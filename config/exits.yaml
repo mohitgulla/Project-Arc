@@ -61,9 +61,21 @@ pipeline:
 # Remaining EV is on the entry model's basis (E6.4a parity): at unchanged marks it
 # equals the proposal's managed Net EV + entry costs + the cost of closing now.
 # Stated default, owner's call (ask in the E6.4 PR).
+#   fill_day_guard             E18.2 (D78, owner 2026-10-10; D44 waived, ships on): a
+#                              position opened today is not closed for a discretionary
+#                              reason (Research review with the thesis intact/weakened,
+#                              the close leg of a swap, the remaining-EV floor) unless
+#                              Research marks the thesis broken. Stop, profit lock, DTE,
+#                              expiry and take profit are never held. Journaled as
+#                              exit:fill_day_hold; no risk.exit call. off = rollback
+#                              (behaviour as before E18.2). Slack: positions.fill_day_guard.
+#   fill_day_guard_sessions    sessions the guard covers, counting the fill day (1 = the
+#                              fill day only; 0 = off).
 positions:
   remaining_ev_floor_per_bp: -0.01
   remaining_ev_floor_eod_only: true
+  fill_day_guard: on
+  fill_day_guard_sessions: 1
   kinds: {}
   # E11.4 (D73): never reach expiry by accident. Inside the closing window
   # (DTE <= flat_by_dte + 1) exits.mandatory may propose a close up to

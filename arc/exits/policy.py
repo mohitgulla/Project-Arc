@@ -333,10 +333,28 @@ class PositionsConfig(BaseModel):
         True, description="Evaluate the remaining-EV floor on end-of-day marks only"
     )
     kinds: dict[StructureKind, float | None] = Field(default_factory=dict)
+    fill_day_guard: bool = Field(
+        True,
+        description="E18.2 (D78): no discretionary close (Research review with the thesis "
+        "intact/weakened, swap close, remaining-EV floor) in the guard's sessions after the "
+        "fill unless Research marks the thesis broken; off = rollback",
+    )
+    fill_day_guard_sessions: int = Field(
+        1,
+        ge=0,
+        le=3,
+        description="E18.2: trading sessions the fill-day guard covers, counting the fill "
+        "day (1 = the fill day only; 0 = off)",
+    )
     expiry_guard: ExpiryGuard = Field(
         default_factory=ExpiryGuard,
         description="E11.4 (D73): flat by DTE, closing-window retries, expiry-day cutoff, DNE",
     )
+
+    @property
+    def fill_day_sessions(self) -> int:
+        """Sessions the E18.2 fill-day guard covers (0 = off)."""
+        return self.fill_day_guard_sessions if self.fill_day_guard else 0
 
     def floor_for(self, kind: StructureKind | None) -> float | None:
         if kind is not None and kind in self.kinds:
