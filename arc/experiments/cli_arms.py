@@ -386,7 +386,7 @@ def _repair_ledger(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
     paths = (
         [Path(p).resolve() for p in args.arm_db]
         if args.arm_db
-        else list(dict(sorted(_arm_stores(conn).items())).values())
+        else list(dict(sorted(_arm_stores(conn, st.experiment_id).items())).values())
     )
     if not paths:
         _err("arc experiment repair-ledger: no arm stores (pass --arm-db)")
@@ -432,10 +432,10 @@ def _repair_ledger(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
     return 0
 
 
-def _arm_stores(conn: sqlite3.Connection) -> dict[str, Path]:
+def _arm_stores(conn: sqlite3.Connection, experiment_id: str) -> dict[str, Path]:
     from arc.experiments.arms import arm_stores
 
-    return arm_stores(conn)
+    return arm_stores(conn, experiment_id)
 
 
 def run_arm_command(args: argparse.Namespace, conn: sqlite3.Connection) -> int:

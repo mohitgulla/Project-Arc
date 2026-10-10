@@ -396,7 +396,7 @@ def test_cli_repair_ledger_on_a_running_experiment(
         arm_dir=tmp_path / "arms",
         control_sha="abcdef1",
     )
-    arm_path = arm_stores(conn)["treatment"]
+    arm_path = arm_stores(conn, "XP-1")["treatment"]
     conn.close()
     # an arm store booked by the pre-fix ledger (rows copied from the XP-10 shape)
     src = _xp10_arm()
