@@ -260,7 +260,7 @@ def test_open_position_seeded_peak_changes_remaining_ev() -> None:
 
 
 def test_rollback_values_reproduce_main_exactly() -> None:
-    """``profit_lock: null`` + debit TP 1.00 → main's (pre-E18.1) numbers, byte-identical.
+    """``profit_lock: null`` + debit TP 1.00 → main's (pre-E18.1) numbers.
 
     The golden was generated on main before E18.1. New fields this card adds to the
     models (``p_profit_lock`` = 0, lock state = None) are dropped before comparing.
@@ -276,12 +276,16 @@ def test_rollback_values_reproduce_main_exactly() -> None:
             return {k: strip(v) for k, v in x.items() if k not in new}
         if isinstance(x, list):
             return [strip(v) for v in x]
+        if isinstance(x, float):
+            # 10 significant digits: numpy's summation order differs by platform
+            # (macOS vs the Linux CI runner) in the last ulp of a few derived ratios
+            return float(f"{x:.10g}")
         return x
 
     assert set(got) == set(want)
     for key in want:
         assert json.dumps(strip(got[key]), sort_keys=True) == json.dumps(
-            want[key], sort_keys=True
+            strip(want[key]), sort_keys=True
         ), key
 
 
