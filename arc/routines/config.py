@@ -904,6 +904,22 @@ class OptionsFastSettings(BaseModel):
     max_csv_bytes: Annotated[int, Field(ge=1_000_000, le=100_000_000)] = 20_000_000
 
 
+class IvBackfillSettings(BaseModel):
+    """E16.1 (D76): the ``iv_backfill:`` block (nightly ``iv.backfill`` top-up knobs).
+
+    Context data only (IV rank / percentile on ``regime``); never a gate input.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    # Short names backfilled per run (open underlyings first, then active-list order).
+    max_tickers_per_run: Annotated[int, Field(ge=1, le=60)] = 10
+    # No new ticker starts after this many seconds (resumable: the next run continues).
+    max_runtime_s: Annotated[int, Field(ge=60, le=3600)] = 900
+    # First day backfilled (Alpaca's option-bars history starts 2024-02).
+    since: _dt.date = _dt.date(2024, 3, 1)
+
+
 class RoutinesUniverseSettings(BaseModel):
     """D64 (E14.7): the ``universe:`` block (tier-writer knobs shared by the Scout's
     discovery tier and ``universe.trending``)."""
@@ -956,6 +972,7 @@ class RoutinesConfig(BaseModel):
     options_slow: OptionsSlowSettings = Field(default_factory=OptionsSlowSettings)  # E13.5
     options_fast: OptionsFastSettings = Field(default_factory=OptionsFastSettings)  # E13.6
     universe: RoutinesUniverseSettings = Field(default_factory=RoutinesUniverseSettings)  # D64
+    iv_backfill: IvBackfillSettings = Field(default_factory=IvBackfillSettings)  # E16.1 (D76)
 
     @model_validator(mode="before")
     @classmethod

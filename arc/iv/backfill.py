@@ -117,6 +117,8 @@ class BackfillReport:
     until: _dt.date
     tickers: list[TickerBackfill] = field(default_factory=list)
     wall_s: float = 0.0
+    #: E16.1: tickers not started because ``max_runtime_s`` ran out (next run resumes).
+    deferred: list[str] = field(default_factory=list)
 
 
 def implied_vol(
@@ -344,13 +346,24 @@ def backfill(
     dividend_yields: Mapping[str, float],
     progress: Callable[[str], None] | None = None,
     clock: Callable[[], float] = time.monotonic,
+    max_runtime_s: float | None = None,
 ) -> BackfillReport:
+    """Backfill each ticker over *sessions* (days already stored or skipped are not refetched).
+
+    E16.1: with *max_runtime_s*, a ticker is not started once that many seconds have
+    passed; it lands in :attr:`BackfillReport.deferred` (each day is stored as it is
+    done, so the next run resumes where this one stopped).
+    """
     t0 = clock()
     rep = BackfillReport(since=sessions[0], until=sessions[-1]) if sessions else None
     if rep is None:
         msg = "no sessions in the requested range"
         raise ValueError(msg)
-    for t in tickers:
+    for i, t in enumerate(tickers):
+        if max_runtime_s is not None and clock() - t0 >= max_runtime_s:
+            rep.deferred = [x.upper() for x in tickers[i:]]
+            log.info("iv.backfill_deferred", tickers=rep.deferred, max_runtime_s=max_runtime_s)
+            break
         q = float(dividend_yields.get(t.upper(), 0.0))
         try:
             rep.tickers.append(

@@ -37,7 +37,7 @@ def add_iv_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> N
     b.add_argument(
         "--tickers",
         required=True,
-        help="Comma list, or `watch` (today's watch list + open underlyings + SPY/QQQ)",
+        help="Comma list, or `watch` (today's watch list + open underlyings + SPY/QQQ/IWM)",
     )
     b.add_argument("--since", type=_dt.date.fromisoformat, required=True, help="YYYY-MM-DD")
     b.add_argument(
@@ -75,10 +75,11 @@ def _open(args: argparse.Namespace) -> sqlite3.Connection:
 def _tickers(
     raw: str, conn: sqlite3.Connection, settings: ArcSettings, now: _dt.datetime
 ) -> list[str]:
+    from arc.iv.topup import MARKET_REFERENCE
     from arc.universe.tiers import open_underlyings, watch_tickers
 
     if raw.strip().lower() == "watch":
-        names = [*watch_tickers(conn, settings, now), *open_underlyings(conn), "SPY", "QQQ"]
+        names = [*watch_tickers(conn, settings, now), *open_underlyings(conn), *MARKET_REFERENCE]
     else:
         names = [t.strip() for t in raw.split(",") if t.strip()]
     return list(dict.fromkeys(t.upper() for t in names))

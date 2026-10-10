@@ -278,6 +278,8 @@ NOT_EXPOSED_PATHS: dict[str, str] = {
     "sources.options_fast.strikes": "tape shape (3 strikes x call/put = the BookLevel cap)",
     "options_fast.vix_flags.vix_gt_25": "tape label only (the gate's no_trade_vix_max rules)",
     "options_fast.vix_flags.vix_gt_35": "tape label only (the gate's no_trade_vix_max rules)",
+    # E16.1 (D76): no date value type; the backfill start is a data-range choice.
+    "iv_backfill.since": "backfill start date (data range); change by PR",
 }
 
 # routines.yaml paths that are never runtime-tunable (path/limit guards; change by PR).
@@ -1975,6 +1977,37 @@ _OPTIONS_SLOW_TUNABLES: tuple[Tunable, ...] = (
     ),
 )
 
+# E16.1 (D76): the `iv_backfill:` block (nightly IV-history top-up; context data only).
+_IV_BACKFILL_TUNABLES: tuple[Tunable, ...] = (
+    Tunable(
+        key="iv_backfill.max_tickers_per_run",
+        group=Group.ROUTINES,
+        type=_I,
+        description="E16.1: most names short of IV rank history that one nightly "
+        "iv.backfill run fills (open underlyings first, then the active list).",
+        target=Target.ROUTINES,
+        risk=Risk.NONE,
+        path=("iv_backfill", "max_tickers_per_run"),
+        min=1,
+        max=60,
+        hard_ceiling=60,
+    ),
+    Tunable(
+        key="iv_backfill.max_runtime_s",
+        group=Group.ROUTINES,
+        type=_I,
+        description="E16.1: seconds after which iv.backfill starts no new ticker (the "
+        "next run resumes); bounds its share of the Alpaca data budget.",
+        target=Target.ROUTINES,
+        risk=Risk.UP,
+        path=("iv_backfill", "max_runtime_s"),
+        unit="s",
+        min=60,
+        max=3600,
+        hard_ceiling=3600,
+    ),
+)
+
 # E13.6 (D56): source-job options that are runtime-tunable (plain YAML paths under a
 # `sources:` job; read and written as is, not as a cadence).
 _SOURCE_OPTION_PATHS: frozenset[tuple[str, ...]] = frozenset(
@@ -2284,6 +2317,7 @@ REGISTRY: dict[str, Tunable] = {
         *_category_tunables(),
         *_FUNNEL_TUNABLES,
         *_OPTIONS_SLOW_TUNABLES,
+        *_IV_BACKFILL_TUNABLES,
         *_OPTIONS_FAST_TUNABLES,
         *_CARRYOVER_TUNABLES,
         *_EXPERIMENT_TUNABLES,
@@ -2656,6 +2690,7 @@ _PLAIN_ROUTINE_SECTIONS = (
     ("funnel",),
     ("options_slow",),  # E13.5
     ("universe",),  # D64 (E14.7): universe.carryover.*
+    ("iv_backfill",),  # E16.1 (D76)
 )
 # Scalar switches that sit next to the jobs under `personas:` (E4.8a), as `on | off`.
 _PERSONA_SWITCHES = frozenset(

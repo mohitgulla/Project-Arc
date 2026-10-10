@@ -857,6 +857,77 @@ def iv_record_source(
     )
 
 
+def iv_backfill_source(
+    ctx: JobContext,
+    history_factory: Callable[[], Any] | None = None,
+    clock: Callable[[], float] | None = None,
+) -> JobResult:
+    """E16.1 (D76): nightly top-up of the IV history for names short of IV rank.
+
+    Picks open underlyings + today's active list + SPY/QQQ/IWM whose series has fewer
+    than ``iv_min_obs_rank`` days in the 252-session lookback (and still has a gap
+    the backfill has not tried), at most ``iv_backfill.max_tickers_per_run``, and runs
+    the E4.12 backfill over ``iv_backfill.since`` .. the last completed session. No
+    new ticker starts after ``iv_backfill.max_runtime_s``; the next run resumes. Every
+    request takes a slot from the shared ``routine_state[alpaca_data:calls]`` budget.
+    No Slack post unless it fails (the run's failure path).
+    """
+    import time as _time
+
+    from arc.iv.topup import candidates, run_topup
+    from arc.universe.tiers import active_tickers, open_underlyings
+    from arc.utils.calendar import previous_session, sessions_between
+
+    s = ctx.settings
+    cfg = ctx.routines.iv_backfill
+    today = ctx.now.astimezone(ET).date()
+    until = previous_session(today)  # today's option bars are partial until after the close
+    sessions = sessions_between(cfg.since, until)
+    if not sessions:
+        msg = f"no sessions between iv_backfill.since {cfg.since} and {until}"
+        raise JobSkippedError(msg)
+    lookback = sessions[-s.scanner_iv_lookback :]
+    explicit = ctx.options.get("tickers")
+    active = (
+        [str(t).upper() for t in explicit] if explicit else active_tickers(ctx.conn, s, ctx.now)
+    )
+    names = candidates([] if explicit else open_underlyings(ctx.conn), active)
+    if history_factory is None:  # pragma: no cover - live Alpaca (integration)
+        from arc.ingest.finnhub import DbRateLimiter
+        from arc.iv.alpaca_history import RATE_STATE_KEY, AlpacaOptionHistory
+
+        def _alpaca_history() -> Any:
+            limiter = DbRateLimiter(
+                ctx.conn, calls_per_minute=s.alpaca_data_calls_per_minute, key=RATE_STATE_KEY
+            )
+            return AlpacaOptionHistory(limiter)
+
+        history_factory = _alpaca_history
+
+    res = run_topup(
+        ctx.conn,
+        history_factory,
+        names,
+        sessions=sessions,
+        lookback=lookback,
+        now=ctx.now,
+        min_obs=s.iv_min_obs_rank,
+        max_tickers=cfg.max_tickers_per_run,
+        max_runtime_s=cfg.max_runtime_s,
+        r=s.scanner_risk_free_rate,
+        dividend_yields=s.iv_dividend_yields,
+        clock=clock or _time.monotonic,
+    )
+    rep = res.report
+    if rep is not None and rep.tickers and not res.days_added:
+        errors = [k for t in rep.tickers for k in t.skipped if k.startswith("error:")]
+        if len(errors) == len(rep.tickers):  # every ticker raised: a data/API outage
+            msg = f"IV backfill failed for every picked ticker (e.g. {errors[0]})"
+            raise RuntimeError(msg)
+    _data_result(ctx, "iv_backfill", "alpaca", res.metrics(), res.days_added)
+    return JobResult(summary=res.summary(), metrics=res.metrics())
+
+
 def betas_source(
     ctx: JobContext,
     market: MarketDataProvider | None = None,
@@ -2719,6 +2790,7 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "macro_calendar": "arc.routines.handlers:macro_calendar_source",
     "ex_dividend": "arc.routines.handlers:ex_dividend_source",
     "iv.record": "arc.routines.handlers:iv_record_source",  # E4.12 (D55) daily 30-DTE IV
+    "iv.backfill": "arc.routines.handlers:iv_backfill_source",  # E16.1 (D76) nightly top-up
     "betas": "arc.routines.handlers:betas_source",  # E3.6 (D62) daily 1y beta vs SPY
     # E4.8 (D46): Finnhub per-ticker context (typed kinds, shared 55/min budget)
     "finnhub.insider": "arc.routines.handlers:finnhub_insider_source",
