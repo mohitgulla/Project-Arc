@@ -642,7 +642,9 @@ def test_detail_market_context_regime_v2(tmp_path: Path) -> None:
         "SELECT payload FROM context_entries WHERE id = 'ctx-fx-regime-spy'"
     ).fetchone()
     payload = json.loads(raw)
-    payload["regime"].update(model="v2", z=1.37, run_length=4, vol_state="low", rv20_pct_rank=18.0)
+    payload["regime"].update(
+        model="v2", z=1.37, run_length=4, margin_z=0.37, vol_state="low", rv20_pct_rank=18.0
+    )
     rw.execute(
         "UPDATE context_entries SET payload = ? WHERE id = 'ctx-fx-regime-spy'",
         (json.dumps(payload),),
@@ -656,6 +658,7 @@ def test_detail_market_context_regime_v2(tmp_path: Path) -> None:
         c.close()
     assert r is not None and r.model == "v2" and r.z == pytest.approx(1.37)
     assert r.run_length == 4 and r.vol_state == "low" and r.rv20_pct_rank == pytest.approx(18.0)
+    assert r.margin_z == pytest.approx(0.37)
 
 
 def test_detail_manifest(conn: sqlite3.Connection) -> None:

@@ -51,6 +51,47 @@
           "default": null,
           "title": "Regime"
         },
+        "regime_check": {
+          "anyOf": [
+            {
+              "enum": [
+                "confirmation",
+                "legacy"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Which transitional test ran: v2 confirmation or the stickiness fallback",
+          "title": "Regime Check"
+        },
+        "regime_margin_z": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Regime Margin Z"
+        },
+        "regime_run_length": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Regime Run Length"
+        },
         "regime_stickiness": {
           "anyOf": [
             {
