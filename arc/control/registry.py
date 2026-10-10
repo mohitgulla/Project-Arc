@@ -988,6 +988,30 @@ liquidity; a leg passes if within this OR spread_max_abs).",
         path=("positions", "remaining_ev_floor_eod_only"),
         choices=("intraday", "eod"),  # eod (relaxed, like the D23 stop) is the riskier side
     ),
+    Tunable(
+        key="positions.fill_day_guard",
+        group=Group.POSITIONS,
+        type=ValueType.CHOICE,
+        description="E18.2 (D78): on = no discretionary close (Research review with the "
+        "thesis intact/weakened, swap close, remaining-EV floor) in the sessions after the "
+        "fill unless the thesis is broken; off = rollback (closes as before E18.2).",
+        target=Target.EXITS,
+        risk=Risk.ANY,
+        path=("positions", "fill_day_guard"),
+        choices=("on", "off"),
+    ),
+    Tunable(
+        key="positions.fill_day_guard_sessions",
+        group=Group.POSITIONS,
+        type=ValueType.INT,
+        description="E18.2: trading sessions the fill-day guard covers, counting the fill "
+        "day (1 = the fill day only; 0 = off).",
+        target=Target.EXITS,
+        risk=Risk.ANY,
+        path=("positions", "fill_day_guard_sessions"),
+        min=0,
+        max=3,
+    ),
     # -- expiry guard (E11.4, D73) ------------------------------------------------
     Tunable(
         key="expiry_guard.flat_by_dte",
@@ -2902,6 +2926,9 @@ def read_raw(t: Tunable, raw: dict[str, Any]) -> Any:
     if t.path == ("positions", "remaining_ev_floor_eod_only"):
         v = _get(raw, t.path)
         return "eod" if (True if v is None else bool(v)) else "intraday"
+    if t.path == ("positions", "fill_day_guard"):  # E18.2: YAML bool shown as on | off
+        v = _get(raw, t.path)
+        return "on" if (True if v is None else bool(v)) else "off"
     if t.target is Target.EXITS and t.path[:1] == ("kinds",):
         kind_data = _get(raw, t.path[:2])
         rel = t.path[2:]
@@ -2957,6 +2984,8 @@ def write_raw(t: Tunable, value: Any, raw: dict[str, Any]) -> list[tuple[tuple[s
         return [((*base, "schedule"), times), ((*base, "every"), None), ((*base, "window"), None)]
     if t.path == ("positions", "remaining_ev_floor_eod_only"):
         return [(t.path, value == "eod")]
+    if t.path == ("positions", "fill_day_guard"):
+        return [(t.path, value == "on")]
     if t.target is Target.EXITS and t.path[:1] == ("kinds",):
         rel = t.path[2:]
         kind_path = t.path[:2]

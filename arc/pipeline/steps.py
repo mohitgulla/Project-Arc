@@ -1212,14 +1212,44 @@ def _held_tickers(conn: sqlite3.Connection) -> set[str]:
     return {str(r[0]) for r in rows}
 
 
-def _exit_watch_rules(ctx: JobContext) -> list[str]:
-    """E13.17: the exit-policy lines Research sees with the exit watch (deterministic)."""
+def _exit_watch_rules(ctx: JobContext, pctx: PortfolioContext | None = None) -> list[str]:
+    """E13.17: the exit-policy lines Research sees with the exit watch (deterministic).
+
+    E18.2 (D78): with the fill-day guard on and a guarded position in the book, one
+    more line names those positions (``opened today: close only if thesis broken``);
+    with the guard off or no guarded position the lines are unchanged.
+    """
     exits = exit_config(ctx.settings)
-    return [
+    rules = [
         f"Exit policy: {exits.policy_for(None).summary()}",
         "Mandatory exits (stop, DTE exit, expiry) are closed by code; `review` asks "
         "Quant to judge hold or close (rolling is not an option).",
     ]
+    line = _fill_day_rule(ctx, pctx, exits)
+    if line:
+        rules.append(line)
+    return rules
+
+
+def _fill_day_rule(ctx: JobContext, pctx: PortfolioContext | None, exits: ExitConfig) -> str:
+    """E18.2: the Research line for fill-day-guarded positions (``""`` when none)."""
+    from arc.positions.exit_case import fill_day_guarded
+
+    sessions = exits.positions.fill_day_sessions
+    if pctx is None or sessions <= 0:
+        return ""
+    today = _today(ctx)
+    held = [
+        f"{p.structure_id} {p.ticker}"
+        for p in pctx.positions
+        if fill_day_guarded(p.opened_at, today, sessions)
+    ]
+    if not held:
+        return ""
+    return (
+        f"Fill-day guard ({', '.join(held)}) opened today: close only if thesis broken; "
+        "a `review` with the thesis intact or weakened is held by code until the next session."
+    )
 
 
 def _valid_watch_items(out: ResearchOutput, pctx: PortfolioContext) -> list[ExitWatchItem]:
@@ -1726,7 +1756,7 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
     inputs["pool_merged"] = True
     if not pctx.empty:  # E13.17: the exit watch (absent with no open positions)
         inputs["exit_block"] = render_exit_block(pctx, settings)
-        inputs["exit_rules"] = _exit_watch_rules(ctx)
+        inputs["exit_rules"] = _exit_watch_rules(ctx, pctx)
     inputs["compact"] = True
     inputs, budget_cut = _fit_research_budget(
         snap,
@@ -3791,7 +3821,10 @@ def quant_exit(ctx: JobContext, env: PipelineEnv) -> JobResult:
     from arc.positions.exit_case import (
         ExitCaseFacts,
         ExitSwap,
+        ExitTrigger,
         case_skip_reason,
+        fill_day_filter,
+        fill_day_guarded,
         triggers_for,
     )
     from arc.positions.reallocate import ReallocRules, pair_swaps
@@ -3839,17 +3872,38 @@ def quant_exit(ctx: JobContext, env: PipelineEnv) -> JobResult:
             skip[sid] = why
         else:
             eligible.append(reviews[sid])
+    exits = exit_config(settings)
+    # E18.2 (D78): positions inside the fill-day guard (none when it is off).
+    guard_sessions = exits.positions.fill_day_sessions
+    guarded = {
+        r.structure_id
+        for r in eligible
+        if fill_day_guarded(rows[r.structure_id].get("opened_at"), today, guard_sessions)
+    }
+    # A guarded position never pairs: its swap close would be held, and pairing it
+    # would take a capacity candidate another position could swap into.
     paired = {
         sid: ExitSwap.of(sw)
         for sid, sw in pair_swaps(
-            eligible, capacity, rules, swaps_today=count, ticker_swaps_today=per_ticker
+            [r for r in eligible if r.structure_id not in guarded],
+            capacity,
+            rules,
+            swaps_today=count,
+            ticker_swaps_today=per_ticker,
         ).items()
     }
-    exits = exit_config(settings)
     pending: list[ExitCase] = []
+    fill_day_holds: list[tuple[str, str, str | None, list[ExitTrigger]]] = []
     for r in eligible:
         w = watch.get(r.structure_id)
         trig = triggers_for(r, w, paired.get(r.structure_id))
+        if r.structure_id in guarded and trig:
+            trig, held_trig = fill_day_filter(trig, w.thesis_status if w is not None else None)
+            if held_trig:
+                status = w.thesis_status if w is not None else None
+                fill_day_holds.append((r.structure_id, r.ticker, status, held_trig))
+                if not trig:
+                    continue
         if not trig:
             skip[r.structure_id] = "no_trigger"
             continue
@@ -3900,7 +3954,30 @@ def quant_exit(ctx: JobContext, env: PipelineEnv) -> JobResult:
             reason_text="over_case_limit",
             payload={"detail": "over_case_limit", "limit": settings.quant_exit_max_cases},
         )
+    for sid, ticker, status, held_trig in fill_day_holds:
+        kinds = [t.kind for t in held_trig]
+        j.add(
+            JournalPersona.QUANT,
+            Stage.EXIT,
+            sid,
+            Choice.NOTED,
+            ReasonCode.EXIT_FILL_DAY_HOLD,
+            reason_text=(
+                f"{ticker}: opened today, thesis {status or 'not reviewed'}: held "
+                f"({', '.join(kinds)}); re-evaluated from the next session"
+            ),
+            payload={
+                "detail": "fill_day_hold",
+                "thesis_status": status,
+                "signal_kinds": kinds,
+                "triggers": [t.model_dump(mode="json") for t in held_trig],
+                "opened_at": rows[sid].get("opened_at"),
+                "sessions": guard_sessions,
+            },
+        )
     skipped = Counter(skip.values())
+    if fill_day_holds:
+        skipped["fill_day_hold"] = len(fill_day_holds)
     if not cases:
         ctx.conn.commit()
         msg = "no exit cases"
@@ -4183,8 +4260,13 @@ def _propose_exits(ctx: JobContext, env: PipelineEnv) -> JobResult:
     Under a total halt nothing is proposed (today's ``exits()`` rule).
     """
     from arc.execution.exits import exit_pending, price_close, propose_close
+    from arc.positions.evaluate import ExitSignal, SignalKind
     from arc.positions.evaluate import PositionReview as _Review
-    from arc.positions.exit_case import DISCRETIONARY_KINDS, case_skip_reason
+    from arc.positions.exit_case import (
+        DISCRETIONARY_KINDS,
+        case_skip_reason,
+        fill_day_guarded,
+    )
     from arc.positions.steps import (
         SIGNAL_CODES,
         _advance_swaps,
@@ -4222,14 +4304,26 @@ def _propose_exits(ctx: JobContext, env: PipelineEnv) -> JobResult:
     )
     unavailable = risk is None or risk.unavailable
     day = _today(ctx).isoformat()
+    # E18.2 (D78): inside the fill-day guard the remaining-EV floor never closes
+    # (quant.exit journaled the hold); take-profit signals still do. Off: unchanged.
+    guard_sessions = exit_config(settings).positions.fill_day_sessions
+    guarded = {
+        sid
+        for sid in reviews
+        if fill_day_guarded(rows[sid].get("opened_at"), _today(ctx), guard_sessions)
+    }
+
+    def _discretionary(sid: str, r: PositionReview) -> list[ExitSignal]:
+        return [
+            s
+            for s in r.signals
+            if s.kind in DISCRETIONARY_KINDS
+            and not (sid in guarded and s.kind is SignalKind.REMAINING_EV_FLOOR)
+        ]
+
     # Positions to settle: every case, plus every unreviewed discretionary signal.
     todo: list[str] = sorted(
-        set(cases)
-        | {
-            sid
-            for sid, r in reviews.items()
-            if any(s.kind in DISCRETIONARY_KINDS for s in r.signals)
-        }
+        set(cases) | {sid for sid, r in reviews.items() if _discretionary(sid, r)}
     )
     # A hold streak ends when its signal clears.
     for sid in reviews:
@@ -4278,7 +4372,7 @@ def _propose_exits(ctx: JobContext, env: PipelineEnv) -> JobResult:
         if skip is not None:
             note(sid, ReasonCode.EXIT_CASE_SKIPPED, skip, detail=skip)
             continue
-        signals = [s for s in rv.signals if s.kind in DISCRETIONARY_KINDS]
+        signals = _discretionary(sid, rv)
         kinds = [s.kind.value for s in signals]
         verdict = verdicts.get(sid) if case is not None else None
         if case is not None and verdict is None and not unavailable:
