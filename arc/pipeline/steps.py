@@ -173,6 +173,8 @@ from arc.pipeline.store import PersonaCallRepo
 from arc.routines.handlers import JobResult
 from arc.routines.loop import LoopInputs, LoopState, pnl_bucket
 from arc.routines.runs import RoutineRunRepo
+from arc.scanner.menu import CONTROL as MENU_CONTROL
+from arc.scanner.menu import MenuRankKey, candidate_model, rank_menu
 from arc.scanner.rank import live_net_ev_check
 from arc.sizing import apply_live_cap, size_contracts
 from arc.slack.blocks import esc
@@ -1139,6 +1141,165 @@ def _portfolio_filter(
     return out, dropped, rejected
 
 
+#: Scanner strategies that collect premium: a stance the profile maps to any of them is
+#: not "long premium only", so the anti-chase filter leaves it alone (E16.3).
+_CREDIT_STRATEGY_NAMES = frozenset({"bull_put", "bear_call", "iron_condor"})
+
+
+@dataclasses.dataclass
+class _AntiChase:
+    """E16.3 (D76/D78): what the anti-chase filter did in one Research run."""
+
+    kept: list[ResearchRankedItem]
+    dropped: Counter[str] = dataclasses.field(default_factory=Counter)
+    rejected: list[tuple[ResearchRankedItem, str]] = dataclasses.field(default_factory=list)
+    # ticker -> the verdict (every directional long-premium idea checked)
+    verdicts: dict[str, Any] = dataclasses.field(default_factory=dict)
+    # tickers kept because their technicals were missing / the VWAP fetch failed
+    tech_missing: list[ResearchRankedItem] = dataclasses.field(default_factory=list)
+    vwap_missing: list[tuple[ResearchRankedItem, str]] = dataclasses.field(default_factory=list)
+
+
+def _long_premium_only(stance: str, settings: ArcSettings) -> bool:
+    """The profile maps *stance* to debit structures only (long calls/puts, debit verticals)."""
+    names = settings.profile.strategies_for(stance)
+    return bool(names) and not (set(names) & _CREDIT_STRATEGY_NAMES)
+
+
+def _session_vwap_stretch(
+    ctx: JobContext,
+    env: PipelineEnv,
+    ticker: str,
+    atr14: float | None,
+    take: Callable[[], object] | None,
+) -> tuple[float | None, str]:
+    """``((spot - session VWAP) / ATR14, why-missing)`` from today's 5-min bars.
+
+    Spot is the last bar's close (no extra quote call). One ``history_bars`` request,
+    taken from the shared ``alpaca_data:calls`` budget (*take*). Any failure returns
+    ``(None, reason)``: the caller skips the VWAP part and keeps the daily rule.
+    """
+    from arc.features.technicals import session_vwap, vwap_stretch_atr
+
+    today = _today(ctx)
+    try:
+        if take is not None:
+            take()
+        bars = env.market.history_bars(ticker, today, today, "5Min")
+        ctx.record_input(f"bars5m:{ticker}", _source(env), bars, as_of=ctx.now, count=len(bars))
+    except Exception as exc:  # noqa: BLE001 - a missing intraday read only skips VWAP
+        return None, f"5-min bars failed: {exc}"[:200]
+    open_at = _dt.time(9, 30)
+    vwap = session_vwap(bars, start=open_at, end=ctx.now)
+    spot = None
+    for b in bars:
+        if b.timestamp.astimezone(ET) < ctx.now:
+            spot = float(b.close)
+    out = vwap_stretch_atr(spot, vwap, atr14)
+    if out is None:
+        return None, "no session bars yet" if vwap is None else "no ATR14"
+    return out, ""
+
+
+def _alpaca_take(ctx: JobContext, env: PipelineEnv) -> Callable[[], object] | None:
+    """The shared Alpaca data budget (``routine_state[alpaca_data:calls]``); None offline."""
+    if env.offline:
+        return None
+    from arc.ingest.finnhub import DbRateLimiter
+    from arc.iv.alpaca_history import RATE_STATE_KEY
+
+    return DbRateLimiter(
+        ctx.conn, calls_per_minute=ctx.settings.alpaca_data_calls_per_minute, key=RATE_STATE_KEY
+    ).acquire
+
+
+def _anti_chase_filter(
+    ctx: JobContext,
+    env: PipelineEnv,
+    snap: ContextSnapshot,
+    kept: list[ResearchRankedItem],
+) -> _AntiChase:
+    """E16.3 (D76/D78): drop directional long-premium ideas whose move is stretched.
+
+    Runs after Research ranks (and after the E5.9 portfolio drops), before Quant.
+    Only a bullish/bearish idea the account profile can structure as long premium
+    only is checked (a credit-capable stance and neutral ideas pass untouched). The
+    rule is :func:`arc.features.technicals.is_stretched` on the ``regime`` entry's
+    technicals. Missing technicals keep the idea (journaled ``technicals_missing``).
+    With ``anti_chase.vwap`` on, each checked idea also costs one 5-min bars request
+    (shared Alpaca budget); a failed fetch skips only the VWAP part (``vwap_missing``).
+    Survivors are re-ranked 1..n. Deterministic: no LLM, never a gate input.
+    """
+    from arc.features.technicals import TechnicalFeatures, is_stretched
+
+    cfg = ctx.routines.anti_chase
+    rule = cfg.rule()
+    res = _AntiChase(kept=[])
+    take = _alpaca_take(ctx, env) if cfg.vwap else None
+    for item in kept:
+        stance = item.stance.strip().lower()
+        if stance not in ("bullish", "bearish") or not _long_premium_only(stance, ctx.settings):
+            res.kept.append(item.model_copy(update={"rank": len(res.kept) + 1}))
+            continue
+        entry = snap.latest("regime", item.ticker)
+        raw = (entry.payload.get("technicals") if entry is not None else None) or None
+        tech = TechnicalFeatures.model_validate(raw) if raw is not None else None
+        vwap_stretch: float | None = None
+        if cfg.vwap:
+            vwap_stretch, why = _session_vwap_stretch(
+                ctx, env, item.ticker, tech.atr14 if tech is not None else None, take
+            )
+            if vwap_stretch is None:
+                res.vwap_missing.append((item, why))
+        verdict = is_stretched(tech, stance, rule, vwap_stretch=vwap_stretch)
+        res.verdicts[item.ticker] = verdict
+        if verdict.stretched:
+            res.dropped[ReasonCode.STRETCHED_ENTRY.value] += 1
+            res.rejected.append((item, ReasonCode.STRETCHED_ENTRY.value))
+            continue
+        if verdict.status == "missing" and tech is None:
+            res.tech_missing.append(item)
+        res.kept.append(item.model_copy(update={"rank": len(res.kept) + 1}))
+    return res
+
+
+def _journal_anti_chase(j: Recorder, chase: _AntiChase, call_id: str | None) -> None:
+    """E16.3: one record per stretched drop (with the numbers), per kept-without-data idea."""
+    for item, _ in chase.rejected:
+        v = chase.verdicts[item.ticker]
+        j.add(
+            JournalPersona.RESEARCH,
+            Stage.SHORTLIST,
+            item.ticker,
+            Choice.REJECTED,
+            ReasonCode.STRETCHED_ENTRY,
+            reason_text=f"{item.stance}: {v.text()}",
+            confidence=item.confidence,
+            persona_call_id=call_id,
+            payload={"idea": item.model_dump(mode="json"), "anti_chase": v.model_dump(mode="json")},
+        )
+    for item in chase.tech_missing:
+        j.add(
+            JournalPersona.RESEARCH,
+            Stage.SHORTLIST,
+            item.ticker,
+            Choice.NOTED,
+            ReasonCode.TECHNICALS_MISSING,
+            reason_text="no technicals on the regime entry: idea kept (optional filter)",
+            persona_call_id=call_id,
+        )
+    for item, why in chase.vwap_missing:
+        j.add(
+            JournalPersona.RESEARCH,
+            Stage.SHORTLIST,
+            item.ticker,
+            Choice.NOTED,
+            ReasonCode.VWAP_MISSING,
+            reason_text=f"VWAP part skipped ({why}); daily rule applied",
+            persona_call_id=call_id,
+        )
+
+
 def _no_trade_reason(out: ResearchOutput, kept: list[ResearchRankedItem]) -> str | None:
     """The explicit no-trade outcome (E5.9): only meaningful with an empty shortlist."""
     if kept:
@@ -1212,14 +1373,44 @@ def _held_tickers(conn: sqlite3.Connection) -> set[str]:
     return {str(r[0]) for r in rows}
 
 
-def _exit_watch_rules(ctx: JobContext) -> list[str]:
-    """E13.17: the exit-policy lines Research sees with the exit watch (deterministic)."""
+def _exit_watch_rules(ctx: JobContext, pctx: PortfolioContext | None = None) -> list[str]:
+    """E13.17: the exit-policy lines Research sees with the exit watch (deterministic).
+
+    E18.2 (D78): with the fill-day guard on and a guarded position in the book, one
+    more line names those positions (``opened today: close only if thesis broken``);
+    with the guard off or no guarded position the lines are unchanged.
+    """
     exits = exit_config(ctx.settings)
-    return [
+    rules = [
         f"Exit policy: {exits.policy_for(None).summary()}",
         "Mandatory exits (stop, DTE exit, expiry) are closed by code; `review` asks "
         "Quant to judge hold or close (rolling is not an option).",
     ]
+    line = _fill_day_rule(ctx, pctx, exits)
+    if line:
+        rules.append(line)
+    return rules
+
+
+def _fill_day_rule(ctx: JobContext, pctx: PortfolioContext | None, exits: ExitConfig) -> str:
+    """E18.2: the Research line for fill-day-guarded positions (``""`` when none)."""
+    from arc.positions.exit_case import fill_day_guarded
+
+    sessions = exits.positions.fill_day_sessions
+    if pctx is None or sessions <= 0:
+        return ""
+    today = _today(ctx)
+    held = [
+        f"{p.structure_id} {p.ticker}"
+        for p in pctx.positions
+        if fill_day_guarded(p.opened_at, today, sessions)
+    ]
+    if not held:
+        return ""
+    return (
+        f"Fill-day guard ({', '.join(held)}) opened today: close only if thesis broken; "
+        "a `review` with the thesis intact or weakened is held by code until the next session."
+    )
 
 
 def _valid_watch_items(out: ResearchOutput, pctx: PortfolioContext) -> list[ExitWatchItem]:
@@ -1726,7 +1917,7 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
     inputs["pool_merged"] = True
     if not pctx.empty:  # E13.17: the exit watch (absent with no open positions)
         inputs["exit_block"] = render_exit_block(pctx, settings)
-        inputs["exit_rules"] = _exit_watch_rules(ctx)
+        inputs["exit_rules"] = _exit_watch_rules(ctx, pctx)
     inputs["compact"] = True
     inputs, budget_cut = _fit_research_budget(
         snap,
@@ -1743,6 +1934,11 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
     kept, pdropped, prejected = _portfolio_filter(kept, pctx, held, settings, diversification)
     dropped.update(pdropped)
     rejected.extend(prejected)
+    chase: _AntiChase | None = None
+    if ctx.routines.anti_chase.enabled:  # E16.3 (D78 on): off = pipeline as before E16.3
+        chase = _anti_chase_filter(ctx, env, snap, kept)
+        kept = chase.kept
+        dropped.update(chase.dropped)
     ranked = {i.ticker for i in kept}
     excluded = _filter_excluded(out, cands, ranked)
     call_id = _record_ok(ctx, "research", reply, snap.id, dropped)
@@ -1811,6 +2007,8 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
             persona_call_id=call_id,
             payload=item.model_dump(mode="json"),
         )
+    if chase is not None:
+        _journal_anti_chase(j, chase, call_id)
     for ex in excluded:
         j.add(
             JournalPersona.RESEARCH,
@@ -1822,6 +2020,8 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
             persona_call_id=call_id,
         )
     accounted = ranked | {e.ticker for e in excluded}
+    if chase is not None:  # E16.3: a stretched drop was ranked; it has its own record
+        accounted |= {i.ticker for i, _ in chase.rejected}
     not_ranked = sorted(set(cands) - accounted)
     for t in not_ranked:
         j.add(
@@ -1899,6 +2099,8 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
         )
     names = ", ".join(f"{i.ticker} ({i.stance})" for i in kept) or "none"
     drop_items = [(i.ticker.strip().upper() or "?", reason) for i, reason in rejected]
+    if chase is not None:
+        drop_items += [(i.ticker, reason) for i, reason in chase.rejected]
     funnel = [
         *[(e.ticker, FUNNEL_EXCLUDED, e.reason) for e in excluded],
         *[(t, FUNNEL_NOT_RANKED, "") for t in not_ranked],
@@ -2013,18 +2215,7 @@ def _exit_model(
     c: ScanCandidate, spot: float, exits: ExitConfig, r: float, realized_vol: float | None
 ) -> ExitModelResult | None:
     """E2.4 static vs managed numbers for a scanner candidate (None without an IV)."""
-    if c.atm_iv is None or c.dte < 1:
-        return None
-    return model_exits(
-        c.structure,
-        exits.policy_for(c.structure.kind),
-        spot=spot,
-        iv=c.atm_iv,
-        r=r,
-        cfg=exits.model,
-        spreads=c.leg_spreads,
-        realized_vol=realized_vol,
-    )
+    return candidate_model(c, spot, exits, r, realized_vol)
 
 
 def _menu_rank_key(summary: ExitSummary | None, by: str) -> float:
@@ -2033,8 +2224,22 @@ def _menu_rank_key(summary: ExitSummary | None, by: str) -> float:
     return math.inf if val is None else -float(val)
 
 
-def _menu_entry(c: ScanCandidate, exit_summary: ExitSummary | None = None) -> dict[str, Any]:
+def _menu_entry(
+    c: ScanCandidate,
+    exit_summary: ExitSummary | None = None,
+    rank_key: MenuRankKey | None = None,
+) -> dict[str, Any]:
+    """One Quant menu row. ``rank_key``/``rank_measure`` (E7.5b) appear only under a
+    non-control ``pipeline.menu_measure``, so the control menu is byte-identical."""
     st = c.structure
+    extra: dict[str, Any] = {}
+    if rank_key is not None:
+        extra = {
+            "rank_measure": rank_key.measure,
+            "rank_key": rank_key.value,
+        }
+        if rank_key.tilt is not None:
+            extra["rank_tilt"] = rank_key.tilt
     return {
         "structure_type": _structure_type(c),
         "strategy": c.strategy.value,
@@ -2056,6 +2261,7 @@ def _menu_entry(c: ScanCandidate, exit_summary: ExitSummary | None = None) -> di
         "cost_bps": _cost_bps(c),
         "greeks": {"delta": st.greeks.delta, "vega": st.greeks.vega, "theta": st.greeks.theta},
         "exits": None if exit_summary is None else exit_summary.model_dump(mode="json"),
+        **extra,
     }
 
 
@@ -2121,6 +2327,8 @@ class _QuantMenus:
     no_chain_why: dict[str, str] = dataclasses.field(default_factory=dict)
     # (ticker, stance) the account profile cannot trade
     no_profile: list[tuple[str, str]] = dataclasses.field(default_factory=list)
+    # E7.5b: id(candidate) -> its menu rank key (only under a non-control menu_measure)
+    rank_keys: dict[int, MenuRankKey] = dataclasses.field(default_factory=dict)
 
 
 def _quant_menus(ctx: JobContext, env: PipelineEnv, items: list[ResearchRankedItem]) -> _QuantMenus:
@@ -2134,6 +2342,10 @@ def _quant_menus(ctx: JobContext, env: PipelineEnv, items: list[ResearchRankedIt
     today = _today(ctx)
     iv_store = safe_iv_store(ctx.conn)  # E4.12: scanner IV rank from iv_daily
     exits = exit_config(settings)  # D26: exits.yaml + control-panel overrides
+    measure = exits.pipeline.menu_measure  # E7.5b (D79): "control" = scanner menu
+    full = measure != MENU_CONTROL
+    scan_top = settings.pipeline_scan_top
+    pool = max(scan_top, exits.pipeline.menu_pool_max) if full else scan_top
     for item in items:
         strategies = _strategies(item.stance, settings)
         if not strategies:
@@ -2147,9 +2359,7 @@ def _quant_menus(ctx: JobContext, env: PipelineEnv, items: list[ResearchRankedIt
             )
             continue
         try:
-            params = ScanParams.from_settings(
-                settings, strategies=strategies, top=settings.pipeline_scan_top
-            )
+            params = ScanParams.from_settings(settings, strategies=strategies, top=pool)
             history = iv_store.series(item.ticker, until=today) if iv_store is not None else {}
             res = scan(env.market, item.ticker, params, as_of=today, iv_history=history)
             ctx.record_input(
@@ -2171,12 +2381,40 @@ def _quant_menus(ctx: JobContext, env: PipelineEnv, items: list[ResearchRankedIt
         spots[item.ticker] = res.spot
         cands = list(res.candidates)
         rv = _realized_vol(ctx.snapshot, item.ticker)
+        r = settings.scanner_risk_free_rate
+        models: dict[int, ExitModelResult] = {}
         for c in cands:
-            model = _exit_model(c, res.spot, exits, settings.scanner_risk_free_rate, rv)
+            model = _exit_model(c, res.spot, exits, r, rv)
             if model is not None:
-                summaries[id(c)] = ExitSummary.from_result(model)
+                models[id(c)] = model
+        if full:
+            t0 = time.perf_counter()
+            cands, keys = rank_menu(
+                cands,
+                models,
+                measure=measure,
+                top=scan_top,
+                stance=item.stance,
+                tilt=exits.pipeline.direction_tilt,
+                spot=res.spot,
+                exits=exits,
+                r=r,
+                realized_vol=rv,
+            )
+            m.rank_keys.update({id(c): keys[id(c)] for c in cands})
+            log.info(
+                "pipeline.menu_measure",
+                ticker=item.ticker,
+                measure=measure,
+                pool=len(res.candidates),
+                kept=len(cands),
+                rank_ms=round((time.perf_counter() - t0) * 1000),
+            )
+        for c in cands:
+            if id(c) in models:
+                summaries[id(c)] = ExitSummary.from_result(models[id(c)])
         by = exits.pipeline.rank_menu_by
-        if by != "scanner":
+        if by != "scanner" and not full:
             cands.sort(key=lambda c: _menu_rank_key(summaries.get(id(c)), by))
         menus[item.ticker] = {
             _legs_key([(leg.occ_symbol, leg.side.value) for leg in c.structure.legs]): c
@@ -2189,7 +2427,7 @@ def _quant_menus(ctx: JobContext, env: PipelineEnv, items: list[ResearchRankedIt
             "policy in config/exits.yaml (both after costs, $ per contract). Paths move at "
             "the realised-vol forecast (path_vol, mean HV20/HV60) and are priced at IV; "
             "vrp = IV − forecast; rorc_day = managed net EV / (max loss × days held).",
-            "menu": [_menu_entry(c, summaries.get(id(c))) for c in cands],
+            "menu": [_menu_entry(c, summaries.get(id(c)), m.rank_keys.get(id(c))) for c in cands],
         }
 
     return m
@@ -2396,7 +2634,7 @@ def quant_open(ctx: JobContext, env: PipelineEnv) -> JobResult:
                 persona_call_id=call_id,
             )
         for key, c in menu.items():
-            entry = _menu_entry(c, summaries.get(id(c)))
+            entry = _menu_entry(c, summaries.get(id(c)), m.rank_keys.get(id(c)))
             if chosen.get(t) == key:
                 q = by_ticker[t]
                 j.add(
@@ -3791,7 +4029,10 @@ def quant_exit(ctx: JobContext, env: PipelineEnv) -> JobResult:
     from arc.positions.exit_case import (
         ExitCaseFacts,
         ExitSwap,
+        ExitTrigger,
         case_skip_reason,
+        fill_day_filter,
+        fill_day_guarded,
         triggers_for,
     )
     from arc.positions.reallocate import ReallocRules, pair_swaps
@@ -3839,17 +4080,38 @@ def quant_exit(ctx: JobContext, env: PipelineEnv) -> JobResult:
             skip[sid] = why
         else:
             eligible.append(reviews[sid])
+    exits = exit_config(settings)
+    # E18.2 (D78): positions inside the fill-day guard (none when it is off).
+    guard_sessions = exits.positions.fill_day_sessions
+    guarded = {
+        r.structure_id
+        for r in eligible
+        if fill_day_guarded(rows[r.structure_id].get("opened_at"), today, guard_sessions)
+    }
+    # A guarded position never pairs: its swap close would be held, and pairing it
+    # would take a capacity candidate another position could swap into.
     paired = {
         sid: ExitSwap.of(sw)
         for sid, sw in pair_swaps(
-            eligible, capacity, rules, swaps_today=count, ticker_swaps_today=per_ticker
+            [r for r in eligible if r.structure_id not in guarded],
+            capacity,
+            rules,
+            swaps_today=count,
+            ticker_swaps_today=per_ticker,
         ).items()
     }
-    exits = exit_config(settings)
     pending: list[ExitCase] = []
+    fill_day_holds: list[tuple[str, str, str | None, list[ExitTrigger]]] = []
     for r in eligible:
         w = watch.get(r.structure_id)
         trig = triggers_for(r, w, paired.get(r.structure_id))
+        if r.structure_id in guarded and trig:
+            trig, held_trig = fill_day_filter(trig, w.thesis_status if w is not None else None)
+            if held_trig:
+                status = w.thesis_status if w is not None else None
+                fill_day_holds.append((r.structure_id, r.ticker, status, held_trig))
+                if not trig:
+                    continue
         if not trig:
             skip[r.structure_id] = "no_trigger"
             continue
@@ -3900,7 +4162,30 @@ def quant_exit(ctx: JobContext, env: PipelineEnv) -> JobResult:
             reason_text="over_case_limit",
             payload={"detail": "over_case_limit", "limit": settings.quant_exit_max_cases},
         )
+    for sid, ticker, status, held_trig in fill_day_holds:
+        kinds = [t.kind for t in held_trig]
+        j.add(
+            JournalPersona.QUANT,
+            Stage.EXIT,
+            sid,
+            Choice.NOTED,
+            ReasonCode.EXIT_FILL_DAY_HOLD,
+            reason_text=(
+                f"{ticker}: opened today, thesis {status or 'not reviewed'}: held "
+                f"({', '.join(kinds)}); re-evaluated from the next session"
+            ),
+            payload={
+                "detail": "fill_day_hold",
+                "thesis_status": status,
+                "signal_kinds": kinds,
+                "triggers": [t.model_dump(mode="json") for t in held_trig],
+                "opened_at": rows[sid].get("opened_at"),
+                "sessions": guard_sessions,
+            },
+        )
     skipped = Counter(skip.values())
+    if fill_day_holds:
+        skipped["fill_day_hold"] = len(fill_day_holds)
     if not cases:
         ctx.conn.commit()
         msg = "no exit cases"
@@ -4183,8 +4468,13 @@ def _propose_exits(ctx: JobContext, env: PipelineEnv) -> JobResult:
     Under a total halt nothing is proposed (today's ``exits()`` rule).
     """
     from arc.execution.exits import exit_pending, price_close, propose_close
+    from arc.positions.evaluate import ExitSignal, SignalKind
     from arc.positions.evaluate import PositionReview as _Review
-    from arc.positions.exit_case import DISCRETIONARY_KINDS, case_skip_reason
+    from arc.positions.exit_case import (
+        DISCRETIONARY_KINDS,
+        case_skip_reason,
+        fill_day_guarded,
+    )
     from arc.positions.steps import (
         SIGNAL_CODES,
         _advance_swaps,
@@ -4222,14 +4512,26 @@ def _propose_exits(ctx: JobContext, env: PipelineEnv) -> JobResult:
     )
     unavailable = risk is None or risk.unavailable
     day = _today(ctx).isoformat()
+    # E18.2 (D78): inside the fill-day guard the remaining-EV floor never closes
+    # (quant.exit journaled the hold); take-profit signals still do. Off: unchanged.
+    guard_sessions = exit_config(settings).positions.fill_day_sessions
+    guarded = {
+        sid
+        for sid in reviews
+        if fill_day_guarded(rows[sid].get("opened_at"), _today(ctx), guard_sessions)
+    }
+
+    def _discretionary(sid: str, r: PositionReview) -> list[ExitSignal]:
+        return [
+            s
+            for s in r.signals
+            if s.kind in DISCRETIONARY_KINDS
+            and not (sid in guarded and s.kind is SignalKind.REMAINING_EV_FLOOR)
+        ]
+
     # Positions to settle: every case, plus every unreviewed discretionary signal.
     todo: list[str] = sorted(
-        set(cases)
-        | {
-            sid
-            for sid, r in reviews.items()
-            if any(s.kind in DISCRETIONARY_KINDS for s in r.signals)
-        }
+        set(cases) | {sid for sid, r in reviews.items() if _discretionary(sid, r)}
     )
     # A hold streak ends when its signal clears.
     for sid in reviews:
@@ -4278,7 +4580,7 @@ def _propose_exits(ctx: JobContext, env: PipelineEnv) -> JobResult:
         if skip is not None:
             note(sid, ReasonCode.EXIT_CASE_SKIPPED, skip, detail=skip)
             continue
-        signals = [s for s in rv.signals if s.kind in DISCRETIONARY_KINDS]
+        signals = _discretionary(sid, rv)
         kinds = [s.kind.value for s in signals]
         verdict = verdicts.get(sid) if case is not None else None
         if case is not None and verdict is None and not unavailable:

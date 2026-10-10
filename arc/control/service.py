@@ -18,14 +18,16 @@ subcommands, which shell out to the CLI):
 
 from __future__ import annotations
 
+import copy
 import datetime as _dt
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 import structlog
 
 from arc.config import PER_ENV_SWITCHES, ArcSettings
-from arc.control.effective import apply_changes, raw_yaml, yaml_overrides
+from arc.control.effective import YAML_PATHS, apply_changes, raw_yaml, yaml_overrides
 from arc.control.registry import (
     REGISTRY,
     Direction,
@@ -174,6 +176,9 @@ class ControlService:
         self._optionable = optionable
         self._is_halted = is_halted or self._default_halted
         self.confirm_ttl = confirm_ttl
+        # Parsed YAML per (target, path, mtime_ns) for this service's read path. One
+        # `show` reads ~560 keys; parsing routines.yaml per key cost ~50 ms each (D82).
+        self._raw_cache: dict[tuple[Target, str, int], dict[str, Any]] = {}
 
     # -- identity --------------------------------------------------------------
 
@@ -215,13 +220,13 @@ class ControlService:
                 return self._default(t)
             v = getattr(settings, t.field or t.key)
             return list(v) if isinstance(v, list) else v
-        raw = raw_yaml(t.target, self._yaml_path(t.target))
+        raw = self._raw(t.target)
         ov = settings.yaml_overrides(t.target.value)
         if ov:
             from arc.utils.yamlpatch import apply_overrides
 
             raw = apply_overrides(raw, ov)
-        return read_raw(t, raw)
+        return copy.deepcopy(read_raw(t, raw))
 
     def _default(self, t: Tunable) -> Any:
         if t.target is Target.SETTINGS:
@@ -229,7 +234,19 @@ class ControlService:
                 return False  # a per-env switch for another env: off unless overridden
             v = getattr(self.base, t.field or t.key)
             return list(v) if isinstance(v, list) else v
-        return read_raw(t, raw_yaml(t.target, self._yaml_path(t.target)))
+        return copy.deepcopy(read_raw(t, self._raw(t.target)))
+
+    def _raw(self, target: Target) -> dict[str, Any]:
+        """``raw_yaml`` parsed once per file version; read-only (callers copy what they keep).
+
+        Keyed by mtime so an edit to the YAML (owner, tests) is seen on the next read.
+        """
+        path = self._yaml_path(target)
+        p = Path(path) if path is not None else YAML_PATHS[target]
+        key = (target, str(p), p.stat().st_mtime_ns)
+        if key not in self._raw_cache:
+            self._raw_cache[key] = raw_yaml(target, p)
+        return self._raw_cache[key]
 
     def _yaml_path(self, target: Target) -> Any:
         if target is Target.PROFILES:
@@ -270,7 +287,7 @@ class ControlService:
         that profile (the global ``dte_min``/``dte_max`` only apply to a profile
         without a window, i.e. ``margin``), so the summary must show them.
         """
-        raw = raw_yaml(Target.PROFILES, self._yaml_path(Target.PROFILES))
+        raw = self._raw(Target.PROFILES)
         out: list[str] = []
         for name, spec in (raw.get("profiles") or {}).items():
             if not isinstance(spec, dict):
@@ -298,7 +315,7 @@ class ControlService:
         return [self.view(k, s) for k in keys]
 
     def _routine_keys(self) -> list[str]:
-        raw = raw_yaml(Target.ROUTINES)
+        raw = self._raw(Target.ROUTINES)
         out: list[str] = []
         for section in ("sources", "personas"):
             for job, spec in (raw.get(section) or {}).items():

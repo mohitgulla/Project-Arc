@@ -297,6 +297,12 @@ _CREDIT_EXIT_KINDS = frozenset({"vertical_credit", "iron_condor"})
 
 PROFILE_ORDER: tuple[str, ...] = ("cash_long_only", "cash_debit", "margin")  # safest first
 RANK_MENU_BY: tuple[str, ...] = ("scanner", "managed_net_ev", "rorc_day", "vrp")
+MENU_MEASURE: tuple[str, ...] = (
+    "control",
+    "managed_net_ev_full",
+    "rorc_day_full",
+    "rorc_day_tilted",
+)
 STOP_BASES: tuple[str, ...] = ("pct_max_loss", "pct_debit", "credit_multiple")
 
 MAX_UNIVERSE = 25  # D58: hard ceiling on the core list (arc.universe.tiers.MAX_CORE)
@@ -963,6 +969,43 @@ liquidity; a leg passes if within this OR spread_max_abs).",
         path=("pipeline", "rank_menu_by"),
         choices=RANK_MENU_BY,
     ),
+    # -- E7.5b (D79): one menu measure for credit + debit, ranked before the cut --------
+    Tunable(
+        key="menu_measure",
+        group=Group.ENTRIES,
+        type=ValueType.CHOICE,
+        description="E7.5b: control = scanner menu; managed_net_ev_full / rorc_day_full / "
+        "rorc_day_tilted rank up to menu_pool_max candidates (credit and debit on one key) "
+        "before the cut to pipeline_scan_top (exits.yaml pipeline.menu_measure).",
+        target=Target.EXITS,
+        risk=Risk.NONE,
+        path=("pipeline", "menu_measure"),
+        choices=MENU_MEASURE,
+    ),
+    Tunable(
+        key="menu_direction_tilt",
+        group=Group.ENTRIES,
+        type=ValueType.FLOAT,
+        description="E7.5b: rorc_day_tilted drift, a fraction of a 1-sigma move over the "
+        "expected hold in the stance's direction (0 = off). Ranking key only.",
+        target=Target.EXITS,
+        risk=Risk.ANY,
+        path=("pipeline", "direction_tilt"),
+        min=0.0,
+        max=0.5,
+    ),
+    Tunable(
+        key="menu_pool_max",
+        group=Group.ENTRIES,
+        type=ValueType.INT,
+        description="E7.5b: scanner candidates per ticker scored by the managed model before "
+        "the menu is cut (only under a *_full / *_tilted menu_measure).",
+        target=Target.EXITS,
+        risk=Risk.ANY,
+        path=("pipeline", "menu_pool_max"),
+        min=5,
+        max=40,
+    ),
     # -- positions (E6.4, D19): early exits + close-to-reallocate -----------------
     Tunable(
         key="positions.remaining_ev_floor",
@@ -987,6 +1030,30 @@ liquidity; a leg passes if within this OR spread_max_abs).",
         risk=Risk.ORDER,
         path=("positions", "remaining_ev_floor_eod_only"),
         choices=("intraday", "eod"),  # eod (relaxed, like the D23 stop) is the riskier side
+    ),
+    Tunable(
+        key="positions.fill_day_guard",
+        group=Group.POSITIONS,
+        type=ValueType.CHOICE,
+        description="E18.2 (D78): on = no discretionary close (Research review with the "
+        "thesis intact/weakened, swap close, remaining-EV floor) in the sessions after the "
+        "fill unless the thesis is broken; off = rollback (closes as before E18.2).",
+        target=Target.EXITS,
+        risk=Risk.ANY,
+        path=("positions", "fill_day_guard"),
+        choices=("on", "off"),
+    ),
+    Tunable(
+        key="positions.fill_day_guard_sessions",
+        group=Group.POSITIONS,
+        type=ValueType.INT,
+        description="E18.2: trading sessions the fill-day guard covers, counting the fill "
+        "day (1 = the fill day only; 0 = off).",
+        target=Target.EXITS,
+        risk=Risk.ANY,
+        path=("positions", "fill_day_guard_sessions"),
+        min=0,
+        max=3,
     ),
     # -- expiry guard (E11.4, D73) ------------------------------------------------
     Tunable(
@@ -1884,6 +1951,22 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         choices=("off", "on"),
         aliases=("routines.personas.research_technicals", "research_technicals"),
     ),
+    # E16.3 (D76/D78): the anti-chase entry filter. D78 ships it on without an
+    # experiment; `off` is the rollback switch only (pipeline as before E16.3).
+    # Choices listed safest -> riskiest: the filter off lets stretched entries through.
+    Tunable(
+        key="personas.anti_chase",
+        group=Group.ROUTINES,
+        type=ValueType.CHOICE,
+        description="E16.3: drop a bullish/bearish long-premium idea before Quant when its "
+        "move is already stretched (anti_chase.* thresholds; journaled stretched_entry). "
+        "Deterministic, never a gate input. off = rollback (pipeline as before E16.3).",
+        target=Target.ROUTINES,
+        risk=Risk.ORDER,
+        path=("personas", "anti_chase"),
+        choices=("on", "off"),
+        aliases=("routines.personas.anti_chase", "anti_chase"),
+    ),
 )
 
 # E8.2a: ops-alert thresholds under `monitoring:` in routines.yaml. They only shape
@@ -2125,6 +2208,99 @@ _IV_BACKFILL_TUNABLES: tuple[Tunable, ...] = (
         min=60,
         max=3600,
         hard_ceiling=3600,
+    ),
+)
+
+# E16.3 (D76/D78): the `anti_chase:` thresholds (a higher stretch/RSI bar, a lower
+# oversold bar or a tighter 20-day-extreme band drops fewer entries: riskier).
+_ANTI_CHASE_TUNABLES: tuple[Tunable, ...] = (
+    Tunable(
+        key="anti_chase.combine",
+        group=Group.ROUTINES,
+        type=ValueType.CHOICE,
+        description="E16.3: all = stretch AND RSI (D78); any = stretch OR (RSI and near "
+        "the 20-day extreme) (D76 card rule, drops more).",
+        target=Target.ROUTINES,
+        risk=Risk.ORDER,
+        path=("anti_chase", "combine"),
+        choices=("any", "all"),
+    ),
+    Tunable(
+        key="anti_chase.max_stretch_atr",
+        group=Group.ROUTINES,
+        type=_F,
+        description="E16.3: (close - SMA20) / ATR14 at or above which a bullish idea is "
+        "stretched (bears mirror).",
+        target=Target.ROUTINES,
+        risk=Risk.UP,
+        path=("anti_chase", "max_stretch_atr"),
+        unit="ATR",
+        min=1.0,
+        max=5.0,
+        hard_ceiling=5.0,
+    ),
+    Tunable(
+        key="anti_chase.rsi_overbought",
+        group=Group.ROUTINES,
+        type=_F,
+        description="E16.3: RSI14 at or above which a bullish idea counts as overbought.",
+        target=Target.ROUTINES,
+        risk=Risk.UP,
+        path=("anti_chase", "rsi_overbought"),
+        min=60.0,
+        max=95.0,
+        hard_ceiling=95.0,
+    ),
+    Tunable(
+        key="anti_chase.rsi_oversold",
+        group=Group.ROUTINES,
+        type=_F,
+        description="E16.3: RSI14 at or below which a bearish idea counts as oversold.",
+        target=Target.ROUTINES,
+        risk=Risk.DOWN,
+        path=("anti_chase", "rsi_oversold"),
+        min=5.0,
+        max=40.0,
+        hard_ceiling=5.0,
+    ),
+    Tunable(
+        key="anti_chase.max_dist_high20_atr",
+        group=Group.ROUTINES,
+        type=_F,
+        description="E16.3 (combine any): within this many ATR of the 20-day high (bears: "
+        "low) counts as near the extreme.",
+        target=Target.ROUTINES,
+        risk=Risk.DOWN,
+        path=("anti_chase", "max_dist_high20_atr"),
+        unit="ATR",
+        min=0.0,
+        max=2.0,
+    ),
+    Tunable(
+        key="anti_chase.vwap",
+        group=Group.ROUTINES,
+        type=ValueType.CHOICE,
+        description="E16.3: also drop when (spot - session VWAP) / ATR14 >= "
+        "anti_chase.max_vwap_stretch_atr (one 5-min bars request per directional idea, "
+        "shared Alpaca data budget). off = daily rule only.",
+        target=Target.ROUTINES,
+        risk=Risk.ORDER,
+        path=("anti_chase", "vwap"),
+        choices=("on", "off"),
+    ),
+    Tunable(
+        key="anti_chase.max_vwap_stretch_atr",
+        group=Group.ROUTINES,
+        type=_F,
+        description="E16.3: VWAP stretch in ATR14 at or above which a bullish idea is "
+        "stretched (bears mirror); used only with anti_chase.vwap on.",
+        target=Target.ROUTINES,
+        risk=Risk.UP,
+        path=("anti_chase", "max_vwap_stretch_atr"),
+        unit="ATR",
+        min=0.25,
+        max=3.0,
+        hard_ceiling=3.0,
     ),
 )
 
@@ -2438,6 +2614,7 @@ REGISTRY: dict[str, Tunable] = {
         *_FUNNEL_TUNABLES,
         *_OPTIONS_SLOW_TUNABLES,
         *_IV_BACKFILL_TUNABLES,
+        *_ANTI_CHASE_TUNABLES,
         *_OPTIONS_FAST_TUNABLES,
         *_CARRYOVER_TUNABLES,
         *_EXPERIMENT_TUNABLES,
@@ -2836,6 +3013,7 @@ _PLAIN_ROUTINE_SECTIONS = (
     ("options_slow",),  # E13.5
     ("universe",),  # D64 (E14.7): universe.carryover.*
     ("iv_backfill",),  # E16.1 (D76)
+    ("anti_chase",),  # E16.3 (D76/D78)
 )
 # Scalar switches that sit next to the jobs under `personas:` (E4.8a), as `on | off`.
 _PERSONA_SWITCHES = frozenset(
@@ -2845,6 +3023,7 @@ _PERSONA_SWITCHES = frozenset(
         ("personas", "scalp_movers_context"),  # E14.3
         ("personas", "retail_sentiment_context"),  # E14.6
         ("personas", "research_technicals"),  # E16.2
+        ("personas", "anti_chase"),  # E16.3
     }
 )
 # Scalar choice switches under `personas:` (E12.5) -> the control value when absent.
@@ -2927,6 +3106,9 @@ def read_raw(t: Tunable, raw: dict[str, Any]) -> Any:
     if t.path == ("positions", "remaining_ev_floor_eod_only"):
         v = _get(raw, t.path)
         return "eod" if (True if v is None else bool(v)) else "intraday"
+    if t.path == ("positions", "fill_day_guard"):  # E18.2: YAML bool shown as on | off
+        v = _get(raw, t.path)
+        return "on" if (True if v is None else bool(v)) else "off"
     if t.target is Target.EXITS and t.path[:1] == ("kinds",):
         kind_data = _get(raw, t.path[:2])
         rel = t.path[2:]
@@ -2982,6 +3164,8 @@ def write_raw(t: Tunable, value: Any, raw: dict[str, Any]) -> list[tuple[tuple[s
         return [((*base, "schedule"), times), ((*base, "every"), None), ((*base, "window"), None)]
     if t.path == ("positions", "remaining_ev_floor_eod_only"):
         return [(t.path, value == "eod")]
+    if t.path == ("positions", "fill_day_guard"):
+        return [(t.path, value == "on")]
     if t.target is Target.EXITS and t.path[:1] == ("kinds",):
         rel = t.path[2:]
         kind_path = t.path[:2]

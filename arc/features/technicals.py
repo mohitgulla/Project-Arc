@@ -20,23 +20,31 @@ from __future__ import annotations
 
 import datetime as dt  # noqa: TC003 - used at runtime in the pydantic model
 import math
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, Protocol
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
 
 from arc.features._series import truncate_frame
+from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     import pandas as pd
 
 __all__ = [
     "ATR_PERIOD",
     "MIN_TECH_BARS",
     "RSI_PERIOD",
+    "AntiChaseRule",
+    "StretchVerdict",
     "TechnicalFeatures",
     "compute_technicals",
+    "is_stretched",
+    "session_vwap",
     "squeeze_series",
+    "vwap_stretch_atr",
     "wilder_atr",
     "wilder_rsi",
 ]
@@ -54,6 +62,21 @@ RS_WINDOWS = (20, 60)
 IMPLIED_MOVE_SESSIONS = 20
 
 RangePosition = Literal["above", "inside", "below"]
+
+
+class IntradayBar(Protocol):
+    """An OHLCV bar (e.g. ``arc.data.base.HistoryBar``) for the session VWAP."""
+
+    @property
+    def timestamp(self) -> dt.datetime: ...
+    @property
+    def high(self) -> float: ...
+    @property
+    def low(self) -> float: ...
+    @property
+    def close(self) -> float: ...
+    @property
+    def volume(self) -> float: ...
 
 
 class TechnicalFeatures(BaseModel):
@@ -329,3 +352,194 @@ def compute_technicals(
         close_vs_prev_range=position,
         missing=missing,
     )
+
+
+# ---------------------------------------------------------------------------
+# E16.3 (D76/D78): anti-chase entry filter (pure; no clock, network or LLM)
+# ---------------------------------------------------------------------------
+
+Direction = Literal["bullish", "bearish"]
+StretchStatus = Literal["stretched", "ok", "missing", "not_directional"]
+
+
+class AntiChaseRule(BaseModel):
+    """Thresholds of the anti-chase rule (D78 defaults; ``config/routines.yaml anti_chase:``).
+
+    ``combine: all`` (D78): a bullish idea is stretched when ``stretch_atr >=
+    max_stretch_atr`` **and** ``rsi14 >= rsi_overbought``. ``combine: any`` (the D76
+    card rule, kept for XP-13 variants and the backtest grid): stretched when
+    ``stretch_atr >= max_stretch_atr`` **or** (``rsi14 >= rsi_overbought`` and
+    ``dist_high20_atr <= max_dist_high20_atr``). Bearish ideas mirror both
+    (``-stretch``, ``rsi_oversold``, ``dist_low20_atr``).
+
+    The optional VWAP part (``vwap``) adds one more trigger, OR-ed with the daily
+    rule: ``(spot - session VWAP) / ATR14 >= max_vwap_stretch_atr`` (mirrored).
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    combine: Literal["all", "any"] = "all"
+    max_stretch_atr: float = Field(2.5, gt=0.0, le=10.0)
+    rsi_overbought: float = Field(75.0, gt=50.0, le=100.0)
+    rsi_oversold: float = Field(25.0, ge=0.0, lt=50.0)
+    max_dist_high20_atr: float = Field(0.25, ge=0.0, le=5.0)
+    vwap: bool = False
+    max_vwap_stretch_atr: float = Field(0.75, gt=0.0, le=10.0)
+
+
+class StretchVerdict(BaseModel):
+    """The rule's outcome for one idea, with the numbers it read (journal payload)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    status: StretchStatus
+    direction: Direction | None = None
+    triggers: list[str] = Field(default_factory=list, description="Conditions that tripped")
+    missing: list[str] = Field(default_factory=list, description="Inputs the rule lacked")
+    stretch_atr: float | None = None
+    rsi14: float | None = None
+    dist_extreme20_atr: float | None = Field(
+        None, description="dist_high20_atr (bullish) / dist_low20_atr (bearish)"
+    )
+    vwap_stretch_atr: float | None = None
+    rule: AntiChaseRule
+
+    @property
+    def stretched(self) -> bool:
+        return self.status == "stretched"
+
+    def text(self) -> str:
+        """One plain line for the journal / card, e.g. ``+2.8 ATR over SMA20, RSI 79``."""
+        if self.status == "not_directional":
+            return "not a directional idea"
+        if self.status == "missing":
+            return "technicals missing: " + ", ".join(self.missing)
+        return "; ".join(self.triggers) or "not stretched"
+
+
+def _ge(v: float | None, x: float) -> bool | None:
+    return None if v is None else v >= x
+
+
+def _le(v: float | None, x: float) -> bool | None:
+    return None if v is None else v <= x
+
+
+def _and(*xs: bool | None) -> bool | None:
+    """Three-valued AND: False wins, then unknown."""
+    if any(x is False for x in xs):
+        return False
+    return None if any(x is None for x in xs) else True
+
+
+def _or(*xs: bool | None) -> bool | None:
+    """Three-valued OR: True wins, then unknown."""
+    if any(x is True for x in xs):
+        return True
+    return None if any(x is None for x in xs) else False
+
+
+def is_stretched(
+    tech: TechnicalFeatures | None,
+    stance: str,
+    cfg: AntiChaseRule,
+    *,
+    vwap_stretch: float | None = None,
+) -> StretchVerdict:
+    """Is a directional long-premium idea chasing a move that is already stretched?
+
+    *stance* ``bullish`` / ``bearish`` (anything else: ``not_directional``). The caller
+    decides that the idea is long premium (the account profile maps the stance to
+    debit structures only). *vwap_stretch* is ``(spot - vwap) / atr14`` when the VWAP
+    part is on and the intraday fetch worked (``None``: skipped, reported missing).
+
+    Missing inputs never drop an idea by themselves: a condition that cannot be
+    decided leaves the verdict ``missing`` unless another condition already trips.
+    """
+    s = stance.strip().lower()
+    if s not in ("bullish", "bearish"):
+        return StretchVerdict(status="not_directional", rule=cfg)
+    bull = s == "bullish"
+    missing: list[str] = []
+    if tech is None:
+        stretch = rsi = dist = None
+        missing.append("technicals")
+    else:
+        stretch, rsi = tech.stretch_atr, tech.rsi14
+        dist = tech.dist_high20_atr if bull else tech.dist_low20_atr
+        for name, v in (("stretch_atr", stretch), ("rsi14", rsi)):
+            if v is None:
+                missing.append(name)
+        if cfg.combine == "any" and dist is None:
+            missing.append("dist_high20_atr" if bull else "dist_low20_atr")
+    sign = 1.0 if bull else -1.0
+    stretch_hit = _ge(None if stretch is None else sign * stretch, cfg.max_stretch_atr)
+    rsi_hit = _ge(rsi, cfg.rsi_overbought) if bull else _le(rsi, cfg.rsi_oversold)
+    near_hit = _le(dist, cfg.max_dist_high20_atr)
+    if cfg.combine == "all":
+        daily = _and(stretch_hit, rsi_hit)
+    else:
+        daily = _or(stretch_hit, _and(rsi_hit, near_hit))
+    # The VWAP part (optional): a failed intraday fetch skips it (reported missing);
+    # the daily rule still decides on its own.
+    vwap_hit = False
+    if cfg.vwap:
+        if vwap_stretch is None:
+            missing.append("vwap")
+        else:
+            vwap_hit = sign * vwap_stretch >= cfg.max_vwap_stretch_atr
+    verdict = True if vwap_hit else daily
+
+    triggers: list[str] = []
+    side = "over" if bull else "under"
+    if stretch_hit and stretch is not None:
+        triggers.append(f"{stretch:+.1f} ATR {side} SMA20 (limit {cfg.max_stretch_atr:g})")
+    if rsi_hit and rsi is not None:
+        lim = cfg.rsi_overbought if bull else cfg.rsi_oversold
+        triggers.append(f"RSI {rsi:.0f} (limit {lim:g})")
+    if cfg.combine == "any" and near_hit and rsi_hit and dist is not None:
+        triggers.append(f"{dist:.2f} ATR from the 20-day {'high' if bull else 'low'}")
+    if vwap_hit and vwap_stretch is not None:
+        triggers.append(f"{vwap_stretch:+.2f} ATR vs VWAP (limit {cfg.max_vwap_stretch_atr:g})")
+    status: StretchStatus = (
+        "stretched" if verdict is True else "ok" if verdict is False else "missing"
+    )
+    if status != "stretched":
+        triggers = []
+    return StretchVerdict(
+        status=status,
+        direction="bullish" if bull else "bearish",
+        triggers=triggers,
+        missing=missing,
+        stretch_atr=stretch,
+        rsi14=rsi,
+        dist_extreme20_atr=dist,
+        vwap_stretch_atr=vwap_stretch,
+        rule=cfg,
+    )
+
+
+def session_vwap(bars: Iterable[IntradayBar], *, start: dt.time, end: dt.datetime) -> float | None:
+    """Volume-weighted typical price of the bars that open in [*start*, *end*).
+
+    *bars* are intraday bars (timestamps tz-aware, any zone; ET is the session clock).
+    Typical price = (high + low + close) / 3. ``None`` with no volume in the window.
+    """
+    pv = vol = 0.0
+    for b in bars:
+        ts = b.timestamp.astimezone(ET)
+        if ts.date() != end.astimezone(ET).date() or ts.time() < start or ts >= end:
+            continue
+        v = float(b.volume or 0.0)
+        if v <= 0:
+            continue
+        pv += v * (float(b.high) + float(b.low) + float(b.close)) / 3.0
+        vol += v
+    return pv / vol if vol > 0 else None
+
+
+def vwap_stretch_atr(spot: float | None, vwap: float | None, atr14: float | None) -> float | None:
+    """``(spot - vwap) / atr14``; ``None`` when any input is missing or ATR is 0."""
+    if spot is None or vwap is None or atr14 is None or atr14 <= 0:
+        return None
+    return (spot - vwap) / atr14

@@ -42,6 +42,7 @@ __all__ = [
     "calibration",
     "expiry_value",
     "max_adverse_excursion",
+    "max_favourable_excursion",
     "realised_pnl",
     "slippage",
 ]
@@ -79,6 +80,16 @@ def max_adverse_excursion(*, entry: Decimal, marks: Iterable[Decimal], contracts
     for m in marks:
         worst = min(worst, realised_pnl(entry=entry, exit_=m, contracts=contracts))
     return worst
+
+
+def max_favourable_excursion(
+    *, entry: Decimal, marks: Iterable[Decimal], contracts: int
+) -> Decimal:
+    """Best open P&L over *marks* (≥ 0; 0 when the position never showed a gain). E18.3."""
+    best = Decimal(0)
+    for m in marks:
+        best = max(best, realised_pnl(entry=entry, exit_=m, contracts=contracts))
+    return best
 
 
 def expiry_value(legs: Sequence[Leg], settlement: Decimal) -> Decimal:
@@ -165,11 +176,9 @@ def attribute(
     if exit_fill is None and expired and shadow_value is not None:
         exit_fill = shadow_value
         exit_reason = exit_reason or "expiry"
-    mae = max_adverse_excursion(
-        entry=entry_fill,
-        marks=[*marks, *([exit_fill] if exit_fill is not None else [])],
-        contracts=n,
-    )
+    path = [*marks, *([exit_fill] if exit_fill is not None else [])]
+    mae = max_adverse_excursion(entry=entry_fill, marks=path, contracts=n)
+    mfe = max_favourable_excursion(entry=entry_fill, marks=path, contracts=n)
     days = (closed_at - opened_at).days if opened_at and closed_at else None
     common = {
         **base,
@@ -177,6 +186,7 @@ def attribute(
         "slippage_usd": slip_usd,
         "slippage_bps": slip_bps,
         "max_adverse_excursion": mae,
+        "max_favourable_excursion": mfe,
         "hold_to_expiry_shadow_pnl": shadow,
     }
     if exit_fill is None:

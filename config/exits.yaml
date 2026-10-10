@@ -44,6 +44,19 @@ model:
 
 pipeline:
   rank_menu_by: scanner   # scanner (credit_width) | managed_net_ev | rorc_day | vrp; owner decision pending
+  # E7.5b (D79), flag off: one measure for credit AND debit kinds, scored on up to
+  # menu_pool_max scanner candidates BEFORE the cut to pipeline_scan_top.
+  #   control              the scanner's menu (rank_menu_by still reorders it)
+  #   managed_net_ev_full  E2.4 managed Net EV after all costs ($ per unit)
+  #   rorc_day_full        managed Net EV / (max loss x expected days held)
+  #   rorc_day_tilted      rorc_day from the managed model run under a stance-signed
+  #                        drift r + sign x direction_tilt x sigma / sqrt(T_hold)
+  #                        (verticals / long options only; condor + neutral at r)
+  # The tilted number is a ranking key only: the card, the D41 Net EV floor and the
+  # gate keep the untilted managed numbers. Flip only with an XP verdict (D44).
+  menu_measure: control
+  direction_tilt: 0.0     # fraction of a 1-sigma move over the expected hold; 0.0 = off
+  menu_pool_max: 20       # candidates MC-scored per ticker before the cut
 
 # E6.4 position manager (D19): the intraday positions.evaluate step reviews every
 # open position against the per-kind rules below plus this remaining-EV floor.
@@ -61,9 +74,21 @@ pipeline:
 # Remaining EV is on the entry model's basis (E6.4a parity): at unchanged marks it
 # equals the proposal's managed Net EV + entry costs + the cost of closing now.
 # Stated default, owner's call (ask in the E6.4 PR).
+#   fill_day_guard             E18.2 (D78, owner 2026-10-10; D44 waived, ships on): a
+#                              position opened today is not closed for a discretionary
+#                              reason (Research review with the thesis intact/weakened,
+#                              the close leg of a swap, the remaining-EV floor) unless
+#                              Research marks the thesis broken. Stop, profit lock, DTE,
+#                              expiry and take profit are never held. Journaled as
+#                              exit:fill_day_hold; no risk.exit call. off = rollback
+#                              (behaviour as before E18.2). Slack: positions.fill_day_guard.
+#   fill_day_guard_sessions    sessions the guard covers, counting the fill day (1 = the
+#                              fill day only; 0 = off).
 positions:
   remaining_ev_floor_per_bp: -0.01
   remaining_ev_floor_eod_only: true
+  fill_day_guard: on
+  fill_day_guard_sessions: 1
   kinds: {}
   # E11.4 (D73): never reach expiry by accident. Inside the closing window
   # (DTE <= flat_by_dte + 1) exits.mandatory may propose a close up to

@@ -128,6 +128,20 @@ def add_journal_parser(sub: argparse._SubParsersAction) -> None:  # type: ignore
     b.add_argument("--json", action="store_true", help="Print the per-structure results as JSON")
     b.add_argument("--db", default=None, help="SQLite path (default: data/arc.db)")
 
+    xs = jsub.add_parser(
+        "backfill-exit-stats",
+        help="Fill the hold-to-expiry shadow + max favourable excursion of closed outcomes "
+        "(idempotent, E18.3)",
+    )
+    xs.add_argument("--dry-run", action="store_true", help="Build the records, write nothing")
+    xs.add_argument(
+        "--no-settle",
+        action="store_true",
+        help="Do not fetch settlement closes (Alpaca daily bars): MFE only",
+    )
+    xs.add_argument("--json", action="store_true", help="Print the per-structure results as JSON")
+    xs.add_argument("--db", default=None, help="SQLite path (default: data/arc.db)")
+
     fs = jsub.add_parser(
         "repair-fill-signs",
         help="Restate fills stored with the wrong sign vs their band (idempotent, E6.2g)",
@@ -346,6 +360,37 @@ def _backfill(conn: sqlite3.Connection, *, dry_run: bool, as_json: bool) -> int:
     return 0
 
 
+def _backfill_exit_stats(conn: sqlite3.Connection, args: argparse.Namespace) -> int:
+    """``arc journal backfill-exit-stats``: D19 shadow + MFE on closed outcomes (E18.3)."""
+    from collections import Counter
+    from dataclasses import asdict
+
+    from arc.journal.outcomes import backfill_exit_stats
+    from arc.utils.calendar import now_et
+
+    settle = None
+    if not args.no_settle:  # pragma: no cover - network
+        from arc.broker.reconcile_job import settle_from_market
+        from arc.data.alpaca import AlpacaMarketData
+
+        settle = settle_from_market(AlpacaMarketData())
+    results = backfill_exit_stats(
+        conn, today=now_et().date(), settle_price=settle, dry_run=args.dry_run
+    )
+    if args.json:
+        sys.stdout.write(json.dumps([asdict(r) for r in results], indent=2) + "\n")
+        return 0
+    lines = [
+        f"{r.action:<14} {r.ticker:<6} {r.structure_id} {r.proposal_hash[:12]}"
+        f" shadow {r.shadow} mfe {r.mfe}" + (f" ({r.detail})" if r.detail else "")
+        for r in results
+    ]
+    counts = Counter(r.action for r in results)
+    summary = ", ".join(f"{k}={v}" for k, v in counts.items()) or "no closed structures"
+    _out([*lines, f"{'dry run: ' if args.dry_run else ''}{summary}"])
+    return 0
+
+
 def _repair_fill_signs(conn: sqlite3.Connection, *, dry_run: bool) -> int:
     """``arc journal repair-fill-signs``: restate sign-mismatched fills (E6.2g)."""
     from decimal import Decimal
@@ -430,6 +475,8 @@ def run_journal(args: argparse.Namespace) -> int:
             return _scorecard(conn, args, settings)
         if cmd == "backfill-outcomes":
             return _backfill(conn, dry_run=args.dry_run, as_json=args.json)
+        if cmd == "backfill-exit-stats":
+            return _backfill_exit_stats(conn, args)
         if cmd == "repair-fill-signs":
             return _repair_fill_signs(conn, dry_run=args.dry_run)
     except (LookupError, ReviewCitationError, ValueError) as exc:

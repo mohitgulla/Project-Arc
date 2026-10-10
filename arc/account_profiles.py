@@ -96,6 +96,7 @@ class ShortLegPolicy(StrEnum):
     ANY = "any"
 
 
+# FINRA retired the PDT rule on 2026-06-04 and Alpaca dropped the fields; no profile sets it (D80).
 class DayTradeRule(StrEnum):
     """E10.2 (D44): which day-trade limit the account faces.
 

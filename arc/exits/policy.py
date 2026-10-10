@@ -85,6 +85,7 @@ if TYPE_CHECKING:
     from arc.models import Structure
 
 __all__ = [
+    "MenuMeasure",
     "MenuRank",
     "CREDIT_KINDS",
     "DEBIT_KINDS",
@@ -299,6 +300,10 @@ class ExitModelConfig(BaseModel):
 
 
 MenuRank = Literal["scanner", "managed_net_ev", "rorc_day", "vrp"]
+# E7.5b (D79): one measure for every structure kind, scored on the scanner's pool
+# BEFORE the cut to pipeline_scan_top. "control" = the scanner menu (rank_menu_by
+# still applies); the others replace rank_menu_by.
+MenuMeasure = Literal["control", "managed_net_ev_full", "rorc_day_full", "rorc_day_tilted"]
 
 
 class PipelineExitConfig(BaseModel):
@@ -310,6 +315,28 @@ class PipelineExitConfig(BaseModel):
         "scanner",
         description="Quant menu order: 'scanner' keeps the scanner's rank_by (credit_width); "
         "or managed_net_ev / rorc_day / vrp, highest first (owner decision pending)",
+    )
+    menu_measure: MenuMeasure = Field(
+        "control",
+        description="E7.5b (D79): control = the scanner cuts the menu to pipeline_scan_top "
+        "(then rank_menu_by reorders it). managed_net_ev_full / rorc_day_full / "
+        "rorc_day_tilted score up to menu_pool_max scanner candidates with the managed "
+        "model, rank credit and debit kinds on that one key, then cut",
+    )
+    direction_tilt: float = Field(
+        0.0,
+        ge=0.0,
+        le=0.5,
+        description="E7.5b: rorc_day_tilted only. Drift = r + sign(stance) x tilt x "
+        "sigma / sqrt(T_hold), i.e. a tilt-fraction of a 1-sigma hold move in the "
+        "stance's direction; 0.0 = off. A ranking key only (never the card, floor, gate)",
+    )
+    menu_pool_max: int = Field(
+        20,
+        ge=5,
+        le=40,
+        description="E7.5b: scanner candidates per ticker scored by the managed model "
+        "before the cut, under a *_full / *_tilted measure (bounds the MC cost)",
     )
 
 
@@ -333,10 +360,28 @@ class PositionsConfig(BaseModel):
         True, description="Evaluate the remaining-EV floor on end-of-day marks only"
     )
     kinds: dict[StructureKind, float | None] = Field(default_factory=dict)
+    fill_day_guard: bool = Field(
+        True,
+        description="E18.2 (D78): no discretionary close (Research review with the thesis "
+        "intact/weakened, swap close, remaining-EV floor) in the guard's sessions after the "
+        "fill unless Research marks the thesis broken; off = rollback",
+    )
+    fill_day_guard_sessions: int = Field(
+        1,
+        ge=0,
+        le=3,
+        description="E18.2: trading sessions the fill-day guard covers, counting the fill "
+        "day (1 = the fill day only; 0 = off)",
+    )
     expiry_guard: ExpiryGuard = Field(
         default_factory=ExpiryGuard,
         description="E11.4 (D73): flat by DTE, closing-window retries, expiry-day cutoff, DNE",
     )
+
+    @property
+    def fill_day_sessions(self) -> int:
+        """Sessions the E18.2 fill-day guard covers (0 = off)."""
+        return self.fill_day_guard_sessions if self.fill_day_guard else 0
 
     def floor_for(self, kind: StructureKind | None) -> float | None:
         if kind is not None and kind in self.kinds:

@@ -167,8 +167,21 @@ def test_every_committed_v1_spec_loads_as_t1_with_its_hash_unchanged(name: str) 
     assert '"treatment":' in canonical_json(sp) and '"treatments"' not in canonical_json(sp)
 
 
+# Specs committed as v2 (D69 multi-arm); never loaded as v1.
+V2_SPECS = {
+    "xp13_technicals.yaml",  # E16.3: draft, unregistered
+    "xp14_menu_measure.yaml",  # E7.5b: draft, unregistered
+}
+
+
 def test_committed_specs_are_all_covered() -> None:
-    assert {p.name for p in LIVE.glob("*.yaml")} == set(V1_HASHES)
+    assert {p.name for p in LIVE.glob("*.yaml")} == set(V1_HASHES) | V2_SPECS
+
+
+@pytest.mark.parametrize("name", sorted(V2_SPECS))
+def test_committed_v2_specs_load_with_their_arms(name: str) -> None:
+    sp = ExperimentSpec.model_validate(yaml.safe_load((LIVE / name).read_text()))
+    assert sp.spec_version == 2 and len(sp.arms.names) >= 2
 
 
 def test_a_v1_spec_round_trips_through_its_stored_json() -> None:

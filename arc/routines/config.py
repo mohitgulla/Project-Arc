@@ -630,6 +630,7 @@ PERSONA_FLAGS: tuple[str, ...] = (
     "scalp_movers_context",
     "retail_sentiment_context",  # E14.6
     "research_technicals",  # E16.2 (D76/D78)
+    "anti_chase",  # E16.3 (D76/D78)
 )
 #: E13.15 (D56 cutover): switches removed with their off paths. Each is always on
 #: now (quant_risk_loop on, scalp_options_tape on, scout_feed on, research_idea_pool
@@ -834,6 +835,60 @@ class ResearchTechnicalsSettings(BaseModel):
     enabled: bool = False
 
 
+class AntiChaseSettings(BaseModel):
+    """E16.3 (D76/D78): the deterministic anti-chase entry filter.
+
+    ``enabled`` comes from ``personas.anti_chase: off | on`` (D78 ships it **on**;
+    ``off`` is the rollback: the pipeline is byte-identical to before E16.3). On:
+    after Research ranks and before Quant prices, a bullish / bearish idea whose
+    account profile maps it to long premium only (``cash_debit`` / ``cash_long_only``
+    debit structures) is dropped when its move is already stretched, journaled
+    ``stretched_entry`` with the numbers that tripped it. Neutral ideas and any idea
+    the profile could structure as a credit spread are never filtered. Missing
+    technicals keep the idea (journaled ``technicals_missing``): an optional filter,
+    not a safety rule. Exits are untouched. The rule itself is
+    :func:`arc.features.technicals.is_stretched`.
+
+    ``combine: all`` (D78): stretch >= ``max_stretch_atr`` **and** RSI14 >=
+    ``rsi_overbought`` (bears: <= -stretch and RSI <= ``rsi_oversold``). ``any`` is the
+    D76 card rule (stretch, **or** RSI near the 20-day extreme), kept for XP-13.
+    ``vwap: on`` (default off) adds the intraday VWAP stretch input (one 5-min bars
+    request per surviving directional idea, on the shared ``alpaca_data:calls``
+    budget; a failed fetch skips that part, journaled ``vwap_missing``).
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    enabled: bool = False
+    combine: Literal["all", "any"] = "all"
+    max_stretch_atr: Annotated[float, Field(gt=0.0, le=10.0)] = 2.5
+    rsi_overbought: Annotated[float, Field(gt=50.0, le=100.0)] = 75.0
+    rsi_oversold: Annotated[float, Field(ge=0.0, lt=50.0)] = 25.0
+    max_dist_high20_atr: Annotated[float, Field(ge=0.0, le=5.0)] = 0.25
+    vwap: bool = False
+    max_vwap_stretch_atr: Annotated[float, Field(gt=0.0, le=10.0)] = 0.75
+    vwap_bar_minutes: Literal[5] = 5
+
+    @field_validator("vwap", mode="before")
+    @classmethod
+    def _vwap(cls, v: Any) -> bool:
+        return parse_on_off(v, where="anti_chase.vwap")
+
+    def rule(self) -> Any:
+        """The pure rule's thresholds (:class:`arc.features.technicals.AntiChaseRule`)."""
+        from arc.features.technicals import AntiChaseRule
+
+        return AntiChaseRule(
+            combine=self.combine,
+            max_stretch_atr=self.max_stretch_atr,
+            rsi_overbought=self.rsi_overbought,
+            rsi_oversold=self.rsi_oversold,
+            max_dist_high20_atr=self.max_dist_high20_atr,
+            vwap=self.vwap,
+            max_vwap_stretch_atr=self.max_vwap_stretch_atr,
+        )
+
+
 class TechnicalsSettings(BaseModel):
     """E16.2 (D76): ``technicals:`` inputs for the sector relative-strength field.
 
@@ -1010,6 +1065,8 @@ class RoutinesConfig(BaseModel):
         default_factory=ResearchTechnicalsSettings
     )
     technicals: TechnicalsSettings = Field(default_factory=TechnicalsSettings)  # E16.2
+    # E16.3 (D76/D78): knobs + the ``personas.anti_chase`` flag (as ``enabled``).
+    anti_chase: AntiChaseSettings = Field(default_factory=AntiChaseSettings)
     # E12.5: knobs + the ``personas.director_diversification`` switch (as ``mode``).
     director_diversification: ResearchDiversificationSettings = Field(
         default_factory=ResearchDiversificationSettings

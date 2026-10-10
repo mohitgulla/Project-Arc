@@ -1341,11 +1341,13 @@ dropped rather than wrapped. It is rebuilt from the chain's journal with the roo
 so a later fill or approval updates it. `HOLD (skip)` slots (inputs unchanged,
 D31) get a fixed one-liner.
 
-After the 16:30 `broker.reconcile`, a `:rolled_up_newspaper: Thu Oct 8 • Day Recap` reply
+After the 16:30 `broker.reconcile`, a `:rolled_up_newspaper: Thu Oct 8 · Day Recap` reply
 posts in the day's Session Notes thread with "Also send to #arc-investor" ticked
-(`reply_broadcast`), e.g.:
+(`reply_broadcast`): the bold title, a blank line, then the headline, e.g.:
 
 ```
+:rolled_up_newspaper: *Thu Oct 8 · Day Recap*
+
 _*Red day: -$1,946 (-2.0%) on 2 opens and 5 closes; biggest hit META -$8,765.*_
 ```
 
@@ -2336,3 +2338,65 @@ switch only and serialises byte-identically to the pre-v2 entries.
 Rollback: `arc config set regime.model v1 --actor <owner> --source cli` (then confirm).
 Regime is context and a Research/backtest input only; it is never a gate input
 (`lint-imports`).
+
+### 5.37 Anti-chase entry filter (E16.3, D76; on per D78)
+
+A deterministic drop between Research and Quant (`arc/pipeline/steps.py`
+`_anti_chase_filter`; the rule is `arc.features.technicals.is_stretched`, pure). After
+Research ranks and after the E5.9 portfolio drops, a **bullish/bearish idea that the
+account profile can only structure as long premium** (long call/put, debit vertical:
+`cash_debit`, `cash_long_only`) is dropped when its move is already stretched:
+
+- D78 rule (`anti_chase.combine: all`): `stretch_atr` = (close − SMA20) / ATR14 ≥ 2.5
+  **and** RSI14 ≥ 75. Bears mirror it (≤ −2.5 and RSI ≤ 25). The inputs are the
+  `technicals` on the ticker's `regime` entry (E16.2, daily bars ≤ the last close).
+- `combine: any` is the D76 card rule (stretch ≥ the limit **or** RSI at the limit within
+  `max_dist_high20_atr` of the 20-day high/low), kept for XP-13 variants.
+- Optional VWAP part (`anti_chase.vwap: on`, default off): one 5-min bars request per
+  checked idea (shared `alpaca_data:calls` budget); dropped also when
+  (last 5-min close − session VWAP) / ATR14 ≥ `max_vwap_stretch_atr` (0.75; mirrored).
+
+Never filtered: neutral ideas, any stance the profile maps to a credit spread
+(`margin`), exits. Missing technicals keep the idea (an optional filter, not a safety
+rule). Journal codes on the `shortlist` stage: `stretched_entry` (rejected; payload
+`anti_chase` holds the numbers and the rule), `technicals_missing` and `vwap_missing`
+(noted). The research outcome's metrics count `stretched_entry`; the loop headline
+says "move already stretched".
+
+Knobs (runtime registry, `!arc config` / `arc config set`): `personas.anti_chase`
+(on | off; **off is the rollback**: the pipeline is exactly the pre-E16.3 one),
+`anti_chase.combine`, `.max_stretch_atr`, `.rsi_overbought`, `.rsi_oversold`,
+`.max_dist_high20_atr`, `.vwap`, `.max_vwap_stretch_atr`. Variants go through the
+draft multi-arm `config/experiments/live/xp13_technicals.yaml` (D78: after E15.x).
+
+Backtest: `arc backtest rank ... --entry-filter anti_chase|anti_chase_vwap`
+(`backtest.entry_filter` in `config/ranking.yaml`, default `none`). It needs
+split-adjusted daily OHLC, cached in `<data-dir>/underlying_ohlc/` (fetched from Alpaca
+unless `--offline`). The VWAP arm reads the daily bar's VWAP at the decision close.
+Verdict and caveats: `docs/RESEARCH/anti-chase-backtest.md`.
+
+### 5.38 Exit stats: hold-to-expiry shadow + max favourable excursion (E18.3, D78/D19)
+
+Every closed position's latest `outcomes` row carries, next to MAE, the
+**max favourable excursion** (`max_favourable_excursion`, $ ≥ 0, migration 036): the
+best open P&L over the stored 30-min `position_review` marks and the exit fill. MAE now
+runs over the same marks (before: the exit fill only).
+
+`hold_to_expiry_shadow_pnl` (D19) was NULL on every early close: the ladder writes the
+outcome when the close fills, before expiry, without a settlement price. The nightly
+`broker.reconcile` now restates it after expiry: for each closed structure whose
+expiration has passed and whose latest outcome lacks the shadow (or MFE), it appends a
+superseding outcome priced with the underlying's settlement close (the same
+`settle_from_market` the expiry settlement uses). Idempotent; a failure is logged
+(`reconcile.exit_stats_failed`) and never fails the reconcile.
+
+Manual / backfill (idempotent, one transaction):
+
+    arc journal backfill-exit-stats [--dry-run] [--no-settle] [--json] [--db <path>]
+
+Actions per structure: `written`, `would_write`, `complete`, `pending_expiry` (shadow
+waits for the expiration), `no_settle` (expired but no settlement close), `skipped`.
+`--no-settle` fills MFE only, without the Alpaca daily-bars call.
+
+Exit policy v1 vs v2 report (report only): `scripts/exit_policy_report.py`, output and
+keep/rollback verdict in `docs/RESEARCH/exit-policy-v2.md`.

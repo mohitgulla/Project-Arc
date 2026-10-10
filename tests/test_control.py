@@ -850,3 +850,55 @@ def test_orphaned_share_delta_cap_override_is_ignored_and_logged(
     orphaned = [e["key"] for e in logs if e["event"] == "config.override_orphaned"]
     assert set(orphaned) == {"portfolio_delta_cap"}
     assert not [e for e in logs if e["event"] == "control.override_unknown_key"]
+
+
+# -- D82: parsed-YAML cache on the read path ---------------------------------------------
+
+
+def test_yaml_parse_is_cached_per_file_version(
+    conn: sqlite3.Connection, clock: Clock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One `show` parses each YAML once; an edit (new mtime) is seen on the next read."""
+    import os
+
+    import arc.control.service as service_mod
+    from arc.account_profiles import DEFAULT_PROFILES_PATH
+
+    prof = tmp_path / "account_profiles.yaml"
+    prof.write_text(DEFAULT_PROFILES_PATH.read_text())
+    svc = ControlService(
+        conn, base=base(account_profiles_file=prof), now=clock,
+        optionable=lambda s: True, is_halted=lambda: False,
+    )  # fmt: skip
+    parses: list[str] = []
+    real = service_mod.raw_yaml
+
+    def counting(target: object, path: object = None) -> dict[str, object]:
+        parses.append(str(path))
+        return real(target, path)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(service_mod, "raw_yaml", counting)
+    views = svc.show()
+    assert len(views) > 100
+    assert len(parses) == len(set(parses))  # one parse per file, not one per key
+    assert len(parses) <= 10  # a handful of config files, not ~560 key reads
+    lo = svc.view("profiles.cash_debit.dte_min").value
+    assert len(parses) == len(set(parses))  # still cached
+    # an edit to the file is picked up (mtime changes the cache key)
+    text = prof.read_text()
+    assert f"dte_min: {lo}" in text
+    prof.write_text(text.replace(f"dte_min: {lo}", f"dte_min: {lo + 3}", 1))
+    st = prof.stat()
+    os.utime(prof, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000))
+    assert svc.view("profiles.cash_debit.dte_min").value == lo + 3
+
+
+def test_cached_yaml_is_never_mutated_by_callers(svc: ControlService) -> None:
+    """Views hand out copies: mutating a returned list value can't leak into the cache."""
+    keys = [k for k in svc.keys() if isinstance(svc.view(k).value, list)]  # noqa: SIM118 - a method
+    assert keys, "expected at least one list-valued key"
+    k = keys[0]
+    first = svc.view(k).value
+    first.append("__mutated__")
+    assert "__mutated__" not in svc.view(k).value
+    assert "__mutated__" not in (svc.view(k).default or [])

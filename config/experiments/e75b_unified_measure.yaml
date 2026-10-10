@@ -1,0 +1,31 @@
+experiment: >
+  E7.5b (D79) unified menu measure on live-shaped menus. Every expiration in the
+  profile's DTE window (the live scanner's shape, expiry_mode: all) at the scanner's
+  delta bands, so managed_net_ev / rorc_day pick among the full set of credit and
+  debit structures on one key. direction_tilt 0.25 (the verdict value, fixed before
+  the run) feeds the *_tilted rankers only: a stance-signed drift worth 0.25 of a
+  1-sigma move over the expected hold, stance = the 20-session trend proxy.
+  The E7.5 menus (one expiry nearest the window middle) stay the default in
+  config/ranking.yaml, so the E7.5 numbers reproduce without this overlay.
+ranking:
+  rankers: [credit_width, debit_width, managed_net_ev, rorc_day, managed_net_ev_tilted, rorc_day_tilted]
+backtest:
+  direction_tilt: 0.25
+  menus:
+    margin:
+      - kinds: [bull_put, bear_call, iron_condor]   # scanner short band 16-30 delta
+        deltas: [0.16, 0.20, 0.25, 0.30]
+        width_pct: 0.02
+        expiry_mode: all
+    cash_debit:
+      - kinds: [bull_call, bear_put]        # scanner debit_short band 20-35 delta
+        deltas: [0.20, 0.25, 0.30, 0.35]
+        width_pct: 0.02
+        expiry_mode: all
+      - kinds: [long_call, long_put]        # scanner long band 40-70 delta
+        deltas: [0.40, 0.55, 0.70]
+        expiry_mode: all
+    cash_long_only:
+      - kinds: [long_call, long_put]
+        deltas: [0.40, 0.55, 0.70]
+        expiry_mode: all

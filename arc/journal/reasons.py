@@ -161,6 +161,10 @@ class ReasonCode(StrEnum):
     # E5.9 (D33): portfolio-aware Research, idea dedupe, explicit no-trade
     DROP_CONCENTRATION = "drop_concentration"  # adds_concentration over a flagged threshold
     DROP_AT_CAP = "drop_at_cap"  # underlying already at the per-underlying max-loss cap
+    # E16.3 (D76/D78): the deterministic anti-chase entry filter (personas.anti_chase)
+    STRETCHED_ENTRY = "stretched_entry"  # directional long premium on a stretched move
+    TECHNICALS_MISSING = "technicals_missing"  # filter on, no technicals: idea kept (noted)
+    VWAP_MISSING = "vwap_missing"  # anti_chase.vwap on, intraday fetch failed: daily rule only
     DEDUPE_EXECUTED = "dedupe_executed"  # same idea is open / closed within the cooldown
     DEDUPE_PROPOSED = "dedupe_proposed"  # same idea proposed within the cooldown
     DEDUPE_REJECTED = "dedupe_rejected"  # same idea rejected by the owner within the cooldown
@@ -254,6 +258,7 @@ class ReasonCode(StrEnum):
     EXIT_WATCH_MISSING = "exit:watch_missing"  # no watch item for an open position: hold
     EXIT_CASE_BUILT = "exit:case_built"  # Quant judged an exit case (hold | close)
     EXIT_CASE_SKIPPED = "exit:case_skipped"  # mandatory_pending | exit_pending | no_trigger
+    EXIT_FILL_DAY_HOLD = "exit:fill_day_hold"  # E18.2 (D78): opened today, thesis not broken
     # E13.18 (D56): Risk exit review + the close path (personas.exit_path research)
     EXIT_RESEARCH_REVIEW = "exit:research_review"  # close on a Research review (Risk close)
     EXIT_HOLD_REVIEWED = "exit:hold_reviewed"  # Risk said hold: journaled no-action
@@ -402,6 +407,9 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.ORDER_BUDGET_EXHAUSTED: "Daily order budget used up",
     ReasonCode.DROP_CONCENTRATION: "Dropped: adds concentration",
     ReasonCode.DROP_AT_CAP: "Dropped: underlying already at its max-loss cap",
+    ReasonCode.STRETCHED_ENTRY: "Skipped: move already stretched",
+    ReasonCode.TECHNICALS_MISSING: "Anti-chase check skipped: no technicals",
+    ReasonCode.VWAP_MISSING: "VWAP check skipped: no intraday bars",
     ReasonCode.DEDUPE_EXECUTED: "Same idea already traded recently",
     ReasonCode.DEDUPE_PROPOSED: "Same idea already proposed recently",
     ReasonCode.DEDUPE_REJECTED: "Same idea rejected by the owner recently",
@@ -487,6 +495,7 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.EXIT_WATCH_MISSING: "Exit watch: no Research item (hold)",
     ReasonCode.EXIT_CASE_BUILT: "Exit case judged by Quant",
     ReasonCode.EXIT_CASE_SKIPPED: "Exit case skipped",
+    ReasonCode.EXIT_FILL_DAY_HOLD: "Held: opened today, thesis not broken",
     ReasonCode.EXIT_RESEARCH_REVIEW: "Exit: Research review (Risk close)",
     ReasonCode.EXIT_HOLD_REVIEWED: "Exit: Risk holds (reviewed)",
     ReasonCode.EXIT_HOLD_LIMIT: "Exit: hold limit reached (close)",

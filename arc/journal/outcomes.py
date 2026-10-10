@@ -49,15 +49,20 @@ from arc.journal.attribution import attribute
 from arc.journal.models import OutcomeRecord, OutcomeStatus
 from arc.journal.store import JournalStore
 from arc.models import Proposal, QuantMetrics, Sizing, Structure
+from arc.structures import parse_occ
 from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
     import sqlite3
+    from collections.abc import Callable
 
 __all__ = [
     "BackfillResult",
+    "ExitStatsResult",
+    "backfill_exit_stats",
     "backfill_outcomes",
     "build_close_outcome",
+    "expiration_of",
     "load_proposal",
     "record_close_outcome",
 ]
@@ -151,6 +156,31 @@ def _tranches(
     return [*out, (int(row["contracts"]), Decimal(row["close_net"]))], final_hash is None
 
 
+def _stored_marks(conn: sqlite3.Connection, row: dict[str, Any]) -> list[Decimal]:
+    """Per-share position values of the stored 30-min marks while *row* was open (E18.3).
+
+    ``positions.evaluate``'s ``position_review`` entries (see
+    :mod:`arc.positions.marks`), from the open fill up to the close, as
+    ``entry_net + per-share P&L`` in the entry sign convention. Feeds MAE / MFE.
+    """
+    from arc.positions.marks import stored_mark_pnls
+
+    closed = from_db(row["closed_at"]) if row.get("closed_at") else None
+    entry = Decimal(row["entry_net"])
+    return [
+        entry + Decimal(str(p))
+        for _, p in stored_mark_pnls(
+            conn, str(row["id"]), opened_at=row.get("opened_at"), before=closed
+        )
+    ]
+
+
+def expiration_of(structure_json: str) -> _dt.date:
+    """Last leg expiration of a stored structure."""
+    st = Structure.model_validate_json(structure_json)
+    return max(parse_occ(leg.occ_symbol).expiration for leg in st.legs)
+
+
 def build_close_outcome(
     conn: sqlite3.Connection,
     structure_id: str,
@@ -162,7 +192,9 @@ def build_close_outcome(
     """The outcome for a fully closed ``open_structures`` row (no write).
 
     ``expired=None`` infers it: the final tranche is a remainder that no filled
-    close execution accounts for (see :func:`_tranches`).
+    close execution accounts for (see :func:`_tranches`). *settlement* (the
+    underlying's close on expiration day) also prices the D19 hold-to-expiry
+    shadow of an early close. MAE / MFE run over the stored marks plus the exit.
     Raises ``LookupError`` for an unknown structure or proposal and ``ValueError``
     when the structure is not closed.
     """
@@ -191,6 +223,7 @@ def build_close_outcome(
         traded=True,
         entry_fill=Decimal(row["entry_net"]),
         exit_fill=exit_value,
+        marks=_stored_marks(conn, row),
         opened_at=opened.astimezone(ET).date(),
         closed_at=closed.astimezone(ET).date(),
         exit_reason="expiry" if expired else row["exit_reason"],
@@ -301,3 +334,114 @@ def backfill_outcomes(conn: sqlite3.Connection, *, dry_run: bool = False) -> lis
                 )
             )
     return out
+
+
+@dataclass(frozen=True)
+class ExitStatsResult:
+    structure_id: str
+    proposal_hash: str
+    ticker: str
+    action: str  # written | would_write | complete | pending_expiry | no_settle | skipped
+    shadow: str | None = None
+    mfe: str | None = None
+    detail: str = ""
+
+
+def _needs(latest: OutcomeRecord | None, *, expired_by: bool) -> tuple[bool, bool]:
+    """``(mfe missing, shadow missing and now derivable)`` for the latest outcome."""
+    if latest is None:
+        return True, expired_by
+    return latest.max_favourable_excursion is None, (
+        latest.hold_to_expiry_shadow_pnl is None and expired_by
+    )
+
+
+def backfill_exit_stats(
+    conn: sqlite3.Connection,
+    *,
+    today: _dt.date,
+    settle_price: Callable[[str, _dt.date], Decimal | None] | None = None,
+    dry_run: bool = False,
+) -> list[ExitStatsResult]:
+    """Fill the D19 hold-to-expiry shadow and the E18.3 MFE of closed outcomes (idempotent).
+
+    Why the shadow was NULL on every row: the ladder writes a close outcome the
+    moment the close fills (``arc.execution.fills``), before the legs expire, so it
+    has no settlement price; only the reconcile expiry settlement passes one, and
+    it never fires for a structure closed early. Nothing came back after expiry.
+    This pass does: for every closed structure whose latest outcome lacks MFE, or
+    lacks the shadow once the expiration is before *today* and
+    ``settle_price(root, expiration)`` knows the close, it appends a restated
+    outcome superseding the latest (``outcomes`` is append-only). A complete row
+    is left alone, so re-running writes nothing. One transaction; ``dry_run``
+    writes nothing.
+    """
+    store = JournalStore(conn)
+    rows = conn.execute(
+        """SELECT id, ticker, open_proposal_hash, structure_json FROM open_structures
+           WHERE status = 'closed' ORDER BY closed_at, id"""
+    ).fetchall()
+    out: list[ExitStatsResult] = []
+    with conn:
+        for r in rows:
+            sid, ticker, phash = str(r[0]), str(r[1]), str(r[2])
+            try:
+                exp = expiration_of(str(r[3]))
+            except ValueError as exc:
+                out.append(ExitStatsResult(sid, phash, ticker, "skipped", detail=str(exc)))
+                continue
+            latest = store.outcome(phash)
+            mfe_missing, shadow_due = _needs(latest, expired_by=exp < today)
+            settle: Decimal | None = None
+            if shadow_due:
+                settle = settle_price(ticker, exp) if settle_price is not None else None
+            if not mfe_missing and settle is None:
+                if shadow_due:
+                    action = "no_settle"
+                elif latest is not None and latest.hold_to_expiry_shadow_pnl is None:
+                    action = "pending_expiry"
+                else:
+                    action = "complete"
+                out.append(
+                    ExitStatsResult(
+                        sid,
+                        phash,
+                        ticker,
+                        action,
+                        _s(latest.hold_to_expiry_shadow_pnl) if latest else None,
+                        _s(latest.max_favourable_excursion) if latest else None,
+                        detail=f"expires {exp.isoformat()}" if action == "pending_expiry" else "",
+                    )
+                )
+                continue
+            head = store.latest_outcome_row(phash)
+            try:
+                rec = build_close_outcome(
+                    conn, sid, settlement=settle, supersedes_id=head[0] if head else None
+                )
+            except (LookupError, ValueError) as exc:
+                out.append(ExitStatsResult(sid, phash, ticker, "skipped", detail=str(exc)))
+                continue
+            if rec.hold_to_expiry_shadow_pnl is None and latest is not None:
+                # keep a shadow an earlier row already carries (e.g. reconcile's expiry)
+                rec = rec.model_copy(
+                    update={"hold_to_expiry_shadow_pnl": latest.hold_to_expiry_shadow_pnl}
+                )
+            if not dry_run:
+                store.record_outcome(rec)
+            out.append(
+                ExitStatsResult(
+                    sid,
+                    phash,
+                    ticker,
+                    "would_write" if dry_run else "written",
+                    _s(rec.hold_to_expiry_shadow_pnl),
+                    _s(rec.max_favourable_excursion),
+                    detail="" if settle is None else f"settle {exp.isoformat()} {settle}",
+                )
+            )
+    return out
+
+
+def _s(v: Decimal | None) -> str | None:
+    return None if v is None else str(v)

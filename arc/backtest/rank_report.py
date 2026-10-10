@@ -25,6 +25,7 @@ import pandas as pd
 import structlog
 
 from arc.backtest.engine import prepare_chains
+from arc.backtest.entry_filter import apply_entry_filter, stretched_days
 from arc.backtest.ranking import (
     Candidate,
     Outcome,
@@ -42,9 +43,11 @@ from arc.backtest.ranking import (
     rankers_for,
     remark_chains,
     run_portfolio,
+    stance_hit_rate,
     stance_kinds,
     subperiod_stats,
     summarize,
+    trend_stances,
 )
 from arc.backtest.report import format_table
 from arc.exits.policy import load_exit_config
@@ -65,6 +68,9 @@ log = structlog.get_logger()
 __all__ = ["TickerResult", "root_cause", "run_rank_report", "ticker_job"]
 
 _Key = tuple[str, float]  # (profile, slippage)
+# E7.5b: forward window for the trend proxy's hit rate, in sessions (~ the mean
+# expected hold of the E7.5 picks, 20-22 calendar days)
+HIT_RATE_SESSIONS = 15
 
 
 class TickerResult:
@@ -77,12 +83,15 @@ class TickerResult:
         outcomes: dict[_Key, dict[tuple[str, dt.date, str], Outcome | None]],
         trend: pd.Series,
         vol: pd.Series,
+        filtered: dict[_Key, int] | None = None,
     ) -> None:
         self.ticker = ticker
         self.menus = menus
         self.outcomes = outcomes
         self.trend = trend
         self.vol = vol
+        # E16.3: (profile, slippage) -> decision days the entry filter emptied of long premium
+        self.filtered = filtered or {}
 
 
 def ticker_job(
@@ -99,8 +108,13 @@ def ticker_job(
     rankers: Mapping[str, Sequence[Ranker]],
     slippages: Sequence[float],
     stances: Mapping[str, Mapping[str, frozenset[str]]] | None = None,
+    ohlc: pd.DataFrame | None = None,
 ) -> TickerResult:
-    """Everything that depends on one ticker only (safe to run in a worker process)."""
+    """Everything that depends on one ticker only (safe to run in a worker process).
+
+    *ohlc* (split-adjusted daily bars) feeds the E16.3 entry filter; required when
+    ``backtest.entry_filter`` is not ``none`` (an empty frame filters nothing).
+    """
     closes = closes.sort_index()
     bt = cfg.backtest
     mc = exits.model.model_copy(update={"n_paths": bt.n_paths})
@@ -111,6 +125,17 @@ def ticker_job(
         chains = clean_chains(chains, max_dev=bt.max_leg_iv_dev, window=bt.smile_window)
     days = [d for d in sorted(chains) if start <= d <= end and d in closes.index]
     trend, vol = labels_for(closes)
+    stretched: dict[dt.date, frozenset[str]] | None = None
+    if bt.entry_filter != "none":
+        stretched = stretched_days(
+            ohlc if ohlc is not None else pd.DataFrame(),
+            days,
+            bt.anti_chase,
+            vwap=bt.entry_filter == "anti_chase_vwap",
+        )
+    filtered: dict[_Key, int] = {}
+    # E7.5b: the tilted rankers' stance per session (the same trend proxy as the menu)
+    day_stance = trend_stances(trend) if bt.direction_tilt > 0 else None
     menus: dict[_Key, dict[dt.date, list[Candidate]]] = {}
     outcomes: dict[_Key, dict[tuple[str, dt.date, str], Outcome | None]] = {}
     for profile, (lo, hi) in sorted(windows.items()):
@@ -135,6 +160,8 @@ def ticker_job(
                     exits=exits,
                     mc=mc,
                     r=bt.risk_free_rate,
+                    stances=day_stance,
+                    tilt=bt.direction_tilt,
                 )
             else:
                 m = build_menus(
@@ -147,9 +174,13 @@ def ticker_job(
                     exits=exits,
                     mc=mc,
                     r=bt.risk_free_rate,
+                    stances=day_stance,
+                    tilt=bt.direction_tilt,
                 )
             if stances is not None:
                 m = apply_stance(m, trend, stances[profile])
+            if stretched is not None:  # E16.3: after the stance, before any ranker picks
+                m, filtered[(profile, x)] = apply_entry_filter(m, trend, stretched)
             menus[(profile, x)] = m
             outcomes[(profile, x)] = picked_outcomes(
                 m,
@@ -163,7 +194,7 @@ def ticker_job(
                 cost_by_kind=ck,
             )
     log.info("backtest.rank_ticker", ticker=ticker, sessions=len(days))
-    return TickerResult(ticker, menus, outcomes, trend, vol)
+    return TickerResult(ticker, menus, outcomes, trend, vol, filtered)
 
 
 # ---------------------------------------------------------------------------
@@ -234,8 +265,13 @@ def run_rank_report(
     exits: ExitConfig | None = None,
     workers: int = 1,
     charts: bool = True,
+    ohlc_by_ticker: Mapping[str, pd.DataFrame] | None = None,
 ) -> dict[str, pd.DataFrame]:
-    """Run the ranking backtest and write ``report.md`` + CSVs (+ PNG charts) to *out_dir*."""
+    """Run the ranking backtest and write ``report.md`` + CSVs (+ PNG charts) to *out_dir*.
+
+    *ohlc_by_ticker*: split-adjusted daily bars for the E16.3 entry filter
+    (``backtest.entry_filter`` not ``none``); a missing ticker filters nothing.
+    """
     exits = exits or load_exit_config()
     out_dir.mkdir(parents=True, exist_ok=True)
     bt = cfg.backtest
@@ -248,6 +284,11 @@ def run_rank_report(
     def job_args(t: str) -> tuple[object, ...]:
         raw = store.read(provider, t, start, end)
         return (t, raw, closes_by_ticker[t])
+
+    def job_kw(t: str) -> dict[str, object]:
+        if bt.entry_filter == "none":
+            return kw
+        return {**kw, "ohlc": (ohlc_by_ticker or {}).get(t)}
 
     kw = {
         "start": start,
@@ -265,10 +306,10 @@ def run_rank_report(
     results: dict[str, TickerResult] = {}
     if workers > 1:
         with ProcessPoolExecutor(max_workers=workers) as ex:
-            futs = {t: ex.submit(ticker_job, *job_args(t), **kw) for t in tickers}  # type: ignore[arg-type]
+            futs = {t: ex.submit(ticker_job, *job_args(t), **job_kw(t)) for t in tickers}  # type: ignore[arg-type]
             results = {t: f.result() for t, f in futs.items()}
     else:
-        results = {t: ticker_job(*job_args(t), **kw) for t in tickers}  # type: ignore[arg-type]
+        results = {t: ticker_job(*job_args(t), **job_kw(t)) for t in tickers}  # type: ignore[arg-type]
 
     sessions = _sessions(closes_by_ticker, start)
     trend = {t: r.trend for t, r in results.items()}
@@ -313,12 +354,34 @@ def run_rank_report(
         for p in profiles
     }
     frames["equity"] = _equity_frame(runs, profiles=profiles, rk=rk, x=cost.slippage_frac)
+    if bt.entry_filter != "none":  # E16.3: decision days the filter emptied of long premium
+        frames["entry_filter_days"] = pd.DataFrame(
+            [
+                {
+                    "ticker": t,
+                    "profile": p,
+                    "days_filtered": r.filtered.get((p, cost.slippage_frac), 0),
+                }
+                for t, r in sorted(results.items())
+                for p in profiles
+            ]
+        )
     for name, df in frames.items():
         if isinstance(df, pd.DataFrame):
             df.to_csv(out_dir / f"{name}.csv", index=False)
     pngs: list[str] = []
     if charts:
         pngs = _charts(runs, profiles=profiles, rk=rk, x=cost.slippage_frac, out_dir=out_dir)
+    hits = {
+        t: stance_hit_rate(
+            closes_by_ticker[t],
+            r.trend,
+            horizon=HIT_RATE_SESSIONS,
+            start=start,
+            end=end,
+        )
+        for t, r in results.items()
+    }
     (out_dir / "report.md").write_text(
         _render(
             frames,
@@ -334,6 +397,7 @@ def run_rank_report(
             coverage={
                 t: len(r.menus[(profiles[0], cost.slippage_frac)]) for t, r in results.items()
             },
+            hits=hits,
         )
     )
     return frames
@@ -515,6 +579,23 @@ def _knobs(cfg: RankingFile) -> list[str]:
         )
     if f.min_net_ev_to_cost is not None:
         out.append(f"Net EV ÷ est. cost filter: ≥ {f.min_net_ev_to_cost:g}\n")
+    if bt.entry_filter != "none":
+        a = bt.anti_chase
+        out.append(
+            f"Entry filter (E16.3): {bt.entry_filter}, combine {a.combine}, stretch ≥ "
+            f"{a.max_stretch_atr:g} ATR, RSI ≥ {a.rsi_overbought:g} / ≤ {a.rsi_oversold:g}"
+            + (
+                f", VWAP stretch ≥ {a.max_vwap_stretch_atr:g} ATR"
+                if bt.entry_filter == "anti_chase_vwap"
+                else ""
+            )
+            + "\n"
+        )
+    if bt.direction_tilt > 0:
+        out.append(
+            f"Direction tilt (E7.5b, D79): {bt.direction_tilt:g} of a 1σ hold move, trend "
+            "stance, read only by the `*_tilted` rankers\n"
+        )
     if bt.slippage_by_kind:
         out.append(
             "Measured slippage x by structure (base run): "
@@ -537,9 +618,30 @@ def _render(
     menu_sizes: Mapping[str, float],
     pngs: Sequence[str],
     coverage: Mapping[str, int],
+    hits: Mapping[str, tuple[float | None, int]] | None = None,
 ) -> str:
     bt = cfg.backtest
     rule = bt.decision.text(bt.bootstrap.ci)
+    all_exp = any(m.expiry_mode == "all" for specs in bt.menus.values() for m in specs)
+    hit_lines: list[str] = []
+    if hits:
+        n_all = sum(n for _, n in hits.values())
+        h_all = sum((h or 0.0) * n for h, n in hits.values())
+        overall = f"{h_all / n_all:.1%}" if n_all else "n/a"
+        per = ", ".join(
+            f"{t} {'n/a' if h is None else f'{h:.0%}'} (n={n})" for t, (h, n) in hits.items()
+        )
+        hit_lines = [
+            f"- **Trend-proxy hit rate** (a bull/bear label followed by a close "
+            f"{HIT_RATE_SESSIONS} sessions later in the labelled direction; diagnostic, "
+            f"reads the future): {overall} overall · {per}. "
+            + (
+                f"The `*_tilted` rankers (tilt {bt.direction_tilt:g} of a 1σ hold move) "
+                "can only help when this is above 50%.\n"
+                if bt.direction_tilt > 0
+                else "\n"
+            )
+        ]
     parts = [
         "# Ranking backtest run (E7.5)\n",
         f"Tickers: {', '.join(tickers)} · entries {start} → {end} · profiles: "
@@ -589,10 +691,18 @@ def _render(
         "- Daily EOD decisions and marks only: stops and take-profits are checked on closes, "
         "so intraday paths are not seen (matches the owner's relaxed, end-of-day stop "
         "preference).\n"
-        "- Menus hold one expiration (nearest the middle of the profile's DTE window) and "
-        "a fixed delta grid, not the full live scanner menu; contracts with no trade that "
-        "session are missing. ThetaData EOD was not used (no coverage in this store).\n"
-        "- At most one new position per ticker per session (open positions stack up to the "
+        + (
+            "- **Live-shaped menus** (E7.5b): every expiration in the profile's DTE window "
+            "and the scanner's delta bands; contracts with no trade that session are "
+            "missing. ThetaData EOD was not used (no coverage in this store).\n"
+            if all_exp
+            else "- Menus hold one expiration (nearest the middle of the profile's DTE "
+            "window) and a fixed delta grid, not the full live scanner menu; contracts with "
+            "no trade that session are missing. ThetaData EOD was not used (no coverage in "
+            "this store).\n"
+        )
+        + "".join(hit_lines)
+        + "- At most one new position per ticker per session (open positions stack up to the "
         "gate's per-underlying and max-open caps), sized by D18 with no Risk persona "
         "(the equity cap binds).\n",
         "## Verdict\n",

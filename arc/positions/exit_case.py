@@ -15,18 +15,21 @@ contributes the hold / close judgement only.
 
 from __future__ import annotations
 
+import datetime as _dt
 from typing import TYPE_CHECKING, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from arc.positions.evaluate import PositionReview, SignalKind
 from arc.positions.portfolio import PositionFacts  # noqa: TC001 - pydantic field
+from arc.utils.calendar import ET, add_sessions
 
 if TYPE_CHECKING:
     from arc.exits.policy import ExitPolicy
 
 __all__ = [
     "DISCRETIONARY_KINDS",
+    "FILL_DAY_BLOCKED_TRIGGERS",
     "MANDATORY_KINDS",
     "ExitCase",
     "ExitCaseFacts",
@@ -37,6 +40,9 @@ __all__ = [
     "TriggerKind",
     "WatchItemLike",
     "case_skip_reason",
+    "fill_day_filter",
+    "fill_day_guarded",
+    "opened_session",
     "stop_state",
     "triggers_for",
 ]
@@ -222,6 +228,58 @@ def case_skip_reason(review: PositionReview, *, today_exit: bool = False) -> Ski
     if review.exit_pending or today_exit:
         return "exit_pending"
     return None
+
+
+#: E18.2 (D78): exit-case triggers the fill-day guard holds (a Research review counts
+#: only when its thesis is not ``broken``; see :func:`fill_day_filter`).
+FILL_DAY_BLOCKED_TRIGGERS: frozenset[str] = frozenset({"remaining_ev_floor", "reallocate"})
+
+
+def opened_session(opened_at: str | None) -> _dt.date | None:
+    """The ET date of the open fill (``open_structures.opened_at``; naive = UTC)."""
+    if not opened_at:
+        return None
+    try:
+        ts = _dt.datetime.fromisoformat(str(opened_at))
+    except ValueError:
+        return None
+    ts = ts.replace(tzinfo=_dt.UTC) if ts.tzinfo is None else ts
+    return ts.astimezone(ET).date()
+
+
+def fill_day_guarded(opened_at: str | None, today: _dt.date, sessions: int) -> bool:
+    """E18.2 (D78): is a structure opened at *opened_at* inside the fill-day guard *today*?
+
+    The guard covers *sessions* trading sessions counting the fill day (1 = the fill
+    day only; 0 = off). Unknown ``opened_at`` is never guarded (fail open to today's
+    behaviour: the guard only ever removes discretionary closes).
+    """
+    opened = opened_session(opened_at)
+    if sessions <= 0 or opened is None or today < opened:
+        return False
+    return today <= add_sessions(opened, sessions - 1)
+
+
+def fill_day_filter(
+    triggers: list[ExitTrigger], thesis_status: str | None
+) -> tuple[list[ExitTrigger], list[ExitTrigger]]:
+    """Split a guarded position's triggers into ``(kept, held)`` (pure, E18.2 / D78).
+
+    Held: a Research ``review`` whose thesis is not ``broken``, the close leg of a
+    swap (``reallocate``) and the remaining-EV floor. Kept: a ``broken`` thesis and
+    the take-profit signals (profit target, time-adjusted target). Mandatory signals
+    never reach here (no exit case; ``exits.mandatory`` closes them).
+    """
+    kept: list[ExitTrigger] = []
+    held: list[ExitTrigger] = []
+    for t in triggers:
+        if t.kind in FILL_DAY_BLOCKED_TRIGGERS or (
+            t.kind == "research_review" and thesis_status != "broken"
+        ):
+            held.append(t)
+        else:
+            kept.append(t)
+    return kept, held
 
 
 def _clip(text: str, n: int = 200) -> str:
