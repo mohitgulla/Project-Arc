@@ -2370,3 +2370,29 @@ Backtest: `arc backtest rank ... --entry-filter anti_chase|anti_chase_vwap`
 split-adjusted daily OHLC, cached in `<data-dir>/underlying_ohlc/` (fetched from Alpaca
 unless `--offline`). The VWAP arm reads the daily bar's VWAP at the decision close.
 Verdict and caveats: `docs/RESEARCH/anti-chase-backtest.md`.
+
+### 5.38 Exit stats: hold-to-expiry shadow + max favourable excursion (E18.3, D78/D19)
+
+Every closed position's latest `outcomes` row carries, next to MAE, the
+**max favourable excursion** (`max_favourable_excursion`, $ ≥ 0, migration 036): the
+best open P&L over the stored 30-min `position_review` marks and the exit fill. MAE now
+runs over the same marks (before: the exit fill only).
+
+`hold_to_expiry_shadow_pnl` (D19) was NULL on every early close: the ladder writes the
+outcome when the close fills, before expiry, without a settlement price. The nightly
+`broker.reconcile` now restates it after expiry: for each closed structure whose
+expiration has passed and whose latest outcome lacks the shadow (or MFE), it appends a
+superseding outcome priced with the underlying's settlement close (the same
+`settle_from_market` the expiry settlement uses). Idempotent; a failure is logged
+(`reconcile.exit_stats_failed`) and never fails the reconcile.
+
+Manual / backfill (idempotent, one transaction):
+
+    arc journal backfill-exit-stats [--dry-run] [--no-settle] [--json] [--db <path>]
+
+Actions per structure: `written`, `would_write`, `complete`, `pending_expiry` (shadow
+waits for the expiration), `no_settle` (expired but no settlement close), `skipped`.
+`--no-settle` fills MFE only, without the Alpaca daily-bars call.
+
+Exit policy v1 vs v2 report (report only): `scripts/exit_policy_report.py`, output and
+keep/rollback verdict in `docs/RESEARCH/exit-policy-v2.md`.

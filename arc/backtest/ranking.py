@@ -715,16 +715,34 @@ def _spot_at_or_before(closes: pd.Series, day: dt.date) -> float | None:
     return None if s.empty else float(s.iloc[-1])
 
 
-def simulate_outcome(
+class PickPath(BaseModel):
+    """One picked candidate's session marks from entry to expiry (E18.3).
+
+    Everything :func:`exit_on_path` needs to play the pick out under any exit
+    policy without re-reading the chains: the open trade, its structure and, per
+    session before expiry, the legs' ``symbol → (mid, spread)`` marks.
+    """
+
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
+
+    open_: Any
+    structure: Any
+    kind: StructureKind
+    sessions: list[tuple[dt.date, dict[str, tuple[float, float]], float]] = Field(
+        default_factory=list, description="(day, leg marks, underlying close), oldest first"
+    )
+    held: Trade
+
+
+def pick_path(
     c: Candidate,
     *,
     chains: Mapping[dt.date, pd.DataFrame],
     days: Sequence[dt.date],
     closes: pd.Series,
     cost: CostModel,
-    exits: ExitConfig,
-) -> Outcome | None:
-    """Play *c* forward under the exit policy; ``None`` if it cannot be filled or settled."""
+) -> PickPath | None:
+    """The marks of *c* from entry to expiry; ``None`` if it cannot be filled or settled."""
     spec_kind = StrategyKind(c.kind)
     o = open_trade(
         c.picks,
@@ -739,13 +757,12 @@ def simulate_outcome(
     last_close = max(closes.index)
     if o.expiration > last_close:
         return None
+    spot_exp = _spot_at_or_before(closes, o.expiration)
+    if spot_exp is None:
+        return None
     structure = analyze(_legs(c.picks, c.underlying), as_of=c.day)
-    rules = resolve_rules(structure, exits.policy_for(STRUCTURE_KIND[spec_kind]))
-    entry_fill = sum(lg.side * lg.fill for lg in o.legs)
     symbols = [lg.symbol for lg in o.legs]
-    marks: dict[dt.date, float] = {}
-    trade: Trade | None = None
-    peak: float | None = None  # E18.1: peak P&L of the earlier session marks
+    sessions: list[tuple[dt.date, dict[str, tuple[float, float]], float]] = []
     for day in days:
         if day <= c.day:
             continue
@@ -758,20 +775,34 @@ def simulate_outcome(
         m = {str(x.symbol): (float(x.mid), float(x.spread)) for x in rows.itertuples()}
         if len(m) != len(set(symbols)):
             continue
+        sessions.append((day, m, float(closes[day])))
+    return PickPath(
+        open_=o,
+        structure=structure,
+        kind=STRUCTURE_KIND[spec_kind],
+        sessions=sessions,
+        held=settle(o, spot_exp, cost),
+    )
+
+
+def exit_on_path(path: PickPath, *, exits: ExitConfig, cost: CostModel) -> Outcome:
+    """Play *path* out under *exits* (stop → profit lock → take profit → DTE on EOD marks)."""
+    o = path.open_
+    rules = resolve_rules(path.structure, exits.policy_for(path.kind))
+    entry_fill = sum(lg.side * lg.fill for lg in o.legs)
+    marks: dict[dt.date, float] = {}
+    trade: Trade | None = None
+    peak: float | None = None  # E18.1: peak P&L of the earlier session marks
+    for day, m, spot in path.sessions:
         value_mid = sum(lg.side * m[lg.symbol][0] for lg in o.legs)
         marks[day] = (value_mid - entry_fill) * MULT - o.open_fees
         pnl = value_mid - rules.entry_net
         reason = check_rules(rules, pnl=pnl, dte=(o.expiration - day).days, peak_pnl=peak)
         peak = pnl if peak is None else max(peak, pnl)
         if reason is not None:
-            trade = close_early(
-                o, day=day, marks=m, spot=float(closes[day]), reason=reason, cost=cost
-            )
+            trade = close_early(o, day=day, marks=m, spot=spot, reason=reason, cost=cost)
             break
-    spot_exp = _spot_at_or_before(closes, o.expiration)
-    if spot_exp is None:
-        return None
-    held = settle(o, spot_exp, cost)
+    held = path.held
     if trade is None:
         trade = held
     exit_day = trade.exit_date or trade.expiration
@@ -784,6 +815,20 @@ def simulate_outcome(
         entry_debit=entry_fill,
         open_fees=o.open_fees,
     )
+
+
+def simulate_outcome(
+    c: Candidate,
+    *,
+    chains: Mapping[dt.date, pd.DataFrame],
+    days: Sequence[dt.date],
+    closes: pd.Series,
+    cost: CostModel,
+    exits: ExitConfig,
+) -> Outcome | None:
+    """Play *c* forward under the exit policy; ``None`` if it cannot be filled or settled."""
+    path = pick_path(c, chains=chains, days=days, closes=closes, cost=cost)
+    return None if path is None else exit_on_path(path, exits=exits, cost=cost)
 
 
 # ---------------------------------------------------------------------------

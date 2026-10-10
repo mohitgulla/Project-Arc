@@ -148,6 +148,9 @@ class OutcomeRecord(BaseModel):
     exit_fill: Decimal | None = None
     realised_pnl: Decimal | None = None
     max_adverse_excursion: Decimal | None = Field(None, le=0)
+    max_favourable_excursion: Decimal | None = Field(
+        None, ge=0, description="E18.3: best open P&L ($) over the stored marks and the exit"
+    )
     days_held: int | None = Field(None, ge=0)
     exit_reason: str | None = None
     ev_total: Decimal | None = None

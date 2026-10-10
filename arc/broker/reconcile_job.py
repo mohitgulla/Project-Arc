@@ -142,6 +142,30 @@ def _notice(report: ReconcileReport) -> str:
     return f"{expiry}\n{text}" if expiry else text
 
 
+def _fill_exit_stats(
+    ctx: JobContext, settle_price: Callable[[str, _dt.date], Decimal | None]
+) -> None:
+    """E18.3: price the D19 hold-to-expiry shadow of early closes once they expire.
+
+    A close outcome is written when the close fills, before expiry, so its shadow
+    is unknown then; the nightly reconcile (which has the settlement prices)
+    restates it afterwards. Idempotent; never fails the reconcile.
+    """
+    from arc.journal.outcomes import backfill_exit_stats
+    from arc.utils.calendar import ET
+
+    try:
+        res = backfill_exit_stats(
+            ctx.conn, today=ctx.now.astimezone(ET).date(), settle_price=settle_price
+        )
+    except Exception as exc:  # noqa: BLE001 - the journal must never fail the reconcile
+        log.warning("reconcile.exit_stats_failed", error=str(exc))
+        return
+    written = [r.structure_id for r in res if r.action == "written"]
+    if written:
+        log.info("reconcile.exit_stats_written", structures=written)
+
+
 def broker_reconcile(
     ctx: JobContext,
     *,
@@ -162,6 +186,8 @@ def broker_reconcile(
         settle_price=settle_price,
     )
     out = reconcile_output(report)
+    if settle_price is not None:
+        _fill_exit_stats(ctx, settle_price)
     ctx.write("journal", report.day.isoformat(), out)
     slots_line = _slots_line(ctx)
     approvals_line = _approvals_line(ctx)
