@@ -51,15 +51,18 @@ __all__ = [
     "Interval",
     "confidence_sequence",
     "corrected_sigma",
+    "holm_adjust",
     "max_drawdown",
     "mde_always_valid",
     "mde_fixed",
     "mixing_tau",
     "msprt_halfwidth",
     "msprt_p_value",
+    "msprt_p_values",
     "non_inferior",
     "sample_sd",
     "seed_for",
+    "sessions_needed",
     "sortino",
     "sortino_diff_ci",
     "sortino_diff_p",
@@ -285,6 +288,73 @@ def sortino_diff_p(
 def non_inferior(ci: Interval | None, margin: float) -> bool:
     """Treatment is non-inferior when the CI's lower bound is above ``-margin``."""
     return ci is not None and ci.lo > -margin
+
+
+# ---------------------------------------------------------------------------
+# D69 (E15.5): multiple treatments
+# ---------------------------------------------------------------------------
+
+
+def holm_adjust(p: ArrayLike) -> NDArray[np.float64]:
+    """Holm step-down adjusted p-values along the last axis (Holm 1979).
+
+    For sorted ``p_(1) <= ... <= p_(m)``: ``adj_(i) = max_{j <= i} min(1, (m - j + 1)
+    p_(j))``, returned in the input order. Rejecting every ``adj < alpha`` controls
+    the familywise error at ``alpha`` under any dependence between the tests (the
+    K Control-vs-Ti pairs share control, so they are positively correlated). With
+    always-valid p-values the bound holds at every daily look: a true null is first
+    rejected only when its p falls below ``alpha / m0`` (``m0`` = true nulls), and
+    each always-valid p does that with probability <= ``alpha / m0`` over the whole
+    run. ``m = 1`` returns *p* unchanged (the one-treatment test).
+    """
+    a = np.asarray(p, dtype=float)
+    if a.shape[-1] == 0:
+        return a.copy()
+    m = a.shape[-1]
+    order = np.argsort(a, axis=-1, kind="stable")
+    ranked = np.take_along_axis(a, order, axis=-1)
+    factors = np.arange(m, 0, -1, dtype=float)
+    stepped = np.maximum.accumulate(np.minimum(1.0, ranked * factors), axis=-1)
+    out = np.empty_like(stepped)
+    np.put_along_axis(out, order, stepped, axis=-1)
+    return out
+
+
+def msprt_p_values(
+    n: ArrayLike, mean: ArrayLike, sigma: ArrayLike, tau: ArrayLike
+) -> NDArray[np.float64]:
+    """Vectorised :func:`msprt_p_value` (``theta0 = 0``); equal to it element-wise."""
+    n_ = np.asarray(n, dtype=float)
+    s2 = np.asarray(sigma, dtype=float) ** 2
+    t2 = np.asarray(tau, dtype=float) ** 2
+    v = s2 + n_ * t2
+    m = np.asarray(mean, dtype=float)
+    log_lam = 0.5 * np.log(s2 / v) + (n_**2 * t2 * m**2) / (2.0 * s2 * v)
+    out: NDArray[np.float64] = np.where(log_lam <= 0.0, 1.0, np.exp(-np.maximum(log_lam, 0.0)))
+    return out
+
+
+def sessions_needed(
+    sigma: float,
+    effect: float,
+    *,
+    tau: float,
+    alpha: float,
+    power: float,
+    k: int = 1,
+    cap: int = 1000,
+) -> int | None:
+    """Smallest session count whose always-valid MDE at level ``alpha / k`` is <= *effect*.
+
+    ``alpha / k`` is Holm's first (strictest) step across *k* treatments, so the count
+    is what one arm needs in the worst case; every extra arm lengthens the run.
+    ``None`` when *cap* sessions are not enough.
+    """
+    level = alpha / k
+    for n in range(1, cap + 1):
+        if mde_always_valid(sigma, n, tau=tau, alpha=level, power=power) <= effect:
+            return n
+    return None
 
 
 def max_drawdown(equity: ArrayLike) -> float:

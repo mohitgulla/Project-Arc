@@ -56,6 +56,7 @@ from __future__ import annotations
 import datetime as _dt
 import hashlib
 import json
+import sqlite3
 from collections import Counter, defaultdict
 from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any, Literal
@@ -88,8 +89,9 @@ from arc.utils.calendar import (
 )
 
 if TYPE_CHECKING:
-    import sqlite3
+    from pathlib import Path
 
+    from arc.experiments.arms import ArmIdentity
     from arc.experiments.config import ExperimentsConfig
     from arc.experiments.store import ExperimentStore
 
@@ -123,6 +125,8 @@ MULTIPLIER = Decimal(100)
 _FORBID = ConfigDict(extra="forbid", frozen=True)
 
 Verdict = Literal["continue", "win", "futility", "invalid"]
+#: D69: one treatment arm's verdict in a multi-arm experiment (each arm stops alone).
+ArmVerdict = Literal["continue", "win", "loss", "futility"]
 _STOP: dict[str, StopReason] = {
     "win": StopReason.WIN,
     "futility": StopReason.FUTILITY,
@@ -185,8 +189,17 @@ class Secondary(BaseModel):
     non_inferior: bool | None = Field(None, description="None for aa (no margin)")
 
 
+def _absent(v: object) -> bool:
+    return v is None
+
+
 class ArmSummary(BaseModel):
-    """Per-arm numbers from t0 (reported for the owner; no verdict reads them)."""
+    """Per-arm numbers from t0 (reported for the owner; no verdict reads them).
+
+    D69 (E15.5): in a multi-arm (``report_version`` 2) report this is the all-arms row
+    (:data:`ArmReport`); the fields below ``mean_slippage_bps`` are filled there and
+    omitted from a one-treatment (v1) report, whose JSON stays byte-identical.
+    """
 
     model_config = _FORBID
 
@@ -200,6 +213,30 @@ class ArmSummary(BaseModel):
     filled_executions: int
     executions: int
     mean_slippage_bps: float | None
+    # -- v2 (all-arms view) only -------------------------------------------------
+    cum_pnl_pct: float | None = Field(
+        None, exclude_if=_absent, description="v2: total P&L / t0 equity (fraction)"
+    )
+    daily_mean: float | None = Field(
+        None, exclude_if=_absent, description="v2: mean daily return (fraction of t0 equity)"
+    )
+    daily_sd: float | None = Field(
+        None, exclude_if=_absent, description="v2: sd of daily returns (fraction)"
+    )
+    sortino: float | None = Field(None, exclude_if=_absent, description="v2: annualised")
+    cross_arm_conflicts: int | None = Field(
+        None, exclude_if=_absent, description="v2: cross_arm_conflict refusals since t0"
+    )
+    rank: int | None = Field(
+        None, exclude_if=_absent, description="v2: 1 = best cumulative net P&L %"
+    )
+    verdict: ArmVerdict | None = Field(
+        None, exclude_if=_absent, description="v2: the arm's Control-vs-arm verdict"
+    )
+
+
+#: D69 (E15.5): the all-arms row of a multi-arm report (same model, v2 fields filled).
+ArmReport = ArmSummary
 
 
 class Calibration(BaseModel):
@@ -233,12 +270,72 @@ class BreakdownRow(BaseModel):
     realised_pnl: float
 
 
-class ExperimentReport(BaseModel):
-    """One evaluation of one experiment (stored append-only in ``experiment_reports``)."""
+class PairReport(BaseModel):
+    """D69 (E15.5): one pairwise comparison of a multi-arm experiment.
+
+    ``control_vs_treatment`` pairs carry the verdict: the primary metric (paired daily
+    net P&L diff of ``b`` minus ``a``, fraction of t0 equity), its always-valid CI with
+    the p next to it, the Holm-adjusted p across the K treatments, and the Sortino
+    non-inferiority. ``treatment_vs_treatment`` pairs (Ti vs Tj) are descriptive only
+    (``descriptive`` true, ``verdict`` None), except in an A/A, where every pair enters
+    the harness check (``holm_p`` is then adjusted over all pairs).
+    """
 
     model_config = _FORBID
 
-    report_version: Literal[1] = REPORT_VERSION
+    kind: Literal["control_vs_treatment", "treatment_vs_treatment"]
+    a: str = Field(..., description="Baseline arm (control, or Ti for Ti vs Tj)")
+    b: str = Field(..., description="Compared arm; the difference is b - a")
+    arm_id: str | None = Field(None, description="b's arm_id")
+    descriptive: bool = Field(..., description="True = no verdict (Ti vs Tj)")
+    n: int
+    mean: float | None
+    ci: stats.Interval | None = Field(None, description="Always-valid (mSPRT) CI, level 1-alpha")
+    sigma: float | None
+    sigma_source: Literal["aa", "running_corrected"] | None
+    tau: float | None
+    p_value: float | None = Field(None, description="Always-valid mSPRT p (dual of ci)")
+    holm_p: float | None = Field(
+        None, description="Holm-adjusted p (control pairs: over the K treatments; A/A: all pairs)"
+    )
+    sample_sd: float | None = Field(None, description="Sample sd of the daily diff (calibration)")
+    secondary: Secondary | None = Field(None, description="Sortino (control pairs only)")
+    verdict: ArmVerdict | None = Field(None, description="None for descriptive pairs")
+    verdict_reason: str | None = None
+    decided_day: _dt.date | None = Field(
+        None, description="Session the arm stopped on (its series ends there)"
+    )
+    missing_sessions: list[_dt.date] = Field(default_factory=list)
+    series: list[SessionRow] = Field(
+        default_factory=list, description="Control pairs: the paired sessions (control = a)"
+    )
+
+
+class Omnibus(BaseModel):
+    """D69: "does any treatment differ from control?" = the Holm-adjusted minimum p."""
+
+    model_config = _FORBID
+
+    k: int = Field(..., description="Treatments tested")
+    p_value: float | None = Field(None, description="min Holm-adjusted p over the K pairs")
+    differs: bool = False
+
+
+class ExperimentReport(BaseModel):
+    """One evaluation of one experiment (stored append-only in ``experiment_reports``).
+
+    ``report_version`` 1: one treatment (D44). ``report_version`` 2 (D69, E15.5): K > 1
+    treatments. A v2 report adds ``pairwise``, ``omnibus`` and ``headline_arm`` (omitted
+    from v1 JSON) and fills the all-arms fields of ``arms`` (Control first, then t1..tK).
+    Its top-level ``primary`` / ``secondary`` / ``series`` are the **headline** pair
+    (Control vs the best-ranked arm, ``headline_arm``) so one-line surfaces keep a
+    single number; verdicts live per arm in ``pairwise``. ``calibration`` is pooled
+    over the Control-vs-Ti pairs.
+    """
+
+    model_config = _FORBID
+
+    report_version: Literal[1, 2] = REPORT_VERSION
     experiment_id: str
     kind: ExperimentKind
     area: str
@@ -269,6 +366,20 @@ class ExperimentReport(BaseModel):
     control_sha: str
     treatment_sha: str | None
     evaluator_sha: str | None
+    # -- v2 (D69 multi-arm) only: omitted from v1 JSON ---------------------------
+    headline_arm: str | None = Field(
+        None, exclude_if=_absent, description="v2: the arm the top-level primary compares"
+    )
+    pairwise: list[PairReport] | None = Field(
+        None,
+        exclude_if=_absent,
+        description="v2: Control vs Ti (verdicts, Holm) then Ti vs Tj (descriptive)",
+    )
+    omnibus: Omnibus | None = Field(None, exclude_if=_absent, description="v2")
+
+    @property
+    def multi_arm(self) -> bool:
+        return self.pairwise is not None
 
     def canonical_json(self) -> str:
         return json.dumps(
@@ -390,11 +501,17 @@ def _first_session(t0: _dt.datetime) -> _dt.date:
 
 
 def _series(
-    conn: sqlite3.Connection, st: ExperimentState, *, now: _dt.datetime
+    conn: sqlite3.Connection,
+    st: ExperimentState,
+    *,
+    now: _dt.datetime,
+    t_arm: str | None = None,
 ) -> tuple[list[SessionRow], list[_dt.date]]:
+    """Control vs one treatment arm (*t_arm*; default the v1 ``XP-<n>:treatment``)."""
     run = st.running
     assert run is not None  # noqa: S101 - caller checks
-    t_arm = arm_id(st.experiment_id, TREATMENT_ARM)
+    if t_arm is None:
+        t_arm = arm_id(st.experiment_id, TREATMENT_ARM)
     ctrl = _eod_equity(conn, None)
     treat = _eod_equity(conn, t_arm, TREATMENT_EQUITY_FIELD)
     legacy = set(run.legacy_book)
@@ -620,41 +737,26 @@ def _breakdowns(arms: dict[str, list[dict[str, Any]]]) -> list[BreakdownRow]:
     return out
 
 
-def build_report(
-    conn: sqlite3.Connection,
-    st: ExperimentState,
-    cfg: ExperimentsConfig,
+def _primary_from(
+    d: list[float],
     *,
-    now: _dt.datetime,
-    aa_sigma: float | None = None,
-) -> ExperimentReport:
-    """Evaluate *st* (running, or stopped with a t0) as of *now*. Read-only."""
-    sp, run = st.spec, st.running
-    if run is None:
-        msg = f"{st.experiment_id} has no t0 (never started): nothing to evaluate"
-        raise ExperimentError(msg)
-    assert sp.alpha is not None and sp.power is not None  # noqa: S101 - registered spec
-    assert sp.min_sessions is not None and sp.max_sessions is not None  # noqa: S101
-    t_arm = arm_id(st.experiment_id, TREATMENT_ARM)
-    assert t_arm is not None  # noqa: S101
-    legacy = set(run.legacy_book)
-    legacy_hashes = _legacy_hashes(conn, legacy)
-    rows, missing = _series(conn, st, now=now)
-    d = [r.d for r in rows]
+    alpha: float,
+    known: float | None,
+    sigma_upper_q: float,
+    mde: float | None,
+    min_sessions: int,
+) -> Primary:
+    """The primary metric of one paired series *d* (shared by v1 and every v2 pair)."""
     n = len(d)
-    is_aa = sp.kind is ExperimentKind.AA
-
-    # -- primary -------------------------------------------------------------
-    known = None if is_aa else aa_sigma
     ci, sigma, tau = stats.confidence_sequence(
         d,
-        alpha=sp.alpha,
+        alpha=alpha,
         sigma=known,
-        sigma_upper_q=cfg.stats.sigma_upper_q,
-        mde=sp.mde,
-        min_sessions=sp.min_sessions,
+        sigma_upper_q=sigma_upper_q,
+        mde=mde,
+        min_sessions=min_sessions,
     )
-    primary = Primary(
+    return Primary(
         n=n,
         mean=float(sum(d) / n) if n else None,
         ci=ci,
@@ -671,31 +773,25 @@ def build_report(
         lower_bound_positive=ci is not None and ci.lo > 0.0,
     )
 
-    # -- arms, secondary -----------------------------------------------------
-    c_pnl = [r.control_pnl for r in rows]
-    t_pnl = [r.treatment_pnl for r in rows]
-    c_out = _closed_outcomes(conn, None, run.t0, legacy_hashes)
-    t_out = _closed_outcomes(conn, t_arm, run.t0, legacy_hashes)
-    ctrl = _arm_summary(
-        CONTROL_ARM, None, c_pnl, run.t0_equity,
-        _orders(conn, None, run.t0, legacy), c_out,
-    )  # fmt: skip
-    treat = _arm_summary(
-        TREATMENT_ARM, t_arm, t_pnl, run.t0_equity,
-        _orders(conn, t_arm, run.t0, set()), t_out,
-    )  # fmt: skip
-    # Sortino on returns vs t0 equity (same denominator as d_t, so the arms compare 1:1)
-    c_r = [p / run.t0_equity for p in c_pnl]
-    t_r = [p / run.t0_equity for p in t_pnl]
+
+def _secondary_from(
+    t_r: list[float],
+    c_r: list[float],
+    *,
+    alpha: float,
+    margin: float | None,
+    resamples: int,
+    seed: int,
+) -> Secondary:
+    """Sortino of both arms and the paired-bootstrap non-inferiority (v1 and v2 pairs)."""
     diff_ci = stats.sortino_diff_ci(
         t_r,
         c_r,
-        level=1.0 - 2.0 * sp.alpha,
-        resamples=cfg.stats.bootstrap_resamples,
-        seed=stats.seed_for(st.experiment_id, n),
+        level=1.0 - 2.0 * alpha,
+        resamples=resamples,
+        seed=seed,
     )
-    margin = sp.non_inferiority_margin
-    secondary = Secondary(
+    return Secondary(
         sortino_control=stats.sortino(c_r),
         sortino_treatment=stats.sortino(t_r),
         diff_ci=diff_ci,
@@ -704,21 +800,80 @@ def build_report(
             t_r,
             c_r,
             margin=margin,
-            resamples=cfg.stats.bootstrap_resamples,
-            seed=stats.seed_for(st.experiment_id, n),
+            resamples=resamples,
+            seed=seed,
         ),
         non_inferior=None if margin is None else stats.non_inferior(diff_ci, margin),
     )
 
-    # -- calibration ---------------------------------------------------------
-    sd = stats.sample_sd(d) if n >= 2 else None
-    # the A/A's MDE table (E10.4): the default window's ends and midpoint (20/40/60)
-    # plus this spec's own window
+
+def _treatment_arm_ids(conn: sqlite3.Connection, st: ExperimentState) -> dict[str, str]:
+    """Spec treatment (t1..tK) -> the ``arm_id`` its runner arm's rows carry (D69).
+
+    From the arm stores recorded at t0 (each store's ``arm_identity.spec_arm``); a
+    treatment with no store falls back to the naming convention: ``XP-<n>:treatment``
+    for a one-treatment spec (the v1 runner arm), ``XP-<n>:<tN>`` otherwise (the
+    ``treatments`` template expands one arm per treatment, named after it).
+    """
+    from arc.experiments.arms import arm_stores
+    from arc.experiments.models import spec_arm_name
+
+    names = st.spec.arms.names
+    out: dict[str, str] = {}
+    try:
+        stores = arm_stores(conn, st.experiment_id)
+    except sqlite3.OperationalError:
+        stores = {}
+    for path in stores.values():
+        ident = _store_identity(path)
+        if ident is None or ident.experiment_id != st.experiment_id:
+            continue
+        spec_arm = spec_arm_name(ident.spec_arm)
+        if spec_arm in names and spec_arm not in out:
+            out[spec_arm] = ident.arm_id
+    for name in names:
+        if name not in out:
+            runner_arm = TREATMENT_ARM if len(names) == 1 else name
+            out[name] = f"{st.experiment_id}:{runner_arm}"
+    return {name: out[name] for name in names}
+
+
+def _store_identity(path: Path) -> ArmIdentity | None:
+    """The arm identity of the store at *path* (read-only), or None."""
+    from arc.experiments.arms import read_identity
+
+    if not path.is_file():
+        return None
+    c = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+    try:
+        return read_identity(c)
+    finally:
+        c.close()
+
+
+def _horizons(cfg: ExperimentsConfig, min_sessions: int, max_sessions: int) -> list[int]:
+    """The MDE table's session counts: the default window's ends and midpoint, plus the spec's."""
     lo_s, hi_s = cfg.defaults.min_sessions, cfg.defaults.max_sessions
-    horizons = sorted({lo_s, (lo_s + hi_s) // 2, hi_s, sp.min_sessions, sp.max_sessions})
-    paired, diverged = _divergence(conn, t_arm, run.t0)
+    return sorted({lo_s, (lo_s + hi_s) // 2, hi_s, min_sessions, max_sessions})
+
+
+def _calibration(
+    sd: float | None,
+    cfg: ExperimentsConfig,
+    st: ExperimentState,
+    ctrl: ArmSummary,
+    treat: ArmSummary,
+    *,
+    paired: int,
+    diverged: int,
+) -> Calibration:
+    """Calibration from the daily-diff sd *sd* and the control / treatment arm rows."""
+    sp = st.spec
+    assert sp.alpha is not None and sp.power is not None  # noqa: S101 - registered spec
+    assert sp.min_sessions is not None and sp.max_sessions is not None  # noqa: S101
+    horizons = _horizons(cfg, sp.min_sessions, sp.max_sessions)
     fill = [(a.filled_executions / a.executions) if a.executions else None for a in (ctrl, treat)]
-    cal = Calibration(
+    return Calibration(
         sigma=sd or None,
         mde_fixed={h: stats.mde_fixed(sd, h) for h in horizons} if sd else {},
         mde_always_valid=(
@@ -745,6 +900,83 @@ def build_report(
         divergent_chains=diverged,
         llm_divergence_rate=diverged / paired if paired else None,
     )
+
+
+def build_report(
+    conn: sqlite3.Connection,
+    st: ExperimentState,
+    cfg: ExperimentsConfig,
+    *,
+    now: _dt.datetime,
+    aa_sigma: float | None = None,
+) -> ExperimentReport:
+    """Evaluate *st* (running, or stopped with a t0) as of *now*. Read-only.
+
+    D69: a spec with K > 1 treatments gets the multi-arm (``report_version`` 2) report
+    (:func:`arc.experiments.multi.build_multi_report`); K = 1 is the v1 report, byte for
+    byte as before E15.5.
+    """
+    sp, run = st.spec, st.running
+    if run is None:
+        msg = f"{st.experiment_id} has no t0 (never started): nothing to evaluate"
+        raise ExperimentError(msg)
+    assert sp.alpha is not None and sp.power is not None  # noqa: S101 - registered spec
+    assert sp.min_sessions is not None and sp.max_sessions is not None  # noqa: S101
+    arm_ids = _treatment_arm_ids(conn, st)
+    if len(arm_ids) > 1:
+        from arc.experiments.multi import build_multi_report
+
+        return build_multi_report(conn, st, cfg, now=now, aa_sigma=aa_sigma, arm_ids=arm_ids)
+    t_arm = next(iter(arm_ids.values()))
+    legacy = set(run.legacy_book)
+    legacy_hashes = _legacy_hashes(conn, legacy)
+    rows, missing = _series(conn, st, now=now, t_arm=t_arm)
+    d = [r.d for r in rows]
+    n = len(d)
+    is_aa = sp.kind is ExperimentKind.AA
+
+    # -- primary -------------------------------------------------------------
+    known = None if is_aa else aa_sigma
+    primary = _primary_from(
+        d,
+        alpha=sp.alpha,
+        known=known,
+        sigma_upper_q=cfg.stats.sigma_upper_q,
+        mde=sp.mde,
+        min_sessions=sp.min_sessions,
+    )
+
+    # -- arms, secondary -----------------------------------------------------
+    c_pnl = [r.control_pnl for r in rows]
+    t_pnl = [r.treatment_pnl for r in rows]
+    c_out = _closed_outcomes(conn, None, run.t0, legacy_hashes)
+    t_out = _closed_outcomes(conn, t_arm, run.t0, legacy_hashes)
+    ctrl = _arm_summary(
+        CONTROL_ARM, None, c_pnl, run.t0_equity,
+        _orders(conn, None, run.t0, legacy), c_out,
+    )  # fmt: skip
+    treat = _arm_summary(
+        TREATMENT_ARM, t_arm, t_pnl, run.t0_equity,
+        _orders(conn, t_arm, run.t0, set()), t_out,
+    )  # fmt: skip
+    # Sortino on returns vs t0 equity (same denominator as d_t, so the arms compare 1:1)
+    c_r = [p / run.t0_equity for p in c_pnl]
+    t_r = [p / run.t0_equity for p in t_pnl]
+    secondary = _secondary_from(
+        t_r,
+        c_r,
+        alpha=sp.alpha,
+        margin=sp.non_inferiority_margin,
+        resamples=cfg.stats.bootstrap_resamples,
+        seed=stats.seed_for(st.experiment_id, n),
+    )
+
+    # -- calibration ---------------------------------------------------------
+    sd = stats.sample_sd(d) if n >= 2 else None
+    # the A/A's MDE table (E10.4): the default window's ends and midpoint (20/40/60)
+    # plus this spec's own window
+    paired, diverged = _divergence(conn, t_arm, run.t0)
+    cal = _calibration(sd, cfg, st, ctrl, treat, paired=paired, diverged=diverged)
 
     # -- verdict -------------------------------------------------------------
     verdict, why = _verdict(

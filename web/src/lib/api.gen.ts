@@ -763,12 +763,36 @@ export interface components {
         /**
          * ArmSummary
          * @description Per-arm numbers from t0 (reported for the owner; no verdict reads them).
+         *
+         *     D69 (E15.5): in a multi-arm (``report_version`` 2) report this is the all-arms row
+         *     (:data:`ArmReport`); the fields below ``mean_slippage_bps`` are filled there and
+         *     omitted from a one-treatment (v1) report, whose JSON stays byte-identical.
          */
         ArmSummary: {
             /** Arm */
             arm: string;
             /** Arm Id */
             arm_id: string | null;
+            /**
+             * Cross Arm Conflicts
+             * @description v2: cross_arm_conflict refusals since t0
+             */
+            cross_arm_conflicts?: number | null;
+            /**
+             * Cum Pnl Pct
+             * @description v2: total P&L / t0 equity (fraction)
+             */
+            cum_pnl_pct?: number | null;
+            /**
+             * Daily Mean
+             * @description v2: mean daily return (fraction of t0 equity)
+             */
+            daily_mean?: number | null;
+            /**
+             * Daily Sd
+             * @description v2: sd of daily returns (fraction)
+             */
+            daily_sd?: number | null;
             /** Executions */
             executions: number;
             /** Filled Executions */
@@ -779,10 +803,25 @@ export interface components {
             mean_slippage_bps: number | null;
             /** Orders */
             orders: number;
+            /**
+             * Rank
+             * @description v2: 1 = best cumulative net P&L %
+             */
+            rank?: number | null;
             /** Sessions */
             sessions: number;
+            /**
+             * Sortino
+             * @description v2: annualised
+             */
+            sortino?: number | null;
             /** Total Pnl */
             total_pnl: number;
+            /**
+             * Verdict
+             * @description v2: the arm's Control-vs-arm verdict
+             */
+            verdict?: ("continue" | "win" | "loss" | "futility") | null;
             /**
              * Worst Day
              * @description Worst daily return (fraction)
@@ -2403,6 +2442,14 @@ export interface components {
         /**
          * ExperimentReport
          * @description One evaluation of one experiment (stored append-only in ``experiment_reports``).
+         *
+         *     ``report_version`` 1: one treatment (D44). ``report_version`` 2 (D69, E15.5): K > 1
+         *     treatments. A v2 report adds ``pairwise``, ``omnibus`` and ``headline_arm`` (omitted
+         *     from v1 JSON) and fills the all-arms fields of ``arms`` (Control first, then t1..tK).
+         *     Its top-level ``primary`` / ``secondary`` / ``series`` are the **headline** pair
+         *     (Control vs the best-ranked arm, ``headline_arm``) so one-line surfaces keep a
+         *     single number; verdicts live per arm in ``pairwise``. ``calibration`` is pooled
+         *     over the Control-vs-Ti pairs.
          */
         ExperimentReport: {
             /** Alpha */
@@ -2436,6 +2483,11 @@ export interface components {
             evaluator_sha: string | null;
             /** Experiment Id */
             experiment_id: string;
+            /**
+             * Headline Arm
+             * @description v2: the arm the top-level primary compares
+             */
+            headline_arm?: string | null;
             kind: components["schemas"]["ExperimentKind"];
             /** Legacy Book */
             legacy_book: string[];
@@ -2445,6 +2497,13 @@ export interface components {
             min_sessions: number;
             /** Missing Sessions */
             missing_sessions: string[];
+            /** @description v2 */
+            omnibus?: components["schemas"]["Omnibus"] | null;
+            /**
+             * Pairwise
+             * @description v2: Control vs Ti (verdicts, Holm) then Ti vs Tj (descriptive)
+             */
+            pairwise?: components["schemas"]["PairReport"][] | null;
             /** Power */
             power: number;
             primary: components["schemas"]["Primary"];
@@ -2453,9 +2512,9 @@ export interface components {
             /**
              * Report Version
              * @default 1
-             * @constant
+             * @enum {integer}
              */
-            report_version: 1;
+            report_version: 1 | 2;
             secondary: components["schemas"]["Secondary"];
             /** Series */
             series: components["schemas"]["SessionRow"][];
@@ -3644,6 +3703,27 @@ export interface components {
             /** Valid From */
             valid_from?: string | null;
         };
+        /**
+         * Omnibus
+         * @description D69: "does any treatment differ from control?" = the Holm-adjusted minimum p.
+         */
+        Omnibus: {
+            /**
+             * Differs
+             * @default false
+             */
+            differs: boolean;
+            /**
+             * K
+             * @description Treatments tested
+             */
+            k: number;
+            /**
+             * P Value
+             * @description min Holm-adjusted p over the K pairs
+             */
+            p_value?: number | null;
+        };
         /** OpsView */
         OpsView: {
             /** Health At */
@@ -3823,6 +3903,92 @@ export interface components {
              */
             stale_after_s: number;
             status: components["schemas"]["StatusSection"];
+        };
+        /**
+         * PairReport
+         * @description D69 (E15.5): one pairwise comparison of a multi-arm experiment.
+         *
+         *     ``control_vs_treatment`` pairs carry the verdict: the primary metric (paired daily
+         *     net P&L diff of ``b`` minus ``a``, fraction of t0 equity), its always-valid CI with
+         *     the p next to it, the Holm-adjusted p across the K treatments, and the Sortino
+         *     non-inferiority. ``treatment_vs_treatment`` pairs (Ti vs Tj) are descriptive only
+         *     (``descriptive`` true, ``verdict`` None), except in an A/A, where every pair enters
+         *     the harness check (``holm_p`` is then adjusted over all pairs).
+         */
+        PairReport: {
+            /**
+             * A
+             * @description Baseline arm (control, or Ti for Ti vs Tj)
+             */
+            a: string;
+            /**
+             * Arm Id
+             * @description b's arm_id
+             */
+            arm_id?: string | null;
+            /**
+             * B
+             * @description Compared arm; the difference is b - a
+             */
+            b: string;
+            /** @description Always-valid (mSPRT) CI, level 1-alpha */
+            ci?: components["schemas"]["Interval"] | null;
+            /**
+             * Decided Day
+             * @description Session the arm stopped on (its series ends there)
+             */
+            decided_day?: string | null;
+            /**
+             * Descriptive
+             * @description True = no verdict (Ti vs Tj)
+             */
+            descriptive: boolean;
+            /**
+             * Holm P
+             * @description Holm-adjusted p (control pairs: over the K treatments; A/A: all pairs)
+             */
+            holm_p?: number | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "control_vs_treatment" | "treatment_vs_treatment";
+            /** Mean */
+            mean: number | null;
+            /** Missing Sessions */
+            missing_sessions?: string[];
+            /** N */
+            n: number;
+            /**
+             * P Value
+             * @description Always-valid mSPRT p (dual of ci)
+             */
+            p_value?: number | null;
+            /**
+             * Sample Sd
+             * @description Sample sd of the daily diff (calibration)
+             */
+            sample_sd?: number | null;
+            /** @description Sortino (control pairs only) */
+            secondary?: components["schemas"]["Secondary"] | null;
+            /**
+             * Series
+             * @description Control pairs: the paired sessions (control = a)
+             */
+            series?: components["schemas"]["SessionRow"][];
+            /** Sigma */
+            sigma: number | null;
+            /** Sigma Source */
+            sigma_source: ("aa" | "running_corrected") | null;
+            /** Tau */
+            tau: number | null;
+            /**
+             * Verdict
+             * @description None for descriptive pairs
+             */
+            verdict?: ("continue" | "win" | "loss" | "futility") | null;
+            /** Verdict Reason */
+            verdict_reason?: string | null;
         };
         /** PayoffPoint */
         PayoffPoint: {
