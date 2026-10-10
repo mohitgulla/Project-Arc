@@ -272,3 +272,13 @@ def test_slack_override_reaches_the_effective_routines(conn: Any) -> None:
     r = svc.set("iv_backfill.max_tickers_per_run", "25", actor="U0OWNER", source="slack")
     assert r.outcome == "applied"  # Risk.NONE: applies at once
     assert effective_routines(conn).iv_backfill.max_tickers_per_run == 25
+
+
+def test_regime_line_prints_iv_rank_as_0_to_100() -> None:
+    """E16.1: iv_rank is 0..1; the Research line shows it 0..100 (was `ivr 0` / `ivr 1`)."""
+    from arc.personas.builders import regime_line
+
+    vol = {"iv": 0.3, "hv20": 0.25, "iv_hv20_ratio": 1.2}
+    assert "ivr 37 " in regime_line("AAPL", {"vol": {**vol, "iv_rank": 0.374}, "last_close": 1})
+    assert "ivr 100" in regime_line("AAPL", {"vol": {**vol, "iv_rank": 1.0}})
+    assert regime_line("AAPL", {"vol": {**vol, "iv_rank": None}}).endswith("ivr n/a")
