@@ -318,6 +318,483 @@
       "title": "RegimeForecast",
       "type": "object"
     },
+    "TechnicalFeatures": {
+      "additionalProperties": false,
+      "description": "Daily technical indicators for one ticker as of one session close.",
+      "properties": {
+        "as_of": {
+          "description": "Session date (ET); bars on or before it only",
+          "format": "date",
+          "title": "As Of",
+          "type": "string"
+        },
+        "atr14": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Wilder ATR(14) of the true range",
+          "title": "Atr14"
+        },
+        "atr14_pct": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "ATR14 / close",
+          "title": "Atr14 Pct"
+        },
+        "bar_date": {
+          "description": "Date of the last bar used (<= as_of)",
+          "format": "date",
+          "title": "Bar Date",
+          "type": "string"
+        },
+        "bb_width20": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Bollinger(20, 2 sd) width / SMA20",
+          "title": "Bb Width20"
+        },
+        "close": {
+          "title": "Close",
+          "type": "number"
+        },
+        "close_vs_prev_range": {
+          "anyOf": [
+            {
+              "enum": [
+                "above",
+                "inside",
+                "below"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Close Vs Prev Range"
+        },
+        "dist_high20_atr": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "(high20 - close) / ATR14",
+          "title": "Dist High20 Atr"
+        },
+        "dist_low20_atr": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "(close - low20) / ATR14",
+          "title": "Dist Low20 Atr"
+        },
+        "gap_pct": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Today's open / previous close - 1",
+          "title": "Gap Pct"
+        },
+        "high20": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Highest high of the last 20 sessions",
+          "title": "High20"
+        },
+        "implied_move_20d": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "close * iv30 * sqrt(20/252)",
+          "title": "Implied Move 20D"
+        },
+        "implied_vs_atr": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "implied_move_20d / realised_atr_move_20d",
+          "title": "Implied Vs Atr"
+        },
+        "low20": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Lowest low of the last 20 sessions",
+          "title": "Low20"
+        },
+        "missing": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Missing",
+          "type": "array"
+        },
+        "pct_from_52w_high": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "close / 252-session high - 1",
+          "title": "Pct From 52W High"
+        },
+        "pct_from_52w_low": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "close / 252-session low - 1",
+          "title": "Pct From 52W Low"
+        },
+        "pct_vs_sma20": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "close / SMA20 - 1",
+          "title": "Pct Vs Sma20"
+        },
+        "pct_vs_sma200": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pct Vs Sma200"
+        },
+        "pct_vs_sma50": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pct Vs Sma50"
+        },
+        "prev_close": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prev Close"
+        },
+        "prev_high": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prev High"
+        },
+        "prev_low": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prev Low"
+        },
+        "realised_atr_move_20d": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "ATR14 * sqrt(20)",
+          "title": "Realised Atr Move 20D"
+        },
+        "ret5d": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "close / close 5 sessions ago - 1",
+          "title": "Ret5D"
+        },
+        "rs_sector_20d": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "20-session return minus the ETF's",
+          "title": "Rs Sector 20D"
+        },
+        "rs_spy_20d": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "20-session return minus SPY's",
+          "title": "Rs Spy 20D"
+        },
+        "rs_spy_60d": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "60-session return minus SPY's",
+          "title": "Rs Spy 60D"
+        },
+        "rsi14": {
+          "anyOf": [
+            {
+              "maximum": 100.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Wilder RSI(14)",
+          "title": "Rsi14"
+        },
+        "sector_etf": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The sector ETF behind rs_sector_20d",
+          "title": "Sector Etf"
+        },
+        "sma20": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sma20"
+        },
+        "sma200": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sma200"
+        },
+        "sma50": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sma50"
+        },
+        "sma50_gt_sma200": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sma50 Gt Sma200"
+        },
+        "sma50_slope_20d": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "SMA50 / SMA50 20 sessions ago - 1",
+          "title": "Sma50 Slope 20D"
+        },
+        "squeeze_days": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Consecutive sessions on; 0 = off",
+          "title": "Squeeze Days"
+        },
+        "squeeze_on": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Bollinger(20, 2 sd) entirely inside Keltner(20, 1.5 ATR20)",
+          "title": "Squeeze On"
+        },
+        "stretch_atr": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "(close - SMA20) / ATR14",
+          "title": "Stretch Atr"
+        }
+      },
+      "required": [
+        "as_of",
+        "bar_date",
+        "close"
+      ],
+      "title": "TechnicalFeatures",
+      "type": "object"
+    },
     "VolFeatures": {
       "description": "Volatility features for one underlying as of one session close.\n\nFields are ``None`` when the underlying history is too short; the\nreason is recorded in ``missing``.",
       "properties": {
@@ -482,7 +959,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "Regime + vol features for one underlying (E4.3).",
+  "description": "Regime + vol features for one underlying (E4.3).\n\nv4 (E16.2, D76): ``technicals`` (defaulted ``None``), so v3 rows still validate.",
   "properties": {
     "as_of": {
       "description": "Session date (ET); uses data up to that close only",
@@ -519,6 +996,17 @@
       "default": 1,
       "title": "Schema Version",
       "type": "integer"
+    },
+    "technicals": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TechnicalFeatures"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "ticker": {
       "description": "Underlying symbol, e.g. 'SPY'",

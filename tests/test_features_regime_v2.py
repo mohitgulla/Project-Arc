@@ -43,6 +43,7 @@ from arc.features.regime import (
 from arc.features.snapshot import build_snapshot
 from arc.personas.builders import regime_line
 from arc.pipeline.steps import regime_history_days, regime_kwargs
+from tests.golden_compare import assert_json_close
 
 FIXTURES = Path(__file__).parent / "fixtures" / "regime"
 V2 = {"model": "v2", "fit_window": 252, "alpha": 0.5}
@@ -167,13 +168,19 @@ class TestFixture:
         assert f.vol_stickiness == pytest.approx(f.vol_transition_matrix[f.vol_state][f.vol_state])
 
     def test_v1_is_byte_identical_to_main(self) -> None:
-        """Golden: the rollback path serialises exactly as the pre-v2 code did."""
+        """Golden: the rollback path serialises as the pre-v2 code did.
+
+        Keys, labels and ints exact; floats to 1e-12 relative (``tests/golden_compare``),
+        because Linux CI differs from the macOS golden in the last ULP of the
+        stationary distribution.
+        """
         s = _fixture()
-        golden = (FIXTURES / "golden_v1_snapshot.json").read_text()
+        golden = json.loads((FIXTURES / "golden_v1_snapshot.json").read_text())
         for kw in (None, {"model": "v1"}, regime_kwargs(ArcSettings(regime_model="v1"))):
             snap = build_snapshot("SPY", s, s.index[-1], regime_kwargs=kw)
-            text = json.dumps(snap.model_dump(mode="json"), indent=2, sort_keys=True) + "\n"
-            assert text == golden
+            dump = snap.model_dump(mode="json")
+            assert dump.pop("technicals") is None  # E16.2 additive field (closes only: none)
+            assert_json_close(json.loads(json.dumps(dump, sort_keys=True)), golden)
 
     def test_backtest_vol_label_is_the_features_one(self) -> None:
         from arc.backtest import regime as bt
@@ -348,7 +355,7 @@ class TestWiring:
         assert RegimeFeatures.model_validate(v2) == estimate_regime(s, s.index[-1], **V2)
 
     def test_context_kind_v3_round_trip_and_v2_rows_load(self) -> None:
-        assert KINDS["regime"].schema_version == 3  # noqa: PLR2004
+        assert KINDS["regime"].schema_version >= 3  # noqa: PLR2004 - E16.2 made it v4
         s = _fixture()
         snap = build_snapshot("SPY", s, s.index[-1], regime_kwargs=V2)
         back = validate_payload("regime", RegimePayload.model_validate(snap.model_dump()))

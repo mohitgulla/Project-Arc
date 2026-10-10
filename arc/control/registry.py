@@ -93,6 +93,7 @@ class ValueType(StrEnum):
     FLOAT_OR_NONE = "float_or_none"  # "none" clears (e.g. no stop)
     CADENCE = "cadence"  # "every 30m [HH:MM-HH:MM]" | "at HH:MM[,HH:MM...]"
     TARGETS = "targets"  # time-adjusted take-profit targets "14:0.35,7:0.25" | "none"
+    PROFIT_LOCK = "profit_lock"  # E18.1 (D78): "<arm>:<floor>[:eod]" | "none"
 
 
 class Risk(StrEnum):
@@ -1623,9 +1624,22 @@ def _exit_tunables() -> tuple[Tunable, ...]:
                 risk=Risk.UP,
                 path=(*base, tp_field),
                 unit="pct",
-                min=0.10,
-                max=1.0 if credit else 3.0,
-                hard_ceiling=1.0 if credit else 3.0,
+                min=0.10 if credit else 0.20,  # E18.1 (D78): debit rollback bounds 0.2-2.0
+                max=1.0 if credit else 2.0,
+                hard_ceiling=1.0 if credit else 2.0,
+                aliases=(f"exits.kinds.{kind}.{tp_field}",),  # E18.1 (D78) rollback name
+            ),
+            Tunable(
+                key=f"exits.{kind}.profit_lock",
+                group=Group.EXITS,
+                type=ValueType.PROFIT_LOCK,
+                description=f"{kind}: profit lock (D78) '<arm>:<floor>[:eod]' as fractions "
+                f"of the {'max gain' if credit else 'debit'}: once the peak P&L reaches "
+                "arm, close when P&L falls to floor; 'none' = off (rollback).",
+                target=Target.EXITS,
+                risk=Risk.ANY,
+                path=(*base, "profit_lock"),
+                aliases=(f"exits.kinds.{kind}.profit_lock",),
             ),
             Tunable(
                 key=f"exits.{kind}.stop_value",
@@ -1827,6 +1841,23 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         path=("personas", "retail_sentiment_context"),
         choices=("off", "on"),
         aliases=("routines.personas.retail_sentiment_context", "retail_sentiment_context"),
+    ),
+    # E16.2 (D76/D78): the code-rendered `tech …` segment on Research's regime lines.
+    # D78 ships it on without an experiment; `off` is the rollback switch only
+    # (Research prompt byte-identical to before E16.2).
+    Tunable(
+        key="personas.research_technicals",
+        group=Group.ROUTINES,
+        type=ValueType.CHOICE,
+        description="E16.2: show Research one code-computed 'tech …' segment per regime "
+        "line (RSI14, ATR stretch vs SMA20, 50>200, 20-day high distance, RS vs SPY, "
+        "squeeze, prior-day range, implied/ATR move). Context only; never a gate input. "
+        "off = rollback (prompt as before E16.2).",
+        target=Target.ROUTINES,
+        risk=Risk.ORDER,
+        path=("personas", "research_technicals"),
+        choices=("off", "on"),
+        aliases=("routines.personas.research_technicals", "research_technicals"),
     ),
 )
 
@@ -2611,6 +2642,26 @@ def _targets(t: Tunable, raw: str) -> list[dict[str, float | int]]:
     return sorted(out, key=lambda o: o["dte_lte"])
 
 
+def _profit_lock(t: Tunable, raw: str) -> dict[str, float | bool] | None:
+    """``"0.5:0.2"`` / ``"50%:20%:eod"`` → the ``profit_lock`` block; ``none`` → ``None``."""
+    text = raw.strip().lower()
+    if text in {"none", "off", "null", "clear"}:
+        return None
+    parts = [p.strip() for p in text.split(":")]
+    if len(parts) not in (2, 3) or (len(parts) == 3 and parts[2] not in {"eod", "intraday"}):  # noqa: PLR2004
+        msg = f"{t.key}: {raw!r}; expected '<arm>:<floor>[:eod]', e.g. 0.5:0.2 or 50%:20%"
+        raise TunableError(msg)
+    try:
+        arm, floor = (float(p.rstrip("%")) / (100.0 if p.endswith("%") else 1.0) for p in parts[:2])
+    except ValueError:
+        msg = f"{t.key}: {raw!r} is not '<arm>:<floor>[:eod]'"
+        raise TunableError(msg) from None
+    if not (0.0 < floor < arm <= 3.0):  # noqa: PLR2004
+        msg = f"{t.key}: {raw!r} needs 0 < floor < arm <= 300%"
+        raise TunableError(msg)
+    return {"arm_pct": arm, "floor_pct": floor, "eod_only": len(parts) == 3 and parts[2] == "eod"}  # noqa: PLR2004
+
+
 def parse_value(
     t: Tunable, raw: str, *, current: Any = None, base_list: list[str] | None = None
 ) -> Any:
@@ -2668,6 +2719,8 @@ def parse_value(
         return _cadence(t, raw)
     if typ is ValueType.TARGETS:
         return _targets(t, raw)
+    if typ is ValueType.PROFIT_LOCK:
+        return _profit_lock(t, raw)
     raise TunableError(f"{t.key}: unsupported type {typ}")  # pragma: no cover
 
 
@@ -2720,6 +2773,9 @@ def format_value(t: Tunable, v: Any) -> str:
     """Owner-facing text for a value of *t* (``5%``, ``on``, ``SPY, QQQ``, ``none``)."""
     if v is None:
         return "none"
+    if t.type is ValueType.PROFIT_LOCK and isinstance(v, dict):
+        eod = " (eod)" if v.get("eod_only") else ""
+        return f"{float(v['arm_pct']):.0%} -> {float(v['floor_pct']):.0%}{eod}"
     if t.type is ValueType.BOOL or isinstance(v, bool):
         return "on" if v else "off"
     if isinstance(v, list):
@@ -2763,6 +2819,7 @@ _PERSONA_SWITCHES = frozenset(
         ("personas", "scout_buzz_velocity"),  # E14.5
         ("personas", "scalp_movers_context"),  # E14.3
         ("personas", "retail_sentiment_context"),  # E14.6
+        ("personas", "research_technicals"),  # E16.2
     }
 )
 # Scalar choice switches under `personas:` (E12.5) -> the control value when absent.

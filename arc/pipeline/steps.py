@@ -183,6 +183,8 @@ from arc.utils.calendar import ET
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
+    import pandas as pd
+
     from arc.backtest.costs import CostModel
     from arc.broker.base import AccountInfo, BrokerPosition
     from arc.config import ArcSettings
@@ -634,15 +636,19 @@ def _regime_entries(ctx: JobContext, env: PipelineEnv, tickers: list[str]) -> li
     written: list[str] = []
     rkw = regime_kwargs(settings)
     days = regime_history_days(settings)
-    for t in tickers:
-        have = ctx.snapshot.latest("regime", t)
-        if have is not None and have.payload.get("as_of") == today.isoformat():
-            continue
+    todo = [
+        t
+        for t in tickers
+        if (have := ctx.snapshot.latest("regime", t)) is None
+        or have.payload.get("as_of") != today.isoformat()
+    ]
+    refs = _TechRefs(ctx, env, today, days, todo)
+    for t in todo:
         try:
-            bars = env.market.history_bars(t, today - _dt.timedelta(days=days), today)
-            ctx.record_input(f"bars:{t}", _source(env), bars, as_of=ctx.now, count=len(bars))
+            bars = refs.bars(t)
             series = store.series(t, until=today) if store is not None else {}
             current = None if today in series else _live_iv30(env, t, today, settings)
+            sector_etf = refs.sector_etf(t)
             snap = build_snapshot_from_bars(
                 t,
                 bars,
@@ -651,6 +657,9 @@ def _regime_entries(ctx: JobContext, env: PipelineEnv, tickers: list[str]) -> li
                 current_iv=current,
                 regime_kwargs=rkw,
                 min_iv_obs=settings.iv_min_obs_rank,
+                benchmark=None if t == refs.benchmark else refs.closes(refs.benchmark),
+                sector=refs.closes(sector_etf) if sector_etf else None,
+                sector_etf=sector_etf,
             )
             if store is not None and snap.vol.iv_percentile is None:
                 ext = store.latest_external(t, until=today)
@@ -672,6 +681,65 @@ def _regime_entries(ctx: JobContext, env: PipelineEnv, tickers: list[str]) -> li
         ctx.write("regime", t, RegimePayload.model_validate(snap.model_dump()))
         written.append(t)
     return written
+
+
+TECH_BENCHMARK = "SPY"  # E16.2: the rs_spy_* reference (the field names fix it)
+
+
+class _TechRefs:
+    """E16.2 (D76): one regime step's daily bars, fetched at most once per symbol.
+
+    The relative-strength references (SPY, and each mapped sector ETF from
+    ``technicals.sector_etf``) are fetched once per run and reused
+    for every ticker; a ticker that is itself a reference reuses that fetch. A
+    reference that fails to load is ``None`` (its ``rs_*`` fields stay ``None``).
+    """
+
+    def __init__(
+        self,
+        ctx: JobContext,
+        env: PipelineEnv,
+        today: _dt.date,
+        days: int,
+        tickers: Sequence[str],
+    ) -> None:
+        from arc.pipeline.portfolio_context import load_sectors
+
+        cfg = ctx.routines.technicals
+        self._ctx, self._env, self._today, self._days = ctx, env, today, days
+        self._bars: dict[str, list[Any]] = {}
+        self._closes: dict[str, pd.Series | None] = {}
+        self.benchmark = TECH_BENCHMARK
+        self._etf_by_sector = dict(cfg.sector_etf)
+        self._sectors = load_sectors() if tickers and self._etf_by_sector else {}
+
+    def bars(self, ticker: str) -> list[Any]:
+        """*ticker*'s daily bars (recorded on the run manifest once); raises on failure."""
+        if ticker not in self._bars:
+            env, today = self._env, self._today
+            bars = env.market.history_bars(ticker, today - _dt.timedelta(days=self._days), today)
+            self._ctx.record_input(
+                f"bars:{ticker}", _source(env), bars, as_of=self._ctx.now, count=len(bars)
+            )
+            self._bars[ticker] = bars
+        return self._bars[ticker]
+
+    def sector_etf(self, ticker: str) -> str | None:
+        """The sector ETF for *ticker* (``None``: no sector, unmapped, or the ETF itself)."""
+        etf = self._etf_by_sector.get(self._sectors.get(ticker.upper(), ""))
+        return None if etf is None or etf == ticker.upper() else etf
+
+    def closes(self, symbol: str) -> pd.Series | None:
+        """Daily closes of a reference symbol (``None`` when its bars fail to load)."""
+        from arc.features._series import closes_from_bars
+
+        if symbol not in self._closes:
+            try:
+                self._closes[symbol] = closes_from_bars(self.bars(symbol))
+            except Exception as exc:  # noqa: BLE001 - a missing reference only drops rs_*
+                log.warning("pipeline.technicals_ref_failed", symbol=symbol, error=str(exc)[:200])
+                self._closes[symbol] = None
+        return self._closes[symbol]
 
 
 def _live_iv30(
@@ -1650,6 +1718,8 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
         inputs["diversification"] = diversification.mode
     if sentiment is not None:  # E14.6: absent when the flag is off (prompt unchanged)
         inputs["retail_sentiment"] = sentiment
+    if ctx.routines.research_technicals.enabled:  # E16.2: absent when off (prompt unchanged)
+        inputs["technicals"] = True
     # E13.8: the merged idea pool, recorded with the compact prompt's inputs
     inputs["idea_pool"] = [i.model_dump(mode="json") for i in pool.items]
     inputs["candidate_tickers"] = sorted(cands)
@@ -3158,6 +3228,7 @@ def _market_context(
         legs=legs,
         quotes_as_of=min(times) if times else None,
         at=now,
+        technicals=f.get("technicals"),  # E16.2: audit only (validated on the model)
     )
 
 

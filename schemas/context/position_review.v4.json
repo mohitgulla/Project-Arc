@@ -159,6 +159,7 @@
       "description": "Why the position manager suggests closing (journal ``exit:<kind>``).",
       "enum": [
         "stop",
+        "profit_lock",
         "profit_target",
         "time_adjusted_target",
         "dte_exit",
@@ -444,6 +445,19 @@
       ],
       "title": "Kind"
     },
+    "lock_armed": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Profit lock armed; None = no lock",
+      "title": "Lock Armed"
+    },
     "minutes_since_fill": {
       "anyOf": [
         {
@@ -495,6 +509,32 @@
       "default": null,
       "description": "Loss / max loss (0 when in profit)",
       "title": "Pct Of Max Loss"
+    },
+    "pct_peak": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Peak P&L / take-profit basis",
+      "title": "Pct Peak"
+    },
+    "peak_pnl_per_share": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Peak per-share P&L since entry (stored marks + this one)",
+      "title": "Peak Pnl Per Share"
     },
     "pnl": {
       "description": "$ per unit at mid, before costs",

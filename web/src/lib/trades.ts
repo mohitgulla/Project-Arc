@@ -132,6 +132,7 @@ export const EXIT_REASON_LABEL: Record<string, string> = {
   take_profit: "Take profit",
   stop: "Stop",
   stop_loss: "Stop loss",
+  profit_lock: "Profit lock",
   dte_exit: "DTE exit",
   expiry: "Expiry",
   reallocate: "Reallocate",

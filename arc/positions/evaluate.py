@@ -11,8 +11,11 @@ thresholds live here) and adds what the position manager needs:
   after half-spread slippage and fees on both paths (exit model at current IV),
 - ``remaining_ev_per_bp``: that per $ of buying power the position holds,
 - ``remaining_pop``: P(holding nets more than closing now),
-- exit signals, in precedence order: stop → profit target / time-adjusted target
-  → DTE exit → expiry, plus ``remaining_ev_floor`` (``positions:`` in exits.yaml).
+- exit signals, in precedence order: stop → profit lock (E18.1) → profit target /
+  time-adjusted target → DTE exit → expiry, plus ``remaining_ev_floor``
+  (``positions:`` in exits.yaml),
+- the profit lock's state: the peak P&L since entry over the stored marks
+  (``peak_pnl``, supplied by the caller) and whether the lock is armed.
 
 Works for credit and debit structures alike (D25: paper defaults to cash_debit).
 """
@@ -25,7 +28,7 @@ from enum import StrEnum
 from pydantic import BaseModel, ConfigDict, Field
 
 from arc.backtest.costs import CostModel  # noqa: TC001 - runtime default arg type
-from arc.exits.policy import ExitConfig, ExitReason, resolve_rules
+from arc.exits.policy import ExitConfig, ExitReason, ResolvedRules, resolve_rules
 from arc.exits.position import OpenPosition, PositionMarks, evaluate_position
 from arc.models import Structure  # noqa: TC001 - pydantic field
 
@@ -38,6 +41,7 @@ class SignalKind(StrEnum):
     """Why the position manager suggests closing (journal ``exit:<kind>``)."""
 
     STOP = "stop"
+    PROFIT_LOCK = "profit_lock"  # E18.1 (D78): trailing take profit, mandatory
     PROFIT_TARGET = "profit_target"
     TIME_ADJUSTED_TARGET = "time_adjusted_target"
     DTE_EXIT = "dte_exit"
@@ -100,6 +104,12 @@ class PositionReview(BaseModel):
     )
     entry_managed_net_ev_per_bp: float | None = None
     minutes_since_fill: float | None = Field(None, ge=0.0)
+    # E18.1 (D78) profit lock: per-share P&L basis (same as current_value − entry_net)
+    peak_pnl_per_share: float | None = Field(
+        None, description="Peak per-share P&L since entry (stored marks + this one)"
+    )
+    pct_peak: float | None = Field(None, description="Peak P&L / take-profit basis")
+    lock_armed: bool | None = Field(None, description="Profit lock armed; None = no lock")
     structure: Structure
 
     @property
@@ -110,10 +120,19 @@ class PositionReview(BaseModel):
 
 _FIRED = {
     ExitReason.STOP: SignalKind.STOP,
+    ExitReason.PROFIT_LOCK: SignalKind.PROFIT_LOCK,
     ExitReason.TAKE_PROFIT: SignalKind.PROFIT_TARGET,
     ExitReason.DTE_EXIT: SignalKind.DTE_EXIT,
     ExitReason.EXPIRY: SignalKind.EXPIRY,
 }
+
+
+def _pct_basis(x: float | None, rules: ResolvedRules) -> str:
+    """*x* (per share) as a share of the take-profit basis: ``+52% of debit``."""
+    basis = rules.tp_basis
+    if x is None or not basis:
+        return "n/a"
+    return f"{x / basis:+.0%} of {'max gain' if rules.credit else 'debit'}"
 
 
 def _money(x: float) -> str:
@@ -132,6 +151,7 @@ def review_position(
     cost: CostModel | None = None,
     entry_managed_net_ev: float | None = None,
     minutes_since_fill: float | None = None,
+    peak_pnl: float | None = None,
 ) -> PositionReview:
     """Review one open position (see module doc). Raises ``LookupError`` on a missing mark.
 
@@ -139,10 +159,14 @@ def review_position(
     evaluated on end-of-day marks (``marks.end_of_day``), never intraday.
     *entry_managed_net_ev* (the open proposal's managed Net EV) and
     *minutes_since_fill* are recorded for the audit only; they never change a signal.
+    *peak_pnl* (E18.1) is the peak per-share P&L of the position's stored marks
+    (:func:`arc.positions.marks.stored_peak_pnl`); ``None`` leaves the lock unarmed.
     """
     st = position.structure
     policy = exits.policy_for(st.kind)
-    state = evaluate_position(position, marks, policy, cost=cost, cfg=exits.model)
+    state = evaluate_position(
+        position, marks, policy, cost=cost, cfg=exits.model, peak_pnl=peak_pnl
+    )
     rules = resolve_rules(st, policy, entry_net=position.entry_net)
     per = state.pnl_per_share
     pct_gain = state.pct_of_max_gain
@@ -175,6 +199,11 @@ def review_position(
             kind = SignalKind.TIME_ADJUSTED_TARGET
         detail = {
             SignalKind.STOP: f"stop: {head}",
+            SignalKind.PROFIT_LOCK: (
+                f"profit lock: peak {_pct_basis(state.peak_pnl_per_share, rules)} fell to "
+                f"{_pct_basis(per, rules)} (floor {_pct_basis(state.lock_floor_pnl, rules)}): "
+                f"{head}"
+            ),
             SignalKind.PROFIT_TARGET: (
                 f"profit target {state.take_profit_pct:.0%} reached: {head}"
             ),
@@ -238,5 +267,12 @@ def review_position(
         minutes_since_fill=(
             None if minutes_since_fill is None else round(max(minutes_since_fill, 0.0), 1)
         ),
+        peak_pnl_per_share=state.peak_pnl_per_share,
+        pct_peak=(
+            None
+            if state.peak_pnl_per_share is None or not rules.tp_basis
+            else round(state.peak_pnl_per_share / rules.tp_basis, 4)
+        ),
+        lock_armed=state.lock_armed,
         structure=st,
     )

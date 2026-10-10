@@ -393,7 +393,9 @@ class TestDebitCard:
         assert "Account cash_debit" in summary
         assert _field(view, "Payoff (per contract)")[-1] == "Risk/Reward 0.82 : 1"
         plan = _section(view, "Exit plan")[0]
-        assert plan.startswith("Take profit 100% of debit (") and "credit to close)" in plan
+        # D78: debit take profit 60 % of debit + the 0.50 -> 0.20 profit lock
+        assert plan.startswith("Take profit 60% of debit (") and "credit to close)" in plan
+        assert "Profit lock 50% → 20% of debit" in plan
         assert _field(view, "Long 1x 770C")[2] == "Size 12 x 30"
         und = _field(view, "Underlying")
         assert und[0] == "Spot 772.00 at 10:30 ET" and und[1] == "Day change +0.26%"

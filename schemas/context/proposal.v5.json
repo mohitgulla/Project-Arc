@@ -228,6 +228,18 @@
           "default": 7,
           "title": "Close At Dte"
         },
+        "profit_lock": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProfitLock"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "E18.1 (D78) trailing take profit; null = off"
+        },
         "stop": {
           "anyOf": [
             {
@@ -517,6 +529,14 @@
           "title": "P Expiry",
           "type": "number"
         },
+        "p_profit_lock": {
+          "default": 0.0,
+          "description": "E18.1 (D78) profit lock",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "P Profit Lock",
+          "type": "number"
+        },
         "p_stop": {
           "maximum": 1.0,
           "minimum": 0.0,
@@ -554,6 +574,35 @@
         "expected_days_held"
       ],
       "title": "ManagedStats",
+      "type": "object"
+    },
+    "ProfitLock": {
+      "additionalProperties": false,
+      "description": "E18.1 (D78) trailing take profit, in units of the take-profit basis.\n\nArmed once the peak P&L since entry \u2265 ``arm_pct \u00b7 B``; then closes when the\ncurrent P&L \u2264 ``floor_pct \u00b7 B`` (``B`` = max gain for credit, debit for debit).\n``eod_only``: evaluated on end-of-day marks only (default: every mark).",
+      "properties": {
+        "arm_pct": {
+          "exclusiveMinimum": 0.0,
+          "maximum": 3.0,
+          "title": "Arm Pct",
+          "type": "number"
+        },
+        "eod_only": {
+          "default": false,
+          "title": "Eod Only",
+          "type": "boolean"
+        },
+        "floor_pct": {
+          "exclusiveMinimum": 0.0,
+          "maximum": 3.0,
+          "title": "Floor Pct",
+          "type": "number"
+        }
+      },
+      "required": [
+        "arm_pct",
+        "floor_pct"
+      ],
+      "title": "ProfitLock",
       "type": "object"
     },
     "QuantMetrics": {

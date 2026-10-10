@@ -20,6 +20,13 @@ committed verdict file (``config/experiments/live/verdicts/XP-<n>.yaml``) says `
 and every changed value must equal that experiment's treatment overlay. ``Flag:`` and
 ``Lane: fast`` never cover a promotion.
 
+The one exception is a narrow, audited **owner waiver** (``owner_waivers`` in
+``config/strategy_lane.yaml``, E18.1 / D78): a promotion passes when every changed
+leaf is listed under a waiver, the PR body's ``Lane: fast — … (PLAN D<n>)`` names
+that waiver's decision, and the ``D<n>`` row of ``docs/PLAN.md`` exists and says
+"D44 waived". A removed value, an unlisted leaf, a body that does not cite the
+decision or a PLAN row without the waiver all stay blocked exactly as before.
+
 Deterministic: no network and no LLM. The only I/O is ``git`` on the local checkout
 and reading files; :func:`evaluate` itself is pure, which is what the tests drive.
 Exit 0 = pass (or not a strategy-lane PR), 1 = fail, 2 = usage / config error.
@@ -47,6 +54,11 @@ _FLAG_RE = re.compile(r"^\s*(?:[-*>]\s*)?flag\s*:\s*`?([A-Za-z0-9_.\-]+)`?", re.
 _FAST_RE = re.compile(r"^\s*(?:[-*>]\s*)?lane\s*:\s*fast\b(.*)$", re.I | re.M)
 _FAST_SEP = " \t—–-:`*"
 _CONFIG_YAML_RE = re.compile(r"^config/([A-Za-z0-9_\-]+)\.yaml$")
+_PLAN_CITE_RE = re.compile(r"\bPLAN\s+(D[1-9]\d*)\b")
+_PLAN_ROW_RE = re.compile(r"^\|\s*(D[1-9]\d*)\s*\|", re.M)
+#: The phrase a PLAN decision row must carry for its owner waiver to count.
+WAIVER_PHRASE = "D44 waived"
+PLAN_PATH = "docs/PLAN.md"
 
 # A committed verdict (config/experiments/live/verdicts/XP-<n>.yaml) is copied from the
 # stored E10.3 report (`arc experiment show XP-<n> --json`); report_hash lets arc-sentinel
@@ -54,6 +66,35 @@ _CONFIG_YAML_RE = re.compile(r"^config/([A-Za-z0-9_\-]+)\.yaml$")
 VERDICT_KEYS = frozenset({"experiment_id", "verdict", "report_hash"})
 
 Leaf = tuple[str, ...]  # (stem, key, key, ...): one leaf value in config/<stem>.yaml
+
+
+@dataclass(frozen=True)
+class OwnerWaiver:
+    """Promotion leaves an owner decision ships without an experiment (D44 waived)."""
+
+    decision: str  # "D78"
+    leaves: frozenset[Leaf]  # (stem, key, ...)
+
+    @classmethod
+    def from_mapping(cls, data: Any) -> OwnerWaiver:
+        if not isinstance(data, Mapping) or set(data) != {"decision", "paths"}:
+            msg = "strategy_lane.yaml: an owner_waivers entry needs exactly decision and paths"
+            raise ValueError(msg)
+        decision = str(data["decision"]).strip().upper()
+        if not re.fullmatch(r"D[1-9]\d*", decision):
+            msg = f"strategy_lane.yaml: owner waiver decision {decision!r} is not D<n>"
+            raise ValueError(msg)
+        paths = data["paths"]
+        if not isinstance(paths, Mapping) or not paths:
+            msg = f"strategy_lane.yaml: owner waiver {decision} lists no paths"
+            raise ValueError(msg)
+        leaves: set[Leaf] = set()
+        for stem, keys in paths.items():
+            if not isinstance(keys, list) or not keys:
+                msg = f"strategy_lane.yaml: owner waiver {decision}: {stem} needs a list of keys"
+                raise ValueError(msg)
+            leaves |= {(str(stem), *str(k).split(".")) for k in keys}
+        return cls(decision=decision, leaves=frozenset(leaves))
 
 
 @dataclass(frozen=True)
@@ -65,6 +106,7 @@ class LaneConfig:
     flag_off_values: tuple[Any, ...]
     fast_reason_min_chars: int
     promotion_stems: tuple[str, ...]
+    owner_waivers: tuple[OwnerWaiver, ...] = ()
 
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any]) -> LaneConfig:
@@ -76,6 +118,7 @@ class LaneConfig:
             "flag_off_values",
             "fast_reason_min_chars",
             "promotion_stems",
+            "owner_waivers",
         }
         extra = set(data) - known
         if extra:
@@ -93,6 +136,9 @@ class LaneConfig:
             flag_off_values=tuple(data.get("flag_off_values", (False, None))),
             fast_reason_min_chars=int(data.get("fast_reason_min_chars", 10)),
             promotion_stems=tuple(str(s) for s in data.get("promotion_stems") or ()),
+            owner_waivers=tuple(
+                OwnerWaiver.from_mapping(w) for w in data.get("owner_waivers") or ()
+            ),
         )
 
 
@@ -116,7 +162,7 @@ class Lanes:
 class Result:
     strategy_files: list[str]
     ok: bool
-    lane: str  # none | experiment | flag | fast | promotion
+    lane: str  # none | experiment | flag | fast | promotion | waiver
     errors: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
@@ -219,18 +265,82 @@ def _is_off(value: Any, cfg: LaneConfig) -> bool:
     return False
 
 
+def plan_rows(plan_text: str) -> dict[str, str]:
+    """``D<n>`` → its decisions-log row in ``docs/PLAN.md`` (the whole table line)."""
+    out: dict[str, str] = {}
+    for line in plan_text.splitlines():
+        m = _PLAN_ROW_RE.match(line)
+        if m is not None:
+            out.setdefault(m.group(1), line)
+    return out
+
+
+def _waived(
+    changed_leaves: Mapping[Leaf, Any],
+    removed_leaves: Mapping[Leaf, Any],
+    fast_reason: str | None,
+    fast_ok: bool,
+    rows: Mapping[str, str],
+    cfg: LaneConfig,
+) -> tuple[bool, list[str], list[str]]:
+    """Does an owner waiver cover this promotion? ``(covered, errors, notes)``.
+
+    Covered only when: no value is removed, the body's `Lane: fast` line is valid and
+    cites ``PLAN D<n>``, every changed leaf is listed under a waiver of a cited
+    decision, and each such decision's PLAN row exists and says "D44 waived".
+    """
+    if not cfg.owner_waivers or not changed_leaves:
+        return False, [], []
+    cited = set(_PLAN_CITE_RE.findall(fast_reason or "")) if fast_ok else set()
+    if not cited:
+        return False, [], []  # no `(PLAN D<n>)` citation: an ordinary promotion
+    by_decision = {w.decision: w for w in cfg.owner_waivers}
+    errors: list[str] = []
+    used: set[str] = set()
+    for leaf in sorted(changed_leaves):
+        owners = [d for d, w in by_decision.items() if leaf in w.leaves]
+        if not owners:
+            return False, [], []  # an unlisted leaf: not a waiver case at all
+        hit = [d for d in owners if d in cited]
+        if not hit:
+            errors.append(
+                f"owner waiver: {_dotted(leaf)} is waived by {', '.join(owners)} only with "
+                f"`Lane: fast — … (PLAN {owners[0]})` in the PR body"
+            )
+            continue
+        used.update(hit)
+    if removed_leaves:
+        listed = ", ".join(_dotted(k) for k in sorted(removed_leaves))
+        errors.append(f"owner waiver: removing existing values ({listed}) is never waived")
+    for d in sorted(used):
+        row = rows.get(d)
+        if row is None:
+            errors.append(f"owner waiver: {d} has no decisions-log row in {PLAN_PATH}")
+        elif WAIVER_PHRASE.lower() not in row.lower():
+            errors.append(
+                f"owner waiver: the {d} row in {PLAN_PATH} does not say {WAIVER_PHRASE!r}"
+            )
+    notes = [
+        f"owner waiver {d} ({PLAN_PATH}: {WAIVER_PHRASE}); arc-sentinel audits it"
+        for d in sorted(used)
+    ]
+    return not errors, errors, notes
+
+
 def evaluate(
     changed: Iterable[str],
     body: str,
     deltas: Mapping[str, YamlDelta],
     experiments: Mapping[str, Experiment],
     cfg: LaneConfig,
+    plan: Mapping[str, str] | None = None,
 ) -> Result:
     """Decide one PR.
 
     *changed* are the repo-relative paths the PR touches, *deltas* the leaf-level
     YAML changes per strategy ``config/<stem>.yaml`` (keyed by stem), *experiments*
-    every spec in the experiments dir (keyed by id, with its verdict if committed).
+    every spec in the experiments dir (keyed by id, with its verdict if committed),
+    *plan* the ``docs/PLAN.md`` decision rows (:func:`plan_rows`) owner waivers need.
     """
     files = strategy_files(changed, cfg)
     if not files:
@@ -278,7 +388,16 @@ def evaluate(
     changed_leaves = {k: v for d in promo.values() for k, v in d.changed.items()}
     removed_leaves = {k: v for d in promo.values() for k, v in d.removed.items()}
     if changed_leaves or removed_leaves:
+        covered, w_errors, w_notes = _waived(
+            changed_leaves, removed_leaves, lanes.fast_reason, fast_ok, plan or {}, cfg
+        )
+        if covered:
+            notes += w_notes
+            notes.append(f"fast lane: {lanes.fast_reason} (arc-sentinel audits fast-lane PRs)")
+            return Result(files, ok=not errors, lane="waiver", errors=errors, notes=notes)
         winners = [e for e in cited if e.verdict == "win"]
+        if w_errors and not winners:
+            return Result(files, ok=False, lane="waiver", errors=errors + w_errors, notes=notes)
         for e in cited:
             if e.verdict != "win":
                 notes.append(f"{e.id} verdict is {e.verdict or 'not committed'}, not win")
@@ -417,7 +536,9 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError, subprocess.CalledProcessError) as exc:
         sys.stderr.write(f"strategy-lane: config error: {exc}\n")
         return 2
-    result = evaluate(changed, args.body_file.read_text(), deltas, experiments, cfg)
+    plan_file = args.repo / PLAN_PATH
+    plan = plan_rows(plan_file.read_text()) if plan_file.is_file() else {}
+    result = evaluate(changed, args.body_file.read_text(), deltas, experiments, cfg, plan)
     sys.stdout.write(result.render() + "\n")
     return 0 if result.ok else 1
 

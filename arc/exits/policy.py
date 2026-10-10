@@ -36,12 +36,21 @@ Let ``N`` = the entry net price (positive debit paid, negative credit received),
 - ``pct_debit``: ``L = value · D`` (0.5 = the position lost half its debit). Debit
   structures only.
 
+*Profit lock* (E18.1, D78; ``profit_lock: {arm_pct, floor_pct, eod_only}``, null =
+off), a trailing take profit on the take-profit basis ``B`` (max gain for credit
+structures, the debit for debit structures): once the position's **peak** P&L since
+entry reached ``arm_pct · B``, close when the current P&L falls to ``floor_pct · B``
+or below (``0.50 / 0.20`` on a $2.00 debit: once up $1.00, close if it falls back to
++$0.40). The peak comes from the stored marks (``peak_pnl``); without any stored
+mark the lock is not armed. ``0 < floor_pct < arm_pct < take-profit pct``.
+
 *Time*: ``close_at_dte`` closes the position once remaining DTE ≤ that value.
 ``time_adjusted_targets`` (D19 decay-adjusted target) replace the take-profit
 percentage once remaining DTE ≤ ``dte_lte``; the tightest matching bucket
 (smallest ``dte_lte``) wins.
 
-Rules are checked each day in the order **stop → take profit → DTE exit**.
+Rules are checked each day in the order **stop → profit lock → take profit → DTE
+exit**.
 
 *Stop timing*: with ``stop_eod_only`` (default) the stop is only evaluated on
 end-of-day marks (``check_rules(..., eod=True)``); take profit and the DTE exit may
@@ -49,15 +58,17 @@ fire on any mark. The Monte Carlo model and the backtester step on daily closes,
 every step is end of day for them.
 
 Defaults (``config/exits.yaml``, D23 owner decision 2026-09-27): take profit 50% of
-max gain (credit) / 100% of debit (debit), close at 7 DTE, and **relaxed stops** so a
-trade can play out: ``pct_max_loss 0.75`` for credit structures and ``pct_debit
-0.75`` for debit structures, on end-of-day marks only.
+max gain (credit), close at 7 DTE, and **relaxed stops** so a trade can play out:
+``pct_max_loss 0.75`` for credit structures and ``pct_debit 0.75`` for debit
+structures, on end-of-day marks only. D78 (2026-10-10): debit take profit 60% of
+the debit (was 100%) and a ``0.50 → 0.20`` profit lock on the debit kinds.
 
 Everything here is deterministic and pure (no LLM, no network).
 """
 
 from __future__ import annotations
 
+from decimal import Decimal
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -69,7 +80,7 @@ from arc.exits.expiry import ExpiryGuard
 from arc.models import StructureKind
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Iterable, Mapping
 
     from arc.models import Structure
 
@@ -84,12 +95,15 @@ __all__ = [
     "ExitReason",
     "IvModel",
     "PipelineExitConfig",
+    "ProfitLock",
     "ResolvedRules",
     "StopBasis",
     "StopRule",
     "TimeAdjustedTarget",
     "check_rules",
     "load_exit_config",
+    "lock_fires",
+    "peak_pnl",
     "resolve_rules",
 ]
 
@@ -119,6 +133,7 @@ class ExitReason(StrEnum):
     TAKE_PROFIT = "take_profit"
     DTE_EXIT = "dte_exit"
     EXPIRY = "expiry"
+    PROFIT_LOCK = "profit_lock"  # E18.1 (D78)
 
 
 class StopRule(BaseModel):
@@ -148,6 +163,28 @@ class TimeAdjustedTarget(BaseModel):
     take_profit_pct: float = Field(..., gt=0.0)
 
 
+class ProfitLock(BaseModel):
+    """E18.1 (D78) trailing take profit, in units of the take-profit basis.
+
+    Armed once the peak P&L since entry ≥ ``arm_pct · B``; then closes when the
+    current P&L ≤ ``floor_pct · B`` (``B`` = max gain for credit, debit for debit).
+    ``eod_only``: evaluated on end-of-day marks only (default: every mark).
+    """
+
+    model_config = _FORBID
+
+    arm_pct: float = Field(..., gt=0.0, le=3.0)
+    floor_pct: float = Field(..., gt=0.0, le=3.0)
+    eod_only: bool = False
+
+    @model_validator(mode="after")
+    def _order(self) -> ProfitLock:
+        if not self.floor_pct < self.arm_pct:
+            msg = f"profit_lock: floor_pct {self.floor_pct} must be < arm_pct {self.arm_pct}"
+            raise ValueError(msg)
+        return self
+
+
 class ExitPolicy(BaseModel):
     """Exit rules for one structure kind (see module doc for exact semantics)."""
 
@@ -163,6 +200,22 @@ class ExitPolicy(BaseModel):
     stop_eod_only: bool = Field(True, description="Evaluate the stop on end-of-day marks only")
     close_at_dte: int | None = Field(7, ge=0)
     time_adjusted_targets: list[TimeAdjustedTarget] = Field(default_factory=list)
+    profit_lock: ProfitLock | None = Field(
+        None, description="E18.1 (D78) trailing take profit; null = off"
+    )
+
+    @model_validator(mode="after")
+    def _lock_below_take_profit(self) -> ExitPolicy:
+        """``arm_pct`` must sit below every base take-profit pct (else it never acts)."""
+        lock = self.profit_lock
+        if lock is None:
+            return self
+        for name in ("take_profit_pct_of_max_gain", "take_profit_pct_of_debit"):
+            tp = getattr(self, name)
+            if tp is not None and not lock.arm_pct < tp:
+                msg = f"profit_lock: arm_pct {lock.arm_pct} must be < {name} {tp}"
+                raise ValueError(msg)
+        return self
 
     @field_validator("time_adjusted_targets")
     @classmethod
@@ -192,6 +245,10 @@ class ExitPolicy(BaseModel):
         else:
             eod = " (end of day)" if self.stop_eod_only else ""
             parts.append(f"stop {self.stop.basis.value} {self.stop.value:g}{eod}")
+        if self.profit_lock is not None:
+            lk = self.profit_lock
+            eod = " (end of day)" if lk.eod_only else ""
+            parts.append(f"profit lock {lk.arm_pct:.0%} -> {lk.floor_pct:.0%}{eod}")
         if self.close_at_dte is not None:
             parts.append(f"close at {self.close_at_dte} DTE")
         parts.extend(
@@ -384,6 +441,25 @@ class ResolvedRules(BaseModel):
             return None if self.max_gain is None else pct * self.max_gain
         return pct * self.entry_net
 
+    @property
+    def tp_basis(self) -> float | None:
+        """Per-share basis of the take profit and the profit lock (max gain / debit)."""
+        if self.credit:
+            return self.max_gain
+        return self.entry_net if self.entry_net > 0 else None
+
+    @property
+    def lock_arm_pnl(self) -> float | None:
+        """Per-share peak P&L that arms the profit lock (``None`` = no lock)."""
+        lock, basis = self.policy.profit_lock, self.tp_basis
+        return None if lock is None or basis is None else lock.arm_pct * basis
+
+    @property
+    def lock_floor_pnl(self) -> float | None:
+        """Per-share P&L at or below which an armed profit lock closes."""
+        lock, basis = self.policy.profit_lock, self.tp_basis
+        return None if lock is None or basis is None else lock.floor_pct * basis
+
     def value_at_pnl(self, pnl: float) -> float:
         """Position value per share at which P&L = *pnl* (``V = N + pnl``)."""
         return self.entry_net + pnl
@@ -409,20 +485,48 @@ def resolve_rules(
     )
 
 
+def peak_pnl(marks: Iterable[float | Decimal | None]) -> Decimal | None:
+    """Peak per-share P&L over stored *marks* (E18.1); ``None`` = no usable mark.
+
+    Non-finite and missing marks are skipped; a peak is never made up.
+    """
+    vals = [d for d in (Decimal(str(m)) for m in marks if m is not None) if d.is_finite()]
+    return max(vals) if vals else None
+
+
+def lock_fires(rules: ResolvedRules, *, pnl: float, peak: float | None, eod: bool = True) -> bool:
+    """The profit lock closes: armed (peak ≥ arm) and the current P&L ≤ floor."""
+    lock = rules.policy.profit_lock
+    arm, floor = rules.lock_arm_pnl, rules.lock_floor_pnl
+    if lock is None or arm is None or floor is None or peak is None:
+        return False
+    if lock.eod_only and not eod:
+        return False
+    return peak >= arm and pnl <= floor
+
+
 def check_rules(
-    rules: ResolvedRules, *, pnl: float, dte: int, eod: bool = True
+    rules: ResolvedRules,
+    *,
+    pnl: float,
+    dte: int,
+    eod: bool = True,
+    peak_pnl: float | None = None,
 ) -> ExitReason | None:
     """Which rule fires for a position with per-share *pnl* at mid and *dte* left.
 
-    Order: stop → take profit → DTE exit. ``None`` = keep holding. Expiry is the
-    caller's business (``dte == 0`` settles; it is not a rule). *eod* says whether
-    the mark is an end-of-day mark; with ``stop_eod_only`` the stop is skipped
-    otherwise.
+    Order: stop → profit lock → take profit → DTE exit. ``None`` = keep holding.
+    Expiry is the caller's business (``dte == 0`` settles; it is not a rule). *eod*
+    says whether the mark is an end-of-day mark; with ``stop_eod_only`` the stop is
+    skipped otherwise. *peak_pnl* is the peak per-share P&L of the stored marks since
+    entry (:func:`peak_pnl`); ``None`` leaves the profit lock unarmed.
     """
     stop = rules.stop_pnl
     stop_live = eod or not rules.policy.stop_eod_only
     if stop is not None and stop_live and pnl <= stop:
         return ExitReason.STOP
+    if lock_fires(rules, pnl=pnl, peak=peak_pnl, eod=eod):
+        return ExitReason.PROFIT_LOCK
     tp = rules.tp_pnl(dte)
     if tp is not None and pnl >= tp:
         return ExitReason.TAKE_PROFIT

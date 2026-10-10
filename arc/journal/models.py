@@ -9,6 +9,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from arc.features.technicals import TechnicalFeatures  # noqa: TC001 - pydantic field
 from arc.journal.analytics import ProposalAnalytics  # noqa: TC001 - pydantic field
 from arc.journal.reasons import (
     Choice,
@@ -111,6 +112,9 @@ class MarketContext(BaseModel):
     analytics: ProposalAnalytics | None = Field(
         None, description="E6.1a card v2 numbers (cost, liquidity, moneyness, vol, exit model)"
     )
+    # E16.2 (D76): the regime entry's daily technicals, frozen for the audit trail
+    # (always written, whatever personas.research_technicals says). None = none stored.
+    technicals: TechnicalFeatures | None = None
 
     _at = field_validator("at")(_aware)
 

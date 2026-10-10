@@ -72,7 +72,12 @@ class TestKinds:
     def test_mandatory_and_discretionary_partition_every_signal(self) -> None:
         assert set(SignalKind) == MANDATORY_KINDS | DISCRETIONARY_KINDS
         assert not MANDATORY_KINDS & DISCRETIONARY_KINDS
-        assert {SignalKind.STOP, SignalKind.DTE_EXIT, SignalKind.EXPIRY} == MANDATORY_KINDS
+        assert {
+            SignalKind.STOP,
+            SignalKind.PROFIT_LOCK,  # E18.1 (D78): a lock Risk could veto is not a lock
+            SignalKind.DTE_EXIT,
+            SignalKind.EXPIRY,
+        } == MANDATORY_KINDS
 
 
 class TestSkipRules:

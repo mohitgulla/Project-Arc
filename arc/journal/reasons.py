@@ -236,6 +236,7 @@ class ReasonCode(StrEnum):
     # exit (E6.2: E2.4 policy on open structures)
     EXIT_TAKE_PROFIT = "exit:take_profit"
     EXIT_STOP = "exit:stop"
+    EXIT_PROFIT_LOCK = "exit:profit_lock"  # E18.1 (D78): trailing take profit
     EXIT_DTE = "exit:dte"
     EXIT_EXPIRY = "exit:expiry"
     EXIT_NOT_PROPOSED = "exit:not_proposed"
@@ -470,6 +471,7 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.ORDER_SUBMIT_FAILED: "Order not taken by the broker (submit failed)",
     ReasonCode.EXIT_TAKE_PROFIT: "Exit: profit target hit",
     ReasonCode.EXIT_STOP: "Exit: stop hit",
+    ReasonCode.EXIT_PROFIT_LOCK: "Closed: profit lock",
     ReasonCode.EXIT_DTE: "Exit: days-to-expiry limit",
     ReasonCode.EXIT_EXPIRY: "Exit: expiry",
     ReasonCode.EXIT_NOT_PROPOSED: "Exit not proposed",

@@ -3,7 +3,8 @@
 :func:`evaluate_position` answers two questions for one open position, using the same
 :class:`~arc.exits.policy.ExitPolicy` as the proposal card and the backtester:
 
-1. Which rule fires **now** (stop → take profit → DTE exit), given current mid marks.
+1. Which rule fires **now** (stop → profit lock → take profit → DTE exit), given
+   current mid marks and, for the E18.1 profit lock, the peak P&L of the stored marks.
 2. What is the **remaining** managed EV if held under the policy, versus closing now
    at the market marks (``remaining_net_ev``, $ per unit, after exit costs on both
    sides). E6.4's close-to-reallocate compares this with a new candidate's managed
@@ -104,6 +105,12 @@ class PositionExitState(BaseModel):
         None, description="E[net P&L if held] − net P&L of closing now (after exit costs)"
     )
     remaining_days_held: float | None = None
+    peak_pnl_per_share: float | None = Field(
+        None, description="E18.1: peak per-share P&L since entry (stored marks + now)"
+    )
+    lock_arm_pnl: float | None = Field(None, description="Per-share peak that arms the lock")
+    lock_floor_pnl: float | None = Field(None, description="Per-share P&L an armed lock closes at")
+    lock_armed: bool | None = Field(None, description="Profit lock armed; None = no lock")
     remaining_pop: float | None = Field(
         None, ge=0.0, le=1.0, description="P(holding under the policy nets more than closing now)"
     )
@@ -131,8 +138,14 @@ def evaluate_position(
     *,
     cost: CostModel | None = None,
     cfg: ExitModelConfig | None = None,
+    peak_pnl: float | None = None,
 ) -> PositionExitState:
-    """Evaluate *position* against *policy* at *marks* (see module doc)."""
+    """Evaluate *position* against *policy* at *marks* (see module doc).
+
+    *peak_pnl* (E18.1) is the peak per-share P&L over the position's stored marks
+    since entry (:func:`arc.exits.policy.peak_pnl`); ``None`` = no stored mark, so the
+    profit lock is not armed (a peak is never made up from the current mark alone).
+    """
     cost = cost or load_cost_model()
     st = position.structure
     rules = resolve_rules(st, policy, entry_net=position.entry_net)
@@ -140,11 +153,13 @@ def evaluate_position(
     dte = dte_calendar(marks.as_of, expiry)
     value = _mark(position, marks)
     pnl = value - rules.entry_net
+    peak = None if peak_pnl is None else max(float(peak_pnl), pnl)
     fired = (
         ExitReason.EXPIRY
         if dte <= 0
-        else check_rules(rules, pnl=pnl, dte=dte, eod=marks.end_of_day)
+        else check_rules(rules, pnl=pnl, dte=dte, eod=marks.end_of_day, peak_pnl=peak)
     )
+    arm = rules.lock_arm_pnl
 
     # closing now: every leg at mid ∓ x·spread, commission on every contract
     legs = sim_legs(st, cost, marks.leg_spreads or None)
@@ -172,6 +187,7 @@ def evaluate_position(
             cost=cost,
             cfg=cfg,
             path_vol=marks.realized_vol if cfg.path_vol == "realized_forecast" else None,
+            peak_pnl=peak,
         )
         # E6.4a parity: "now" is the close at the MARKET marks (the fill closing now
         # would get), the same basis the entry model charges the open against
@@ -210,6 +226,10 @@ def evaluate_position(
         remaining_gross_ev=gross_ev,
         remaining_net_ev=net_ev,
         remaining_days_held=days,
+        peak_pnl_per_share=None if peak is None else round(peak, 4),
+        lock_arm_pnl=None if arm is None else round(arm, 4),
+        lock_floor_pnl=None if rules.lock_floor_pnl is None else round(rules.lock_floor_pnl, 4),
+        lock_armed=None if arm is None else (peak is not None and peak >= arm),
         remaining_pop=rem_pop,
         n_paths=n_paths,
         seed=seed,

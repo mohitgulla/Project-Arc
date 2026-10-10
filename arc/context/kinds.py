@@ -87,7 +87,10 @@ class CandidatePayload(Candidate):
 
 
 class RegimePayload(FeatureSnapshot):
-    """Regime + vol features for one underlying (E4.3)."""
+    """Regime + vol features for one underlying (E4.3).
+
+    v4 (E16.2, D76): ``technicals`` (defaulted ``None``), so v3 rows still validate.
+    """
 
     model_config = _FORBID
 
@@ -951,12 +954,12 @@ KINDS: Mapping[str, KindSpec] = _registry(
     KindSpec("raw_doc_ref", RawDocRefPayload),
     KindSpec("channel_brief", ChannelBriefPayload),
     KindSpec("candidate", CandidatePayload, schema_version=3),  # E13.7: feed, origins
-    KindSpec("regime", RegimePayload, schema_version=3),  # E17.1 (D77): regime v2 fields
+    KindSpec("regime", RegimePayload, schema_version=4),  # E16.2 (D76): technicals
     KindSpec("shortlist", ShortlistPayload, schema_version=5),  # E13.17: exit_watchlist_counts
-    KindSpec("structures", StructuresPayload, schema_version=3),  # E13.9: revision_of/kept
+    KindSpec("structures", StructuresPayload, schema_version=4),  # E18.1: profit_lock
     KindSpec("risk_review", RiskReviewPayload, schema_version=2),  # E13.9: verdicts
-    KindSpec("proposal", ProposalPayload, schema_version=4),  # E6.2h: Leg.penny_program
-    KindSpec("position_review", PositionReviewPayload, schema_version=3),  # E6.2h: penny_program
+    KindSpec("proposal", ProposalPayload, schema_version=5),  # E18.1: profit_lock
+    KindSpec("position_review", PositionReviewPayload, schema_version=4),  # E18.1: lock state
     KindSpec("portfolio_context", PortfolioContextPayload, schema_version=4),  # E3.6: β$Δ
     KindSpec("journal", JournalPayload),
     KindSpec("note", NotePayload, schema_version=5),  # E13.13: sections, scalar facts

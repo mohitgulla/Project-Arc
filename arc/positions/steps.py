@@ -68,6 +68,7 @@ log = structlog.get_logger(__name__)
 
 SIGNAL_CODES: dict[SignalKind, ReasonCode] = {
     SignalKind.STOP: ReasonCode.EXIT_STOP,
+    SignalKind.PROFIT_LOCK: ReasonCode.EXIT_PROFIT_LOCK,
     SignalKind.PROFIT_TARGET: ReasonCode.EXIT_TAKE_PROFIT,
     SignalKind.TIME_ADJUSTED_TARGET: ReasonCode.EXIT_TIME_ADJUSTED,
     SignalKind.DTE_EXIT: ReasonCode.EXIT_DTE,
@@ -212,6 +213,7 @@ def evaluate(ctx: JobContext, env: PipelineEnv, *, exit_cfg: ExitConfig | None =
     from arc.control.effective import cost_model, exit_config
     from arc.execution.exits import exit_pending, price_close
     from arc.pipeline.steps import _realized_vol
+    from arc.positions.marks import stored_peak_pnl
     from arc.store.execution import OpenStructureRepo
 
     settings = ctx.settings
@@ -252,6 +254,9 @@ def evaluate(ctx: JobContext, env: PipelineEnv, *, exit_cfg: ExitConfig | None =
                 exit_pending=exit_pending(ctx.conn, row),
                 entry_managed_net_ev=_entry_managed_net_ev(ctx.conn, row["open_proposal_hash"]),
                 minutes_since_fill=_minutes_since(row.get("opened_at"), ctx.now),
+                peak_pnl=_peak(
+                    stored_peak_pnl(ctx.conn, str(row["id"]), opened_at=row.get("opened_at"))
+                ),
             )
         except (LookupError, ValueError) as exc:
             errors.append(f"{t}: cannot review ({exc})")
@@ -288,6 +293,10 @@ def evaluate(ctx: JobContext, env: PipelineEnv, *, exit_cfg: ExitConfig | None =
         },
         notice="; ".join(errors),
     )
+
+
+def _peak(p: Decimal | None) -> float | None:
+    return None if p is None else float(p)
 
 
 def _theta(priced: PricedStructure, st: Structure, today: _dt.date, r: float) -> float | None:

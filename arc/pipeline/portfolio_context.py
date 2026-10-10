@@ -224,16 +224,27 @@ def _fresh_review(
 
 
 def _computed_review(
-    env: PipelineEnv, settings: ArcSettings, row: Mapping[str, Any], st: Structure, today: _dt.date
+    env: PipelineEnv,
+    settings: ArcSettings,
+    row: Mapping[str, Any],
+    st: Structure,
+    today: _dt.date,
+    conn: sqlite3.Connection | None = None,
 ) -> PositionReview | None:
     """Run E6.4's evaluator on fresh marks (the same code path as positions.evaluate)."""
     from arc.control.effective import cost_model, exit_config
     from arc.execution.exits import price_close
     from arc.exits.position import OpenPosition, PositionMarks
     from arc.positions.evaluate import review_position
+    from arc.positions.marks import stored_peak_pnl
 
     try:
         priced = price_close(env.market, st, as_of=today, r=settings.scanner_risk_free_rate)
+        peak = (
+            None
+            if conn is None
+            else stored_peak_pnl(conn, str(row["id"]), opened_at=row.get("opened_at"))
+        )
         mids = {k: float(c.mid) for k, c in priced.contracts.items() if c.mid is not None}
         return review_position(
             structure_id=str(row["id"]),
@@ -253,6 +264,7 @@ def _computed_review(
             exits=exit_config(settings),
             cost=cost_model(settings),
             exit_pending=bool(row.get("exit_proposal_hash")),
+            peak_pnl=None if peak is None else float(peak),
         )
     except (LookupError, ValueError) as exc:
         log.warning("portfolio_context.review_failed", structure_id=row["id"], error=str(exc))
@@ -392,7 +404,7 @@ def build_portfolio_context(
         review = _fresh_review(snapshot, str(row["id"]), now, review_max_age)
         source: Literal["position_review", "computed", "none"] = "position_review"
         if review is None:
-            review = _computed_review(env, settings, row, st, today)
+            review = _computed_review(env, settings, row, st, today, conn)
             source = "computed" if review is not None else "none"
         if review is None:
             warnings.append(f"{row['ticker']} {row['id']}: no marks (P&L unknown)")
