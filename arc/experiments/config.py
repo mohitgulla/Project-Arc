@@ -16,9 +16,14 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from arc.experiments.models import ExperimentSpec
+
 __all__ = [
     "DEFAULT_EXPERIMENTS_PATH",
+    "EACH_TREATMENT",
     "FORBIDDEN_ARM_KEYS",
+    "MAX_PARALLEL_ARMS_CEILING",
+    "AccountMode",
     "ArmRunner",
     "ExperimentDefaults",
     "RunnerConfig",
@@ -69,6 +74,12 @@ _ENV_RE = r"^[A-Z][A-Z0-9_]*$"
 # Key prefixes an experiment arm may never trade with (AGENTS / D44): production
 # (ALPACA) and the integration-test account (ALPACA_TEST).
 FORBIDDEN_ARM_KEYS: frozenset[str] = frozenset({"ALPACA", "ALPACA_TEST"})
+#: D69: an arm entry with this ``spec_arm`` is a template, expanded at t0 into one
+#: runner arm per spec treatment (named t1..tK); shared account mode only.
+EACH_TREATMENT = "treatments"
+#: D69 / D26: code ceiling of ``max_parallel_arms`` (the registry's hard ceiling too).
+MAX_PARALLEL_ARMS_CEILING = 16
+AccountMode = Literal["dedicated", "shared"]
 
 
 class ArmRunner(BaseModel):
@@ -77,12 +88,20 @@ class ArmRunner(BaseModel):
     N-arm by configuration: a treatment arm, a paper shadow-control for a future
     live control (``spec_arm: control`` on its own paper keys), or both. The
     production control is never listed here: it is the normal tick on ``data/arc.db``.
+
+    D69 (shared account mode): ``spec_arm: treatments`` makes the entry a template,
+    expanded per spec treatment; its ``db`` must carry ``{arm}`` (e.g.
+    ``data/arc-exp-{experiment_id}-{arm}.db``) so every arm gets its own store.
     """
 
     model_config = _FORBID
 
-    spec_arm: Literal["control", "treatment"] = Field(
-        ..., description="Whose overlay this arm runs (the spec's control or treatment arm)"
+    spec_arm: str = Field(
+        ...,
+        description=(
+            "Whose overlay this arm runs: control, treatment (= t1, spec v1), t1..t16, "
+            "or 'treatments' (a template: one arm per spec treatment, shared mode)"
+        ),
     )
     keys_env: str = Field(
         ...,
@@ -93,18 +112,35 @@ class ArmRunner(BaseModel):
         ...,
         min_length=1,
         description=(
-            "The arm's own store, relative to the repo; '{experiment_id}' is replaced, so "
-            "every experiment starts on a fresh store (arm_identity is written once)"
+            "The arm's own store, relative to the repo; '{experiment_id}' (and '{arm}', the "
+            "runner arm name) are replaced, so every experiment starts on a fresh store "
+            "(arm_identity is written once)"
         ),
     )
 
-    def db_path(self, experiment_id: str) -> str:
-        return self.db.replace("{experiment_id}", experiment_id)
+    @property
+    def is_template(self) -> bool:
+        return self.spec_arm == EACH_TREATMENT
+
+    def db_path(self, experiment_id: str, arm: str | None = None) -> str:
+        out = self.db.replace("{experiment_id}", experiment_id)
+        return out if arm is None else out.replace("{arm}", arm)
 
     @model_validator(mode="after")
     def _keys(self) -> ArmRunner:
+        from arc.experiments.models import is_spec_arm
+
         if self.keys_env in FORBIDDEN_ARM_KEYS:
             msg = f"arm keys {self.keys_env}_* are production/test keys; arms use their own"
+            raise ValueError(msg)
+        if not (self.is_template or is_spec_arm(self.spec_arm)):
+            msg = (
+                f"spec_arm {self.spec_arm!r}: control, treatment, t1..t16, or "
+                f"{EACH_TREATMENT!r} (template)"
+            )
+            raise ValueError(msg)
+        if self.is_template and "{arm}" not in self.db:
+            msg = f"a {EACH_TREATMENT!r} template arm needs '{{arm}}' in its db ({self.db})"
             raise ValueError(msg)
         return self
 
@@ -140,6 +176,30 @@ class RunnerConfig(BaseModel):
         ),
     )
     arms: dict[str, ArmRunner] = Field(default_factory=dict)
+    account_mode: AccountMode = Field(
+        default="dedicated",
+        description=(
+            "D69: dedicated = one paper account per arm (keys_env unique, the account flat "
+            "at t0); shared = many arms (and experiments) trade one account, each as a "
+            "virtual sub-account, and an arm entry may be a 'treatments' template. "
+            "Topology: never runtime-tunable."
+        ),
+    )
+    max_parallel_arms: int = Field(
+        default=10,
+        ge=1,
+        le=MAX_PARALLEL_ARMS_CEILING,
+        description="D69: arms registered + running across ALL experiments (ceiling 16)",
+    )
+    shared_capacity_frac: float = Field(
+        default=0.9,
+        gt=0.0,
+        le=1.0,
+        description=(
+            "D69 shared mode: at t0, the virtual t0 equity of every running arm on the "
+            "account plus the new arms must fit in broker equity x this"
+        ),
+    )
 
     @model_validator(mode="after")
     def _arms(self) -> RunnerConfig:
@@ -158,11 +218,59 @@ class RunnerConfig(BaseModel):
                 msg = f"runner arms share a store ({arm.db}); each arm needs its own"
                 raise ValueError(msg)
             dbs.add(arm.db)
-        keys = [a.keys_env for a in self.arms.values()]
-        if len(keys) != len(set(keys)):
-            msg = "runner arms share broker keys; each arm needs its own paper account"
-            raise ValueError(msg)
+            if arm.is_template and self.account_mode != "shared":
+                msg = (
+                    f"runner arm {name!r} is a {EACH_TREATMENT!r} template: only "
+                    "account_mode: shared expands one arm per treatment"
+                )
+                raise ValueError(msg)
+        if self.account_mode == "dedicated":
+            keys = [a.keys_env for a in self.arms.values()]
+            if len(keys) != len(set(keys)):
+                msg = (
+                    "runner arms share broker keys; each arm needs its own paper account "
+                    "(or account_mode: shared, D69)"
+                )
+                raise ValueError(msg)
         return self
+
+    def arms_for(self, spec: ExperimentSpec) -> dict[str, ArmRunner]:
+        """The runner arms of experiment *spec*: templates expanded per treatment (D69).
+
+        Every returned arm names a concrete spec arm. Raises ``ValueError`` when an arm
+        names a spec arm the spec lacks, a template name collides with a listed arm, or
+        a spec treatment has no runner arm (it would silently never run).
+        """
+        from arc.experiments.models import spec_arm_name
+
+        out: dict[str, ArmRunner] = {}
+        for name, arm in self.arms.items():
+            if not arm.is_template:
+                try:
+                    spec.arms.arm(arm.spec_arm)
+                except KeyError as exc:
+                    raise ValueError(f"runner arm {name!r}: {exc.args[0]}") from exc
+                if name in out:
+                    msg = f"runner arm {name!r} collides with a template-expanded arm"
+                    raise ValueError(msg)
+                out[name] = arm
+                continue
+            for t in spec.arms.names:
+                if t in out or t in self.arms:
+                    msg = f"template arm {name!r} expands to {t!r}, which is already an arm"
+                    raise ValueError(msg)
+                out[t] = arm.model_copy(update={"spec_arm": t, "db": arm.db.replace("{arm}", t)})
+        covered = {spec_arm_name(a.spec_arm) for a in out.values()}
+        missing = [t for t in spec.arms.names if t not in covered]
+        # a one-treatment spec may run without its treatment (e.g. a shadow control
+        # only, pre-D69 behaviour); a multi-arm spec must run every treatment
+        if missing and len(spec.arms.names) > 1:
+            msg = (
+                f"{spec.id}: treatment(s) {', '.join(missing)} have no runner arm; list one "
+                f"per treatment or use account_mode: shared with a {EACH_TREATMENT!r} template"
+            )
+            raise ValueError(msg)
+        return out
 
 
 class ExperimentsConfig(BaseModel):

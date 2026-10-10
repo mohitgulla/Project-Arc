@@ -2250,6 +2250,26 @@ _EXPERIMENT_TUNABLES += (
         min=1,
         max=30,
     ),
+    # D69 (E15.1): multi-arm capacity. account_mode is topology (never tunable).
+    _runner(
+        "max_parallel_arms",
+        "experiment arms registered or running at once, across every experiment "
+        "(each arm is one more loop, LLM chain and order stream).",
+        Risk.UP,
+        min=1,
+        max=16,
+        hard_ceiling=16,
+    ),
+    _runner(
+        "shared_capacity_frac",
+        "shared account mode: the arms' virtual t0 equity on one paper account must fit "
+        "in broker equity times this when an experiment starts.",
+        Risk.UP,
+        type=_F,
+        min=0.1,
+        max=1.0,
+        hard_ceiling=1.0,
+    ),
 )
 
 

@@ -163,7 +163,8 @@ def experiment_stop_card(report: ExperimentReport) -> B.CardView:
         ("Sortino Ratio", _secondary(r)),
     ]
     arms = {a.arm: a for a in r.arms}
-    for name in ("control", "treatment"):
+    # control first, then every treatment arm (D69: t1..tK) in report order
+    for name in ["control", *(a for a in arms if a != "control")]:
         if name in arms:
             pairs.append((name.capitalize(), _arm(arms[name], r.t0_equity)))
     pairs.append(

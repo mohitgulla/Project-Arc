@@ -118,10 +118,13 @@ def _detail(s: ExperimentState) -> list[str]:
         f"  alpha {sp.alpha}, power {sp.power}, mde {sp.mde if sp.mde else 'unset (A/A)'}, "
         f"sessions {sp.min_sessions}-{sp.max_sessions}",
     ]
-    over = sp.arms.treatment.overlay
-    lines.append(
-        "  treatment overlay: " + (json.dumps(over, sort_keys=True) if over else "none (= control)")
-    )
+    many = len(sp.arms.treatments) > 1
+    for name, arm in sp.arms.treatments.items():
+        over = arm.overlay
+        label = f"{name} overlay" if many else "treatment overlay"
+        lines.append(
+            f"  {label}: " + (json.dumps(over, sort_keys=True) if over else "none (= control)")
+        )
     lines.append(f"  spec sha256 {s.spec_hash}")
     lines.append(f"  registered sha256 {s.registered_hash or '- (draft: not locked yet)'}")
     lines.append("  events:")
@@ -303,9 +306,12 @@ def run_experiment(args: argparse.Namespace) -> int:
     cmd = args.experiment_command
     conn = _open(args.db)
     try:
-        store = ExperimentStore(conn)
+        from arc.control.effective import effective_settings, experiments_config
+
+        # D69: register/stop queue and promote within experiments.runner.max_parallel_arms
+        runner = experiments_config(effective_settings(conn)).runner
+        store = ExperimentStore.for_runner(conn, runner)
         if cmd == "create":
-            from arc.control.effective import effective_settings, experiments_config
             from arc.experiments.overlay import fill_defaults, load_spec
 
             try:

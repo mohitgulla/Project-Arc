@@ -39,10 +39,27 @@ experiments:
   # account opened at control's t0 equity (arc.experiments.virtual).
   # N arms is configuration: a future live control adds a paper shadow control as
   #   shadow_control: {spec_arm: control, keys_env: ALPACA_SHADOW, db: "data/arc-shadow-{experiment_id}.db"}
+  #
+  # D69 (E15.1) multi-arm: a spec may carry K treatments (t1..t16). In `account_mode:
+  # shared` many arms (of one or several experiments) trade ONE paper account, each as
+  # a virtual sub-account, and an arm entry with `spec_arm: treatments` is a template
+  # expanded to one arm per spec treatment (its db must carry {arm}). At start the
+  # first arm on the account needs it flat; the arms' virtual t0 equity (running arms
+  # + the new ones) must fit in broker equity x shared_capacity_frac. Dedicated- and
+  # shared-mode arms never share one account. Example (keep `enabled` as is):
+  #   account_mode: shared
+  #   arms:
+  #     t:
+  #       spec_arm: treatments
+  #       keys_env: ALPACA_EXP
+  #       db: "data/arc-exp-{experiment_id}-{arm}.db"
   runner:
     enabled: true
     max_lag_seconds: 540     # skip pairing a control chain older than this (stale quotes); D61: 7m loop + 2m (was 240)
     tape_keep_days: 3        # market_tape retention in the control store
+    account_mode: dedicated  # D69: dedicated (one account per arm) | shared (one account, many arms)
+    max_parallel_arms: 10    # D69: arms registered + running across all experiments (ceiling 16)
+    shared_capacity_frac: 0.9   # D69 shared mode: sum of arm t0 equity <= broker equity x this
     arm_jobs: [monitor, positions.evaluate, broker.reconcile, broker]   # run on the arm's own store
     # E13.12 (D56): non-loop personas (scout | scalp) every arm runs itself, on its own
     # store, at control's slots. An arm whose overlay touches a persona's knobs runs it

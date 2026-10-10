@@ -162,7 +162,7 @@ def test_detail_carries_spec_prereg_hash_and_shas(fixture_db: tuple[Path, dt.dat
     assert len(d["spec_hash"]) == 64
     assert d["running"]["control_sha"] == fx.CONTROL_SHA
     assert d["report"]["control_sha"] == fx.CONTROL_SHA
-    overlay = d["spec"]["arms"]["treatment"]["overlay"]
+    overlay = d["spec"]["arms"]["treatments"]["t1"]["overlay"]  # D69: v1 `treatment` -> t1
     assert overlay == {"exits": {"default": {"take_profit_pct": 0.4}}}
     assert [e["status"] for e in d["events"]] == ["draft", "registered", "running"]
 

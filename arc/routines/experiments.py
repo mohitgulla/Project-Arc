@@ -47,7 +47,8 @@ def experiments_evaluate_step(ctx: JobContext) -> JobResult:
     from arc.experiments.store import ExperimentStore
 
     cfg = experiments_config(ctx.settings)
-    store = ExperimentStore(ctx.conn, now=lambda: ctx.now)
+    # D69: stops promote queued experiments while their arms fit max_parallel_arms
+    store = ExperimentStore.for_runner(ctx.conn, cfg.runner, now=lambda: ctx.now)
     reports = evaluate_running(store, cfg, now=ctx.now, run_id=ctx.run_id)
     for r in reports:
         ctx.record_input(

@@ -3,17 +3,22 @@
 Pure: pydantic models, the canonical-JSON spec hash and the status transition
 table. No DB, no clock, no network. :mod:`arc.experiments.store` persists them.
 
-An experiment compares two arms on the same tick inputs:
+An experiment compares control with K treatment arms on the same tick inputs:
 
 - **control** is the production config (its overlay must be empty);
-- **treatment** is the production config with a config *overlay* deep-merged on
-  top: the same format and the same :func:`arc.utils.yamlpatch.deep_merge` as
-  ``arc backtest rank --experiment``. A forward overlay is keyed by the config
-  file it patches (``ranking``, ``exits``, ``costs``, ``account_profiles``,
-  ``routines``); each value is a partial copy of that file.
+- each **treatment** ``t1`` .. ``tK`` (D69, spec v2; K <= 16) is the production
+  config with a config *overlay* deep-merged on top: the same format and the same
+  :func:`arc.utils.yamlpatch.deep_merge` as ``arc backtest rank --experiment``. A
+  forward overlay is keyed by the config file it patches (``ranking``, ``exits``,
+  ``costs``, ``account_profiles``, ``routines``); each value is a partial copy of
+  that file.
 
-``aa`` experiments run two identical arms (both overlays empty) to measure the
-noise floor (sigma, achievable MDE); ``ab`` experiments change one thing.
+``aa`` experiments run identical arms (every overlay empty) to measure the noise
+floor (sigma, achievable MDE); ``ab`` experiments change one thing per treatment.
+
+Spec versions: v1 (``arms.treatment``) is the one-treatment format of D44; it still
+loads, normalised to ``treatments: {t1: ...}``, and its canonical JSON (hence its
+hash) is the v1 document exactly as before. v2 writes ``arms.treatments``.
 
 Pre-registration: once registered, the spec's canonical-JSON SHA-256 is locked
 and any edit needs a new experiment id.
@@ -33,6 +38,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 __all__ = [
     "ACTIVE_STATUSES",
     "CONTROL_ARM",
+    "FIRST_TREATMENT",
+    "LEGACY_TREATMENT",
+    "MAX_TREATMENTS",
     "OVERLAY_TARGETS",
     "SPEC_VERSION",
     "TRANSITIONS",
@@ -51,11 +59,19 @@ __all__ = [
     "StopReason",
     "arm_id",
     "canonical_json",
+    "is_spec_arm",
+    "spec_arm_name",
     "spec_hash",
+    "treatment_key",
 ]
 
-SPEC_VERSION = 1
+SPEC_VERSION = 2
 CONTROL_ARM = "control"  # arm_id NULL on a row means this arm
+#: D69: the v1 spec arm name; an alias of ``t1``. Reserved, like ``control``.
+LEGACY_TREATMENT = "treatment"
+FIRST_TREATMENT = "t1"
+MAX_TREATMENTS = 16
+_TREATMENT_RE = re.compile(r"^t([1-9]|1[0-6])$")
 _FORBID = ConfigDict(extra="forbid", frozen=True)
 _ID_RE = re.compile(r"^XP-[1-9]\d*$")
 _PROPOSER_RE = re.compile(r"^(owner|A-[1-9]\d*)$")
@@ -157,11 +173,81 @@ class Arm(BaseModel):
         return v
 
 
+def treatment_key(name: str) -> int:
+    """Sort key of a treatment name (``t2`` before ``t10``)."""
+    return int(name[1:])
+
+
+def spec_arm_name(name: str) -> str:
+    """The spec arm a name refers to: ``treatment`` (v1 alias) -> ``t1``; else unchanged."""
+    return FIRST_TREATMENT if name == LEGACY_TREATMENT else name
+
+
+def is_spec_arm(name: str) -> bool:
+    """``control``, ``treatment`` (alias of t1) or ``t1`` .. ``t16``."""
+    return name in (CONTROL_ARM, LEGACY_TREATMENT) or bool(_TREATMENT_RE.match(name))
+
+
 class Arms(BaseModel):
+    """Control plus K treatments (D69). Input ``treatment:`` (v1) becomes ``t1``."""
+
     model_config = _FORBID
 
     control: Arm = Field(default_factory=lambda: Arm())
-    treatment: Arm = Field(default_factory=lambda: Arm())
+    treatments: dict[str, Arm] = Field(
+        default_factory=lambda: {FIRST_TREATMENT: Arm()},
+        description="t1..t16 -> the treatment arm (v1 `treatment` loads as t1)",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _alias(cls, data: Any) -> Any:
+        if not isinstance(data, dict) or LEGACY_TREATMENT not in data:
+            return data
+        if "treatments" in data:
+            msg = "arms: give either `treatment` (spec v1) or `treatments` (v2), not both"
+            raise ValueError(msg)
+        out = {k: v for k, v in data.items() if k != LEGACY_TREATMENT}
+        out["treatments"] = {FIRST_TREATMENT: data[LEGACY_TREATMENT]}
+        return out
+
+    @field_validator("treatments")
+    @classmethod
+    def _names(cls, v: dict[str, Arm]) -> dict[str, Arm]:
+        if not v:
+            msg = "an experiment needs at least one treatment arm"
+            raise ValueError(msg)
+        for name in v:
+            if not _TREATMENT_RE.match(name):
+                msg = (
+                    f"treatment arm {name!r}: name it t1..t{MAX_TREATMENTS} "
+                    "('control' and 'treatment' are reserved)"
+                )
+                raise ValueError(msg)
+        return {k: v[k] for k in sorted(v, key=treatment_key)}
+
+    @property
+    def names(self) -> list[str]:
+        """The treatment names in order (t1, t2, ..., t10)."""
+        return list(self.treatments)
+
+    @property
+    def treatment(self) -> Arm:
+        """The only treatment of a one-treatment spec (v1 accessor; K > 1 raises)."""
+        if len(self.treatments) != 1:
+            msg = f"spec has {len(self.treatments)} treatments; read arms.treatments"
+            raise ValueError(msg)
+        return next(iter(self.treatments.values()))
+
+    def arm(self, name: str) -> Arm:
+        """The spec arm *name* (``control``, ``treatment`` = t1, or ``tN``)."""
+        n = spec_arm_name(name)
+        if n == CONTROL_ARM:
+            return self.control
+        if n not in self.treatments:
+            msg = f"spec has no arm {name!r} (treatments: {', '.join(self.treatments)})"
+            raise KeyError(msg)
+        return self.treatments[n]
 
 
 class ExperimentSpec(BaseModel):
@@ -174,7 +260,7 @@ class ExperimentSpec(BaseModel):
 
     model_config = _FORBID
 
-    spec_version: Literal[1] = SPEC_VERSION
+    spec_version: Literal[1, 2] = SPEC_VERSION
     id: str = Field(..., description="XP-<n>")
     title: str = Field(..., min_length=1)
     hypothesis: str = Field(..., min_length=1)
@@ -216,18 +302,41 @@ class ExperimentSpec(BaseModel):
             raise ValueError(msg)
         return v
 
+    @model_validator(mode="before")
+    @classmethod
+    def _v1(cls, data: Any) -> Any:
+        """A spec with v1 ``arms.treatment`` and no ``spec_version`` is a v1 spec."""
+        if (
+            isinstance(data, dict)
+            and "spec_version" not in data
+            and isinstance(data.get("arms"), dict)
+            and LEGACY_TREATMENT in data["arms"]
+        ):
+            return {**data, "spec_version": 1}
+        return data
+
     @model_validator(mode="after")
     def _shape(self) -> ExperimentSpec:
+        if self.spec_version == 1 and self.arms.names != [FIRST_TREATMENT]:
+            msg = (
+                "a spec_version 1 spec has exactly one treatment (`treatment`); "
+                "use spec_version 2 and `treatments: {t1: ..., t2: ...}` for more"
+            )
+            raise ValueError(msg)
         if self.arms.control.overlay:
             msg = "the control arm is the production config: its overlay must be empty"
             raise ValueError(msg)
-        if self.kind is ExperimentKind.AA and self.arms.treatment.overlay:
-            msg = "an aa experiment runs identical arms: the treatment overlay must be empty"
-            raise ValueError(msg)
-        if self.kind is ExperimentKind.AB:
-            if not self.arms.treatment.overlay:
-                msg = "an ab experiment needs a treatment overlay (what changes)"
+        for name, arm in self.arms.treatments.items():
+            if self.kind is ExperimentKind.AA and arm.overlay:
+                msg = (
+                    "an aa experiment runs identical arms: every treatment overlay must be "
+                    f"empty ({name} has one)"
+                )
                 raise ValueError(msg)
+            if self.kind is ExperimentKind.AB and not arm.overlay:
+                msg = f"an ab experiment needs a treatment overlay (what changes) on {name}"
+                raise ValueError(msg)
+        if self.kind is ExperimentKind.AB:
             if self.backtest_ref is None:
                 msg = "an ab experiment needs a backtest_ref (E7.5 run / compare verdict)"
                 raise ValueError(msg)
@@ -254,10 +363,23 @@ class ExperimentSpec(BaseModel):
         )
 
 
+def _canonical_doc(spec: ExperimentSpec) -> dict[str, Any]:
+    """The hashed document. A v1 spec keeps its v1 shape (``arms.treatment``), so every
+    hash locked before D69 recomputes unchanged."""
+    doc = spec.model_dump(mode="json")
+    if spec.spec_version == 1:
+        arms = doc["arms"]
+        doc["arms"] = {
+            "control": arms["control"],
+            LEGACY_TREATMENT: arms["treatments"][FIRST_TREATMENT],
+        }
+    return doc
+
+
 def canonical_json(spec: ExperimentSpec) -> str:
     """The spec as canonical JSON: sorted keys, no whitespace, every field present."""
     return json.dumps(
-        spec.model_dump(mode="json"), sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        _canonical_doc(spec), sort_keys=True, separators=(",", ":"), ensure_ascii=False
     )
 
 

@@ -431,8 +431,8 @@ def test_arms_tick_runs_the_arms_own_scout_only(control: Path, tmp_path: Path) -
         lock_dir=None,
         handlers=handlers,
     )
-    treat = report["arms"]["treatment"]
-    shadow = report["arms"]["shadow_control"]
+    treat = report["arms"]["XP-5:treatment"]
+    shadow = report["arms"]["XP-5:shadow_control"]
     assert treat["plan"]["arm_personas"] == ["scout"]
     assert treat["jobs"] == [("scout", "ok")]  # its own Scout at control's 06:00 slot
     assert shadow["jobs"] == []  # the shadow control reads control's Scout

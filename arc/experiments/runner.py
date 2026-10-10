@@ -41,6 +41,7 @@ from __future__ import annotations
 import datetime as _dt
 import json
 from dataclasses import dataclass, field
+from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -48,7 +49,10 @@ import structlog
 
 from arc.context.ttl import from_db, to_db
 from arc.experiments.arms import (
+    STATE_ARM,
+    ArmAccountChangedError,
     ArmIdentity,
+    account_fingerprint,
     arm_stores,
     read_identity,
     write_identity,
@@ -57,7 +61,6 @@ from arc.experiments.arms import (
 if TYPE_CHECKING:
     import sqlite3
     from collections.abc import Callable, Iterable, Mapping
-    from decimal import Decimal
 
     from arc.config import ArcSettings
     from arc.experiments.config import ArmRunner, RunnerConfig
@@ -67,11 +70,14 @@ if TYPE_CHECKING:
     from arc.routines.handlers import Handler
 
 __all__ = [
+    "ACCOUNT_CHANGED",
     "ACCOUNT_STEPS",
     "BOOK_KINDS",
     "PERSONA_JOBS",
     "PERSONA_OVERLAY_PREFIXES",
     "STEP_TARGETS",
+    "ArmAccount",
+    "ArmAccountChangedError",
     "ArmStartError",
     "PairResult",
     "arm_owned_personas",
@@ -80,7 +86,11 @@ __all__ = [
     "arm_stores",
     "arms_preview",
     "arms_tick",
+    "check_arm_account",
     "fork_step",
+    "live_account_number",
+    "live_account_probe",
+    "live_arms",
     "pair_chain",
     "persona_jobs",
     "plan_of",
@@ -153,11 +163,39 @@ BOOK_KINDS: frozenset[str] = frozenset(
 )
 
 _INGEST_FMT = "%Y-%m-%dT%H:%M:%S.%fZ"  # raw_docs.ingested_at (arc.ingest.store)
-_STATE_ARM = "experiment_arm:{arm}"  # control routine_state -> arm store path
+#: D69: the halt reason prefix of an arm whose broker account changed under it.
+ACCOUNT_CHANGED = "account_changed"
+_ACTOR = "arc.experiments"
 
 
 class ArmStartError(RuntimeError):
     """t0 refused (arm store exists, keys missing, arm account not flat, ...)."""
+
+
+@dataclass(frozen=True)
+class ArmAccount:
+    """What t0 reads from one arm broker account (D69): never stored raw."""
+
+    account_number: str
+    equity: Decimal
+    positions: int
+    open_orders: int
+
+    @property
+    def flat(self) -> bool:
+        return self.positions == 0 and self.open_orders == 0
+
+
+@dataclass(frozen=True)
+class _LiveArm:
+    """An arm of a running experiment, read from its store (start's account checks)."""
+
+    experiment_id: str
+    arm: str
+    keys_env: str
+    account_mode: str
+    account_sha256: str | None
+    t0_equity: Decimal
 
 
 @dataclass
@@ -215,10 +253,11 @@ def _db_file(conn: sqlite3.Connection) -> Path | None:
     return Path(r[2]).resolve() if r is not None and r[2] else None
 
 
-def runner_config(conn: sqlite3.Connection) -> RunnerConfig:
+def runner_config(conn: sqlite3.Connection, path: Path | str | None = None) -> RunnerConfig:
+    """``experiments.runner`` with the D26 overrides; *path* = another experiments.yaml."""
     from arc.control.effective import effective_settings, experiments_config
 
-    return experiments_config(effective_settings(conn)).runner
+    return experiments_config(effective_settings(conn), path).runner
 
 
 def fork_step(chain: list[str], overlay: Mapping[str, Any], personas: Iterable[str] = ()) -> str:
@@ -323,8 +362,8 @@ def plans_at_start(
     from arc.control.effective import routines_for_overlay
 
     out: dict[str, ArmPlan] = {}
-    for name, arm in runner.arms.items():
-        overlay = getattr(st.spec.arms, arm.spec_arm).overlay
+    for name, arm in runner.arms_for(st.spec).items():
+        overlay = st.spec.arms.arm(arm.spec_arm).overlay
         routines = routines_for_overlay(control, overlay, routines_path)
         out[name] = arm_plan(routines, overlay, runner)
     return out
@@ -355,6 +394,136 @@ def arm_routines(routines: RoutinesConfig, arm_jobs: list[str]) -> RoutinesConfi
 # ---------------------------------------------------------------------------
 
 
+def _ro(path: Path) -> sqlite3.Connection | None:
+    import sqlite3 as _sqlite3
+
+    if not path.is_file():
+        return None
+    try:
+        return _sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+    except _sqlite3.Error:
+        return None
+
+
+def live_arms(control: sqlite3.Connection, *, exclude: str | None = None) -> list[_LiveArm]:
+    """Every arm of every running experiment (except *exclude*), read from its store."""
+    import sqlite3 as _sqlite3
+
+    from arc.experiments.tape import running_experiments
+
+    out: list[_LiveArm] = []
+    for st in running_experiments(control):
+        if st.experiment_id == exclude:
+            continue
+        for name, path in arm_stores(control, st.experiment_id).items():
+            conn = _ro(path)
+            if conn is None:
+                continue
+            try:
+                ident = read_identity(conn)
+                r = conn.execute(
+                    "SELECT amount FROM virtual_ledger WHERE kind = 'open' LIMIT 1"
+                ).fetchone()
+            except _sqlite3.Error:
+                continue
+            finally:
+                conn.close()
+            if ident is None:
+                continue
+            out.append(
+                _LiveArm(
+                    experiment_id=st.experiment_id,
+                    arm=name,
+                    keys_env=ident.keys_env,
+                    account_mode=ident.account_mode,
+                    account_sha256=ident.account_sha256,
+                    t0_equity=Decimal(str(r[0])) if r is not None else Decimal(0),
+                )
+            )
+    return out
+
+
+def _check_accounts(
+    runner: RunnerConfig,
+    arms: Mapping[str, ArmRunner],
+    live: list[_LiveArm],
+    *,
+    experiment_id: str,
+    t0_equity: Decimal,
+    probe: Callable[[str], ArmAccount] | None,
+) -> dict[str, ArmAccount]:
+    """D69 t0 account rules per ``keys_env``; returns what *probe* read (keys -> account).
+
+    * dedicated and shared arms never share one account (either direction);
+    * a dedicated arm owns its account: no running arm may already use it, and it
+      starts flat;
+    * a shared account is flat at its FIRST arm's t0; later experiments join it busy;
+    * a running arm recorded on a different account (the keys were replaced) blocks
+      ``start`` until that experiment is stopped;
+    * shared capacity: running arms' t0 + the new arms' t0 <= equity x frac.
+    """
+
+    mode = runner.account_mode
+    new_by_keys: dict[str, list[str]] = {}
+    for name, arm in arms.items():
+        new_by_keys.setdefault(arm.keys_env, []).append(name)
+    seen: dict[str, ArmAccount] = {}
+    for keys, names in new_by_keys.items():
+        on = [a for a in live if a.keys_env == keys]
+        other_mode = sorted({a.experiment_id for a in on if a.account_mode != mode})
+        if other_mode:
+            msg = (
+                f"{experiment_id} ({mode} mode) would trade {keys}_*, which running "
+                f"experiment(s) {', '.join(other_mode)} use in "
+                f"{'shared' if mode == 'dedicated' else 'dedicated'} mode: dedicated and "
+                "shared arms never share one account (D69); stop "
+                f"{', '.join(other_mode)} first (`arc experiment stop <id>`)"
+            )
+            raise ArmStartError(msg)
+        if mode == "dedicated" and (on or len(names) > 1):
+            users = sorted({a.experiment_id for a in on}) or [experiment_id]
+            msg = (
+                f"{keys}_* is a dedicated arm account already used by {', '.join(users)}; "
+                "each dedicated arm needs its own paper account"
+            )
+            raise ArmStartError(msg)
+        if probe is None:
+            continue
+        acct = probe(keys)
+        seen[keys] = acct
+        sha, last4 = account_fingerprint(acct.account_number)
+        moved = sorted({a.experiment_id for a in on if a.account_sha256 not in (None, sha)})
+        if moved:
+            msg = (
+                f"{keys}_* now reaches account …{last4}, but running experiment(s) "
+                f"{', '.join(moved)} started on a different account: stop them first "
+                "(`arc experiment stop <id>`), then start on the new account"
+            )
+            raise ArmStartError(msg)
+        if not on and not acct.flat:
+            msg = (
+                f"{keys} account holds {acct.positions} position(s) and {acct.open_orders} "
+                "open order(s); close them in the Alpaca dashboard before t0 (the "
+                f"{'first arm on a shared' if mode == 'shared' else 'arm'} account must "
+                "start flat)"
+            )
+            raise ArmStartError(msg)
+        if mode == "shared":
+            frac = Decimal(str(runner.shared_capacity_frac))
+            running = sum((a.t0_equity for a in on), Decimal(0))
+            need = running + t0_equity * len(names)
+            cap = acct.equity * frac
+            if need > cap:
+                msg = (
+                    f"shared account {keys} …{last4} too small: {len(on)} running arm(s) "
+                    f"${running:,.2f} + {len(names)} new x ${t0_equity:,.2f} = "
+                    f"${need:,.2f} > equity ${acct.equity:,.2f} x {runner.shared_capacity_frac}"
+                    f" = ${cap:,.2f} (short ${need - cap:,.2f})"
+                )
+                raise ArmStartError(msg)
+    return seen
+
+
 def start_arms(
     control: sqlite3.Connection,
     experiment_id: str,
@@ -368,6 +537,7 @@ def start_arms(
     control_sha: str | None = None,
     check_flat: Callable[[ArmRunner], None] | None = None,
     routines_path: str | None = None,
+    probe: Callable[[str], ArmAccount] | None = None,
 ) -> ExperimentState:
     """t0 of a registered experiment: create every arm store, then mark it ``running``.
 
@@ -375,9 +545,12 @@ def start_arms(
     personas, shared kinds) is computed here and stored on its identity and in the
     ``running`` event (``arm_plans``).
 
-    *check_flat* (live) raises :class:`ArmStartError` when the arm's paper account
-    holds positions or open orders; fixtures pass ``None``. A failure leaves no arm
-    store behind and the experiment ``registered``.
+    D69: the runner arms are :meth:`RunnerConfig.arms_for` the spec (one per treatment
+    with a ``treatments`` template). *probe* ``(keys_env) -> ArmAccount`` reads each
+    arm account once (live; fixtures pass the fixture account or ``None``); the
+    account rules are :func:`_check_accounts`, and each arm records its account's
+    sha256 + last 4. *check_flat* is the pre-D69 per-arm hook (tests). A failure
+    leaves no arm store behind and the experiment ``registered``.
     """
     from arc.experiments.models import ExperimentStatus, RunningDetail
     from arc.experiments.store import ExperimentStore
@@ -385,7 +558,7 @@ def start_arms(
     from arc.routines.manifest import config_hashes
     from arc.routines.runs import RoutineStateRepo
 
-    store = ExperimentStore(control, now=lambda: now)
+    store = ExperimentStore.for_runner(control, runner, now=lambda: now)
     st = store.require(experiment_id)
     if st.status is not ExperimentStatus.REGISTERED:
         msg = f"{experiment_id} is {st.status.value}; only a registered experiment starts"
@@ -393,19 +566,34 @@ def start_arms(
     if not runner.arms:
         msg = "experiments.runner.arms is empty: no arm to run the treatment"
         raise ArmStartError(msg)
+    try:
+        arms = runner.arms_for(st.spec)
+    except ValueError as exc:
+        raise ArmStartError(str(exc)) from exc
     control_db = _db_file(control)
     if control_db is None:
         msg = "the control store must be a file (arms read it by path)"
         raise ArmStartError(msg)
+    live = live_arms(control, exclude=experiment_id)
+    if len(live) + len(arms) > runner.max_parallel_arms:
+        msg = (
+            f"max_parallel_arms {runner.max_parallel_arms}: {len(live)} arm(s) running + "
+            f"{len(arms)} of {experiment_id}; stop an experiment first"
+        )
+        raise ArmStartError(msg)
+    taken = {p.resolve() for p in arm_stores(control).values()}
     legacy = legacy_reservations(control)
     paths: dict[str, Path] = {}
-    for name, arm in runner.arms.items():
-        p = Path(arm.db_path(experiment_id))
+    for name, arm in arms.items():
+        p = Path(arm.db_path(experiment_id, name))
         if arm_dir is not None:
             p = arm_dir / p.name
         p = p.resolve()
         if p == control_db:
             msg = f"arm {name} store is the control store"
+            raise ArmStartError(msg)
+        if p in taken or p in paths.values():
+            msg = f"arm {name} store {p} is another arm's store; every arm needs its own"
             raise ArmStartError(msg)
         if p.exists():
             msg = f"arm {name} store {p} already exists; every experiment starts fresh"
@@ -413,13 +601,21 @@ def start_arms(
         if check_flat is not None:
             check_flat(arm)
         paths[name] = p
+    accounts = _check_accounts(
+        runner, arms, live, experiment_id=experiment_id, t0_equity=t0_equity, probe=probe
+    )
     plans = plans_at_start(control, st, runner, routines_path=routines_path)
     created: list[Path] = []
+    state = RoutineStateRepo(control)
     try:
-        for name, arm in runner.arms.items():
+        for name, arm in arms.items():
             p = paths[name]
             p.parent.mkdir(parents=True, exist_ok=True)
             created.append(p)
+            acct = accounts.get(arm.keys_env)
+            sha, last4 = (
+                account_fingerprint(acct.account_number) if acct is not None else (None, None)
+            )
             conn = _connect(p)
             try:
                 aid = f"{experiment_id}:{name}"
@@ -432,9 +628,12 @@ def start_arms(
                         spec_arm=arm.spec_arm,
                         keys_env=arm.keys_env,
                         control_db=str(control_db),
-                        overlay=getattr(st.spec.arms, arm.spec_arm).overlay,
+                        overlay=st.spec.arms.arm(arm.spec_arm).overlay,
                         created_at=now,
                         plan=plans[name].model_dump(mode="json"),
+                        account_mode=runner.account_mode,
+                        account_sha256=sha,
+                        account_last4=last4,
                     ),
                 )
                 open_account(conn, aid, t0_equity=t0_equity, legacy=legacy, at=now)
@@ -453,20 +652,20 @@ def start_arms(
             config_hashes=config_hashes(),
             arm_plans=plans,
         )
-        state = RoutineStateRepo(control)
         for name, p in paths.items():
-            state.set(_STATE_ARM.format(arm=name), str(p), now=now)
+            state.set(STATE_ARM.format(experiment_id=experiment_id, arm=name), str(p), now=now)
         out = store.start(experiment_id, detail, actor=actor, aa_override=aa_override)
     except BaseException:
         for p in created:
             for suffix in ("", "-wal", "-shm"):
                 Path(f"{p}{suffix}").unlink(missing_ok=True)
         for name in paths:
-            RoutineStateRepo(control).delete(_STATE_ARM.format(arm=name))
+            state.delete(STATE_ARM.format(experiment_id=experiment_id, arm=name))
         raise
     log.info(
         "experiments.started",
         experiment_id=experiment_id,
+        account_mode=runner.account_mode,
         arms={n: str(p) for n, p in paths.items()},
         plans={n: pl.model_dump(mode="json") for n, pl in plans.items()},
         t0_equity=str(t0_equity),
@@ -475,35 +674,109 @@ def start_arms(
     return out
 
 
-def live_flat_check(environ: Mapping[str, str] | None = None) -> Callable[[ArmRunner], None]:
-    """The live t0 check: arm keys valid (never ALPACA/ALPACA_TEST) and the account flat."""
+def _arm_broker(keys_env: str, environ: Mapping[str, str] | None = None) -> Any:
+    from arc.broker.alpaca_paper import AlpacaPaperBroker
+    from arc.broker.registry import resolve_broker
+    from arc.config import get_settings
 
-    def check(arm: ArmRunner) -> None:
-        from arc.broker.alpaca_paper import AlpacaPaperBroker
-        from arc.broker.registry import resolve_broker
-        from arc.config import get_settings
+    # the arm's own keys (arm_keys refuses ALPACA / ALPACA_TEST) via the registry
+    broker = resolve_broker(get_settings(), keys_env=keys_env, environ=environ)
+    if not isinstance(broker, AlpacaPaperBroker):  # only alpaca/paper/rest constructs
+        msg = f"arm t0 check needs the Alpaca paper broker, got {type(broker).__name__}"
+        raise ArmStartError(msg)
+    return broker
 
-        # the arm's own keys (arm_keys refuses ALPACA / ALPACA_TEST) via the registry
-        broker = resolve_broker(get_settings(), keys_env=arm.keys_env, environ=environ)
-        if not isinstance(broker, AlpacaPaperBroker):  # only alpaca/paper/rest constructs
-            msg = f"arm t0 check needs the Alpaca paper broker, got {type(broker).__name__}"
-            raise ArmStartError(msg)
-        held = broker.positions()
-        if held:
-            msg = (
-                f"{arm.keys_env} account holds {len(held)} position(s); close them in the "
-                "Alpaca dashboard before t0 (the arm must start flat)"
-            )
-            raise ArmStartError(msg)
+
+def live_account_probe(environ: Mapping[str, str] | None = None) -> Callable[[str], ArmAccount]:
+    """The live t0 probe (D69): the arm account's number, equity, positions, open orders."""
+
+    def probe(keys_env: str) -> ArmAccount:
         from alpaca.trading.enums import QueryOrderStatus
         from alpaca.trading.requests import GetOrdersRequest
 
+        broker = _arm_broker(keys_env, environ)
+        info = broker.account()
         open_orders = broker._client.get_orders(  # noqa: SLF001 - read-only listing
             GetOrdersRequest(status=QueryOrderStatus.OPEN, limit=50)
         )
-        if open_orders:
+        return ArmAccount(
+            account_number=info.account_id,
+            equity=info.equity,
+            positions=len(broker.positions()),
+            open_orders=len(open_orders or []),
+        )
+
+    return probe
+
+
+def live_account_number(environ: Mapping[str, str] | None = None) -> Callable[[str], str]:
+    """``keys_env -> account_number`` (D69 account identity guard, every arms tick)."""
+
+    def number(keys_env: str) -> str:
+        return str(_arm_broker(keys_env, environ).account().account_id)
+
+    return number
+
+
+def check_arm_account(
+    arm: sqlite3.Connection,
+    ident: ArmIdentity,
+    account_number: str,
+    *,
+    now: _dt.datetime,
+    notifier: Any = None,
+) -> bool:
+    """D69: True when *account_number* is the account the arm started on (or none was
+    recorded). On a mismatch the arm store gets an ``account_changed`` halt (once) and
+    an ``[Ops]`` notice names the experiment; the caller runs nothing for the arm.
+    """
+    from arc.store.repos import HaltRepo
+
+    if ident.account_sha256 is None:
+        return True
+    sha, last4 = account_fingerprint(account_number)
+    if sha == ident.account_sha256:
+        return True
+    reason = (
+        f"{ACCOUNT_CHANGED}: {ident.keys_env}_* now reach account …{last4}, not "
+        f"…{ident.account_last4} (t0); stop {ident.experiment_id}"
+    )
+    repo = HaltRepo(arm)
+    if not any(str(h.get("reason", "")).startswith(ACCOUNT_CHANGED) for h in repo.active()):
+        repo.halt(reason=reason, actor=_ACTOR, kind="manual", at=to_db(now))
+        if notifier is not None:
+            notifier.post(
+                f"[Ops] Experiment {ident.experiment_id} arm {ident.arm} halted "
+                f"({ACCOUNT_CHANGED}): its keys {ident.keys_env}_* now reach account "
+                f"…{last4}, not the t0 account …{ident.account_last4}. Nothing runs on "
+                f"the arm; stop {ident.experiment_id} (`arc experiment stop "
+                f"{ident.experiment_id}`)."
+            )
+    log.error(
+        "experiments.arm_account_changed",
+        arm_id=ident.arm_id,
+        keys_env=ident.keys_env,
+        recorded=ident.account_last4,
+        live=last4,
+    )
+    return False
+
+
+def live_flat_check(environ: Mapping[str, str] | None = None) -> Callable[[ArmRunner], None]:
+    """Pre-D69 live t0 check, kept for callers: the arm's account must be flat."""
+    probe = live_account_probe(environ)
+
+    def check(arm: ArmRunner) -> None:
+        acct = probe(arm.keys_env)
+        if acct.positions:
             msg = (
-                f"{arm.keys_env} account has {len(open_orders)} open order(s); cancel them "
+                f"{arm.keys_env} account holds {acct.positions} position(s); close them in "
+                "the Alpaca dashboard before t0 (the arm must start flat)"
+            )
+            raise ArmStartError(msg)
+        if acct.open_orders:
+            msg = (
+                f"{arm.keys_env} account has {acct.open_orders} open order(s); cancel them "
                 "in the Alpaca dashboard before t0 (the arm must start flat)"
             )
             raise ArmStartError(msg)
@@ -1010,107 +1283,168 @@ def arms_tick(
     clock: Callable[[], _dt.datetime] | None = None,
     handlers: Mapping[str, Handler] | None = None,
     spawner: Any = None,
+    account_number: Callable[[str], str] | None = None,
+    notifier: Any = None,
 ) -> dict[str, Any]:
     """Pair recent control loop chains, then run each arm's own jobs (see the module doc).
 
+    D69: serves the arms of EVERY running experiment; ``report["arms"]`` is keyed by
+    arm id (``XP-<n>:<arm>``). *account_number* ``(keys_env) -> account number`` (live)
+    is read once per keys per tick: an arm whose recorded t0 account differs runs
+    nothing and is halted ``account_changed`` (:func:`check_arm_account`).
+
     Never raises for one arm's failure; the report says what each arm did.
     """
+    from arc.experiments.tape import prune_tape, running_experiments
+
+    report: dict[str, Any] = {"now": now.isoformat(), "arms": {}}
+    running = running_experiments(control)
+    if not running:
+        report["skipped"] = "no running experiment"
+        return report
+    runner = runner_config(control)
+    report["experiment_ids"] = [st.experiment_id for st in running]
+    if not runner.enabled:
+        report["skipped"] = "experiments.runner.enabled is off"
+        return report
+    report["tape_pruned"] = prune_tape(control, keep_days=runner.tape_keep_days, now=now)
+    accounts: dict[str, str | Exception] = {}
+
+    def live_number(keys_env: str) -> str | Exception:
+        if keys_env not in accounts:
+            try:
+                accounts[keys_env] = account_number(keys_env)  # type: ignore[misc]
+            except Exception as exc:  # noqa: BLE001 - reported per arm; the arm skips
+                accounts[keys_env] = exc
+        return accounts[keys_env]
+
+    for st in running:
+        for name, path in arm_stores(control, st.experiment_id).items():
+            out: dict[str, Any] = {"store": str(path)}
+            report["arms"][f"{st.experiment_id}:{name}"] = out
+            _tick_one_arm(
+                control,
+                st,
+                name,
+                path,
+                out,
+                runner=runner,
+                routines_path=routines_path,
+                now=now,
+                lock_dir=lock_dir,
+                clock=clock,
+                handlers=handlers,
+                spawner=spawner,
+                live_number=live_number if account_number is not None else None,
+                notifier=notifier,
+            )
+    log.info("experiments.arms_tick", **{k: v for k, v in report.items() if k != "arms"})
+    return report
+
+
+def _tick_one_arm(
+    control: sqlite3.Connection,
+    st: ExperimentState,
+    name: str,
+    path: Path,
+    out: dict[str, Any],
+    *,
+    runner: RunnerConfig,
+    routines_path: str | None,
+    now: _dt.datetime,
+    lock_dir: Path | None,
+    clock: Callable[[], _dt.datetime] | None,
+    handlers: Mapping[str, Handler] | None,
+    spawner: Any,
+    live_number: Callable[[str], str | Exception] | None,
+    notifier: Any,
+) -> None:
     from arc.approvals.cli import make_service
-    from arc.control.effective import effective_routines
-    from arc.experiments.tape import prune_tape, running_experiment
+    from arc.control.effective import effective_routines, effective_settings
     from arc.routines.dispatcher import Dispatcher
     from arc.routines.handlers import RunEnv
     from arc.routines.heartbeat import LogNotifier
     from arc.routines.locks import LockManager, NullLocks
 
-    report: dict[str, Any] = {"now": now.isoformat(), "arms": {}}
-    st = running_experiment(control)
-    if st is None:
-        report["skipped"] = "no running experiment"
-        return report
-    runner = runner_config(control)
-    report["experiment_id"] = st.experiment_id
-    if not runner.enabled:
-        report["skipped"] = "experiments.runner.enabled is off"
-        return report
-    report["tape_pruned"] = prune_tape(control, keep_days=runner.tape_keep_days, now=now)
+    if not path.is_file():
+        out["error"] = "arm store missing"
+        return
     since = max(
         now - _dt.timedelta(seconds=runner.max_lag_seconds),
         st.running.t0 if st.running is not None else now,
     )
-    for name, path in arm_stores(control).items():
-        out: dict[str, Any] = {"store": str(path)}
-        report["arms"][name] = out
-        if not path.is_file():
-            out["error"] = "arm store missing"
-            continue
-        arm = _connect(path)
-        try:
-            ident = read_identity(arm)
-            if ident is None or ident.experiment_id != st.experiment_id:
-                out["error"] = "arm store belongs to another experiment"
-                continue
-            arm_lock = lock_dir / f"arm-{name}" if lock_dir is not None else None
-            routines = effective_routines(arm, routines_path)
-            env = RunEnv(
-                db_path=str(path),
-                config_path=routines_path,
-                lock_dir=str(arm_lock) if arm_lock is not None else None,
-                slack=False,
-            )
-            pairs = []
-            for chain_id in _recent_loop_chains(control, routines.loop.job, since=since):
-                pairs.append(
-                    pair_chain(
-                        control,
-                        arm,
-                        chain_id,
-                        routines=routines,
-                        runner=runner,
-                        now=now,
-                        handlers=handlers,
-                        lock_dir=arm_lock,
-                        clock=clock,
-                        run_env=env,
-                    ).as_json()
-                )
-            out["pairs"] = pairs
-            plan = plan_of(ident, routines, runner)
-            out["plan"] = plan.model_dump(mode="json")
-            own = persona_jobs(plan.arm_personas)
-            if own:  # E13.12: the arm's own Scout / Scalp read control's synced inputs
-                out["persona_synced"] = sync_persona_inputs(
+    arm = _connect(path)
+    try:
+        ident = read_identity(arm)
+        if ident is None or ident.experiment_id != st.experiment_id:
+            out["error"] = "arm store belongs to another experiment"
+            return
+        if live_number is not None and ident.account_sha256 is not None:
+            number = live_number(ident.keys_env)
+            if isinstance(number, Exception):
+                out["error"] = f"account check failed: {type(number).__name__}: {number}"
+                return
+            if not check_arm_account(arm, ident, number, now=now, notifier=notifier):
+                out["error"] = f"{ACCOUNT_CHANGED}: arm halted, nothing ran"
+                return
+        # D69: two experiments may reuse an arm name; lock per experiment + arm
+        arm_lock = lock_dir / f"arm-{st.experiment_id}-{name}" if lock_dir is not None else None
+        routines = effective_routines(arm, routines_path)
+        env = RunEnv(
+            db_path=str(path),
+            config_path=routines_path,
+            lock_dir=str(arm_lock) if arm_lock is not None else None,
+            slack=False,
+        )
+        pairs = []
+        for chain_id in _recent_loop_chains(control, routines.loop.job, since=since):
+            pairs.append(
+                pair_chain(
                     control,
                     arm,
-                    routines,
-                    plan.arm_personas,
-                    as_of=now,
-                    since=st.running.t0 if st.running is not None else None,
-                )
-            disp = Dispatcher(
+                    chain_id,
+                    routines=routines,
+                    runner=runner,
+                    now=now,
+                    handlers=handlers,
+                    lock_dir=arm_lock,
+                    clock=clock,
+                    run_env=env,
+                ).as_json()
+            )
+        out["pairs"] = pairs
+        plan = plan_of(ident, routines, runner)
+        out["plan"] = plan.model_dump(mode="json")
+        own = persona_jobs(plan.arm_personas)
+        if own:  # E13.12: the arm's own Scout / Scalp read control's synced inputs
+            out["persona_synced"] = sync_persona_inputs(
+                control,
                 arm,
-                arm_routines(routines, [*runner.arm_jobs, *own]),
-                handlers=handlers,
-                locks=LockManager(arm_lock) if arm_lock is not None else NullLocks(),
-                notifier=LogNotifier(),
-                clock=clock,
-                run_env=env,
-                spawner=spawner,
+                routines,
+                plan.arm_personas,
+                as_of=now,
+                since=st.running.t0 if st.running is not None else None,
             )
-            tick = disp.tick(now)
-            out["jobs"] = [(o.job, o.status) for o in tick.outcomes]
-            from arc.control.effective import effective_settings
-
-            out["expired_approvals"] = len(
-                make_service(arm, effective_settings(arm), slack=False).expire_due(now)
-            )
-        except Exception as exc:  # noqa: BLE001 - one arm's failure never stops another
-            out["error"] = f"{type(exc).__name__}: {exc}"
-            log.exception("experiments.arm_tick_failed", arm=name)
-        finally:
-            arm.close()
-    log.info("experiments.arms_tick", **{k: v for k, v in report.items() if k != "arms"})
-    return report
+        disp = Dispatcher(
+            arm,
+            arm_routines(routines, [*runner.arm_jobs, *own]),
+            handlers=handlers,
+            locks=LockManager(arm_lock) if arm_lock is not None else NullLocks(),
+            notifier=LogNotifier(),
+            clock=clock,
+            run_env=env,
+            spawner=spawner,
+        )
+        tick = disp.tick(now)
+        out["jobs"] = [(o.job, o.status) for o in tick.outcomes]
+        out["expired_approvals"] = len(
+            make_service(arm, effective_settings(arm), slack=False).expire_due(now)
+        )
+    except Exception as exc:  # noqa: BLE001 - one arm's failure never stops another
+        out["error"] = f"{type(exc).__name__}: {exc}"
+        log.exception("experiments.arm_tick_failed", arm=name, experiment_id=st.experiment_id)
+    finally:
+        arm.close()
 
 
 def arms_preview(
@@ -1154,9 +1488,9 @@ def arms_preview(
         "plans_from": "stored (running)" if stored else "computed (not started)",
         "arms": {},
     }
-    for name, arm in runner.arms.items():
+    for name, arm in runner.arms_for(st.spec).items():
         plan = plans[name]
-        overlay = getattr(st.spec.arms, arm.spec_arm).overlay
+        overlay = st.spec.arms.arm(arm.spec_arm).overlay
         routines = routines_for_overlay(control, overlay, routines_path)
         scratch = _sqlite3.connect(":memory:")
         try:
