@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 from unittest import mock
 
 import pytest
-from hypothesis import given
+from hypothesis import example, given
 from hypothesis import settings as hsettings
 from hypothesis import strategies as st
 
@@ -242,6 +242,12 @@ class TestMerge:
     w=st.floats(0.5, 1.0),
     size=st.integers(0, 25),
 )
+@example(  # 4-dp rounding tie that failed the old `w*a + (1-w)*b` expectation
+    t=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.8226013200807598],
+    p=[0.0, 0.0, 0.0, 0.7023098778172826],
+    w=0.6304707025226778,
+    size=1,
+)
 def test_merge_properties(t: list[float], p: list[float], w: float, size: int) -> None:
     today = [_m(f"S{i}", i + 1, s, day=FRI.date()) for i, s in enumerate(t)]
     prev = [_m(f"S{i * 2}", i + 1, s, day=THU.date()) for i, s in enumerate(p)]
@@ -252,7 +258,9 @@ def test_merge_properties(t: list[float], p: list[float], w: float, size: int) -
     scores = [m.score or 0 for m in res.members]
     assert scores == sorted(scores, reverse=True)
     for m in res.members:
-        exp = round(w * (m.score_today or 0) + (1 - w) * (m.score_prev or 0), 4)
+        # Same weights and association as the code (w_prev, not 1 - w): a differently
+        # associated formula can land on the other side of a 4-dp rounding tie.
+        exp = round(cfg.w_today * (m.score_today or 0) + cfg.w_prev * (m.score_prev or 0), 4)
         assert m.score == pytest.approx(exp, abs=1e-9)
         assert 1 <= len(m.runs) <= 2
     assert len({m.ticker for m in res.members}) == len(res.members)
