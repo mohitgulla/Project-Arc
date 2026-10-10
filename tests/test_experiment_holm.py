@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import datetime as dt
 import json
-import math
 from unittest import mock
 
 import numpy as np
@@ -21,6 +20,7 @@ from arc.store.migrate import migrate
 from arc.utils.calendar import previous_session
 from tests import experiment_fixtures as fx
 from tests.experiment_k1_scenarios import GOLDEN_DIR, SCENARIOS, render
+from tests.golden_compare import assert_json_close
 
 OVERLAY = {"overlay": {"exits": {"default": {"take_profit_pct": 0.4}}}}
 
@@ -70,33 +70,11 @@ def _report(
 # -- K=1 regression: byte-identical to the pre-E15.5 evaluator ---------------------
 
 
-def _assert_same_report(got: object, want: object, path: str = "$") -> None:
-    """Exact keys/order, strings, ints, bools and nulls; floats to 1e-12 relative.
-
-    The goldens were captured on macOS; Linux numpy/libm can differ in the last ULP
-    of a few floats (e.g. a p-value), which is not a v1 behaviour change.
-    """
-    if isinstance(want, float) or isinstance(got, float):
-        assert isinstance(got, (int, float)) and isinstance(want, (int, float)), path
-        assert not isinstance(got, bool) and not isinstance(want, bool), path
-        assert math.isclose(got, want, rel_tol=1e-12, abs_tol=1e-300), (path, got, want)
-    elif isinstance(want, dict):
-        assert isinstance(got, dict) and list(got) == list(want), path
-        for k in want:
-            _assert_same_report(got[k], want[k], f"{path}.{k}")
-    elif isinstance(want, list):
-        assert isinstance(got, list) and len(got) == len(want), path
-        for i, (g, w) in enumerate(zip(got, want, strict=True)):
-            _assert_same_report(g, w, f"{path}[{i}]")
-    else:
-        assert type(got) is type(want) and got == want, (path, got, want)
-
-
 @pytest.mark.parametrize("name", sorted(SCENARIOS))
 def test_k1_report_is_byte_identical_to_pre_e155(name: str) -> None:
     want = (GOLDEN_DIR / f"{name}.json").read_text().rstrip("\n")
     got = render(name)
-    _assert_same_report(json.loads(got), json.loads(want))
+    assert_json_close(json.loads(got), json.loads(want))
     assert '"report_version":1' in got
     for key in ("pairwise", "omnibus", "headline_arm", "cum_pnl_pct", "rank"):
         assert f'"{key}"' not in got
