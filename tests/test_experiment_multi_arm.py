@@ -168,7 +168,10 @@ def test_every_committed_v1_spec_loads_as_t1_with_its_hash_unchanged(name: str) 
 
 
 # Specs committed as v2 (D69 multi-arm); never loaded as v1.
-V2_SPECS = {"xp13_technicals.yaml"}  # E16.3: draft, unregistered
+V2_SPECS = {
+    "xp13_technicals.yaml",  # E16.3: draft, unregistered
+    "xp14_menu_measure.yaml",  # E7.5b: draft, unregistered
+}
 
 
 def test_committed_specs_are_all_covered() -> None:

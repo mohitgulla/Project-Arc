@@ -1,0 +1,837 @@
+{
+ "margin": {
+  "NVDA": {
+   "exit_policy_note": "exits: static = hold to expiry; managed = under the exit policy in config/exits.yaml (both after costs, $ per contract). Paths move at the realised-vol forecast (path_vol, mean HV20/HV60) and are priced at IV; vrp = IV \u2212 forecast; rorc_day = managed net EV / (max loss \u00d7 days held).",
+   "iv": {
+    "atm_iv": 0.3230199,
+    "atm_iv_expiration": "2026-10-30",
+    "iv_percentile": null,
+    "iv_rank": null,
+    "lookback": 252,
+    "observations": 1
+   },
+   "menu": [
+    {
+     "breakevens": [
+      213.95
+     ],
+     "cost_bps": 384.3,
+     "credit_width": 0.21,
+     "dte": 42,
+     "ev_per_contract": -56.04,
+     "exits": {
+      "expected_days_held": 22.3,
+      "managed_net_ev": -64.25,
+      "managed_pop": 0.6339,
+      "p_dte_exit": 0.1626,
+      "p_expiry": 0.0,
+      "p_profit_lock": 0.0,
+      "p_stop": 0.2236,
+      "p_take_profit": 0.6138,
+      "path_vol": 0.325,
+      "policy": "take profit 50% of max gain (credit); stop pct_max_loss 0.75 (end of day); close at 7 DTE",
+      "rorc_day": -0.007294,
+      "static_net_ev": -56.0,
+      "static_pop": 0.6688,
+      "stop_close": 4.0125,
+      "take_profit_close": 0.525,
+      "vrp": 0.0035
+     },
+     "expiration": "2026-11-06",
+     "greeks": {
+      "delta": 6.213513788030088,
+      "theta": 0.6667369929621696,
+      "vega": -274.85485046538497
+     },
+     "legs": [
+      {
+       "expiry": "2026-11-06",
+       "mid": 2.98,
+       "occ_symbol": "NVDA261106P00210000",
+       "option_type": "p",
+       "ratio": 1,
+       "side": "long",
+       "strike": 210.0
+      },
+      {
+       "expiry": "2026-11-06",
+       "mid": 4.03,
+       "occ_symbol": "NVDA261106P00215000",
+       "option_type": "p",
+       "ratio": 1,
+       "side": "short",
+       "strike": 215.0
+      }
+     ],
+     "max_gain": 105.0,
+     "max_loss": 395.0,
+     "net_debit_credit": -1.05,
+     "pop": 0.6701,
+     "short_deltas": [
+      0.2498
+     ],
+     "strategy": "bull_put",
+     "structure_type": "vertical_spread"
+    },
+    {
+     "breakevens": [
+      214.06
+     ],
+     "cost_bps": 176.8,
+     "credit_width": 0.188,
+     "dte": 35,
+     "ev_per_contract": -52.6,
+     "exits": {
+      "expected_days_held": 18.45,
+      "managed_net_ev": -56.88,
+      "managed_pop": 0.6323,
+      "p_dte_exit": 0.2041,
+      "p_expiry": 0.0,
+      "p_profit_lock": 0.0,
+      "p_stop": 0.1914,
+      "p_take_profit": 0.6045,
+      "path_vol": 0.325,
+      "policy": "take profit 50% of max gain (credit); stop pct_max_loss 0.75 (end of day); close at 7 DTE",
+      "rorc_day": -0.007593,
+      "static_net_ev": -52.7,
+      "static_pop": 0.6867,
+      "stop_close": 3.985,
+      "take_profit_close": 0.47,
+      "vrp": -0.002
+     },
+     "expiration": "2026-10-30",
+     "greeks": {
+      "delta": 6.586846481187926,
+      "theta": 0.8602466106417701,
+      "vega": -283.0739488718659
+     },
+     "legs": [
+      {
+       "expiry": "2026-10-30",
+       "mid": 2.345,
+       "occ_symbol": "NVDA261030P00210000",
+       "option_type": "p",
+       "ratio": 1,
+       "side": "long",
+       "strike": 210.0
+      },
+      {
+       "expiry": "2026-10-30",
+       "mid": 3.285,
+       "occ_symbol": "NVDA261030P00215000",
+       "option_type": "p",
+       "ratio": 1,
+       "side": "short",
+       "strike": 215.0
+      }
+     ],
+     "max_gain": 94.0,
+     "max_loss": 406.0,
+     "net_debit_credit": -0.94,
+     "pop": 0.6878,
+     "short_deltas": [
+      0.2326
+     ],
+     "strategy": "bull_put",
+     "structure_type": "vertical_spread"
+    }
+   ],
+   "stance": "bullish"
+  },
+  "SPY": {
+   "exit_policy_note": "exits: static = hold to expiry; managed = under the exit policy in config/exits.yaml (both after costs, $ per contract). Paths move at the realised-vol forecast (path_vol, mean HV20/HV60) and are priced at IV; vrp = IV \u2212 forecast; rorc_day = managed net EV / (max loss \u00d7 days held).",
+   "iv": {
+    "atm_iv": 0.13293525000000003,
+    "atm_iv_expiration": "2026-10-30",
+    "iv_percentile": null,
+    "iv_rank": null,
+    "lookback": 252,
+    "observations": 1
+   },
+   "menu": [
+    {
+     "breakevens": [
+      743.33,
+      798.67
+     ],
+     "cost_bps": 311.1,
+     "credit_width": 0.334,
+     "dte": 35,
+     "ev_per_contract": -23.4,
+     "exits": {
+      "expected_days_held": 24.77,
+      "managed_net_ev": 3.27,
+      "managed_pop": 0.6792,
+      "p_dte_exit": 0.3267,
+      "p_expiry": 0.0,
+      "p_profit_lock": 0.0,
+      "p_stop": 0.0812,
+      "p_take_profit": 0.5921,
+      "path_vol": 0.1074,
+      "policy": "take profit 50% of max gain (credit); stop pct_max_loss 0.75 (end of day); close at 7 DTE",
+      "rorc_day": 0.000396,
+      "static_net_ev": 27.43,
+      "static_pop": 0.7178,
+      "stop_close": 4.1675,
+      "take_profit_close": 0.835,
+      "vrp": 0.0255
+     },
+     "expiration": "2026-10-30",
+     "greeks": {
+      "delta": -2.0482010752506206,
+      "theta": 3.045696020922737,
+      "vega": -1680.3628433942176
+     },
+     "legs": [
+      {
+       "expiry": "2026-10-30",
+       "mid": 3.74,
+       "occ_symbol": "SPY261030P00740000",
+       "option_type": "p",
+       "ratio": 1,
+       "side": "long",
+       "strike": 740.0
+      },
+      {
+       "expiry": "2026-10-30",
+       "mid": 4.455,
+       "occ_symbol": "SPY261030P00745000",
+       "option_type": "p",
+       "ratio": 1,
+       "side": "short",
+       "strike": 745.0
+      },
+      {
+       "expiry": "2026-10-30",
+       "mid": 3.105,
+       "occ_symbol": "SPY261030C00797000",
+       "option_type": "c",
+       "ratio": 1,
+       "side": "short",
+       "strike": 797.0
+      },
+      {
+       "expiry": "2026-10-30",
+       "mid": 2.15,
+       "occ_symbol": "SPY261030C00802000",
+       "option_type": "c",
+       "ratio": 1,
+       "side": "long",
+       "strike": 802.0
+      }
+     ],
+     "max_gain": 167.0,
+     "max_loss": 333.0,
+     "net_debit_credit": -1.67,
+     "pop": 0.6146,
+     "short_deltas": [
+      0.2071,
+      0.2073
+     ],
+     "strategy": "iron_condor",
+     "structure_type": "iron_condor"
+    },
+    {
+     "breakevens": [
+      743.3445,
+      799.6555
+     ],
+     "cost_bps": 203.9,
+     "credit_width": 0.3311,
+     "dte": 35,
+     "ev_per_contract": -18.74,
+     "exits": {
+      "expected_days_held": 24.48,
+      "managed_net_ev": 9.22,
+      "managed_pop": 0.6955,
+      "p_dte_exit": 0.3135,
+      "p_expiry": 0.0,
+      "p_profit_lock": 0.0,
+      "p_stop": 0.0777,
+      "p_take_profit": 0.6088,
+      "path_vol": 0.1074,
+      "policy": "take profit 50% of max gain (credit); stop pct_max_loss 0.75 (end of day); close at 7 DTE",
+      "rorc_day": 0.001126,
+      "static_net_ev": 32.36,
+      "static_pop": 0.7278,
+      "stop_close": 4.1639,
+      "take_profit_close": 0.8277,
+      "vrp": 0.0255
+     },
+     "expiration": "2026-10-30",
+     "greeks": {
+      "delta": -2.0038529261320086,
+      "theta": 3.1367535026024242,
+      "vega": -1710.6531627253598
+     },
+     "legs": [
+      {
+       "expiry": "2026-10-30",
+       "mid": 3.74,
+       "occ_symbol": "SPY261030P00740000",
+       "option_type": "p",
+       "ratio": 1,
+       "side": "long",
+       "strike": 740.0
+      },
+      {
+       "expiry": "2026-10-30",
+       "mid": 4.455,
+       "occ_symbol": "SPY261030P00745000",
+       "option_type": "p",
+       "ratio": 1,
+       "side": "short",
+       "strike": 745.0
+      },
+      {
+       "expiry": "2026-10-30",
+       "mid": 2.945,
+       "occ_symbol": "SPY261030C00798000",
+       "option_type": "c",
+       "ratio": 1,
+       "side": "short",
+       "strike": 798.0
+      },
+      {
+       "expiry": "2026-10-30",
+       "mid": 2.0045,
+       "occ_symbol": "SPY261030C00803000",
+       "option_type": "c",
+       "ratio": 1,
+       "side": "long",
+       "strike": 803.0
+      }
+     ],
+     "max_gain": 165.55,
+     "max_loss": 334.45,
+     "net_debit_credit": -1.6555,
+     "pop": 0.6232,
+     "short_deltas": [
+      0.2071,
+      0.1982
+     ],
+     "strategy": "iron_condor",
+     "structure_type": "iron_condor"
+    },
+    {
+     "breakevens": [
+      741.45,
+      798.55
+     ],
+     "cost_bps": 416.2,
+     "credit_width": 0.31,
+     "dte": 35,
+     "ev_per_contract": -29.74,
+     "exits": {
+      "expected_days_held": 24.7,
+      "managed_net_ev": -4.56,
+      "managed_pop": 0.6754,
+      "p_dte_exit": 0.3245,
+      "p_expiry": 0.0,
+      "p_profit_lock": 0.0,
+      "p_stop": 0.0782,
+      "p_take_profit": 0.5974,
+      "path_vol": 0.1074,
+      "policy": "take profit 50% of max gain (credit); stop pct_max_loss 0.75 (end of day); close at 7 DTE",
+      "rorc_day": -0.000535,
+      "static_net_ev": 20.71,
+      "static_pop": 0.7304,
+      "stop_close": 4.1375,
+      "take_profit_close": 0.775,
+      "vrp": 0.0255
+     },
+     "expiration": "2026-10-30",
+     "greeks": {
+      "delta": -2.3958009025552656,
+      "theta": 2.889507506045481,
+      "vega": -1635.57886128057
+     },
+     "legs": [
+      {
+       "expiry": "2026-10-30",
+       "mid": 3.55,
+       "occ_symbol": "SPY261030P00738000",
+       "option_type": "p",
+       "ratio": 1,
+       "side": "long",
+       "strike": 738.0
+      },
+      {
+       "expiry": "2026-10-30",
+       "mid": 4.145,
+       "occ_symbol": "SPY261030P00743000",
+       "option_type": "p",
+       "ratio": 1,
+       "side": "short",
+       "strike": 743.0
+      },
+      {
+       "expiry": "2026-10-30",
+       "mid": 3.105,
+       "occ_symbol": "SPY261030C00797000",
+       "option_type": "c",
+       "ratio": 1,
+       "side": "short",
+       "strike": 797.0
+      },
+      {
+       "expiry": "2026-10-30",
+       "mid": 2.15,
+       "occ_symbol": "SPY261030C00802000",
+       "option_type": "c",
+       "ratio": 1,
+       "side": "long",
+       "strike": 802.0
+      }
+     ],
+     "max_gain": 155.0,
+     "max_loss": 345.0,
+     "net_debit_credit": -1.55,
+     "pop": 0.6284,
+     "short_deltas": [
+      0.1941,
+      0.2073
+     ],
+     "strategy": "iron_condor",
+     "structure_type": "iron_condor"
+    },
+    {
+     "breakevens": [
+      741.4645,
+      799.5355
+     ],
+     "cost_bps": 312.3,
+     "credit_width": 0.3071,
+     "dte": 35,
+     "ev_per_contract": -25.09,
+     "exits": {
+      "expected_days_held": 24.37,
+      "managed_net_ev": 1.25,
+      "managed_pop": 0.6935,
+      "p_dte_exit": 0.3113,
+      "p_expiry": 0.0,
+      "p_profit_lock": 0.0,
+      "p_stop": 0.0743,
+      "p_take_profit": 0.6144,
+      "path_vol": 0.1074,
+      "policy": "take profit 50% of max gain (credit); stop pct_max_loss 0.75 (end of day); close at 7 DTE",
+      "rorc_day": 0.000148,
+      "static_net_ev": 25.64,
+      "static_pop": 0.7399,
+      "stop_close": 4.1339,
+      "take_profit_close": 0.7678,
+      "vrp": 0.0255
+     },
+     "expiration": "2026-10-30",
+     "greeks": {
+      "delta": -2.3514527534366536,
+      "theta": 2.9805649877251685,
+      "vega": -1665.8691806117122
+     },
+     "legs": [
+      {
+       "expiry": "2026-10-30",
+       "mid": 3.55,
+       "occ_symbol": "SPY261030P00738000",
+       "option_type": "p",
+       "ratio": 1,
+       "side": "long",
+       "strike": 738.0
+      },
+      {
+       "expiry": "2026-10-30",
+       "mid": 4.145,
+       "occ_symbol": "SPY261030P00743000",
+       "option_type": "p",
+       "ratio": 1,
+       "side": "short",
+       "strike": 743.0
+      },
+      {
+       "expiry": "2026-10-30",
+       "mid": 2.945,
+       "occ_symbol": "SPY261030C00798000",
+       "option_type": "c",
+       "ratio": 1,
+       "side": "short",
+       "strike": 798.0
+      },
+      {
+       "expiry": "2026-10-30",
+       "mid": 2.0045,
+       "occ_symbol": "SPY261030C00803000",
+       "option_type": "c",
+       "ratio": 1,
+       "side": "long",
+       "strike": 803.0
+      }
+     ],
+     "max_gain": 153.55,
+     "max_loss": 346.45,
+     "net_debit_credit": -1.5355,
+     "pop": 0.637,
+     "short_deltas": [
+      0.1941,
+      0.1982
+     ],
+     "strategy": "iron_condor",
+     "structure_type": "iron_condor"
+    },
+    {
+     "breakevens": [
+      743.535,
+      800.465
+     ],
+     "cost_bps": 165.8,
+     "credit_width": 0.293,
+     "dte": 35,
+     "ev_per_contract": -33.1,
+     "exits": {
+      "expected_days_held": 25.02,
+      "managed_net_ev": -2.9,
+      "managed_pop": 0.6721,
+      "p_dte_exit": 0.3412,
+      "p_expiry": 0.0,
+      "p_profit_lock": 0.0,
+      "p_stop": 0.0779,
+      "p_take_profit": 0.5809,
+      "path_vol": 0.1074,
+      "policy": "take profit 50% of max gain (credit); stop pct_max_loss 0.75 (end of day); close at 7 DTE",
+      "rorc_day": -0.000328,
+      "static_net_ev": 18.15,
+      "static_pop": 0.7332,
+      "stop_close": 4.1162,
+      "take_profit_close": 0.7325,
+      "vrp": 0.0255
+     },
+     "expiration": "2026-10-30",
+     "greeks": {
+      "delta": -1.3206032452741248,
+      "theta": 2.6717032085386982,
+      "vega": -1602.2294179769751
+     },
+     "legs": [
+      {
+       "expiry": "2026-10-30",
+       "mid": 3.74,
+       "occ_symbol": "SPY261030P00740000",
+       "option_type": "p",
+       "ratio": 1,
+       "side": "long",
+       "strike": 740.0
+      },
+      {
+       "expiry": "2026-10-30",
+       "mid": 4.455,
+       "occ_symbol": "SPY261030P00745000",
+       "option_type": "p",
+       "ratio": 1,
+       "side": "short",
+       "strike": 745.0
+      },
+      {
+       "expiry": "2026-10-30",
+       "mid": 2.66,
+       "occ_symbol": "SPY261030C00799000",
+       "option_type": "c",
+       "ratio": 1,
+       "side": "short",
+       "strike": 799.0
+      },
+      {
+       "expiry": "2026-10-30",
+       "mid": 1.91,
+       "occ_symbol": "SPY261030C00804000",
+       "option_type": "c",
+       "ratio": 1,
+       "side": "long",
+       "strike": 804.0
+      }
+     ],
+     "max_gain": 146.5,
+     "max_loss": 353.5,
+     "net_debit_credit": -1.465,
+     "pop": 0.6287,
+     "short_deltas": [
+      0.2071,
+      0.1849
+     ],
+     "strategy": "iron_condor",
+     "structure_type": "iron_condor"
+    }
+   ],
+   "stance": "neutral"
+  }
+ },
+ "cash_debit": {
+  "NVDA": {
+   "exit_policy_note": "exits: static = hold to expiry; managed = under the exit policy in config/exits.yaml (both after costs, $ per contract). Paths move at the realised-vol forecast (path_vol, mean HV20/HV60) and are priced at IV; vrp = IV \u2212 forecast; rorc_day = managed net EV / (max loss \u00d7 days held).",
+   "iv": {
+    "atm_iv": 0.3230199,
+    "atm_iv_expiration": "2026-10-30",
+    "iv_percentile": null,
+    "iv_rank": null,
+    "lookback": 252,
+    "observations": 1
+   },
+   "menu": [
+    {
+     "breakevens": [
+      242.215
+     ],
+     "cost_bps": 243.7,
+     "credit_width": null,
+     "dte": 42,
+     "ev_per_contract": -92.77,
+     "exits": {
+      "expected_days_held": 13.52,
+      "managed_net_ev": -105.36,
+      "managed_pop": 0.4258,
+      "p_dte_exit": 0.0197,
+      "p_expiry": 0.0,
+      "p_profit_lock": 0.0621,
+      "p_stop": 0.5347,
+      "p_take_profit": 0.3836,
+      "path_vol": 0.325,
+      "policy": "take profit 60% of debit (debit); stop pct_debit 0.75 (end of day); profit lock 50% -> 20%; close at 7 DTE",
+      "rorc_day": -0.010801,
+      "static_net_ev": -108.75,
+      "static_pop": 0.2447,
+      "stop_close": 1.8037,
+      "take_profit_close": 11.544,
+      "vrp": 0.0035
+     },
+     "expiration": "2026-11-06",
+     "greeks": {
+      "delta": 37.84597472453046,
+      "theta": -11.704163217424233,
+      "vega": 2903.363835438657
+     },
+     "legs": [
+      {
+       "expiry": "2026-11-06",
+       "mid": 7.215,
+       "occ_symbol": "NVDA261106C00235000",
+       "option_type": "c",
+       "ratio": 1,
+       "side": "long",
+       "strike": 235.0
+      }
+     ],
+     "max_gain": null,
+     "max_loss": 721.5,
+     "net_debit_credit": 7.215,
+     "pop": 0.2504,
+     "short_deltas": [],
+     "strategy": "long_call",
+     "structure_type": "long_call"
+    },
+    {
+     "breakevens": [
+      238.315
+     ],
+     "cost_bps": 7.0,
+     "credit_width": null,
+     "dte": 35,
+     "ev_per_contract": -114.08,
+     "exits": {
+      "expected_days_held": 12.51,
+      "managed_net_ev": -113.46,
+      "managed_pop": 0.4184,
+      "p_dte_exit": 0.0453,
+      "p_expiry": 0.0,
+      "p_profit_lock": 0.062,
+      "p_stop": 0.526,
+      "p_take_profit": 0.3668,
+      "path_vol": 0.325,
+      "policy": "take profit 60% of debit (debit); stop pct_debit 0.75 (end of day); profit lock 50% -> 20%; close at 7 DTE",
+      "rorc_day": -0.010907,
+      "static_net_ev": -113.45,
+      "static_pop": 0.2774,
+      "stop_close": 2.0787,
+      "take_profit_close": 13.304,
+      "vrp": -0.002
+     },
+     "expiration": "2026-10-30",
+     "greeks": {
+      "delta": 44.47947415770027,
+      "theta": -13.163065083730327,
+      "vega": 2753.787359893475
+     },
+     "legs": [
+      {
+       "expiry": "2026-10-30",
+       "mid": 8.315,
+       "occ_symbol": "NVDA261030C00230000",
+       "option_type": "c",
+       "ratio": 1,
+       "side": "long",
+       "strike": 230.0
+      }
+     ],
+     "max_gain": null,
+     "max_loss": 831.5,
+     "net_debit_credit": 8.315,
+     "pop": 0.2798,
+     "short_deltas": [],
+     "strategy": "long_call",
+     "structure_type": "long_call"
+    },
+    {
+     "breakevens": [
+      241.165
+     ],
+     "cost_bps": 90.5,
+     "credit_width": null,
+     "dte": 35,
+     "ev_per_contract": -85.18,
+     "exits": {
+      "expected_days_held": 11.15,
+      "managed_net_ev": -87.04,
+      "managed_pop": 0.4145,
+      "p_dte_exit": 0.024,
+      "p_expiry": 0.0,
+      "p_profit_lock": 0.0593,
+      "p_stop": 0.5435,
+      "p_take_profit": 0.3731,
+      "path_vol": 0.325,
+      "policy": "take profit 60% of debit (debit); stop pct_debit 0.75 (end of day); profit lock 50% -> 20%; close at 7 DTE",
+      "rorc_day": -0.012662,
+      "static_net_ev": -84.17,
+      "static_pop": 0.2407,
+      "stop_close": 1.5412,
+      "take_profit_close": 9.864,
+      "vrp": -0.002
+     },
+     "expiration": "2026-10-30",
+     "greeks": {
+      "delta": 35.86408938649532,
+      "theta": -12.354505004490077,
+      "vega": 2604.0219679279267
+     },
+     "legs": [
+      {
+       "expiry": "2026-10-30",
+       "mid": 6.165,
+       "occ_symbol": "NVDA261030C00235000",
+       "option_type": "c",
+       "ratio": 1,
+       "side": "long",
+       "strike": 235.0
+      }
+     ],
+     "max_gain": null,
+     "max_loss": 616.5,
+     "net_debit_credit": 6.165,
+     "pop": 0.2413,
+     "short_deltas": [],
+     "strategy": "long_call",
+     "structure_type": "long_call"
+    },
+    {
+     "breakevens": [
+      239.6
+     ],
+     "cost_bps": 177.9,
+     "credit_width": null,
+     "dte": 42,
+     "ev_per_contract": -141.85,
+     "exits": {
+      "expected_days_held": 15.23,
+      "managed_net_ev": -155.83,
+      "managed_pop": 0.4185,
+      "p_dte_exit": 0.0387,
+      "p_expiry": 0.0,
+      "p_profit_lock": 0.062,
+      "p_stop": 0.5315,
+      "p_take_profit": 0.3678,
+      "path_vol": 0.325,
+      "policy": "take profit 60% of debit (debit); stop pct_debit 0.75 (end of day); profit lock 50% -> 20%; close at 7 DTE",
+      "rorc_day": -0.010658,
+      "static_net_ev": -158.18,
+      "static_pop": 0.274,
+      "stop_close": 2.4,
+      "take_profit_close": 15.36,
+      "vrp": 0.0035
+     },
+     "expiration": "2026-11-06",
+     "greeks": {
+      "delta": 45.88495391462686,
+      "theta": -12.563927691568855,
+      "vega": 3029.613845799394
+     },
+     "legs": [
+      {
+       "expiry": "2026-11-06",
+       "mid": 9.6,
+       "occ_symbol": "NVDA261106C00230000",
+       "option_type": "c",
+       "ratio": 1,
+       "side": "long",
+       "strike": 230.0
+      }
+     ],
+     "max_gain": null,
+     "max_loss": 960.0,
+     "net_debit_credit": 9.6,
+     "pop": 0.2824,
+     "short_deltas": [],
+     "strategy": "long_call",
+     "structure_type": "long_call"
+    },
+    {
+     "breakevens": [
+      237.34
+     ],
+     "cost_bps": 65.5,
+     "credit_width": null,
+     "dte": 42,
+     "ev_per_contract": -184.37,
+     "exits": {
+      "expected_days_held": 17.07,
+      "managed_net_ev": -195.66,
+      "managed_pop": 0.4195,
+      "p_dte_exit": 0.0688,
+      "p_expiry": 0.0,
+      "p_profit_lock": 0.0621,
+      "p_stop": 0.513,
+      "p_take_profit": 0.356,
+      "path_vol": 0.325,
+      "policy": "take profit 60% of debit (debit); stop pct_debit 0.75 (end of day); profit lock 50% -> 20%; close at 7 DTE",
+      "rorc_day": -0.009289,
+      "static_net_ev": -199.88,
+      "static_pop": 0.3062,
+      "stop_close": 3.085,
+      "take_profit_close": 19.744,
+      "vrp": 0.0035
+     },
+     "expiration": "2026-11-06",
+     "greeks": {
+      "delta": 53.96862668078586,
+      "theta": -12.885746390513628,
+      "vega": 3030.748355934309
+     },
+     "legs": [
+      {
+       "expiry": "2026-11-06",
+       "mid": 12.34,
+       "occ_symbol": "NVDA261106C00225000",
+       "option_type": "c",
+       "ratio": 1,
+       "side": "long",
+       "strike": 225.0
+      }
+     ],
+     "max_gain": null,
+     "max_loss": 1234.0,
+     "net_debit_credit": 12.34,
+     "pop": 0.3118,
+     "short_deltas": [],
+     "strategy": "long_call",
+     "structure_type": "long_call"
+    }
+   ],
+   "stance": "bullish"
+  }
+ }
+}
