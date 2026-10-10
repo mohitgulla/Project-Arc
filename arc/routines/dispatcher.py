@@ -71,6 +71,7 @@ from arc.routines.runs import (
     RoutineRunRepo,
     RoutineStateRepo,
     RunStatus,
+    owner_lock,
 )
 from arc.routines.schedule import catch_up_slots, catchup_deadline, slots_between
 from arc.utils.calendar import ET, now_et, session_phase
@@ -1527,6 +1528,15 @@ class Dispatcher:
             log.warning("routines.loop_root_update_failed", chain_run_id=chain_run_id, err=str(exc))
         log.info("routines.loop_root", chain_run_id=chain_run_id, ts=root_ts, text=line.text())
 
+    def _beater(self, run_id: str, now: _dt.datetime) -> Callable[[], None]:
+        """E11.2 (D72): ``JobContext.heartbeat`` for *run_id* (wall clock when live)."""
+        clock = self._clock
+
+        def beat() -> None:
+            self.runs.beat(run_id, clock() if clock is not None else now)
+
+        return beat
+
     def _execute(
         self,
         run: RoutineRun,
@@ -1548,6 +1558,8 @@ class Dispatcher:
             started, t0 = now_et(), time.monotonic()
             # D26: the config_changes version this run executes under (E7.4 attribution).
             self.runs.set_config_version(run.run_id, self._config_version())
+            # E11.2 (D72): the process running it, so a dead ladder can be told apart.
+            self.runs.set_pid(run.run_id, os.getpid(), now=now)
             try:
                 return self._execute_bound(
                     run, now=now, event=event, note=note, trace=trace, job_lock=job_lock
@@ -1591,11 +1603,19 @@ class Dispatcher:
                 clock_fn=self._clock,
                 run_env=self.run_env,
                 reason=run.reason,
+                heartbeat=self._beater(run.run_id, now),
             )
             trace.ctx = ctx
             hold = run.step_index and job_lock  # a chain step; run_event holds its own lock
-            with self.locks.hold(run.job) if hold else contextlib.nullcontext():
-                result = handler(ctx)
+            names = [run.job] if hold else []
+            if event is not None:  # E11.2: held while the handler runs (re-attach probes it)
+                names.append(owner_lock(run.run_id))
+            try:
+                with self.locks.hold(*names) if names else contextlib.nullcontext():
+                    result = handler(ctx)
+            finally:
+                if event is not None:
+                    self.locks.discard(owner_lock(run.run_id))
             if not isinstance(result, JobResult):
                 msg = f"handler for {run.job!r} returned {type(result).__name__}, not JobResult"
                 raise TypeError(msg)

@@ -200,6 +200,10 @@ NOT_EXPOSED: dict[str, str] = {
     "execution_broker_read_timeout_s": "broker HTTP read timeout (D71); change by PR",
     "execution_unknown_submit_lookups": "client-id lookups after a submit error (D71)",
     "execution_intraday_reconcile": "safety: reconcile an unconfirmed ladder at once (D71)",
+    # E11.2 (D72): ladder liveness / re-attach safety plumbing; change by PR.
+    "execution_reattach": "safety: adopt a dead ladder's working order (D72)",
+    "execution_reattach_stale_s": "ladder heartbeat staleness (D72); change by PR",
+    "execution_reattach_kill_after_s": "wedged-ladder SIGTERM threshold (D72); change by PR",
     "alpaca_data_feed": "data subscription tier",
     "alpaca_options_feed": "data subscription tier",
     "scanner_target_delta": "target inside the tunable short band",

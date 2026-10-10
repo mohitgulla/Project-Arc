@@ -45,9 +45,7 @@ ladder is fully testable without waiting.
 from __future__ import annotations
 
 import datetime as _dt
-import sqlite3
 from dataclasses import dataclass, field
-from decimal import Decimal
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
@@ -55,6 +53,7 @@ import structlog
 
 from arc.budget.orders import REFUSED_DETAIL_PREFIX, OrderBudgetConfig, can_submit, count_orders
 from arc.context.ttl import to_db
+from arc.execution.fills import apply_fill, fill_net_price, record_fill
 from arc.execution.resolve import (
     ResolvedSubmit,
     api_status_code,
@@ -66,24 +65,34 @@ from arc.gate.band import PriceBand
 from arc.gate.rules import proposal_hash as hash_proposal
 from arc.gate.ticks import TickGrid, legs_grid
 from arc.gate.token import BandToken, TokenError, parse_any
-from arc.journal.outcomes import record_close_outcome
 from arc.journal.reasons import Choice, JournalPersona, ReasonCode, Stage
 from arc.journal.store import JournalStore
 from arc.models import OrderState
-from arc.store.execution import ExecutionRepo, OpenStructureRepo
-from arc.store.repos import FillRepo, OrderRepo, TaxLotRepo
+from arc.store.execution import ExecutionRepo
+from arc.store.repos import OrderRepo
 from arc.structures import parse_occ
 from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
+    import sqlite3
     from collections.abc import Callable
+    from decimal import Decimal
 
     from arc.broker.base import BrokerAdapter, BrokerOrderStatus
     from arc.config import ArcSettings
     from arc.gate.halt import HaltSwitch
     from arc.models import ApprovalRecord, GateDecision, Proposal
 
-__all__ = ["AttemptRecord", "ExecStatus", "ExecutionOutcome", "execute", "fill_net_price"]
+__all__ = [
+    "AttemptRecord",
+    "ExecStatus",
+    "ExecutionAdoptedError",
+    "ExecutionOutcome",
+    "LadderContext",
+    "execute",
+    "fill_net_price",
+    "resume_attempt",
+]
 
 log = structlog.get_logger(__name__)
 
@@ -91,7 +100,19 @@ _ACTOR = "arc:execution"
 _FILLED = {"filled"}
 _DONE_NO_FILL = {"canceled", "cancelled", "expired", "rejected", "done_for_day", "replaced"}
 _REJECTED = {"rejected"}
-_HUNDRED = Decimal(100)
+
+
+class ExecutionAdoptedError(RuntimeError):
+    """E11.2 (D72): another run (``broker.reattach``) adopted this execution.
+
+    Raised by the ladder's fence before any further write; the ladder stops
+    without touching orders, fills or the execution row.
+    """
+
+    def __init__(self, proposal_hash: str, adopted_by: str) -> None:
+        self.proposal_hash = proposal_hash
+        self.adopted_by = adopted_by
+        super().__init__(f"execution {proposal_hash[:12]} adopted by {adopted_by}")
 
 
 class ExecStatus(StrEnum):
@@ -164,83 +185,33 @@ def _band_of(decision: GateDecision, proposal: Proposal) -> tuple[PriceBand, str
     return PriceBand(lo=limit, hi=limit, max_steps=0), t.version
 
 
-def fill_net_price(status: BrokerOrderStatus, fallback: Decimal) -> Decimal:
-    """Per-unit net fill price (+ debit / − credit).
-
-    From the legs' fill prices when every leg reports one (``buy`` +, ``sell`` −,
-    weighted by leg qty / order qty); else the order's own average, which the
-    broker reports *unsigned*: ``+avg`` for a ``buy``, ``−avg`` for a ``sell``,
-    and the sign of ``fallback`` (the attempt's signed limit) when the side is
-    unknown (E6.2f); else ``fallback``.
-
-    Guard (deterministic): a limit order never fills worse than its limit, so a
-    credit limit (< 0) can't fill as a debit, and a one-leg order is always a
-    pure debit (buy) or credit (sell). A fill whose sign disagrees in those cases
-    is logged ``fill_sign_mismatch`` and takes the limit's sign. A debit-limit
-    mleg filled as a credit is genuine price improvement and is kept.
-    """
-    legs = status.legs or []
-    qty = status.filled_qty
-    if legs and qty > 0 and all(leg.get("filled_avg_price") for leg in legs):
-        net = Decimal(0)
-        for leg in legs:
-            sign = 1 if str(leg.get("side")) == "buy" else -1
-            ratio = Decimal(str(leg.get("filled_qty") or leg.get("qty") or 0)) / qty
-            net += sign * ratio * Decimal(str(leg["filled_avg_price"]))
-        return _sign_guard(status, net.quantize(Decimal("0.0001")), fallback, single=False)
-    if status.filled_avg_price is not None:
-        avg = abs(status.filled_avg_price)
-        side = (status.side or "").lower()
-        if side not in ("buy", "sell"):  # unknown: the signed limit decides
-            side = "sell" if fallback < 0 else "buy"
-            if fallback == 0:
-                log.warning(
-                    "fill_sign_unknown",
-                    broker_order_id=status.broker_order_id,
-                    filled_avg_price=str(avg),
-                )
-        price = avg if side == "buy" else -avg
-        return _sign_guard(status, price, fallback, single=True)
-    return fallback
-
-
-def _sign_guard(
-    status: BrokerOrderStatus, price: Decimal, limit: Decimal, *, single: bool
-) -> Decimal:
-    """Flip *price* to the limit's sign when the two can't legitimately disagree."""
-    credit_as_debit = limit < 0 < price
-    debit_as_credit = single and price < 0 < limit
-    if not (credit_as_debit or debit_as_credit):
-        return price
-    log.warning(
-        "fill_sign_mismatch",
-        broker_order_id=status.broker_order_id,
-        fill=str(price),
-        limit=str(limit),
-        side=status.side,
-    )
-    return -price
-
-
 # ---------------------------------------------------------------------------
 # The ladder
 # ---------------------------------------------------------------------------
 
 
 @dataclass
-class _Ctx:
+class LadderContext:
+    """What one ladder (or one ``broker.reattach`` adoption, E11.2) works with.
+
+    ``proposal`` / ``decision`` / ``approval`` / ``halt`` are only needed to *send*
+    an attempt; the re-attach never sends, so it builds one without them.
+    """
+
     conn: sqlite3.Connection
     broker: BrokerAdapter
     config: ArcSettings
-    halt: HaltSwitch
     clock: Callable[[], _dt.datetime]
     sleep: Callable[[float], None]
     run_id: str | None
-    proposal: Proposal
-    decision: GateDecision
-    approval: ApprovalRecord | None
     phash: str
     ticker: str
+    halt: HaltSwitch | None = None
+    proposal: Proposal | None = None
+    decision: GateDecision | None = None
+    approval: ApprovalRecord | None = None
+    actor: str = _ACTOR
+    heartbeat: Callable[[], None] | None = None
     stale_detail: str = ""
     closing: bool = False  # E11.4 (D73): a close passes an opens-only halt
 
@@ -248,7 +219,26 @@ class _Ctx:
     def orders(self) -> OrderRepo:
         return OrderRepo(self.conn)
 
+    def beat(self) -> None:
+        """E11.2: tell the run's liveness record this ladder is still working."""
+        if self.heartbeat is None:
+            return
+        try:
+            self.heartbeat()
+        except Exception as exc:  # noqa: BLE001 - a missed beat never stops an order
+            log.warning("execution.heartbeat_failed", proposal_hash=self.phash, error=str(exc))
+
+    def fence(self) -> None:
+        """E11.2 (D72): stop before any write once another run adopted this execution."""
+        row = self.conn.execute(
+            "SELECT adopted_by_run_id FROM executions WHERE proposal_hash = ?", (self.phash,)
+        ).fetchone()
+        adopted = row[0] if row is not None else None
+        if adopted and adopted != self.run_id:
+            raise ExecutionAdoptedError(self.phash, str(adopted))
+
     def journal(self, choice: Choice, code: ReasonCode, text: str, **payload: Any) -> None:
+        self.fence()
         with self.conn:
             JournalStore(self.conn).record(
                 persona=JournalPersona.BROKER,
@@ -264,14 +254,21 @@ class _Ctx:
             )
 
     def move(self, order_id: str, to: OrderState, detail: str = "") -> None:
+        self.fence()
+        row = self.orders.get(order_id)
+        if row is not None and row["state"] == to.value:
+            return  # E11.2: a re-attach finishing a half-recorded move
         self.orders.transition(
             order_id=order_id,
             to_state=to,
-            actor=_ACTOR,
+            actor=self.actor,
             detail=detail,
             event_at=to_db(self.clock()),
             run_id=self.run_id,
         )
+
+
+_Ctx = LadderContext
 
 
 def _poll(c: _Ctx, broker_id: str, seconds: float) -> BrokerOrderStatus | None:
@@ -279,10 +276,13 @@ def _poll(c: _Ctx, broker_id: str, seconds: float) -> BrokerOrderStatus | None:
 
     D71: a poll that raises (timeout, dropped connection, API error) is logged and
     retried until the deadline; ``None`` when no poll in the window answered.
+    E11.2: every iteration beats the run's heartbeat and checks the adoption fence.
     """
     deadline = c.clock() + _dt.timedelta(seconds=seconds)
     last: BrokerOrderStatus | None = None
     while True:
+        c.beat()
+        c.fence()
         try:
             last = c.broker.order_status(broker_id)
         except Exception as exc:  # noqa: BLE001 - retried within the deadline
@@ -300,25 +300,27 @@ def _poll(c: _Ctx, broker_id: str, seconds: float) -> BrokerOrderStatus | None:
 
 
 def _record_fill(c: _Ctx, a: AttemptRecord, st: BrokerOrderStatus) -> None:
-    qty = int(st.filled_qty)
-    if qty <= 0:
-        return
-    price = fill_net_price(st, a.limit_price)
-    a.filled_qty, a.fill_price = qty, price
-    FillRepo(c.conn).insert(
+    c.fence()
+    qty, price = record_fill(
+        c.conn,
         order_id=a.order_id,
-        qty=qty,
-        price=str(price),
-        filled_at=to_db(st.updated_at or c.clock()),
-        broker_fill_id=st.broker_order_id,
+        status=st,
+        limit_price=a.limit_price,
+        now=c.clock(),
         run_id=c.run_id,
     )
+    if qty:
+        a.filled_qty, a.fill_price = qty, price
 
 
 def _attempt(c: _Ctx, step: int, price: Decimal) -> tuple[AttemptRecord, str]:
     """Send and work one attempt. Returns the record and a verdict:
     ``filled`` | ``partial`` | ``next`` | ``refused`` | ``rejected`` | ``unconfirmed`` |
     ``submit_failed`` (D71)."""
+    if c.proposal is None or c.decision is None or c.halt is None:
+        msg = "a ladder attempt needs the proposal, its gate decision and the halt switch"
+        raise ValueError(msg)
+    c.beat()
     token = c.decision.token or ""
     try:
         coid = attempt_order_id(token, step)
@@ -334,6 +336,7 @@ def _attempt(c: _Ctx, step: int, price: Decimal) -> tuple[AttemptRecord, str]:
     c.move(order_id, OrderState.GATED, "gate passed (token issued)")
     c.move(order_id, OrderState.APPROVED, f"approved; step {step} limit {price:+}")
     ExecutionRepo(c.conn).attempt(c.phash)
+    c.fence()  # E11.2: never send once another run adopted this execution
     try:
         broker_id = submit(
             c.proposal,
@@ -600,19 +603,55 @@ def execute(
     run_id: str | None = None,
     priced_at: _dt.datetime | None = None,
     fresh_mid: Callable[[], Decimal | None] | None = None,
+    heartbeat: Callable[[], None] | None = None,
 ) -> ExecutionOutcome:
     """Work *proposal* through its price band; record orders, fills and the position.
 
     ``kind='close'`` closes ``structure_id`` (an ``open_structures`` row) on a fill.
     ``priced_at`` + ``fresh_mid`` enable the D34 re-price (see the module docstring).
+    ``heartbeat`` (E11.2) is called before each attempt and on every poll.
+
+    Raises :class:`ExecutionAdoptedError` (after writing nothing more) when a
+    ``broker.reattach`` run adopted this execution while it was being worked.
     """
     phash = hash_proposal(proposal)
     band, version = _band_of(decision, proposal)
     t = ticker or parse_occ(proposal.structure.legs[0].occ_symbol).root
     c = _Ctx(
-        conn, broker, config, halt, clock, sleep, run_id, proposal, decision, approval, phash, t
+        conn=conn,
+        broker=broker,
+        config=config,
+        clock=clock,
+        sleep=sleep,
+        run_id=run_id,
+        phash=phash,
+        ticker=t,
+        halt=halt,
+        proposal=proposal,
+        decision=decision,
+        approval=approval,
+        heartbeat=heartbeat,
     )
     c.closing = kind == "close"
+    try:
+        return _execute(c, band, version, kind, structure_id, priced_at, fresh_mid)
+    except ExecutionAdoptedError as exc:
+        log.warning("execution.adopted_elsewhere", proposal_hash=phash, adopted_by=exc.adopted_by)
+        raise
+
+
+def _execute(
+    c: _Ctx,
+    band: PriceBand,
+    version: str,
+    kind: str,
+    structure_id: str | None,
+    priced_at: _dt.datetime | None,
+    fresh_mid: Callable[[], Decimal | None] | None,
+) -> ExecutionOutcome:
+    assert c.proposal is not None  # noqa: S101 - execute() always sets it
+    conn, config, clock, run_id = c.conn, c.config, c.clock, c.run_id
+    phash, t, proposal = c.phash, c.ticker, c.proposal
     execs = ExecutionRepo(conn)
     claimed = execs.start(
         proposal_hash=phash,
@@ -666,6 +705,7 @@ def execute(
         if ladder:
             out.detail = f"no fill after {len(ladder)} attempt(s); last {ladder[-1]:+}"
 
+    c.fence()
     if out.filled_qty:
         out.structure_id = _apply_fill(c, out, kind=kind, structure_id=structure_id)
     execs.finish(
@@ -698,83 +738,61 @@ def execute(
     return out
 
 
-# ---------------------------------------------------------------------------
-# Position model updates
-# ---------------------------------------------------------------------------
-
-
 def _apply_fill(c: _Ctx, out: ExecutionOutcome, *, kind: str, structure_id: str | None) -> str:
-    assert out.fill_price is not None
-    last = out.attempts[-1]
-    now = c.clock()
-    if kind == "open":
-        sid = OpenStructureRepo(c.conn).open(
-            ticker=c.ticker,
-            open_proposal_hash=c.phash,
-            candidate_id=c.proposal.candidate_id,
-            structure_json=c.proposal.structure.model_dump_json(),
-            contracts=out.filled_qty,
-            entry_net=out.fill_price,
-            now=now,
-        )
-        lots = TaxLotRepo(c.conn)
-        for leg in c.proposal.structure.legs:
-            lots.open_lot(
-                order_id=last.order_id,
-                ticker=c.ticker,
-                occ_symbol=leg.occ_symbol,
-                side=str(leg.side),
-                qty=leg.ratio * out.filled_qty,
-                open_price=str(leg.premium if leg.premium is not None else ""),
-                opened_at=to_db(now),
-                run_id=c.run_id,
-            )
-        return sid
-
-    if structure_id is None:
-        msg = "a close execution needs the structure it closes"
-        raise ValueError(msg)
-    repo = OpenStructureRepo(c.conn)
-    row = repo.get(structure_id)
-    closed = repo.reduce(
-        structure_id, closed_qty=out.filled_qty, close_net=out.fill_price, now=now, commit=False
+    assert out.fill_price is not None  # noqa: S101 - only called with a fill
+    assert c.proposal is not None  # noqa: S101 - execute() always sets it
+    return apply_fill(
+        c.conn,
+        kind=kind,
+        phash=c.phash,
+        ticker=c.ticker,
+        candidate_id=c.proposal.candidate_id,
+        structure=c.proposal.structure,
+        order_id=out.attempts[-1].order_id,
+        filled_qty=out.filled_qty,
+        fill_price=out.fill_price,
+        structure_id=structure_id,
+        now=c.clock(),
+        run_id=c.run_id,
     )
-    if closed:  # the outcome commits with the close (E7.4b)
-        record_close_outcome(c.conn, structure_id, expired=False)
-    c.conn.commit()
-    if row is not None:
-        pnl = -(Decimal(row["entry_net"]) + out.fill_price) * _HUNDRED * out.filled_qty
-        text = f"closed {out.filled_qty} @ {out.fill_price:+}; realized {pnl:+.2f}"
-        if closed:
-            _close_lots(c, row, pnl, now)
-        with c.conn:
-            JournalStore(c.conn).record(
-                persona=JournalPersona.BROKER,
-                stage=Stage.EXIT,
-                subject=c.ticker,
-                choice=Choice.FILLED,
-                reason_code=ReasonCode.EXIT_CLOSED,
-                reason_text=text,
-                proposal_hash=c.phash,
-                payload={"structure_id": structure_id, "realized_pnl": str(pnl)},
-                at=now,
-                run_id=c.run_id,
-            )
-    return structure_id
 
 
-def _close_lots(c: _Ctx, row: dict[str, Any], pnl: Decimal, now: _dt.datetime) -> None:
-    """Close the structure's open lots; the realised P&L sits on the first lot (wash sale)."""
-    lots = c.conn.execute(
-        """SELECT l.id FROM tax_lots l JOIN orders o ON o.id = l.order_id
-           WHERE o.proposal_hash = ? AND l.closed_at IS NULL ORDER BY l.rowid""",
-        (row["open_proposal_hash"],),
-    ).fetchall()
-    repo = TaxLotRepo(c.conn)
-    for i, lot in enumerate(lots):
-        repo.close_lot(
-            lot["id"] if isinstance(lot, sqlite3.Row) else lot[0],
-            close_price="",
-            realized_pnl=str(pnl if i == 0 else Decimal(0)),
-            closed_at=now.astimezone(_dt.UTC).isoformat(),
+# ---------------------------------------------------------------------------
+# E11.2 (D72): finish an attempt whose ladder process died
+# ---------------------------------------------------------------------------
+
+
+def resume_attempt(c: _Ctx, a: AttemptRecord, status: BrokerOrderStatus | None) -> str:
+    """Finish attempt *a* where it stands, exactly as the ladder would; never submits.
+
+    *status* is the broker's current view of the order (``None`` = unreadable).
+    A terminal status is settled at once; a working one is cancelled and the
+    cancel confirmed within ``execution_cancel_confirm_seconds``. Returns the
+    ladder's verdict: ``filled`` | ``partial`` | ``next`` (cancelled, no fill) |
+    ``rejected`` | ``unconfirmed``.
+    """
+    terminal = _FILLED | _DONE_NO_FILL
+    bid = a.broker_order_id or (status.broker_order_id if status is not None else None)
+    if bid is None:
+        msg = "resume_attempt needs the broker order id"
+        raise ValueError(msg)
+    a.broker_order_id = bid
+    st = status
+    if st is None or st.status not in terminal:
+        try:
+            c.broker.cancel(bid)
+        except Exception as exc:  # noqa: BLE001 - it may have filled/closed meanwhile
+            log.warning("execution.cancel_error", broker_order_id=bid, error=str(exc))
+        polled = _poll(c, bid, c.config.execution_cancel_confirm_seconds)
+        st = polled if polled is not None else st
+    if st is None:
+        a.status = "unconfirmed"
+        a.detail = f"order {bid} status unreadable after the cancel"
+        c.journal(
+            Choice.FAILED, ReasonCode.ORDER_UNCONFIRMED, a.detail, step=a.step, broker_order_id=bid
         )
+        return "unconfirmed"
+    if st.status not in terminal:
+        a.status = st.status
+        a.detail = f"cancel not confirmed (broker status {st.status})"
+    return _settle(c, a, st)

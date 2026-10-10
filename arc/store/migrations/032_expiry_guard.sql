@@ -1,4 +1,4 @@
--- 031_expiry_guard.sql — expiry guard, opens-only halts, assignment shares (E11.4, D73).
+-- 032_expiry_guard.sql — expiry guard, opens-only halts, assignment shares (E11.4, D73).
 --
 -- halts.scope: 'all' (today's halt: opens and closes stop) or 'opens' (new opens
 -- stop, exits keep running; raised by arc:expiry). Existing rows stay 'all'.

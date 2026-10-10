@@ -312,7 +312,7 @@ def broker_execute(
     market: MarketDataProvider | None = None,
 ) -> JobResult:
     from arc.approvals.service import approval_record
-    from arc.execution.ladder import ExecStatus, execute
+    from arc.execution.ladder import ExecStatus, ExecutionAdoptedError, execute
     from arc.gate.halt import HaltSwitch
     from arc.store.repos import HaltRepo
 
@@ -335,23 +335,28 @@ def broker_execute(
         fresh_mid = fresh_mid_of(
             market, proposal, as_of=clock().date(), r=ctx.settings.scanner_risk_free_rate
         )
-    out: ExecutionOutcome = execute(
-        proposal,
-        decision,
-        approval_record(ctx.conn, phash),
-        conn=ctx.conn,
-        broker=broker,
-        config=ctx.settings,
-        halt=HaltSwitch(HaltRepo(ctx.conn)),
-        clock=clock,
-        sleep=sleep,
-        kind=kind,
-        structure_id=sid,
-        ticker=ticker,
-        run_id=ctx.run_id,
-        priced_at=priced_at_of(ctx.conn, phash) if market is not None else None,
-        fresh_mid=fresh_mid,
-    )
+    try:
+        out: ExecutionOutcome = execute(
+            proposal,
+            decision,
+            approval_record(ctx.conn, phash),
+            conn=ctx.conn,
+            broker=broker,
+            config=ctx.settings,
+            halt=HaltSwitch(HaltRepo(ctx.conn)),
+            clock=clock,
+            sleep=sleep,
+            kind=kind,
+            structure_id=sid,
+            ticker=ticker,
+            run_id=ctx.run_id,
+            priced_at=priced_at_of(ctx.conn, phash) if market is not None else None,
+            fresh_mid=fresh_mid,
+            heartbeat=ctx.heartbeat,  # E11.2 (D72): liveness for broker.reattach
+        )
+    except ExecutionAdoptedError as exc:  # D72 rule 7: the re-attach owns it now
+        msg = f"adopted by {exc.adopted_by}"
+        raise JobSkippedError(msg) from exc
     what = "exit" if kind == "close" else "entry"
     card = None
     if out.status is not ExecStatus.ALREADY:  # a replayed event posts nothing new

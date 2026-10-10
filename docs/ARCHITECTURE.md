@@ -234,3 +234,21 @@ own id; an API 4xx it does not hold → rejected; lookups failing → one
 proposal. That event-driven job reconciles only the proposal's orders/executions
 (`reconcile(scope="intraday")`) and halts + alerts only if the order is still
 unresolved. A client id is never submitted twice.
+
+**Ladder liveness and re-attach (E11.2, D72).** A Broker ladder runs in a detached
+process (D34); if that process dies after a submit, its DAY order would keep
+working with nobody to cancel it. Each run therefore records its `pid` and a
+`heartbeat_at` (beaten at each attempt and every poll) on its `routine_runs` row,
+and an event-triggered run holds the owner flock `run-<run id>` for its whole
+life (the kernel releases it on death). The deterministic `broker.reattach` job
+(`arc.execution.reattach`, every tick in RTH, halt-exempt, never submits) treats a
+`working` execution as orphaned when that lock is free or the heartbeat is older
+than `execution.reattach_stale_s`. It fences the execution
+(`executions.adopted_by_run_id`; the old ladder checks the fence before every
+send/write and stops with `ExecutionAdoptedError`), resolves each open order at
+the broker (by id, else by `client_order_id`), records fills through the ladder's
+own `arc.execution.fills.apply_fill`, cancels and confirms the remainder, fails the
+dead run and posts one notice per adoption. A ladder that holds its lock but has
+stopped beating is *wedged*: alerted, then sent one SIGTERM after
+`execution.reattach_kill_after_s` and adopted on a later tick. A unique index on
+`fills(order_id, broker_fill_id)` is the last guard against a double fill.

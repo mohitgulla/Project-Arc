@@ -46,9 +46,38 @@ class RoutineRun(BaseModel):
     summary: str | None = None
     error: str | None = None
     event_id: str | None = None  # E6.2d: the routine_events.id an event-triggered run is for
+    pid: int | None = None  # E11.2: the process that ran it (os.getpid() at claim)
+    heartbeat_at: _dt.datetime | None = None  # E11.2: refreshed by a working ladder
+
+
+def owner_lock(run_id: str) -> str:
+    """E11.2 (D72): the flock an event-triggered run holds while its handler runs.
+
+    Held by the process running it and released by the kernel when that process
+    dies, so ``broker.reattach`` tells a live ladder from a dead one by probing it.
+    """
+    return f"run-{run_id}"
+
+
+def pid_alive(pid: int | None) -> bool | None:
+    """Whether *pid* names a live process on this host (``None`` when unknown)."""
+    import os
+
+    if pid is None or pid <= 0:
+        return None
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return None
+    return True
 
 
 def _row(row: sqlite3.Row) -> RoutineRun:
+    keys = row.keys()
     return RoutineRun(
         run_id=row["run_id"],
         job=row["job"],
@@ -65,6 +94,10 @@ def _row(row: sqlite3.Row) -> RoutineRun:
         summary=row["summary"],
         error=row["error"],
         event_id=row["event_id"],
+        pid=row["pid"] if "pid" in keys else None,
+        heartbeat_at=(
+            from_db(row["heartbeat_at"]) if "heartbeat_at" in keys and row["heartbeat_at"] else None
+        ),
     )
 
 
@@ -184,6 +217,32 @@ class RoutineRunRepo:
             self.conn.execute(
                 "UPDATE routine_runs SET config_version = ? WHERE run_id = ?", (version, run_id)
             )
+
+    def set_pid(self, run_id: str, pid: int, *, now: _dt.datetime) -> None:
+        """E11.2 (D72): record the process running *run_id* and its first heartbeat."""
+        with self.conn:
+            self.conn.execute(
+                "UPDATE routine_runs SET pid = ?, heartbeat_at = ? WHERE run_id = ?",
+                (pid, to_db(now), run_id),
+            )
+
+    def beat(self, run_id: str, now: _dt.datetime) -> None:
+        """E11.2 (D72): the run's owner is alive at *now* (a working ladder calls this)."""
+        with self.conn:
+            self.conn.execute(
+                "UPDATE routine_runs SET heartbeat_at = ? WHERE run_id = ? AND status = 'running'",
+                (to_db(now), run_id),
+            )
+
+    def fail_if_running(self, run_id: str, *, error: str, now: _dt.datetime) -> bool:
+        """E11.2: finish a run whose process died as ``failed``; never touches a finished run."""
+        with self.conn:
+            cur = self.conn.execute(
+                """UPDATE routine_runs SET status = 'failed', finished_at = ?, error = ?
+                   WHERE run_id = ? AND status = 'running'""",
+                (to_db(now), error, run_id),
+            )
+        return cur.rowcount == 1
 
     def set_inputs(self, run_id: str, snapshot_ids: Iterable[str]) -> None:
         with self.conn:

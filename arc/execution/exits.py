@@ -228,7 +228,7 @@ def attempts_today(row: dict[str, Any], day: str) -> int:
     """Close proposals made for *row* on ET *day* (``exit_attempts_day``, E11.4)."""
     if row.get("exit_day") != day:
         return 0
-    return max(int(row.get("exit_attempts_day") or 0), 1)  # a pre-031 row counts as one
+    return max(int(row.get("exit_attempts_day") or 0), 1)  # a pre-032 row counts as one
 
 
 def close_allowed(

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 import sqlite3
 import time
 from typing import TYPE_CHECKING, Any
@@ -553,6 +554,52 @@ class TestHaltedApprovals:
         repo.consume(ev.id, ["r0"], now=NOW)
         assert [o.status for o in d.run_event("broker", ev, now=NOW)] == ["duplicate"]
         assert calls == []
+
+    def test_run_claim_records_pid_and_dispatcher_beats(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        """E11.2 (D72): the run row carries this pid; ctx.heartbeat moves heartbeat_at;
+        the run's owner lock is held while the handler runs and its file removed after."""
+        from arc.routines.locks import LockBusyError, LockManager
+        from arc.routines.runs import RoutineRunRepo, owner_lock
+
+        seen: dict[str, Any] = {}
+        locks = LockManager(tmp_path / "locks")
+        later = NOW + dt.timedelta(seconds=30)
+
+        def broker(ctx: JobContext) -> JobResult:
+            got = RoutineRunRepo(ctx.conn).get(ctx.run_id)
+            seen["pid"] = got.pid if got else None
+            seen["first_beat"] = got.heartbeat_at if got else None
+            ctx.heartbeat()
+            got = RoutineRunRepo(ctx.conn).get(ctx.run_id)
+            seen["beat"] = got.heartbeat_at if got else None
+            try:
+                with locks.hold(owner_lock(ctx.run_id)):
+                    seen["lock"] = "free"
+            except LockBusyError:
+                seen["lock"] = "held"
+            seen["run_id"] = ctx.run_id
+            return JobResult(summary="ok")
+
+        d = Dispatcher(
+            conn,
+            RoutinesConfig.model_validate(
+                {"personas": {"broker": {"trigger": "approval", "llm": False}}}
+            ),
+            handlers={"broker": broker},
+            notifier=RecordingNotifier(),
+            locks=locks,
+            is_halted=lambda: False,
+            clock=lambda: later,
+        )
+        ev = RoutineEventRepo(conn).emit("approval", {"proposal_hash": "x"}, now=NOW)
+        out = d.run_event("broker", ev, now=NOW)
+        assert [o.status for o in out][:1] == ["ok"]
+        assert seen["pid"] == os.getpid()
+        assert seen["first_beat"] == NOW and seen["beat"] == later
+        assert seen["lock"] == "held"
+        assert not (tmp_path / "locks" / f"{owner_lock(seen['run_id'])}.lock").exists()
 
 
 # ---------------------------------------------------------------------------
