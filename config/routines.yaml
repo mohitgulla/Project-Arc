@@ -1,62 +1,32 @@
-# Project Arc routines (D16; defaults tuned in E5.3). Validated by `arc routines validate`.
+# Project Arc routines (D16). Validated by `arc routines validate`; all times are ET.
+# One Hermes cron runs `arc routines tick` every 10 min (D52); cadences, sources,
+# personas and chains are edited here, not in code or cron.
+# Job keys: schedule | every (+window) | trigger, days, chain, after_sources, ttl
+# (catch-up window), context {ttl, supersede}, reads, writes, handler, halt_exempt,
+# notify, llm, lane (D39). Any other key is a handler option (e.g. only_for).
+# I/O (D27): writing a kind not in `writes:` fails the run; `arc context trace` shows both.
 #
-# One Hermes cron runs `arc routines tick` every 10 min on the clock (:00, :10, ...; D52,
-# hermes/routines/); everything
-# below is config. Changing a cadence, adding a source/persona, or re-ordering a
-# chain is an edit to this file, not a code or cron change. All times are ET.
+# A trading day at a glance (D31; full day: `arc routines tick --dry-run`):
+#   02:00          youtube.briefs -> one channel_brief per channel (D45, D60)
+#   05:30 / 05:35  active universe (D56 tiers; Mon symbol master) / betas vs SPY (D62)
+#   06:00          earnings calendar; rss / edgar every 15 min until 20:00
+#   08:15 / 08:20  options_slow / market_health catch-ups (only if the evening slot missed)
+#   09:00-16:00    Scalp every 30 min
+#   09:30-16:00    monitor every 10 min; broker.reattach 09:30-16:10 (D72)
+#   09:40-15:50    trading loop every 10 min (D52, D56): research -> exits.mandatory ->
+#                  quant.exit -> risk.exit -> quant.open -> risk.open -> quant.revise ->
+#                  quant.propose -> broker.execute; ttl 5m (a missed slot is skipped)
+#   09:50-15:50    position marks every 30 min (:20/:50): evaluate -> mandatory exits
+#   16:30          broker.reconcile; (event) reconcile.intraday after an unconfirmed ladder
+#   16:40          experiments.evaluate; 16:45 Fri weekly scorecard ([Ops])
+#   18:00 / 18:30  earnings calendar / vol_term
+#   22:00          overnight Scalp (YouTube never reaches the Scalp, D45)
+#   23:00 / 23:15  options_daily + vix_futures (read by the 06:00 Scout) / market_health
 #
-# Job keys: schedule | every (+window) | trigger, days (daily|trading|weekdays or a
-# weekday list like [fri]), chain, after_sources, ttl (catch-up window),
-# context {ttl, supersede}, reads [kinds], writes [kinds], handler "module:function",
-# halt_exempt, notify (quiet|summary), llm, lane (inline|background, D39). Any other key is passed to the
-# handler as an option (e.g. only_for).
-#
-# I/O contract (D27): every job and chain step declares `writes: [kinds]`. A write
-# of an undeclared kind fails the run (fail-closed); `writes: []` = writes nothing.
-# `reads` limits the recorded input snapshot. `arc context trace <run|chain>` shows both.
-#
-# A trading day at a glance (full simulated day: `arc routines tick --dry-run`), D31:
-#   02:00           youtube.briefs (D45/E4.6; owner 2026-10-05, was 05:00): newest video per channel (last 48 h, D60) ->
-#                   one channel_brief each (newest supersedes; pending keeps the older); Research reads them
-#   05:30           active universe resolve (D56 tiers); Mon: symbol master refresh (E5.7)
-#   05:35           betas (E3.6/D62): 1y daily beta vs SPY per ticker -> betas (beta-weighted delta cap)
-#   06:00           earnings calendar; rss (15m) / edgar (15m) polling until 20:00
-#   08:15           options_slow catch-up (options_daily / vix_futures / vol_term), only for a
-#                   session the evening slot did not write; lands after the 06:00 Scout, so it
-#                   serves Research and the Scalp only (E14.2, D60)
-#   08:20           market_health catch-up (E16.4), only when 23:15 did not write that session
-#   09:00-16:00     Scalp every 30 min (15 in-session runs; after the fast sources)
-#   09:30-16:00     intraday monitor every 10 min (D35/D52: positions, Greeks, marks + account
-#                   fields for the tower, expiries, halts; 40 slots, 16:00 inclusive)
-#   09:40-15:50     trading loop every 10 min (38 slots, D52): research -> exits.mandatory ->
-#                   quant.exit -> risk.exit -> quant.open -> risk.open -> quant.revise ->
-#                   quant.propose -> broker.execute (D56: exits before opens). ttl 5m: a
-#                   missed slot is skipped, never caught up.
-#                   One #arc-investor root line per slot, persona cards in its thread (D36).
-#   09:50-15:50     position marks every 30 min (:20/:50, D52): positions.evaluate ->
-#                   exits.mandatory -> broker.execute (stop / DTE exit / expiry; D56)
-#   16:30           broker.reconcile (reconcile + journal)
-#   (event)         reconcile.intraday (E11.1/D71): right after a ladder ends unconfirmed
-#   09:30-16:10     broker.reattach every 10 min (E11.2/D72): adopts a dead ladder's working order
-#   16:40           experiments.evaluate (E10.3: daily A/B evaluation, auto-stop; E10.5 posts)
-#   16:45 Fri       weekly scorecard ([Ops])
-#   18:00           earnings calendar
-#   18:30           vol_term (today's Cboe VIX-complex closes; E14.2, D60)
-#   22:00 daily     overnight Scalp (after-close fast sources; Sunday 22:00 feeds Monday).
-#                   YouTube never reaches the Scalp (D45): briefs only, at 02:00.
-#   23:00           options_daily / vix_futures (after the ~21:00-22:50 Cboe publish; E14.2)
-#                   -> read by the next morning's 06:00 Scout
-#   23:15           market_health (E16.4, D76): VIX/VVIX vs history, put/call 5d pct, breadth
-#
-# lane (D39 / E5.10): `background` = the tick claims the slot, spawns a detached
-# `arc routines run-claimed <run_id>` and moves on, so a slow job never delays the
-# 10-min loop. Chosen by measured p90 > 30 s (run_manifests, 3 days). A background
-# Scalp (after_sources) waits up to tick.after_sources_wait for the background
-# sources claimed in the same tick, then reads what is committed.
-#
-# notify (E5.5): sources default `quiet` (folded into the next persona post);
-# personas and chain steps default `card` (Block Kit digest; the one-liner stays
-# the notification text). `summary` = one-liner only. Failures always alert.
+# lane (D39): `background` = run detached so a slow job (p90 > 30 s) never delays the
+# tick; a background after_sources Scalp waits up to tick.after_sources_wait.
+# notify (E5.5): sources `quiet`, personas and chain steps `card`, `summary` = one-liner
+# only; failures always alert.
 
 timezone: America/New_York
 
@@ -67,14 +37,12 @@ tick:
   after_sources_wait: 5m   # D39: a background Scalp waits at most this for same-tick background sources
 
 heartbeat:
-  # Posts before this time on a trading day go to that day's #arc-investor thread;
-  # "24:00" = the whole calendar day (the 22:00 Scalp stays in that day). Weekend/holiday
-  # posts go to the NEXT session's.
+  # Posts before this time go to that trading day's #arc-investor thread ("24:00" = the
+  # whole calendar day); weekend/holiday posts go to the next session's.
   day_rollover: "24:00"
 
-# Ops monitoring (E8.2): `arc health check`, run every 30 min by the launchd agent
-# from hermes/monitoring/install.sh (outside the gateway it watches). Alerts go to
-# #project-arc once per problem and again when it clears.
+# Ops monitoring (E8.2): `arc health check` every 30 min from launchd (hermes/monitoring/);
+# alerts go to #project-arc once per problem and again when it clears.
 monitoring:
   tick_stale_after: 30m    # no `arc routines tick` heartbeat for this long -> alert (3 missed 10-min ticks)
   miss_grace: 10m          # judge a slot this long after its catch-up window closes
@@ -111,8 +79,8 @@ monitoring:
 # D31 / D36 / D52: the 10-min trading loop (the `research` persona and its chain).
 loop:
   job: research
-  max_idle: 15m            # force one full LLM evaluation at least this often (D85: was 30m)
-  max_runtime: 7m          # chain deadline: no new step starts after it (run -> `timeout`); D61 (owner 2026-10-07, was 4m)
+  max_idle: 15m            # force one full LLM evaluation at least this often (D85)
+  max_runtime: 7m          # chain deadline: no new step starts after it (run -> `timeout`); D61
   pnl_bucket_pct: 0.5      # P&L rounding (as % of equity) inside the no-change digest
   post_hold_roots: true    # false = HOLD / no_change loops post no root line
   slack_layout: root_per_loop   # root_per_loop (D36) | day_thread (pre-D36 rollback)
@@ -177,93 +145,66 @@ context_ttl:
   exit_case:     {ttl: 30m, supersede: latest}             # E13.17 (D56) Quant exit case; subject = open structure id
   risk_exit_review: {ttl: 30m, supersede: latest}          # E13.18 (D56) Risk exit verdicts; subject = session
 
-# D47/D49/D56 (E4.7, E4.9, E13.3): six source categories, weighted EQUALLY (not per source). A
-# source's `weight:` is its share INSIDE its category, so a new feed (or YouTube channel)
-# splits its category's share instead of growing it. `max_age` is the category's
-# freshness window: the Scalp never reads an older doc (closed `skipped_stale`), the
-# rss/edgar connectors never store one, and Scalp story/candidate entries expire at
-# min(1 session, max_age + 2h). D49: Research's "Context by category" block also
-# lists a typed context entry (options data, briefs) older than its category's max_age
-# as `stale (age)`, never as fresh (its context TTL is unchanged). A source may set its
-# own `max_age:` (none does). Weight 0-5 and max_age 30m-7d are tunable from Slack
-# (`!arc config set categories.<c>.weight|max_age`).
-# D56: market_news and company_data split the Scalp's `scalp_doc_budget` equally;
-# options_fast (Scalp, 30m) and options_slow + the two YouTube categories (Scout) reach
-# the personas as typed context only. Old names `company` (and company_news/filings/
-# calendar) and `options_data` (-> options_slow) load as logged aliases for one
-# release; `macro_data`/`macro` and `video` are refused with a pointer.
-# REFERENCE DATA (D56) is not a category: ex_dividend, macro_calendar, the earnings
-# calendar, the Finnhub kinds and iv_daily. Those sources declare `reference: true`
-# (never `category:`), keep their own context_ttl and feed the Risk step, the gate's
-# earnings blackout and the regime step unchanged.
+# Source categories (D47/D49/D56), weighted EQUALLY. A source's `weight:` is its share
+# inside its category. `max_age` is the freshness window: older docs are never stored or
+# read (`skipped_stale`), Scalp entries expire at min(1 session, max_age + 2h), and
+# Research shows older typed context as `stale (age)`. Tunable: `!arc config set
+# categories.<c>.weight|max_age`. market_news + company_data split `scalp_doc_budget`;
+# options_* and YouTube reach the personas as typed context only. Removed names fail
+# config load. Reference data (ex_dividend, macro_calendar, earnings, Finnhub kinds,
+# iv_daily) declares `reference: true`, never `category:`.
 categories:              # D56: equal weight per category; sources split their category's share
   market_news:   {weight: 1, max_age: 6h,  label: Market news}
   company_data:  {weight: 1, max_age: 12h, label: Company data}
   options_fast:  {weight: 1, max_age: 30m, label: Options fast}    # Scalp, 30-min RTH (E13.6 source)
   options_slow:  {weight: 1, max_age: 24h, label: Options slow}    # Scout, daily Cboe snapshots
-  youtube_macro: {weight: 1, max_age: 48h, label: YouTube macro}   # D60: was 24h
-  youtube_micro: {weight: 1, max_age: 48h, label: YouTube micro}   # D60: was 24h
+  youtube_macro: {weight: 1, max_age: 48h, label: YouTube macro}   # D60
+  youtube_micro: {weight: 1, max_age: 48h, label: YouTube micro}   # D60
   retail_buzz:   {weight: 1, max_age: 24h, label: Retail buzz}     # D58: Scout slow feed + the trending tier (code)
 
-# D56 (E13.3, folds E5.14's config half): the idea funnel. Config only for now: the
-# Scout (E13.7), the coverage:scout alert and the Tower funnel report (E13.14) read
-# it. Discovery comes from the Scout's YouTube calls only (owner decisions 1 and 2:
-# no most-active input, no Scalp backfill). The two `*_split` values are fixed by
-# D56; max_discovery (0-25), min_discovery_alert (0-20) and max_scout_only_ideas are
-# tunable (`!arc config set funnel.<persona>.<key>`).
+# D56 idea funnel, read by the Scout, the coverage:scout alert and the Tower funnel.
+# Discovery comes from the Scout's YouTube calls only. The `*_split` values are fixed;
+# the rest are tunable (`!arc config set funnel.<persona>.<key>`).
 funnel:
   scalp:    {doc_budget_split: equal}            # scalp_doc_budget: market_news | company_data
   scout:    {max_discovery: 25, video_budget_split: equal, min_discovery_alert: 5}
   research: {max_scout_only_ideas: 20}
 
-# E13.5 (D56): options_slow knobs (options_daily + vix_futures sources below).
-# vx_flat_band (0-10, tunable: `!arc config set options_slow.vx_flat_band`): the VX
-# curve is `flat` when |month1 -> month2 slope| is below this many percent.
-# publish_probe_minutes (0-60, measurement only, not runtime-tunable): when > 0, an
-# evening run that finds today's session unpublished re-probes once a minute for up to
-# this long and records the wait (metric probe_wait_s). 0 = skip at once.
+# E13.5 (D56) options_slow knobs. vx_flat_band (tunable): the VX curve is `flat` when the
+# month1 -> month2 slope is below this %. publish_probe_minutes (measurement only): an
+# unpublished evening run re-probes once a minute for this long (0 = skip at once).
 options_slow:
   vx_flat_band: 0.5
   publish_probe_minutes: 0
 
-# E13.6 (D56): options_fast knobs (the options_fast source below). Not runtime-tunable.
-# vix_flags: VIX levels that only LABEL the tape (vix_gt_25 / vix_gt_35); the gate's
-# no_trade_vix_max is the rule, these never block anything. max_csv_bytes: size guard
-# on one Cboe symbol_data CSV download (~1.7 MB on 2026-10-06).
+# E13.6 (D56) options_fast knobs (not tunable). vix_flags only LABEL the tape (the gate's
+# no_trade_vix_max is the rule); max_csv_bytes guards one Cboe symbol_data download.
 options_fast:
   vix_flags: {vix_gt_25: 25, vix_gt_35: 35}
   max_csv_bytes: 20000000
 
-# E16.1 (D76) / D81: pre-market `iv.backfill` top-up (07:15 ET). Picks open underlyings, then today's active
-# list, then SPY/QQQ/IWM whose IV series has < iv_min_obs_rank (120) days in the
-# 252-session lookback and still has an untried gap (a day with an iv_skips row is not
-# retried). Tunable: `!arc config set iv_backfill.max_tickers_per_run|max_runtime_s`.
+# E16.1 (D76, D81): pre-market `iv.backfill` top-up for open underlyings, the active list,
+# then SPY/QQQ/IWM with < iv_min_obs_rank days of IV and an untried gap. Tunable:
+# `!arc config set iv_backfill.max_tickers_per_run|max_runtime_s`.
 iv_backfill:
   max_tickers_per_run: 10       # short names per run
   max_runtime_s: 900            # no new ticker starts after this (resumable next run)
   since: 2024-03-01             # first day backfilled (change by PR)
 
-# D64 (E14.7): discovery (Scout) + trending (universe.trending) two-run carry-over. Each
-# run's universe_tier entry lives 48 h (job `context_kinds`) and is merged with the
-# previous run's entry written <= window_h ago on an earlier ET day: score = w_today x
-# this run + (1 - w_today) x previous run (missing = 0), each run's OWN score (a name
-# never carries past 2 runs), cut to the tier size (25). Carried names are re-checked
-# against today's exclusions, never re-screened. Off = each run's list only.
-# Tunable: `!arc config set universe.carryover.enabled|window_h|w_today`. OPS 5.31.
+# D64 (E14.7) two-run carry-over for discovery + trending: score = w_today x this run +
+# (1 - w_today) x the previous run's entry (<= window_h old, earlier ET day), cut to the
+# tier size; carried names are re-checked against exclusions, never re-screened. Off =
+# this run only. Tunable: `!arc config set universe.carryover.enabled|window_h|w_today`.
 universe:
   carryover:
     enabled: true               # owner decision D64: on by default (not an experiment)
     window_h: 48                # 24-96: strict clock hours (Monday's run has no previous run)
     w_today: 0.6                # 0.5-1.0; previous run weight = 1 - w_today
 
-# D30 (E4.5) source registry: every `sources:` job that writes raw_doc_ref is a Scalp
-# source; each RSS feed is its own source. Every source job that writes context (or
-# every one of its feeds) declares exactly one of `category:` (one of the six above) or
-# `reference: true` (D56); neither, both, or an unknown category fails config load.
-# Other knobs: weight (default 1), max_docs_per_run, label (shown in the Scalp card's source mix). The Scalp reads `scalp_doc_budget` docs
-# per run, split equally across categories with fresh docs, then by weighted
-# round-robin inside a category; the rest wait, and are closed `skipped_budget` once
-# older than the raw_doc_ref TTL above.
+# D30 source registry: every raw_doc_ref source (each RSS feed separately) is a Scalp
+# source and declares exactly one of `category:` or `reference: true`. Knobs: weight,
+# max_docs_per_run, label. The Scalp reads `scalp_doc_budget` docs per run, equal per
+# category then weighted round-robin; the rest wait, then close `skipped_budget`.
 
 sources:                        # fetch-only jobs (no LLM), each with its own cadence; quiet heartbeats
   youtube.briefs:               # D45/E4.6: one pre-market brief run, newest video per channel
@@ -277,7 +218,7 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     notify: quiet               # folded into the first persona post; a channel error posts a notice
     context: {ttl: 48h, supersede: latest}   # D60: a brief lives 48 h from its video's publish time (hard expiry)
     writes: [raw_doc_ref, channel_brief]
-    lookback: 48h               # D60 (was 24h): newest qualifying video in the last 48 h; Monday 02:00 sees Saturday uploads
+    lookback: 48h               # D60: newest qualifying video in the last 48 h; Monday 02:00 sees Saturday uploads
     channels:                   # adding a channel = one entry here + arc/ingest/channels/<slug>/; D49: each declares youtube_macro | youtube_micro
                                 # D60: include_streams also lists /streams (post_live ok, never is_live/is_upcoming)
       - {slug: stockedup, channel: UC-m6zNItyoDk5lSykDlhE4Q, label: StockedUp, category: youtube_micro, skip_shorts: true}
@@ -294,21 +235,14 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     window: "06:00-20:00"
     days: trading
     writes: [raw_doc_ref]
-    # Every feed declares its D47 category and its D54 feed (all fast: `scalp`).
-    # D55 (E4.11): optional per-feed `title_exclude` / `title_include` regex lists
-    # (case-insensitive search on the entry title). A filtered entry is stored closed
-    # `scalp_status='filtered'` (counted on the Tower Sources page and the Scalp card),
-    # never read and never silently dropped. Not runtime-tunable (NOT_EXPOSED_PATHS).
-    # Retired keys stay readable as label aliases (LEGACY_SOURCES): `cnbc` (CNBC Economy,
-    # D55) and `cnbc_earnings` / `cnbc_business` (E14.2, D60: replaced by the wires below).
+    # Every feed declares its category and feed. D55: optional per-feed `title_exclude` /
+    # `title_include` regexes (case-insensitive, on the title); a filtered entry is stored
+    # `filtered`, never read. Retired feed keys stay readable as LEGACY_SOURCES labels.
     feeds:
       - {name: wsj, label: WSJ, url: "https://feeds.content.dowjones.io/public/rss/RSSMarketsMain", hosts: [wsj.com], category: market_news, feed: scalp}
       - {name: wsj_business, label: WSJ Business, url: "https://feeds.content.dowjones.io/public/rss/WSJcomUSBusiness", hosts: [wsj.com], category: company_data, feed: scalp}
-      # E14.2 (D60): press-release wires. Only material company events are read: an
-      # entry must match a title_include (results / guidance / M&A / FDA / offering /
-      # buyback / dividend); date-of-call notices, AGM polls and law-firm alerts are
-      # title_exclude'd. Measured live 2026-10-08: PR Newswire 3/20 kept, Business
-      # Wire 5/63 kept (the rest were "to announce Q3 results on ..." notices).
+      # E14.2 (D60): press-release wires; only material company events pass title_include
+      # (results / guidance / M&A / FDA / offering / buyback / dividend).
       - name: prnewswire
         label: PR Newswire
         url: "https://www.prnewswire.com/rss/financial-services-latest-news/financial-services-latest-news-list.rss"
@@ -352,8 +286,7 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
         category: market_news
         feed: scalp
         weight: 0.5             # D60 (E14.1): half share
-        # E14.2 (D60): foreign-market wraps and listicle/opinion pieces. Measured on the
-        # 514 stored titles of 2026-10-06..08: 160 filtered (31%).
+        # E14.2 (D60): drop foreign-market wraps and listicle/opinion pieces.
         title_exclude:
           # foreign-market wraps
           - '\b(Malaysia|Korea|Japan|China|Hong Kong|Taiwan|Singapore|Thai|Indonesia|Philippine|Australia|New Zealand|Europe(an)?|German|French|Swiss|U\.?K\.?) (stock market|shares|bourse)\b'
@@ -369,17 +302,13 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
           - '^(Here''s|Here Is) (What|Why|How|the Average)\b'
           - '^(If (I|You|You''d|a Stock Market|the Fed)|History Says|What a \$|All It Takes|Warren Buffett( Says|''s))\b'
           - '\bSocial Security\b'
-      - {name: fed, label: Fed, url: "https://www.federalreserve.gov/feeds/press_all.xml", category: market_news, feed: scalp}   # D56: was macro_data
+      - {name: fed, label: Fed, url: "https://www.federalreserve.gov/feeds/press_all.xml", category: market_news, feed: scalp}   # D56
   edgar:    {every: 15m, window: "06:00-20:00", days: trading, category: company_data, label: EDGAR, writes: [raw_doc_ref], lane: background,
              about: "SEC filings (8-K, 10-Q, 10-K) for the universe; stale filings are skipped"}   # D39: p90 75 s (377 s max on new filings); E14.2 (D60): no Form 4
-  # E14.1 (D60): ticker-tagged news scoped to the active list. Each input is its own
-  # registry source (`ticker_news.<input>`) in company_data at the job's `weight` (2:
-  # twice an RSS feed's share). Docs carry the provider's symbols ∩ (active list ∪
-  # open underlyings) as tickers_hint; an article with none is stored `filtered`.
-  # `type` picks the fetcher (alpaca_news | finnhub_company_news); `enabled_when:
-  # primary_failed` runs an input only for tickers every primary failed on this run.
-  # No key -> skipped no_api_key; 401/403 -> failed forbidden; 429 -> one retry after
-  # Retry-After, then rate_limited. Cursor `ticker_news:<input>` (full walk only).
+  # E14.1 (D60): ticker-tagged news for the active list + open underlyings. Each input is
+  # its own source (`ticker_news.<input>`, company_data, at the job's weight); an article
+  # with no in-scope ticker is stored `filtered`. `type` picks the fetcher; `enabled_when:
+  # primary_failed` = fallback only. No key -> skipped; 429 -> one retry, then rate_limited.
   ticker_news:
     label: Ticker news
     about: "Alpaca/Benzinga news tagged by ticker for the active list (Finnhub company news as fallback)"
@@ -418,10 +347,8 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     age_basis: ingested         # D47: calendar rows are always "the latest pull", never stale by date
     feed: scout                 # D54: slow feed (06:00/18:00); the Scalp never reads these docs, next_earnings() still does
     writes: [raw_doc_ref]
-    # E4.1d: the free tier silently caps a call at row_cap rows (keeping the latest dates),
-    # so the window (today - lookback_days .. today + horizon_days) is fetched in
-    # chunk_days chunks; a capped chunk is re-fetched per day, a capped day fails the run
-    # (`truncated`). HTTP 429: one retry after Retry-After (else 60 s), then `rate_limited`.
+    # E4.1d: the free tier caps a call at row_cap rows, so the window is fetched in
+    # chunk_days chunks (a capped chunk per day; a capped day fails `truncated`).
     row_cap: 1500
     chunk_days: 7
     rate_limit_per_min: 60
@@ -431,10 +358,8 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
   vol_term:                     # Cboe VIX9D/VIX/VIX3M/VVIX closes -> contango/backwardation
     label: VIX term structure
     about: "Cboe VIX9D / VIX / VIX3M / VVIX closes -> contango or backwardation"
-    # E14.2 (D60): was 09:00 + 16:45, and both slots stored the previous session's close
-    # (Cboe's history CSVs update after 16:45). 18:30 reads today's close; the 08:15
-    # catch-up runs only when 18:30 did not write that session (payload as_of). A slot
-    # whose CSV still ends on an older session is skipped at 18:30, failed at 08:15.
+    # 18:30 reads today's close (Cboe history CSVs update after 16:45); the 08:15
+    # catch-up runs only when 18:30 did not write that session.
     schedule: ["18:30", "08:15"]
     days: trading
     ttl: 2h
@@ -443,15 +368,9 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     category: options_slow
     feed: scout                 # D56: daily Cboe closes (Scout's slow feed)
     writes: [vol_term]
-  # E13.5 (D56): options_slow. Evening run after the Cboe publish (~21:00-22:50 ET
-  # measured, OPS 5.28) and an 08:15 catch-up. Both slots read one session: 23:00
-  # reads today's, 08:15 the previous session's. catch_up `<kind>:{day}` drops any
-  # slot whose session is already written (payload as_of), so 08:15 runs only when the
-  # evening slot did not write. Not published = skipped at 23:00, failed at 08:15.
-  # E14.2 (D60): evening slot 18:30 -> 23:00 (18:30 was always before the publish, so
-  # every session came from the 08:15 catch-up). The 06:00 Scout reads the 23:00 write
-  # of the previous evening; the 08:15 catch-up lands after the Scout, so it only
-  # serves Research and the Scalp that day.
+  # E13.5 (D56): options_slow. 23:00 runs after the Cboe publish (~21:00-22:50 ET, OPS
+  # 5.28) and feeds the 06:00 Scout; the 08:15 catch-up runs only when 23:00 did not write
+  # that session (unpublished: skipped at 23:00, failed at 08:15).
   options_daily:                # Cboe daily options statistics: P/C x6 + volume/OI per product
     label: Cboe daily options
     about: "Cboe put/call ratios (total, index, ETP, equity, VIX, SPX) and volume + open interest per product"
@@ -462,12 +381,9 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     category: options_slow
     feed: scout
     writes: [options_daily]
-  # E16.4 (D76): the daily market-health read (VIX vs 50d + 1y percentile, VVIX, put/call
-  # 5d percentile, active-list breadth from regime.technicals). 23:15 lands after the
-  # 23:00 options_daily; the 08:20 catch-up (after the 08:15 options_daily catch-up) runs
-  # only when 23:15 did not write that session (payload as_of), before the 09:40 loop.
-  # Research sees it only with
-  # personas.market_health_context on; label thresholds in the market_health: block.
+  # E16.4 (D76): daily market-health read (VIX vs 50d + 1y pct, VVIX, put/call 5d pct,
+  # active-list breadth). The 08:20 catch-up runs only when 23:15 did not write. Research
+  # sees it with personas.market_health_context on; thresholds in market_health: below.
   market_health:
     label: Market health
     about: "Daily market-health read: VIX vs its 50-day mean and 1-year percentile, VVIX, Cboe put/call 5-day percentile, active-list breadth"
@@ -488,10 +404,8 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     category: options_slow
     feed: scout
     writes: [vx_curve]
-  # E13.6 (D56): options_fast, the Scalp's 30-min options tape (Cboe ~15-min delayed).
-  # Three parts, each isolated (a failed part -> metrics.failed_parts; run ok if >= 1
-  # part wrote): index vols, one delayed chain per ticker (active list + open
-  # underlyings, serial, pace_s apart), exchange symbol_data CSVs. OPS 5.29.
+  # E13.6 (D56): options_fast, the Scalp's 30-min Cboe tape: index vols, one delayed chain
+  # per ticker (pace_s apart), symbol_data CSVs; each part isolated (ok if >= 1 wrote).
   options_fast:
     label: Options tape
     about: "Cboe delayed VIX complex + VXN, near-ATM chain snapshot per active ticker, exchange volume by underlying"
@@ -508,10 +422,8 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     strikes: 3                  # strikes nearest spot (call + put each)
     pace_s: 0.2
     symbol_data_markets: [opt]  # opt | cone | ctwo | exo (one CSV each)
-  # E14.3 (D60): Alpaca screener movers + most-actives on the existing key, Scalp
-  # context only (the "Tape movers" block, behind personas.scalp_movers_context).
-  # Never a candidate / universe_tier / discovery input (D56). Dropped at write time:
-  # price < min_price, warrants/units/rights, leveraged/inverse funds. OPS 5.29a.
+  # E14.3 (D60): Alpaca movers + most-actives, Scalp context only (personas.scalp_movers_
+  # context); never a candidate or tier input. Penny names, warrants and levered funds dropped.
   market_movers:
     label: Tape movers
     about: "Alpaca top gainers / losers and most-active stocks (context for the Scalp; never a discovery input)"
@@ -573,11 +485,9 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     horizon_days: 45
     reference: true             # D56: reference data (Risk: short-call early assignment)
     writes: [ex_dividend]
-  # E4.8 (D46): Finnhub per-ticker context (free key, typed kinds, never raw docs). One
-  # shared budget of finnhub_calls_per_minute (55 of the key's 60/min) across processes,
-  # earnings calendar included. Scope (E12.4, D56): open underlyings → live candidates →
-  # core → momentum → discovery, ETFs skipped, capped at finnhub_max_tickers (50) in that
-  # order. Options: tickers (replaces the tier part), max_tickers.
+  # E4.8 (D46): Finnhub per-ticker context (typed kinds). One shared finnhub_calls_per_minute
+  # budget; scope open underlyings -> candidates -> core -> momentum -> discovery, ETFs
+  # skipped, capped at finnhub_max_tickers. Options: tickers, max_tickers.
   finnhub.insider:              # /stock/insider-transactions: open-market P/S only
     label: Finnhub insider
     about: "Open-market insider buys and sells per ticker"
@@ -677,29 +587,23 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     schedule: ["05:50"]         # after retail_buzz 05:40, before the 06:00 Scout; `arc universe trending` = by hand
     days: trading
     ttl: 1h
-    # D64 (E14.7): the trending entry lives 48 h; each run merges the previous run's
-    # entry (universe.carryover above). A failed run writes nothing, so the previous
-    # list stays valid until its 48 h end.
+    # D64: the entry lives 48 h and merges the previous run's (universe.carryover); a
+    # failed run writes nothing, so the previous list stays valid.
     context: {ttl: 48h, supersede: latest}
     reads: [retail_buzz, universe_tier]
     writes: [universe_tier, active_universe]   # re-resolves today's active list after the write
     pool: 40                    # first 40 in rank order get the tier's screen
     min_inputs_first: 2         # names in both inputs rank ahead of single-input names
     exclude_market_reference: true
-    # E14.5 (D60): Reddit's second half. rank_gain = 24 h rank gain (control); velocity =
-    # rank-normalised mention velocity (m + k) / (m24 + k). Strategy lane: change only via
-    # `!arc config universe.trending.scoring` or the XP-10 draft (velocity arm).
+    # E14.5 (D60): rank_gain = 24 h rank gain (control); velocity = (m + k) / (m24 + k).
+    # Strategy lane: `!arc config universe.trending.scoring` or the XP-10 draft.
     scoring: rank_gain
     velocity:                   # also the Scout's velocity lines (personas.scout_buzz_velocity)
       smoothing: 5              # k: a 3 -> 12 jump reads 2.1x, not 4x
       min_mentions: 10          # fewer 24 h mentions -> no velocity (never ranked as growth)
-  # E14.6 (D60): Stocktwits per-ticker sentiment. One stream request per ticker in
-  # scope (latest 30 messages); code counts the user-tagged Bullish/Bearish ones.
-  # Context only (Scout + Research behind personas.retail_sentiment_context); never a
-  # gate or tier-ranking input. Rate limit (unauthenticated, ~200 req/h per IP): the
-  # live run 2026-10-08 made 49 requests in 86 s with no 429 and no rate-limit headers
-  # (2 runs/day x <= 55 = 110 req/day). A 429 stops the run (partial), keeps what was
-  # fetched. See docs/OPS.md "Stocktwits per-ticker sentiment (E14.6)".
+  # E14.6 (D60): Stocktwits per-ticker sentiment (latest 30 messages, user-tagged
+  # Bullish/Bearish counted). Context only, behind personas.retail_sentiment_context; a 429
+  # stops the run and keeps what was fetched. OPS "Stocktwits per-ticker sentiment".
   retail_sentiment:
     label: Retail sentiment
     about: "Stocktwits bull/bear ratio per active ticker (user-tagged messages, latest 30): Scout + Research context"
@@ -720,9 +624,8 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     timeout_s: 15
     retries: 1
 
-# E4.8a (D46/D44): Finnhub per-ticker facts in the Scalp/Research prompts. The switch
-# is `personas.finnhub_context` below (D85: default on, was off; off = rollback, prompts
-# without the facts); these are its knobs.
+# E4.8a (D46): knobs of the Finnhub facts in the Scalp/Research prompts; the switch is
+# `personas.finnhub_context` below (default on, D85; off = rollback).
 finnhub_context:
   max_chars_per_ticker: 300     # rendered facts line per ticker (hard budget)
   scalp_max_tickers: 8          # Scalp: tickers its story digests name, first N
@@ -734,9 +637,8 @@ finnhub_context:
     fundamentals: 8
   cap_buckets_musd: {mega: 200000, large: 10000, mid: 2000, small: 300}   # below small = micro
 
-# E12.5 (D51/D44): Research diversification. The switch is
-# `personas.director_diversification` below (D85: default relaxed, was strict; strict =
-# the E5.9 behaviour, the rollback); these knobs only apply in `relaxed`.
+# E12.5 (D51): Research diversification knobs, used only when
+# `personas.director_diversification` is relaxed (default, D85; strict = rollback).
 director_diversification:
   max_names_per_industry: 2     # relaxed: an adds_concentration pick on a flagged sector drops only once the book holds this many names in its industry
   relaxed:                      # relaxed-mode flag thresholds (never below the strict portfolio.*_max_pct)
@@ -744,13 +646,10 @@ director_diversification:
     stance_max_pct: 0.85        # strict portfolio.stance_max_pct 0.75
     expiry_max_pct: 0.70        # strict portfolio.expiry_max_pct 0.60
 
-# E16.3 (D76/D78): the anti-chase entry filter, on while `personas.anti_chase` is on
-# (D78 ships it on without an experiment; off = rollback, pipeline as before E16.3).
-# After Research ranks and before Quant prices, a bullish/bearish long-premium idea
-# whose move is already stretched is dropped (journaled `stretched_entry`). Neutral
-# ideas and credit-capable profiles are never filtered; missing technicals keep the
-# idea (`technicals_missing`). Thresholds are the D78 rule; `combine: any` is the D76
-# card rule (stretch, or RSI near the 20-day extreme) for later XP-13 variants.
+# E16.3 (D78): anti-chase entry filter (personas.anti_chase; off = rollback). After Research
+# ranks, a bullish/bearish long-premium idea whose move is stretched is dropped
+# (`stretched_entry`); neutral ideas, credit-capable profiles and missing technicals are
+# kept. `combine: any` = stretch or RSI near the 20-day extreme.
 anti_chase:
   combine: all                  # all (D78): stretch AND RSI | any (D76): stretch OR (RSI AND near 20d extreme)
   max_stretch_atr: 2.5          # (close - SMA20) / ATR14 at or above this (bears: at or below minus this)
@@ -774,9 +673,9 @@ market_health:
   max_lag_sessions: 2
 
 personas:
-  finnhub_context: "on"         # E4.8a: off | on (D85: on without an experiment, was off; off = rollback)
+  finnhub_context: "on"         # E4.8a: off | on (D85; off = rollback)
   scalp_movers_context: "off"   # E14.3 (D60): off | on, the Scalp's "Tape movers" block (strategy lane; XP-11)
-  director_diversification: relaxed   # E12.5: strict | relaxed (D85: relaxed without an experiment, was strict; strict = rollback)
+  director_diversification: relaxed   # E12.5: strict | relaxed (D85; strict = rollback)
   scout_buzz_velocity: "off"    # E14.5 (D60): off | on: Reddit mention velocity + "Fastest risers" in the Scout's retail-buzz section (strategy lane)
   retail_sentiment_context: "off"   # E14.6 (D60): off | on: Stocktwits bull/bear lines for the Scout + one fact per Research pool line (strategy lane; draft XP-12)
   anti_chase: "on"              # E16.3 (D76/D78): off | on: drop stretched directional long-premium ideas before Quant (D78 ships on; off = rollback, pipeline byte-identical)
@@ -787,7 +686,7 @@ personas:
     about: "Daily read of the YouTube briefs + Cboe options stats; writes the discovery tier and Scout ideas"
     group: scout
     persona: scout
-    schedule: ["06:00"]         # owner 2026-10-05 (was 08:30)
+    schedule: ["06:00"]         # owner 2026-10-05
     days: trading
     after_sources: true
     ttl: 1h                     # a missed 06:00 still runs until 07:00; later = skipped for the day
@@ -830,7 +729,7 @@ personas:
     about: "10-min trading loop: pick ideas, price structures, risk review, propose, auto-approve, execute"
     group: trading_loop
     persona: research
-    every: 10m                  # D52 (owner 2026-10-05; was 5m)
+    every: 10m                  # D52
     window: "09:40-15:50"       # 38 slots; skips the open's first 10 min
     days: trading
     chain: auto                 # E13.15 AUTO_CHAINS: exits.mandatory, quant.exit, risk.exit, quant.open, risk.open, quant.revise, quant.propose, broker.execute (D34/D56)
@@ -910,7 +809,7 @@ personas:
     label: Weekly scorecard
     about: "Weekly paper scorecard to #arc-investor and docs/RESEARCH/weekly"
     group: post_market
-    persona: ops                  # D56 (E13.2): was auditor
+    persona: ops                  # D56
     schedule: ["16:45"]
     days: [fri]
     llm: false                  # deterministic: audit store (read-only) + Alpaca bars for D19 settles
@@ -948,7 +847,7 @@ steps:                          # per-step settings for chain-only steps (E5.2, 
   # One Quant revision round after Risk's verdicts; skipped when no structure is
   # `revise`, on a no-change loop, or with < 90 s of loop.max_runtime left.
   quant.revise:  {reads: [shortlist, regime, structures, risk_review], writes: [structures, note], notify: card, on_no_change: skip, min_remaining_s: 90}
-  quant.propose: {reads: [candidate, regime, shortlist, structures, risk_review, exit_case, risk_exit_review, position_review], writes: [proposal], llm: false, notify: summary}  # was propose; E6.1 posts the proposal cards; E5.9 fingerprint dedupe; E13.18 close branch
+  quant.propose: {reads: [candidate, regime, shortlist, structures, risk_review, exit_case, risk_exit_review, position_review], writes: [proposal], llm: false, notify: summary}  # posts the proposal cards; fingerprint dedupe (E5.9); close branch (E13.18)
   # E13.17 (D56) exit path: Quant judges one exit case per position Research flagged
   # `review`, with a discretionary signal, or paired with a capacity rejection.
   quant.exit:    {reads: [position_review, exit_watchlist, portfolio_context, regime, ex_dividend, story, scout_read], writes: [exit_case, note], notify: card, on_no_change: skip, min_remaining_s: 60}
@@ -957,12 +856,10 @@ steps:                          # per-step settings for chain-only steps (E5.2, 
   # risk.exit gives close | hold per exit case; quant.propose proposes the closes.
   exits.mandatory: {reads: [position_review], writes: [proposal], llm: false, notify: summary, on_no_change: run}
   risk.exit:     {reads: [exit_case, position_review, portfolio_context, ex_dividend, macro_calendar], writes: [risk_exit_review, note], notify: card, on_no_change: skip, min_remaining_s: 60}
-  # D34: publishes this chain's proposal cards (auto-approved when `auto_approve` is on for
-  # ARC_ENV) and hands each approved one to a Broker subprocess (own lock, ~6 min ladder).
-  # With auto-approve off it reports "awaiting approval". The Broker run joins the chain.
-  # D31: `on_no_change: run` = the only step a no_change loop still runs (carries pending
-  # approvals / ladders forward); every other chain step defaults to `skip`.
-  broker.execute: {reads: [proposal], writes: [], llm: false, notify: summary, on_no_change: run}   # D56: was execute
+  # D34: publishes this chain's proposal cards (auto-approved when `auto_approve` is on)
+  # and hands each approved one to a Broker subprocess. `on_no_change: run`: the only step
+  # a no_change loop still runs; every other step defaults to `skip`.
+  broker.execute: {reads: [proposal], writes: [], llm: false, notify: summary, on_no_change: run}   # D56
 
 triggers: []                    # D31: no scalp.completed -> research trigger any more; the 10-min
                                 # loop picks new candidates up within one slot
