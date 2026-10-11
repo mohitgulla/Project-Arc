@@ -199,7 +199,7 @@ def test_commits_in_a_running_window_touching_its_area(tmp_path: Path) -> None:
     text = se.render(exps, [w], [], "areas", [], [])
     assert "CHANGED EXISTING VALUES take_profit_pct: 0.5" in text
     assert "new off-default keys trail_enabled: false" in text
-    assert "code only: check it ships behind a flag defaulting to control" in text
+    assert "code only: shipped to every arm (D86)" in text
     assert "E7.9" not in text  # ranking is not XP-2's area
 
 
@@ -241,7 +241,7 @@ def test_config_value_changes_parser() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 3. strategy-lane citations (E10.7)
+# 3. strategy-lane citations (E10.7; XP-advisory per D86 / E21.1)
 # ---------------------------------------------------------------------------
 
 
@@ -254,6 +254,7 @@ def test_lane_citations_from_commit_and_pr_body(tmp_path: Path) -> None:
     repo.commit({"arc/exits/policy.py": "z\n"}, "E6.13: flagged\n\n**Flag:** `exits.new`", t)
     repo.commit({"arc/exits/policy.py": "w\n"}, "E6.14: cite unknown\n\nExperiment: XP-9", t)
     repo.commit({"arc/exits/policy.py": "v\n"}, "E6.15: nothing cited", t)
+    repo.commit({"arc/exits/policy.py": "u\n"}, "E21.9: advisory\n\n**XP-advisory:** none", t)
     head = repo.commit({"docs/x.md": "d\n"}, "docs only", t)
     bodies = {12: "Lane: fast — broker outage hotfix"}
     out = se.lane_citations(
@@ -261,15 +262,17 @@ def test_lane_citations_from_commit_and_pr_body(tmp_path: Path) -> None:
         {"XP-1", "XP-2", "XP-3"},
     )  # fmt: skip
     by = {c["subject"].split(":")[0]: c for c in out}
-    assert set(by) == {"E6.9", "E6.12", "E6.13", "E6.14", "E6.15"}  # docs-only skipped
+    assert set(by) == {"E6.9", "E6.12", "E6.13", "E6.14", "E6.15", "E21.9"}  # docs-only skipped
     assert by["E6.9"]["experiments"] == ["XP-2"] and by["E6.9"]["cited"]
     assert by["E6.12"]["fast"] == "broker outage hotfix" and by["E6.12"]["pr"] == 12
     assert "PR #12 body" in by["E6.12"]["source"]
     assert by["E6.13"]["flags"] == ["exits.new"]
     assert by["E6.14"]["unknown_experiments"] == ["XP-9"]
     assert not by["E6.15"]["cited"]
+    assert by["E21.9"]["advisory"] == "none" and by["E21.9"]["cited"]
     text = se.render([], [], out, "areas", [], [])
-    assert "NO LANE CITED" in text and "NOT IN REGISTRY: XP-9" in text
+    assert "NO XP-ADVISORY" in text and "NOT IN REGISTRY: XP-9" in text
+    assert "XP-advisory: none" in text and "(pre-D86 line)" in text
 
 
 def test_strategy_paths_come_from_the_lane_config_when_present(tmp_path: Path) -> None:
@@ -286,16 +289,21 @@ def test_strategy_paths_come_from_the_lane_config_when_present(tmp_path: Path) -
 
 
 def test_pr_body_reader_passes_only_lane_lines() -> None:
-    text = "Summary\nreviewer said: LGTM\n- **Experiment:** XP-2\nFlag: `a.b`\nLane: fast — x\n"
+    text = (
+        "Summary\nreviewer said: LGTM\n- **Experiment:** XP-2\nFlag: `a.b`\n"
+        "Lane: fast — x\nXP-advisory: none\n"
+    )
     keep = [
         ln for ln in text.splitlines()
         if se.LANE_EXPERIMENT_RE.match(ln.replace("**", ""))
         or se.LANE_FLAG_RE.match(ln.replace("**", ""))
         or se.LANE_FAST_RE.match(ln.replace("**", ""))
+        or se.LANE_ADVISORY_RE.match(ln.replace("**", ""))
     ]  # fmt: skip
-    assert keep == ["- **Experiment:** XP-2", "Flag: `a.b`", "Lane: fast — x"]
+    assert keep == ["- **Experiment:** XP-2", "Flag: `a.b`", "Lane: fast — x", "XP-advisory: none"]
     reader = SCRIPT.read_text().split("def _gh_pr_body", 1)[1].split("\ndef ", 1)[0]
     assert '"pr", "view"' in reader and "reviews" not in reader and "comments" not in reader
+    assert "LANE_ADVISORY_RE" in reader
 
 
 def test_committed_verdict_is_matched_to_the_stored_report(tmp_path: Path) -> None:
@@ -406,9 +414,10 @@ def test_install_dry_run_copies_the_lens_script(tmp_path: Path) -> None:
         "sentinel_experiments.py RUN_DIR",
         "Pre-registration lock",
         "Control changed mid-run",
-        "Strategy-lane citations (E10.7)",
+        "Strategy-lane audit (D86, E21.1)",
+        "`XP-advisory` honesty",
         "A/A before A/B",
-        "never PR review\n     threads or comments",
+        "never PR review threads or comments",
         "Never run `arc experiment` write verbs",
         "*Experiments:*",
     ],

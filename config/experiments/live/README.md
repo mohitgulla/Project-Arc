@@ -19,11 +19,17 @@ Unset `alpha`, `power`, `min_sessions` and `max_sessions` are
 filled from `config/experiments.yaml` at `create`; the filled spec is what gets
 hash-locked. After `register`, any edit needs a new experiment id.
 
-Promotion (E10.7 strategy-lane CI check, docs/OPS.md 5.20): a PR that flips a
-strategy default cites `Experiment: XP-<n>` and commits
-`verdicts/XP-<n>.yaml` with `experiment_id`, `verdict: win` and the stored report's
-`report_hash` (from `arc experiment show XP-<n> --json`). The check only lets the PR
-change the values that experiment's treatment overlay tested.
+Promotion (strategy-lane CI check, docs/OPS.md 5.20, D86): while a spec here has no
+verdict file it is *open*, and every config leaf its treatment overlays set is locked;
+no PR may change those leaves. The promotion PR cites `Experiment: XP-<n>` and commits
+`verdicts/XP-<n>.yaml` with `experiment_id`, `verdict: win`, `winner: t<k>` (omit for a
+single-treatment run = `t1`) and the stored report's `report_hash` (from
+`arc experiment show XP-<n> --json`). The check only lets it change the values arm
+`t<k>` tested. Any verdict file (win, futility, invalid) frees the leaves.
+
+Who adds specs (D86): specs are added only by `arc experiment adopt` (E21.4) after the
+owner approves an Analyst proposal (`approve P-<n>` in #arc-analyst). Cards and PRs never
+draft XP specs here; a strategy PR's only XP touchpoint is its `XP-advisory:` line.
 
 Fork at any persona (E13.12, D56): `arc experiment start` computes each arm's plan
 (`arc.experiments.runner.arm_plan`) and stores it on the arm's identity and in the

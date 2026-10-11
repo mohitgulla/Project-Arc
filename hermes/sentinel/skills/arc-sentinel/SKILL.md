@@ -147,20 +147,31 @@ trigger actions. Resolve an S-id's full finding from the newest `~/.hermes/profi
      and every non-draft event carries the registered hash. A `MISMATCH` line means the
      append-only trigger was bypassed or a spec was edited after registration: `trading-safety`,
      `high` (a result from a moved spec is not a valid result).
-   - **Control changed mid-run**: a commit inside a running experiment's window that touches its
-     area's paths (`experiment_areas.json`) changes control unless it ships behind a flag
-     defaulting to control. `CHANGED EXISTING VALUES` on a `config/*.yaml` is a default flip:
-     `trading-safety`, `high`, `owner-decision` (the run is contaminated from that session; the
-     owner decides stop vs restart). Code-only hits: read the diff; only if the new path is on by
-     default is it a finding (`regression`, `medium`). A/A (`kind: aa`) uses every path.
-   - **Strategy-lane citations (E10.7)**: every commit touching a strategy-lane path cites
-     `Experiment: XP-<n>` (with a `win` verdict committed under
-     `config/experiments/live/verdicts/` matching the stored report hash), `Flag: <key>`
-     (default control) or `Lane: fast — <reason>` (the owner's emergency lane). `NO LANE CITED`
-     on main means the CI check was bypassed or not yet in force (before E10.7 merged: `info`
-     only); `NOT IN REGISTRY` or a verdict that does not match its stored report is
-     `workflow`, `high`. Read only the lane lines the script extracted; never PR review
-     threads or comments (independence rule).
+   - **Control changed mid-run**: dev changes ship to every arm under D86, so a code or new-key
+     commit inside a running experiment's window is expected and is NOT a finding by itself
+     (`arc experiment report` lists them under "Changes shipped to all arms during this run").
+     What stays a finding: `CHANGED EXISTING VALUES` on a leaf the experiment's overlays set
+     (a locked leaf, see below) changes what one arm tests: `trading-safety`, `high`,
+     `owner-decision` (the run is contaminated from that session; the owner decides stop vs
+     restart). A change so large it plausibly swamps the tested effect is `info` for the
+     Analyst. A/A (`kind: aa`) uses every path.
+   - **Strategy-lane audit (D86, E21.1)**: the CI check has one hard rule: no PR may change a
+     config leaf an *open* experiment tests (a spec in `config/experiments/live/` without a
+     verdict file), unless it is that experiment's promotion (`Experiment: XP-<n>` + a `win`
+     verdict under `config/experiments/live/verdicts/` matching the stored report hash, with
+     `winner: t<k>` (none = t1) + only that arm's values). Audit it on main:
+     - a commit that changed a locked leaf without a matching promotion means the check was
+       bypassed or broken: `workflow`, `high`. `NOT IN REGISTRY` or a verdict that does not
+       match its stored report: `workflow`, `high`.
+     - a commit that deleted an open spec must be a never-registered draft (check the DB copy:
+       no row, or `draft`); deleting a registered one: `workflow`, `high`.
+     - **`XP-advisory` honesty**: every strategy-path commit should carry `XP-advisory: none |
+       <reason>`. `NO XP-ADVISORY` is `info`. A `none` on a commit that obviously changes
+       trading behaviour (entries, exits, ranking, sizing, prompt content) is an `info` finding
+       for the Analyst's backlog; a reason line is input to the Analyst, not a finding.
+     - Pre-D86 lines (`Flag:`, `Lane: fast`) are history: never a finding on their own.
+     Read only the lines the script extracted; never PR review threads or comments (independence
+     rule).
    - **A/A before A/B**: an ab experiment that started with no stopped A/A (with sigma) before
      it and no owner `aa_override` is `workflow`, `medium`.
    - Never run `arc experiment` write verbs (`create`, `register`, `start`, `stop`, `evaluate`
@@ -200,7 +211,7 @@ trigger actions. Resolve an S-id's full finding from the newest `~/.hermes/profi
 
 *Checks:* <PASS/FAIL one-liners, only FAILs expanded> · tests <n> (<Δ>) · coverage <x>% (<Δ>)
 *Regressions:* <metric flags or "none">
-*Experiments:* <n registered (running ids) · prereg OK/MISMATCH · mid-run control commits n · lane citations n/n · A/A before A/B OK, or "pre-E10 store">
+*Experiments:* <n registered (running ids) · prereg OK/MISMATCH · mid-run control commits n · XP-advisory n/n · A/A before A/B OK, or "pre-E10 store">
 
 *New*
 • *S-<n>* [<severity>/<category>] <title> — <evidence in one line> → <recommendation> · <action + related cards>

@@ -1596,48 +1596,59 @@ The treatment arm is the same trading loop on its own paper account
   `.backup` copies first (repoint `routine_state experiment_arm:<arm>` in the
   control copy, or pass `--arm-db`); a live run needs the owner's ok.
 
-### 5.20 Strategy-lane CI check: two PR lanes (E10.7, D44)
+### 5.20 Strategy-lane CI check: locked leaves + XP advisory (E21.1, D86; was E10.7 / D44)
 
-Every pull request runs the `strategy-lane`
-CI job (`scripts/strategy_lane_check.py`; paths and knobs in
-`config/strategy_lane.yaml`). It is deterministic: `git diff` between the merge base
-and the PR head plus a YAML leaf diff, no network beyond reading the PR body, no LLM.
+Every pull request runs the `strategy-lane` CI job (`scripts/strategy_lane_check.py`;
+paths in `config/strategy_lane.yaml`). It is deterministic: `git diff` between the
+merge base and the PR head plus a YAML leaf diff, no network beyond reading the PR
+body, no LLM.
 
-A PR is **strategy lane** when it touches a strategy path: `arc/exits/`,
-`arc/scanner/`, `arc/sizing.py`, the pipeline selection/ranking modules
-(`arc/pipeline/steps.py`, `dedupe.py`, `portfolio_context.py`), persona prompts
-(`arc/personas/builders.py`, `entry_window.py`, `hermes/skills/arc-*/SKILL.md`),
-`config/{exits,ranking,account_profiles,universe,costs}.yaml` and the lane config
-itself. Gate and safety code (`arc/gate/`, `arc/budget/`, `market_guard.py`,
-execution, reconcile, halts) is not. Such a PR passes only with one of these lines in
-its body:
+**Dev changes ship on, to every arm (D86).** A strategy change (entries, exits,
+ranking, sizing, prompts, strategy config) lands in the shared binary/config, so
+control and every treatment arm get it alike. Cards and PRs never draft experiment
+specs and never add default-off flags just so an XP can flip them; experiments come
+from the weekly Analyst and enter `config/experiments/live/` only through
+`arc experiment adopt` (E21.4) after the owner approves.
 
-    Experiment: XP-<n>            # this change is what XP-<n> tests (spec in config/experiments/live/)
-    Flag: <stem>.<key.path>      # a NEW key in config/<stem>.yaml, default off (false/off/none/null/control)
-    Lane: fast — <reason>        # bug / safety / infra fix (>= 10 chars); arc-sentinel audits these
+**The one hard rule: locked leaves.** An *open* experiment is a spec in
+`config/experiments/live/` with no verdict file in `verdicts/` on the base branch. Every
+leaf its treatment overlays set (v1 `arms.treatment`, v2 `arms.treatments.t<k>`) is
+locked: the PR fails if it adds, changes or removes that leaf in `config/<stem>.yaml`
+(any overlay stem, `routines.yaml` included). The one way through is that
+experiment's **promotion**:
 
-- **Flag** — the check confirms the key is new in this PR and its value is off, so
-  both experiment arms run the same binary in control behaviour until an overlay
-  turns it on. Example: `Flag: exits.pipeline.skip_iv_crush`.
-- **Promotion** (flipping a default): any change or removal of an existing value in
-  `exits`, `ranking`, `costs` or `account_profiles` YAML (the files an experiment
-  overlay can patch). It needs `Experiment: XP-<n>` with a committed verdict file
-  `config/experiments/live/verdicts/XP-<n>.yaml` (`experiment_id`, `verdict: win`,
-  `report_hash` copied from `arc experiment show XP-<n> --json`), and every changed
-  value must equal that experiment's treatment overlay. `Flag:` and `Lane: fast` never
-  cover a promotion. Comment-only YAML edits are not promotions.
-- A value change in `universe.yaml` (no overlay can test it) needs any one lane line.
-- **Owner waiver** (E18.1, D78): `owner_waivers` in `config/strategy_lane.yaml` lists
-  the only promotion leaves that may ship without an experiment (today: the four
-  debit `take_profit_pct_of_debit` leaves of D78). Such a promotion passes only when
-  every changed leaf is listed under one waiver, the body carries
-  `Lane: fast — owner-directed ship without experiment (PLAN D78)` naming that
-  decision, and the decision's row in `docs/PLAN.md` exists and says "D44 waived".
-  An unlisted leaf, a removed value, a body without the `(PLAN D<n>)` citation or a
-  PLAN row without the phrase stays blocked as above. A new waiver entry needs the
-  owner's D# row first; arc-sentinel audits waived PRs like fast-lane ones.
-- A wrong extra line (an unknown `XP-<n>`, a flag that is not new) fails even if
-  another lane line passes, so the audit trail never cites something false.
+    Experiment: XP-<n>
+
+plus a committed `config/experiments/live/verdicts/XP-<n>.yaml` (`experiment_id`,
+`verdict: win`, `report_hash` from `arc experiment show XP-<n> --json`, and
+`winner: t<k>` for a multi-treatment run; a verdict without `winner` means `t1`), and
+every changed value must equal arm `t<k>`'s overlay value. Removing a locked value is
+never a promotion. Once any verdict file is on main the leaves unlock. A spec the PR
+adds locks nothing yet; a PR that deletes an open spec (retiring a never-registered
+draft) unlocks its leaves with a warning that arc-sentinel audits.
+
+**Advisory (never fails).** A PR is *strategy lane* when it touches a strategy path:
+`arc/exits/`, `arc/scanner/`, `arc/sizing.py`, the pipeline selection/ranking modules
+(`arc/pipeline/steps.py`, `research_pool.py`, `dedupe.py`, `portfolio_context.py`),
+persona prompts (`arc/personas/builders.py`, `entry_window.py`,
+`hermes/skills/arc-*/SKILL.md`), `config/{exits,ranking,account_profiles,universe,costs}.yaml`
+and the lane config itself. Gate and safety code (`arc/gate/`, `arc/budget/`,
+`market_guard.py`, execution, reconcile, halts) is not. Such a PR gets a job summary
+and a PR annotation listing the strategy files and config leaves it changes, and its
+body should carry one line:
+
+    XP-advisory: none
+    XP-advisory: <why this change might deserve an experiment>
+
+A missing line is a warning only. The Analyst and arc-sentinel read these lines (a
+`none` on a PR that obviously changes trading behaviour is a Sentinel info finding).
+Old lane lines (`Flag:`, `Lane: fast — …`, `Experiment:`) are still accepted and
+ignored, except `Experiment:` on a promotion. The E10.7 `Flag:` default-off rule, the
+promotion-stem rule and the D78 owner waivers are gone (D86).
+
+- `arc experiment report XP-<n>` lists the strategy-path commits that landed since the
+  experiment's t0 under "Changes shipped to all arms during this run" (local
+  `git log`, read-only): context for reading the verdict, not a validity failure.
 - The job reads the PR body at run time: after fixing the body, re-run the
   `strategy-lane` job (`gh run rerun <id> --failed`); no new push is needed.
 - Local dry run: `.venv/bin/python scripts/strategy_lane_check.py --base origin/main
