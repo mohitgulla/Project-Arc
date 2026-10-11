@@ -25,7 +25,7 @@ from arc.data.history.base import EOD_COLUMNS, OptionEodRow
 from arc.utils.calendar import sessions_between
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Iterable, Mapping, Sequence
 
 log = structlog.get_logger()
 
@@ -49,9 +49,18 @@ SCHEMA = pa.schema(
         ("ask", pa.float64()),
         ("bid_size", pa.float64()),
         ("ask_size", pa.float64()),
+        # E7.6 (D84) additive columns; files written before them read back as null.
+        ("last_trade", pa.timestamp("us", tz="America/New_York")),
+        ("created", pa.timestamp("us", tz="America/New_York")),
+        ("open_interest", pa.float64()),
     ]
 )
 assert tuple(SCHEMA.names) == EOD_COLUMNS  # noqa: S101 — schema/model drift guard
+
+#: Parquet key-value metadata marking a session file whose open interest was fetched
+#: (D84: a session is complete only with quotes *and* OI).
+OI_META_KEY = b"arc.open_interest"
+_OI_META_VAL = b"1"
 
 
 class DayCoverage(BaseModel):
@@ -115,6 +124,52 @@ class ParquetHistoryStore:
                 log.warning("history_store.bad_filename", path=str(p))
         return out
 
+    def providers(self) -> list[str]:
+        """Provider partitions present in the cache, sorted."""
+        if not self.root.is_dir():
+            return []
+        return sorted(
+            p.name.removeprefix("provider=") for p in self.root.glob("provider=*") if p.is_dir()
+        )
+
+    def has_open_interest(self, provider: str, underlying: str, day: dt.date) -> bool:
+        """True when the cached session file was written with open interest fetched."""
+        path = self.path_for(provider, underlying, day)
+        if not path.is_file():
+            return False
+        meta = pq.read_schema(path).metadata or {}
+        return meta.get(OI_META_KEY) == _OI_META_VAL
+
+    def oi_dates(self, provider: str, underlying: str) -> set[dt.date]:
+        """Cached sessions whose open interest was fetched (subset of ``cached_dates``)."""
+        return {
+            d
+            for d in self.cached_dates(provider, underlying)
+            if self.has_open_interest(provider, underlying, d)
+        }
+
+    def file_stats(
+        self, provider: str, underlying: str, *, sample: int = 20
+    ) -> tuple[float, float] | None:
+        """(mean rows per non-empty session, mean bytes per row) over the newest *sample*
+        non-empty cached sessions, from parquet footers only; None if nothing cached."""
+        rows = 0
+        size = 0
+        n = 0
+        for d in sorted(self.cached_dates(provider, underlying), reverse=True):
+            path = self.path_for(provider, underlying, d)
+            r = pq.read_metadata(path).num_rows
+            if r == 0:
+                continue
+            rows += r
+            size += path.stat().st_size
+            n += 1
+            if n >= sample:
+                break
+        if n == 0:
+            return None
+        return rows / n, size / rows
+
     # -- write ---------------------------------------------------------------
 
     def write_day(
@@ -123,8 +178,13 @@ class ParquetHistoryStore:
         underlying: str,
         day: dt.date,
         rows: Sequence[OptionEodRow],
+        *,
+        with_oi: bool = False,
     ) -> Path:
-        """Atomically write all rows for one session (zero rows allowed)."""
+        """Atomically write all rows for one session (zero rows allowed).
+
+        *with_oi* stamps the file as carrying fetched open interest.
+        """
         for r in rows:
             if r.date != day or r.provider != provider or r.underlying != underlying.upper():
                 msg = f"row {r.symbol} {r.date} does not belong to {provider}/{underlying}/{day}"
@@ -132,7 +192,8 @@ class ParquetHistoryStore:
         records = [r.model_dump(mode="python") for r in rows]
         for rec in records:
             rec["right"] = str(rec["right"])
-        table = pa.Table.from_pylist(records, schema=SCHEMA)
+        schema = SCHEMA.with_metadata({OI_META_KEY: _OI_META_VAL}) if with_oi else SCHEMA
+        table = pa.Table.from_pylist(records, schema=schema)
         path = self.path_for(provider, underlying, day)
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".parquet.tmp")
@@ -146,6 +207,8 @@ class ParquetHistoryStore:
         underlying: str,
         sessions: Iterable[dt.date],
         rows: Iterable[OptionEodRow],
+        *,
+        with_oi: bool = False,
     ) -> int:
         """Group *rows* by date and write one file per session in *sessions*.
 
@@ -166,8 +229,33 @@ class ParquetHistoryStore:
                 "history_store.stray_rows", provider=provider, underlying=underlying, n=stray
             )
         for day, day_rows in by_day.items():
-            self.write_day(provider, underlying, day, day_rows)
+            self.write_day(provider, underlying, day, day_rows, with_oi=with_oi)
         return len(by_day)
+
+    def add_open_interest(
+        self,
+        provider: str,
+        underlying: str,
+        day: dt.date,
+        oi: Mapping[tuple[dt.date, str], float],
+    ) -> int:
+        """Fill ``open_interest`` into an already-cached session and stamp it complete.
+
+        Used by a resumed run whose quotes are cached but whose OI is not.
+        Returns the number of rows that got a value.
+        """
+        path = self.path_for(provider, underlying, day)
+        table = pq.read_table(path, schema=SCHEMA)
+        symbols = table.column("symbol").to_pylist()
+        old = table.column("open_interest").to_pylist()
+        new = [oi.get((day, s), o) for s, o in zip(symbols, old, strict=True)]
+        idx = table.schema.get_field_index("open_interest")
+        table = table.set_column(idx, "open_interest", pa.array(new, type=pa.float64()))
+        table = table.replace_schema_metadata({OI_META_KEY: _OI_META_VAL})
+        tmp = path.with_suffix(".parquet.tmp")
+        pq.write_table(table, tmp)
+        tmp.replace(path)
+        return sum((day, s) in oi for s in symbols)
 
     # -- read ----------------------------------------------------------------
 

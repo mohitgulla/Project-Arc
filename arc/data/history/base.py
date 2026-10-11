@@ -16,6 +16,8 @@ from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from arc.utils.calendar import ET
+
 
 class OptionRight(enum.StrEnum):
     CALL = "call"
@@ -50,10 +52,36 @@ class OptionEodRow(BaseModel):
     bid_size: float | None = Field(default=None, ge=0)
     ask_size: float | None = Field(default=None, ge=0)
 
+    # E7.6 (D84), schema-additive; None for providers/files that predate them.
+    last_trade: dt.datetime | None = Field(
+        default=None, description="Time of the session's last trade (ET), ThetaData EOD report."
+    )
+    created: dt.datetime | None = Field(
+        default=None, description="EOD report generation time (ET, ~17:15), ThetaData."
+    )
+    open_interest: float | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "OPRA open interest reported the morning of `date` (= OI as of the prior "
+            "session's close), i.e. what a trader sees during `date`. No look-ahead."
+        ),
+    )
+
     @field_validator("underlying")
     @classmethod
     def _upper(cls, v: str) -> str:
         return v.upper()
+
+    @field_validator("last_trade", "created")
+    @classmethod
+    def _et(cls, v: dt.datetime | None) -> dt.datetime | None:
+        """Naive timestamps are ET (ThetaData reports wall-clock ET); aware ones convert."""
+        if v is None:
+            return None
+        if v.tzinfo is None:
+            return v.replace(tzinfo=ET)
+        return v.astimezone(ET)
 
 
 #: Column order for the on-disk parquet schema (mirrors OptionEodRow fields).
