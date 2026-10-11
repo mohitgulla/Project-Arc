@@ -2247,7 +2247,7 @@ Check: `arc routines tick --dry-run --now <today>T10:40-04:00` (Research chain) 
 
 ### 5.33 Betas and the beta-weighted delta cap (E3.6, D62)
 
-**Producer.** The `betas` routine (05:35 ET trading days, `ttl` 3h, background lane,
+**Producer.** The `betas` routine (07:10 ET trading days, after the final active list, D90; `ttl` 2h, background lane,
 `writes: []`) pulls ~400 calendar days of Alpaca daily closes (strictly before today)
 for the active list, every open underlying, today's candidates and SPY/QQQ/IWM, and
 stores one `betas` row per (ticker, day): the raw 1-year β vs SPY over the last 252
