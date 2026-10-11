@@ -147,6 +147,21 @@ head migration); exit 1 when one fails. `--apply --actor <owner id>
 Any failure before the swap deletes `arc.db.new` and leaves the live store as it was.
 Trading stays halted afterwards: resume only after the cutover checks (E19.3).
 
+**D80 cutover log (E19.3).**
+- 2026-10-10 16:34 PT: the owner cleared the experiment registry (XP-10; XP-3 was cleared
+  2026-10-06) as a prep step for the D80 fresh start. This was not a defect (Sentinel S-36,
+  owner decision 2026-10-11). The rows were deleted in place with the append-only triggers
+  bypassed. Pre-deletion copies are in
+  `data/archive/20261011-1315-pre-d80/xp-registry-pre-clear-20261010/` (XP-10 plus its arm
+  store `arc-exp-XP-10.db`) and `.../xp-registry-pre-clear-20261006/` (XP-3). Their
+  `verdict: stopped` files and registered specs are in `config/experiments/live/verdicts/`
+  and `history/`.
+- 2026-10-11 13:15 ET: `arc store reset --apply` swapped in the fresh store. Production is
+  …63Y6 with $25,000 (`store:epoch`), the archive is `data/archive/20261011-1315-pre-d80/`,
+  carry-over was 0 overrides, and the Analyst state is archived under
+  `analyst/archive/pre-d80-20261011-1015/`. The pre-reset scorecards are in
+  `docs/RESEARCH/weekly/archive/pre-d80/`. History on the new store starts here.
+
 ### 3.3 Broker venues (E13.11, D56)
 
 Every trading entry point builds its broker through `arc/broker/registry.py`
