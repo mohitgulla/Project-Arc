@@ -316,7 +316,8 @@ def test_mandatory_exits_record_quant_persona() -> None:
 # Grep gate: no Investor / Auditor persona names outside history
 # ---------------------------------------------------------------------------
 
-_OLD = re.compile(r"\b(Investor|Auditor|INVESTOR|AUDITOR)\b")
+# D92: "Arc Investor" is the production account's name (Tower), not the removed persona.
+_OLD = re.compile(r"\b((?<!Arc )Investor|Auditor|INVESTOR|AUDITOR)\b")
 _ALLOWED = (
     "arc/journal/legacy.py",
     "arc/journal/reasons.py",  # read-only legacy enum members
