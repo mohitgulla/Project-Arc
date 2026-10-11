@@ -827,7 +827,7 @@ def _market_price_lookup():  # noqa: ANN202 — Callable[[str], float | None] | 
 
 
 def _ingest(args: argparse.Namespace) -> int:
-    from arc.config import get_settings
+    from arc.config import DEFAULT_YOUTUBE_CHANNELS, get_settings
     from arc.ingest.channels import default_registry
     from arc.ingest.channels.briefs import (
         fixture_llm,
@@ -851,7 +851,11 @@ def _ingest(args: argparse.Namespace) -> int:
         llm = fixture_llm(proc)
     else:
         docs = fetch_youtube(
-            conn, settings, force_audio=args.force_audio, max_videos=args.max_videos
+            conn,
+            settings,
+            channels=DEFAULT_YOUTUBE_CHANNELS,
+            force_audio=args.force_audio,
+            max_videos=args.max_videos,
         )
         new_docs = len(docs)
         sources = [d.transcript_source for d in docs]

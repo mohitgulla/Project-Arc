@@ -298,10 +298,11 @@ def _fetch(conn: Any, monkeypatch: pytest.MonkeyPatch, titles: list[str]) -> rss
     parsed.entries = entries  # type: ignore[attr-defined]
     monkeypatch.setattr(rss, "_download", lambda *_a, **_k: b"<rss/>")
     monkeypatch.setattr(rss.feedparser, "parse", lambda *_a, **_k: parsed)
-    s = ArcSettings(env="paper", ingest_rss_feeds=[url])  # type: ignore[call-arg]
+    s = ArcSettings(env="paper")  # type: ignore[call-arg]
     return rss.fetch_rss_feeds(
         conn,
         s,
+        feeds=[url],
         source_keys={url: "seekingalpha"},
         feed_specs={url: _shipped_feeds()["seekingalpha"]},
         now=NOW,
@@ -357,8 +358,10 @@ class TestConnector:
             ]
 
         monkeypatch.setattr(rss.feedparser, "parse", lambda *_a, **_k: _Parsed())
-        s = ArcSettings(env="paper", ingest_rss_feeds=[url])  # type: ignore[call-arg]
-        docs = rss.fetch_rss(conn, s, feed_specs={url: _shipped_feeds()["seekingalpha"]}, now=NOW)
+        s = ArcSettings(env="paper")  # type: ignore[call-arg]
+        docs = rss.fetch_rss(
+            conn, s, feeds=[url], feed_specs={url: _shipped_feeds()["seekingalpha"]}, now=NOW
+        )
         assert [d.url for d in docs] == ["https://sa/2"]
 
 

@@ -7,7 +7,7 @@
 # `arc universe tiers` prints it):
 #   core       the 20 names below (the `universe` registry key); no screen; Scalp
 #              confidence floor 0.4
-#   momentum   top 20 of the momentum feed (universe_momentum_size_d56; E12.2, context
+#   momentum   top 20 of the momentum feed (universe_momentum_size; E12.2, context
 #              `universe_tier`); standard screen; floor 0.5
 #   discovery  <= 25 names the Scout writes from YouTube calls (E13.7;
 #              universe_discovery_size); loose screen; floor 0.6
@@ -134,9 +134,9 @@ extraction:
                      "PPI", "RSI", "SEC"]
 
 earnings:
-  # Earnings events are kept for every symbol-master ticker (next_earnings and the
-  # gate's earnings blackout need them). scalp: seed sends only seed-list events to
-  # the Scalp; non-seed events are stored as calendar data (marked scalped) so the
-  # ~1k-event calendar cannot crowd out the other sources before E4.5's per-source
-  # budgets land. scalp: all sends every event to the Scalp.
+  # Events are stored for every symbol-master ticker (next_earnings and the gate's
+  # earnings blackout read them). The earnings source is `feed: scout`, so the Scalp
+  # never reads them either way; `seed` closes non-seed events at ingest (status
+  # scalped, run earnings:calendar-only) instead of at the next Scalp run (slow_feed),
+  # which keeps the Scalp card's slow-feed count to seed names. `all` = leave them all.
   scalp: seed

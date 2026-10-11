@@ -24,7 +24,7 @@ from arc.account_profiles import (
     ShortLegPolicy,
     load_account_profiles,
 )
-from arc.config import ArcSettings, StructureKind
+from arc.config import ArcSettings
 from arc.gate import AccountSnapshot, MarketSnapshot, Portfolio, Quote, RuleCode, evaluate
 from arc.gate import rules as R
 from arc.models import Leg, LegIntent, Proposal, QuantMetrics, Sizing, Structure
@@ -274,54 +274,21 @@ class TestProfilesConfig:
 
 
 # ---------------------------------------------------------------------------
-# Whitelist enum split + legacy alias
+# D4 kinds vs the account profile (E20.2: no separate whitelist setting)
 # ---------------------------------------------------------------------------
 
 
-class TestWhitelistSplit:
-    def test_default_has_both_vertical_kinds(self) -> None:
-        assert set(cfg().structure_whitelist) == {
-            StructureKind.VERTICAL_DEBIT,
-            StructureKind.VERTICAL_CREDIT,
-            StructureKind.IRON_CONDOR,
-            StructureKind.LONG_CALL,
-            StructureKind.LONG_PUT,
-        }
-        assert "vertical" not in {k.value for k in StructureKind}
+class TestD4Kinds:
+    def test_every_profile_kind_is_a_d4_kind(self) -> None:
+        """The profile narrows D4; it can never name a kind outside it."""
+        for prof in load_account_profiles().profiles.values():
+            assert set(prof.allowed_kinds) <= R.D4_KINDS, prof.name
+        assert set(load_account_profiles().get("margin").allowed_kinds) == R.D4_KINDS
 
-    @pytest.mark.parametrize(
-        "raw",
-        ["vertical,long_call", '["vertical", "long_call"]', ["vertical", "long_call"]],
-    )
-    def test_legacy_vertical_alias_expands_to_both(
-        self, raw: object, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        if isinstance(raw, str):
-            monkeypatch.setenv("ARC_STRUCTURE_WHITELIST", raw)
-            s = cfg()
-        else:
-            s = cfg(structure_whitelist=raw)
-        assert s.structure_whitelist == [
-            StructureKind.VERTICAL_DEBIT,
-            StructureKind.VERTICAL_CREDIT,
-            StructureKind.LONG_CALL,
-        ]
-
-    def test_alias_dedupes_and_rejects_unknown(self) -> None:
-        s = cfg(structure_whitelist=["vertical_debit", "vertical", "VERTICAL"])
-        assert s.structure_whitelist == [
-            StructureKind.VERTICAL_DEBIT,
-            StructureKind.VERTICAL_CREDIT,
-        ]
-        with pytest.raises(ValueError):
-            cfg(structure_whitelist="calendar")
-
-    def test_whitelist_split_is_enforced(self) -> None:
-        """Whitelisting only debit verticals now refuses a credit vertical (margin profile)."""
-        s = cfg("margin", structure_whitelist=["vertical_debit"])
-        assert gate(bull_call(), s).passed
-        d = gate(bull_put(), s)
-        assert RuleCode.STRUCTURE_NOT_ALLOWED in codes(d)
+    def test_profile_narrowing_is_enforced(self) -> None:
+        """cash_debit refuses a credit vertical the margin profile accepts."""
+        assert gate(bull_call(), cfg()).passed
+        assert RuleCode.ACCOUNT_KIND in codes(gate(bull_put(), cfg()))
 
 
 # ---------------------------------------------------------------------------

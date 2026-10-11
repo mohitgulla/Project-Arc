@@ -846,7 +846,7 @@ discoveries, `universe.tiers.model`); an old `model:` / `trending:` key in
 - **Momentum tier (E12.2):** job `universe.momentum`, 06:00 ET on the first trading
   session of each month (`days: month_start`). It writes the top holdings of Invesco
   SPMO (the S&P 500 Momentum proxy) from stockanalysis.com, falling back to Schwab's
-  first 20 rows (`partial`); the tier keeps the first `universe_momentum_size_d56` (20)
+  first 20 rows (`partial`); the tier keeps the first `universe_momentum_size` (20)
   that pass the standard screen. GOOG folds into GOOGL; ETFs/funds and non-optionable
   names are dropped. The entry lives 35 days, so a failed month keeps last month's list;
   if no entry was written since the month-start slot, the job retries every trading
@@ -1024,20 +1024,16 @@ unchanged. The Tower Sources page lists them under one *Reference data* group af
 the six categories. `unusual_options` was removed (D56): stored rows expire by TTL,
 and `arc context show --kind unusual_options` still lists them until then.
 
-- **Renames (D49, D56).** `company` → `company_data` and `options_data` →
-  `options_slow`; those and the pre-D47 names `company_news`, `filings`, `calendar`
-  still load for one release (logged `sources.category_alias old= new=`).
-  `macro_data` / `macro` were removed (D56) and fail config load with a pointer: the
-  Fed feed is `market_news`, `macro_calendar` is reference data. A change-log
-  override on `categories.macro_data.*`, `categories.options_data.*` or `uoa_*` is
-  logged `config.override_orphaned` and ignored. `video` was split in two, so
-  `category: video` fails config load with a pointer: set `category: youtube_macro |
-  youtube_micro` on each `youtube.briefs` channel. Stored rows that still say
-  `company` / `macro` / `video` are read through `normalize_category` (a `video`
-  brief resolves by its channel slug; a stored `macro_data` story has no category).
-  A change-log override on an old key
-  (`categories.company.weight`) applies to the renamed key; one on
-  `categories.video.*` is dropped with `control.override_unknown_key`.
+- **Renames (D49, D56; aliases expired in E20.2, D85).** Config accepts only the
+  current category names. `company`, `company_news`, `filings`, `calendar` and
+  `options_data` fail config load as unknown categories (use `company_data` /
+  `options_slow`). `macro_data` / `macro` fail with a pointer (the Fed feed is
+  `market_news`, `macro_calendar` is reference data), and `video` fails with a pointer
+  to the per-channel `category: youtube_macro | youtube_micro`. Stored rows that still
+  say `company` / `filings` / `macro` / `video` are read through `normalize_category`
+  (a `video` brief resolves by its channel slug; a stored `macro_data` story has no
+  category). A change-log override on any removed key (old category keys, `uoa_*`,
+  removed flags) is logged `control.override_unknown_key` and ignored.
 - **Categories.** The top-level `categories:` block sets each category's `weight`
   (all 1 = equal) and freshness `max_age` (table above). Both are Slack-tunable:
   `!arc config set categories.<c>.weight 0-5` and `categories.<c>.max_age <minutes>`

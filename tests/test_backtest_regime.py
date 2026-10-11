@@ -134,12 +134,12 @@ def test_vol_gate_drops_only_the_gated_kind_outside_its_labels() -> None:
 def test_overlays_set_only_their_knob() -> None:
     base = load_ranking_file()
     assert base.backtest.regime_model == "v1" and base.backtest.vol_gate == {}
-    v2 = load_ranking_file(None, [REPO / "config/experiments/e173_regime_v2.yaml"])
+    v2 = load_ranking_file(None, [REPO / "config/experiments/backtest/e173_regime_v2.yaml"])
     assert v2.backtest.regime_model == "v2"
     assert v2.backtest.model_dump(exclude={"regime_model"}) == base.backtest.model_dump(
         exclude={"regime_model"}
     )
-    g = load_ranking_file(None, [REPO / "config/experiments/e173_vol_gate.yaml"])
+    g = load_ranking_file(None, [REPO / "config/experiments/backtest/e173_vol_gate.yaml"])
     assert g.backtest.vol_gate == {"margin": {StrategyKind.IRON_CONDOR: ["low", "mid"]}}
     assert g.backtest.model_dump(exclude={"vol_gate"}) == base.backtest.model_dump(
         exclude={"vol_gate"}

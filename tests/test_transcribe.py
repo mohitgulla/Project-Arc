@@ -46,7 +46,6 @@ def db() -> sqlite3.Connection:
 def settings() -> ArcSettings:
     return ArcSettings(
         env="paper",
-        ingest_youtube_channels=["https://www.youtube.com/@TestChannel"],
         universe=["SPY", "NVDA"],
         ffmpeg_bin=FFMPEG,
     )
@@ -129,7 +128,13 @@ def _run(db, settings, infos, *, force=False, tx=None, fail_ffmpeg=False, subs="
         mock.patch("arc.ingest.youtube.resolve_ffmpeg", return_value=FFMPEG),
     ):
         docs = fetch_youtube(
-            db, settings, force_audio=force, transcriber=tx, now=NOW, sleep=lambda _s: None
+            db,
+            settings,
+            channels=["https://www.youtube.com/@TestChannel"],
+            force_audio=force,
+            transcriber=tx,
+            now=NOW,
+            sleep=lambda _s: None,
         )
     return docs, tools, tx, dl
 
@@ -202,7 +207,6 @@ class TestGuardRails:
     def test_grace_period_configurable(self, db) -> None:
         s = ArcSettings(
             env="paper",
-            ingest_youtube_channels=["https://www.youtube.com/@T"],
             ffmpeg_bin=FFMPEG,
             yt_caption_grace_minutes=0,
         )
@@ -414,7 +418,12 @@ class TestTranscriptSourceOf:
 class TestCli:
     def test_ingest_force_audio_flag(self, tmp_path: Path) -> None:
         from arc.cli import main
+        from arc.config import DEFAULT_YOUTUBE_CHANNELS
 
         with mock.patch("arc.ingest.youtube.fetch_youtube", return_value=[]) as fy:
             assert main(["ingest", "youtube", "--force-audio", "--db", str(tmp_path / "a.db")]) == 0
-        assert fy.call_args.kwargs == {"force_audio": True, "max_videos": 5}
+        assert fy.call_args.kwargs == {
+            "channels": DEFAULT_YOUTUBE_CHANNELS,
+            "force_audio": True,
+            "max_videos": 5,
+        }

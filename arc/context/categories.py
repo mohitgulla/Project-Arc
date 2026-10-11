@@ -42,6 +42,7 @@ __all__ = [
     "REFERENCE_KINDS",
     "RESEARCH_CATEGORIES",
     "SCALP_CATEGORIES",
+    "STORED_CATEGORY_NAMES",
     "YOUTUBE_CATEGORIES",
     "CategorySpec",
     "SourceCategory",
@@ -78,19 +79,24 @@ RESEARCH_CATEGORIES: tuple[SourceCategory, ...] = tuple(
     c for c in CATEGORY_ORDER if c is not SourceCategory.RETAIL_BUZZ
 )
 
-# Old names, accepted for one release (logged as ``sources.category_alias``) so open
-# branches and YAML keep loading: the pre-D47 names, the D47 names D49 renamed and
-# the D49 names D56 replaced. ``None`` = no single successor: config refuses the name
-# with a pointed message (:data:`REMOVED_CATEGORY_HINTS`) and a stored value reads
-# as no category.
+# Old names that config refuses (E20.2, D85: the D56 "one release" aliases are gone).
+# ``None`` = no single successor: refused with a pointed message
+# (:data:`REMOVED_CATEGORY_HINTS`). Stored rows still carry the old names, so
+# :func:`normalize_category` reads them through :data:`STORED_CATEGORY_NAMES`.
 CATEGORY_ALIASES: Mapping[str, SourceCategory | None] = {
+    "macro_data": None,
+    "macro": None,
+}
+
+# Old names on *stored* rows (story / doc categories written before D49/D56), read
+# leniently by :func:`normalize_category`; config never accepts them.
+STORED_CATEGORY_NAMES: Mapping[str, SourceCategory | None] = {
     "company": SourceCategory.COMPANY_DATA,
     "company_news": SourceCategory.COMPANY_DATA,
     "filings": SourceCategory.COMPANY_DATA,
     "calendar": SourceCategory.COMPANY_DATA,
-    "options_data": SourceCategory.OPTIONS_SLOW,  # D56: the daily Cboe snapshots
-    "macro_data": None,
-    "macro": None,
+    "options_data": SourceCategory.OPTIONS_SLOW,
+    **CATEGORY_ALIASES,
 }
 
 # D56: why a name with no successor was removed (the config error says what to do).
@@ -183,7 +189,7 @@ def _removed(text: str, where: str) -> ValueError:
 
 
 def parse_category(raw: Any, *, where: str = "") -> SourceCategory:
-    """Strict config parse: a D56 name or a logged old alias; anything else raises.
+    """Strict config parse: a current category name; anything else raises.
 
     ``video`` raises with a pointer to the per-channel ``category:`` (D49);
     ``macro_data`` / ``macro`` raise with a pointer to ``market_news`` and
@@ -197,11 +203,7 @@ def parse_category(raw: Any, *, where: str = "") -> SourceCategory:
     except ValueError:
         pass
     if text in CATEGORY_ALIASES:
-        new = CATEGORY_ALIASES[text]
-        if new is None:
-            raise _removed(text, where)
-        log.warning("sources.category_alias", old=text, new=new.value, where=where)
-        return new
+        raise _removed(text, where)
     if text == LEGACY_VIDEO:
         raise _video_refused(where)
     names = " | ".join(c.value for c in SourceCategory)
@@ -254,7 +256,7 @@ def normalize_category(
 ) -> SourceCategory | None:
     """Lenient read of a *stored* category value (old rows); never logs or raises.
 
-    Old names map through :data:`CATEGORY_ALIASES` (a removed name such as
+    Old names map through :data:`STORED_CATEGORY_NAMES` (a removed name such as
     ``macro_data`` reads as ``None``); a stored ``video`` resolves by *channel* (slug
     or ``youtube.<slug>``) against the configured *channels*, else ``None``.
     """
@@ -263,7 +265,7 @@ def normalize_category(
         return SourceCategory(text)
     if text == LEGACY_VIDEO:
         return channel_category(channel, channels) if channel else None
-    return CATEGORY_ALIASES.get(text)
+    return STORED_CATEGORY_NAMES.get(text)
 
 
 class CategorySpec(BaseModel):

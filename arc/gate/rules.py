@@ -24,7 +24,6 @@ from typing import TYPE_CHECKING, NamedTuple
 from pydantic import BaseModel, ConfigDict
 
 from arc.account_profiles import BuyingPower, DayTradeRule, ShortLegPolicy
-from arc.config import ArcSettings, StructureKind
 from arc.gate.band import MAX_BAND_STEPS, PriceBand, as_grid, band_from_nbbo
 from arc.gate.ticks import TickGrid, order_grid
 from arc.models import GateDecision, Leg, LegIntent, Proposal, QuoteClock
@@ -39,6 +38,7 @@ from arc.structures import (
 from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
+    from arc.config import ArcSettings
     from arc.gate.inputs import AccountSnapshot, MarketSnapshot, Portfolio
 
 __all__ = [
@@ -621,13 +621,17 @@ def check_greeks_present(proposal: Proposal) -> list[Violation]:
     return []
 
 
-_KIND_MAP: dict[ModelKind, StructureKind] = {
-    ModelKind.LONG_CALL: StructureKind.LONG_CALL,
-    ModelKind.LONG_PUT: StructureKind.LONG_PUT,
-    ModelKind.VERTICAL_DEBIT: StructureKind.VERTICAL_DEBIT,
-    ModelKind.VERTICAL_CREDIT: StructureKind.VERTICAL_CREDIT,
-    ModelKind.IRON_CONDOR: StructureKind.IRON_CONDOR,
-}
+#: D4: the structure kinds Arc may ever open. E20.2 (D85): a fixed set, no longer a
+#: setting; the account profile's ``allowed_kinds`` (D25) narrows it per account.
+D4_KINDS: frozenset[ModelKind] = frozenset(
+    {
+        ModelKind.LONG_CALL,
+        ModelKind.LONG_PUT,
+        ModelKind.VERTICAL_DEBIT,
+        ModelKind.VERTICAL_CREDIT,
+        ModelKind.IRON_CONDOR,
+    }
+)
 
 
 def _uncovered_shorts(legs: Sequence[Leg]) -> list[str]:
@@ -721,13 +725,10 @@ def check_account_profile(
     return out
 
 
-def check_structure_whitelist(
-    proposal: Proposal, d: Derived, config: ArcSettings
-) -> list[Violation]:
-    """Leg geometry must classify into the whitelist, be defined-risk, and match any label."""
+def check_structure_whitelist(proposal: Proposal, d: Derived) -> list[Violation]:
+    """Leg geometry must classify into :data:`D4_KINDS`, be defined-risk, and match any label."""
     out: list[Violation] = []
-    allowed = _KIND_MAP.get(d.kind)
-    if allowed is None or allowed not in config.structure_whitelist:
+    if d.kind not in D4_KINDS:
         out += _v(RuleCode.STRUCTURE_NOT_ALLOWED, f"structure kind {d.kind} is not whitelisted")
     if not d.defined_risk:
         out += _v(RuleCode.STRUCTURE_NOT_ALLOWED, "structure is not defined-risk")
@@ -983,7 +984,7 @@ def evaluate(
             )
             violations += _run("band", lambda: check_band(p, dd, bb, m, c, max_steps=steps_cap))
         if not closing:
-            violations += _run("structure", lambda: check_structure_whitelist(p, dd, c))
+            violations += _run("structure", lambda: check_structure_whitelist(p, dd))
             violations += _run("account_profile", lambda: check_account_profile(p, risk_d, a, c))
             violations += _run("wash_sale", lambda: check_wash_sale(dd, pf, c, now))
             violations += _run("dte_window", lambda: check_dte_window(dd, c, now))

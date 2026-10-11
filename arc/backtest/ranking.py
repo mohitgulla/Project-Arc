@@ -76,6 +76,7 @@ from arc.backtest.strategies import (
     pick_expirations,
     select_legs,
 )
+from arc.backtest.universe import UniverseConfig
 from arc.exits.model import model_exits, realized_vol_forecast
 from arc.exits.policy import ExitReason, check_rules, resolve_rules
 from arc.features.technicals import AntiChaseRule
@@ -300,6 +301,11 @@ class BacktestSettings(BaseModel):
         description="Drop debit candidates whose directional breakeven is more than this "
         "many ATR14 x sqrt(DTE) from the decision close (ATR14 from daily OHLC <= the "
         "decision day), before any ranker picks; None = off",
+    )
+    # -- E7.7 (D84): the point-in-time backtest universe (`arc history universe build`) --
+    universe: UniverseConfig = Field(
+        default_factory=lambda: UniverseConfig(),
+        description="Point-in-time pull list: exactly target_size names, checkpoints nested",
     )
 
     def window_for(self, profile: str, default: tuple[int, int]) -> tuple[int, int]:

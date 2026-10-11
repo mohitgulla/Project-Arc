@@ -21,7 +21,7 @@ from hypothesis import strategies as st
 
 from arc.config import DEFAULT_UNIVERSE, ArcSettings
 from arc.context.store import ContextStore
-from arc.control.registry import REGISTRY, Risk, is_orphaned, lookup
+from arc.control.registry import REGISTRY, Risk, lookup
 from arc.ingest.scalp import (
     REJECT_THRESHOLD,
     ScalpRunResult,
@@ -213,7 +213,7 @@ class TestRegistry:
     def test_new_knobs(self) -> None:
         s = ArcSettings(_env_file=None, env="paper")  # type: ignore[call-arg]
         for key, default in (
-            ("universe_momentum_size_d56", 20),
+            ("universe_momentum_size", 20),
             ("universe_discovery_size", 25),  # D58: 25 (was 20)
             ("universe_trending_size", 25),  # D58 (E13.19)
             ("universe_floor_core", 0.4),
@@ -239,16 +239,18 @@ class TestRegistry:
         re-adds ``universe_trending_size`` (now <= 25)."""
         for key in (
             "universe.tiers.model",
-            "universe_momentum_size",
             "scalp_max_new_tickers",
             "universe_screen_relaxed_min_price",
         ):
-            assert key not in REGISTRY and is_orphaned(key), key
-        assert not is_orphaned("universe_momentum_size_d56")
+            assert key not in REGISTRY, key
+        assert "universe_momentum_size" in REGISTRY
+        # E20.2 (D85): renamed from universe_momentum_size_d56; the old key is an alias
+        assert lookup("universe_momentum_size_d56").key == "universe_momentum_size"
+        assert lookup("universe_momentum_size").field == "universe_momentum_size"
         # the single D51 floor now names the core floor
         assert lookup("scalp_min_confidence").key == "universe_floor_core"
         s = _settings()
-        assert not is_orphaned("universe_trending_size")
+        assert "universe_trending_size" in REGISTRY
         for gone in ("scalp_min_confidence", "scalp_max_new_tickers"):
             assert not hasattr(s, gone), gone
 

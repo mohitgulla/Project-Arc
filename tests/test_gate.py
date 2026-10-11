@@ -21,7 +21,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from arc.config import ArcSettings, StructureKind
+from arc.config import ArcSettings
 from arc.gate import (
     AccountSnapshot,
     ClosedLot,
@@ -697,9 +697,10 @@ def test_greeks_present_single_leg_and_closing_exempt() -> None:
 
 def test_whitelist_accepts_all_phase1_kinds() -> None:
     p = make_proposal()
-    assert R.check_structure_whitelist(p, derive(p), cfg()) == []
+    assert R.check_structure_whitelist(p, derive(p)) == []
     lc = make_proposal(long_call("SPY", EXP, strike=600, premium="3", as_of=AS_OF))
-    assert R.check_structure_whitelist(lc, derive(lc), cfg()) == []
+    assert R.check_structure_whitelist(lc, derive(lc)) == []
+    assert {MK(k) for k in MK if k is not MK.OTHER} == R.D4_KINDS
 
 
 def test_whitelist_rejects_other_and_undefined_risk() -> None:
@@ -709,22 +710,27 @@ def test_whitelist_rejects_other_and_undefined_risk() -> None:
         dte=42,
     )
     p = make_proposal(naked)
-    out = R.check_structure_whitelist(p, derive(p), cfg())
+    out = R.check_structure_whitelist(p, derive(p))
     assert len(out) == 2
     assert all(v.code == RuleCode.STRUCTURE_NOT_ALLOWED for v in out)
 
 
-def test_whitelist_respects_config_and_label() -> None:
-    p = make_proposal()
-    [v] = R.check_structure_whitelist(
-        p, derive(p), cfg(structure_whitelist=[StructureKind.LONG_CALL])
-    )
-    assert "not whitelisted" in v.detail
+def test_whitelist_checks_the_label() -> None:
     lying = make_proposal(bull_put().model_copy(update={"kind": MK.IRON_CONDOR}))
-    [v] = R.check_structure_whitelist(lying, derive(lying), cfg())
+    [v] = R.check_structure_whitelist(lying, derive(lying))
     assert "does not match" in v.detail
     unlabelled = make_proposal(bull_put().model_copy(update={"kind": None}))
-    assert R.check_structure_whitelist(unlabelled, derive(unlabelled), cfg()) == []
+    assert R.check_structure_whitelist(unlabelled, derive(unlabelled)) == []
+
+
+def test_structure_whitelist_env_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
+    """E20.2 (D85): the old ARC_STRUCTURE_WHITELIST setting is gone; it can't narrow
+    or widen the gate, and the account profile still refuses what it doesn't allow."""
+    monkeypatch.setenv("ARC_STRUCTURE_WHITELIST", "long_call")
+    s = cfg()
+    assert not hasattr(s, "structure_whitelist")
+    p = make_proposal()
+    assert R.check_structure_whitelist(p, derive(p)) == []
 
 
 # ---------------------------------------------------------------------------

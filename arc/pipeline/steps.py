@@ -695,7 +695,7 @@ class _TechRefs:
     """E16.2 (D76): one regime step's daily bars, fetched at most once per symbol.
 
     The relative-strength references (SPY, and each mapped sector ETF from
-    ``technicals.sector_etf``) are fetched once per run and reused
+    ``config/sectors.yaml`` ``sector_etf:``) are fetched once per run and reused
     for every ticker; a ticker that is itself a reference reuses that fetch. A
     reference that fails to load is ``None`` (its ``rs_*`` fields stay ``None``).
     """
@@ -708,14 +708,13 @@ class _TechRefs:
         days: int,
         tickers: Sequence[str],
     ) -> None:
-        from arc.pipeline.portfolio_context import load_sectors
+        from arc.pipeline.portfolio_context import load_sector_etfs, load_sectors
 
-        cfg = ctx.routines.technicals
         self._ctx, self._env, self._today, self._days = ctx, env, today, days
         self._bars: dict[str, list[Any]] = {}
         self._closes: dict[str, pd.Series | None] = {}
         self.benchmark = TECH_BENCHMARK
-        self._etf_by_sector = dict(cfg.sector_etf)
+        self._etf_by_sector = load_sector_etfs()
         self._sectors = load_sectors() if tickers and self._etf_by_sector else {}
 
     def bars(self, ticker: str) -> list[Any]:

@@ -233,7 +233,7 @@ class TestSizes:
     def test_size_caps_25(self) -> None:
         s = _settings()
         assert s.universe_trending_size == 25 and s.universe_discovery_size == 25
-        assert s.universe_momentum_size_d56 == 20 and s.universe_active_max == 50
+        assert s.universe_momentum_size == 20 and s.universe_active_max == 50
         assert s.universe_floor_trending == 0.6
         for key in ("universe_trending_size", "universe_discovery_size"):
             t = lookup(key)

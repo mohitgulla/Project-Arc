@@ -55,7 +55,7 @@ experiments:
   #       db: "data/arc-exp-{experiment_id}-{arm}.db"
   runner:
     enabled: true
-    max_lag_seconds: 540     # skip pairing a control chain older than this (stale quotes); D61: 7m loop + 2m (was 240)
+    max_lag_seconds: 540     # skip pairing a control chain older than this (stale quotes); D61: 7m loop + 2m
     tape_keep_days: 3        # market_tape retention in the control store
     account_mode: dedicated  # D69: dedicated (one account per arm) | shared (one account, many arms)
     max_parallel_arms: 10    # D69: arms registered + running across all experiments (ceiling 16)

@@ -38,7 +38,7 @@ def _routines(writes: list[str] | None = None) -> RoutinesConfig:
                 "iv.record": {
                     "schedule": ["15:50"],
                     "writes": writes or [],
-                    "category": "options_data",
+                    "category": "options_slow",
                     "tickers": ["AAPL"],
                 }
             }

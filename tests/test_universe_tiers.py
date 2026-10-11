@@ -179,7 +179,7 @@ class TestCoreConfig:
         assert MAX_UNIVERSE == MAX_CORE == 25  # D58: every tier capped at 25
         for key, default in (
             ("universe_active_max", 50),
-            ("universe_momentum_size_d56", 20),
+            ("universe_momentum_size", 20),
             ("universe_discovery_size", 25),
             ("universe_trending_size", 25),
         ):

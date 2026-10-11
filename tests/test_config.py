@@ -9,7 +9,7 @@ from unittest import mock
 import pytest
 from pydantic import ValidationError
 
-from arc.config import DEFAULT_UNIVERSE, ArcEnv, ArcSettings, StructureKind, get_settings
+from arc.config import DEFAULT_UNIVERSE, ArcEnv, ArcSettings, get_settings
 
 # ---------------------------------------------------------------------------
 # Defaults
@@ -42,16 +42,9 @@ class TestDefaults:
         assert s.approval_ttl_seconds == 1200
         assert s.auto_approve is False
 
-    def test_default_structure_whitelist(self) -> None:
-        s = get_settings()
-        expected = {
-            StructureKind.VERTICAL_DEBIT,
-            StructureKind.VERTICAL_CREDIT,
-            StructureKind.IRON_CONDOR,
-            StructureKind.LONG_CALL,
-            StructureKind.LONG_PUT,
-        }
-        assert set(s.structure_whitelist) == expected
+    def test_no_structure_whitelist_setting(self) -> None:
+        # E20.2 (D85): the account profile's allowed_kinds is the only per-account list
+        assert "structure_whitelist" not in ArcSettings.model_fields
 
     def test_default_universe_is_d56_core(self) -> None:
         s = get_settings()

@@ -65,6 +65,36 @@ backtest:
   # E16.5 (D76): the same breakeven-realism filter as scanner.max_be_atr, ATR14 from
   # split-adjusted daily OHLC <= the decision day. null = off (E7.5 run unchanged).
   max_be_atr: null
+  # E7.7 (D84): the point-in-time backtest universe, built by
+  # `arc history universe build` (arc/backtest/universe.py) into
+  # data/backtest_universe/<version>.parquet. Exactly target_size names, stocks and
+  # ETFs ranked in one list, priority-ordered: 1 always, 2 ever proposed/held
+  # (data/arc.db read-only), 3 in the top target_size in >= persistent_frac of
+  # quarters, 4 the rest; inside a bucket by median rank. Checkpoints nest
+  # (c125 = positions 1-125 ...). Data/backtest infra only: nothing live reads it.
+  universe:
+    target_size: 500
+    checkpoints: [125, 250, 500]
+    start: 2020-01-01          # first quarter start
+    dv_window: 60              # sessions before Q in the median dollar volume (close x volume)
+    min_sessions: 40           # bars needed inside that window
+    max_stale_sessions: 5      # last bar within 5 sessions of Q (still listed at Q)
+    min_price: 10.0            # last close before Q (D9)
+    stage1_keep: 1500          # top names by dollar volume that go to stage 2
+    persistent_frac: 0.75      # bucket 3: in the top target_size in >= 75% of quarters
+    stage2:                    # options liquidity (ThetaData), skipped with --stage1-only
+      enabled: true
+      max_dte: 60
+      strike_range: 5          # strikes each side of spot (+ ATM)
+      volume_days: 20          # option volume over the 20 sessions before Q
+      oi_weight: 1.0           # score = oi_weight x near-ATM OI + volume_weight x volume
+      volume_weight: 1.0
+    always: [SPY, QQQ, IWM, DIA, XLF, XLE, XLK, AAPL, MSFT, NVDA, AMZN, GOOGL, META, TSLA,
+             AMD, JPM, BAC, XOM, UNH, HD]   # SPY/QQQ/IWM + the D9 seed
+    include_ever_traded: true
+    include_index_roots: false # SPX/NDX/RUT/VIX... need a separate index subscription
+    add_inactive_listed: true  # + Alpaca inactive listed assets (delisted names; partial fix)
+    fetch_batch: 100           # symbols per Alpaca bars request
   decision:                   # D25 switch rule, fixed before the run
     min_subperiod_wins: 2
     subperiods: [bear, sideways, bull]

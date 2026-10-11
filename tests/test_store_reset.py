@@ -262,6 +262,15 @@ def test_keep_list_shipped_config() -> None:
     assert "cursor:" in k.routine_state_prefixes
 
 
+def test_every_kept_context_kind_is_registered() -> None:
+    """E20.2 (D85): no retired kind (put_call, unusual_options) lingers in the keep list."""
+    from arc.context.kinds import KINDS
+
+    kinds = load_keep_list(DEFAULT_KEEP_PATH).context_kinds
+    assert [k for k in kinds if k not in KINDS] == []
+    assert len(set(kinds)) == len(kinds)
+
+
 def test_keep_list_rejects_unknown_fields(tmp_path: Path) -> None:
     p = tmp_path / "k.yaml"
     p.write_text(yaml.safe_dump({"tables": ["raw_docs"], "bogus": 1}))

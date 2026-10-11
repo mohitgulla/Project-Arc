@@ -19,6 +19,20 @@ sectors:
   utilities: [XLU]
   real_estate: [XLRE]
 
+# E16.2 (D76): sector -> ETF that rs_sector_20d (on every `regime` entry's technicals)
+# is measured against; an unmapped sector gets None. rs_spy_* always use SPY.
+sector_etf:
+  technology: XLK
+  consumer_discretionary: XLY
+  consumer_staples: XLP
+  financials: XLF
+  energy: XLE
+  health_care: XLV
+  industrials: XLI
+  communication: XLC
+  utilities: XLU
+  real_estate: XLRE
+
 # D51 (E12.1): one level below sector, for the relaxed Research diversification
 # (E12.5: two names in the same industry may both be ranked). Every core name and
 # every SPMO top-25 name has exactly one industry (tests/test_universe_tiers.py).

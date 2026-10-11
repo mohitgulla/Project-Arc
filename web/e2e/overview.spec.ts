@@ -49,6 +49,14 @@ for (const vp of VIEWPORTS) {
         // Cards.
         for (const title of ["Equity", "P&L Today", "Positions", "Greeks vs Caps", "Today's Proposals", "Today's Pick", "Movers", "Recent Activity · 24 h"])
           await expect(page.getByRole("heading", { level: 2, name: title, exact: false }).first()).toBeVisible();
+        // D87: benchmarks, cash split, advisory Greeks
+        await expect(page.getByTestId("benchmark-SPY")).toContainText("SPY");
+        await expect(page.getByTestId("benchmark-QQQ")).toContainText("QQQ");
+        await expect(page.getByTestId("account-split")).toContainText("Cash (available)");
+        await expect(page.getByTestId("account-split")).toContainText("Invested");
+        await expect(page.getByTestId("greeks-theta-risk")).toHaveText(/^Risk (Low|Med|High)$/);
+        await expect(page.getByTestId("greeks-gamma-risk")).toHaveText(/^Risk (Low|Med|High)$/);
+        await expect(page.getByTestId("tile-name").first()).toHaveText(/^(Bullish|Bearish|Neutral|—)$/);
         await expect(page.getByTestId("trend-chart").locator("svg path").first()).toBeVisible();
         await expect(page.getByTestId("mtd-ytd")).toContainText("MTD");
         await expect(page.getByText("Debit Vertical").first()).toBeVisible();
@@ -230,7 +238,7 @@ test.describe("overview phone-75 layout", { tag: PHONE_75_TAG }, () => {
         .sort((a, b) => a.y - b.y)
         .map((x) => x.t),
     );
-    const order = ["Equity", "P&L Today", "Positions", "Greeks vs Caps", "Today's Proposals", "Today's Pick", "Movers", "Recent Activity"];
+    const order = ["Equity", "P&L Today", "Movers", "Positions", "Greeks vs Caps", "Today's Proposals", "Today's Pick", "Recent Activity"];
     expect(order.map((o) => titles.findIndex((t) => t.startsWith(o)))).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
     const cols = await page.getByTestId("status-slots").evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(" ").length);
     expect(cols).toBe(3);

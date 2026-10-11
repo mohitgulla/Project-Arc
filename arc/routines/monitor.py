@@ -24,7 +24,8 @@ Broker request budget (E5.3a): one run makes 1 account + 1 positions request,
 then per open underlying (:func:`~arc.pipeline.market.build_portfolio`) 1 stock
 quote + 1 option-chain snapshot + >=1 contracts page (open interest) + 1 raw
 snapshot (volume), i.e. :func:`broker_requests` = ``2 + 4 * roots`` plus
-pagination (34 at the default 8 ``max_open_positions``). At one run per 5 min
+pagination (34 at the default 8 ``max_open_positions``), plus D87's 2 per benchmark
+(SPY/QQQ quote + daily bars, ``benchmarks:`` job option). At one run per 5 min
 that is far below Alpaca Basic's 200 requests/min, even if the monitor, the
 position manager and a trading-loop run land in the same minute. Each run
 records its estimate as ``metrics.broker_requests``.
@@ -60,9 +61,50 @@ _BASE_REQUESTS = 2  # account + positions
 _REQUESTS_PER_ROOT = 4  # stock quote + chain snapshot + contracts (OI) + raw snapshot (volume)
 
 
-def broker_requests(roots: int) -> int:
-    """Broker/data requests one monitor run makes for *roots* open underlyings."""
-    return _BASE_REQUESTS + _REQUESTS_PER_ROOT * roots
+_REQUESTS_PER_BENCHMARK = 2  # stock quote + daily bars (prev close); D87
+
+
+def broker_requests(roots: int, benchmarks: int = 0) -> int:
+    """Broker/data requests one monitor run makes for *roots* open underlyings and
+    *benchmarks* reference symbols (D87: the Tower's SPY/QQQ comparison)."""
+    return _BASE_REQUESTS + _REQUESTS_PER_ROOT * roots + _REQUESTS_PER_BENCHMARK * benchmarks
+
+
+def _benchmarks(
+    market: Any, symbols: list[str], now: _dt.datetime, max_spread_pct: float
+) -> dict[str, dict[str, float | str | None]]:
+    """D87: each benchmark's spot and prior-session close, for the Tower's equity chart.
+
+    Spot is :func:`arc.data.base.market_spot` (never a one-sided half price); the prior
+    close is the last daily bar before today (ET). A symbol that fails is left out (the
+    Tower then draws no line for it), never a monitor failure.
+    """
+    from arc.data.base import market_spot
+
+    today = now.astimezone(ET).date()
+    out: dict[str, dict[str, float | str | None]] = {}
+    for sym in symbols:
+        try:
+            bars = market.history_bars(sym, today - _dt.timedelta(days=10), today)
+            prior = [
+                b
+                for b in bars
+                if b.close > 0
+                and (b.timestamp.astimezone(ET) if b.timestamp.tzinfo else b.timestamp).date()
+                < today
+            ]
+            spot = market_spot(market, sym, today, max_spread_pct=max_spread_pct)
+        except Exception as exc:  # noqa: BLE001 - display data only
+            log.warning("routines.monitor.benchmark_failed", symbol=sym, error=str(exc))
+            continue
+        if spot.price is None:
+            continue
+        out[sym] = {
+            "price": round(float(spot.price), 4),
+            "basis": spot.basis,
+            "prev_close": round(float(prior[-1].close), 4) if prior else None,
+        }
+    return out
 
 
 def _expiring(positions: list[BrokerPosition], ctx: JobContext, within_days: int) -> list[str]:
@@ -300,7 +342,13 @@ def monitor(ctx: JobContext, env: PipelineEnv) -> JobResult:
         summary += "; HALTED"
     elif opens_halted:
         summary += "; OPENS HALTED (exits still run)"
-    metrics["broker_requests"] = broker_requests(_option_roots(positions))
+    # D87: SPY/QQQ marks for the Tower's equity benchmark lines (display only).
+    bench_syms = [str(s).upper() for s in ctx.options.get("benchmarks", ["SPY", "QQQ"])]
+    if bench_syms:
+        metrics["benchmarks"] = _benchmarks(
+            env.market, bench_syms, now, settings.spot_max_spread_pct
+        )
+    metrics["broker_requests"] = broker_requests(_option_roots(positions), len(bench_syms))
     log.info("routines.monitor", **{k: v for k, v in metrics.items() if v is not None})
     _record_heartbeat(ctx, positions, info, metrics)
     return JobResult(summary=summary, metrics=metrics, notice=_dedupe_notice(ctx, notices))

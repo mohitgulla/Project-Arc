@@ -554,6 +554,39 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
+         * AccountSplit
+         * @description D87: how much of the account is free cash vs held in open positions.
+         */
+        AccountSplit: {
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+            /**
+             * Cash
+             * @description Broker cash: available to open new debit trades
+             */
+            cash: string;
+            /**
+             * Cash Pct
+             * @description cash / equity (fraction)
+             */
+            cash_pct?: number | null;
+            /** Equity */
+            equity: string;
+            /**
+             * In Positions
+             * @description equity − cash: the open positions' marked value (locked up)
+             */
+            in_positions: string;
+            /**
+             * Options Buying Power
+             * @description Broker options buying power (cash account: = cash)
+             */
+            options_buying_power?: string | null;
+        };
+        /**
          * ActivityEntry
          * @description One event inside a grouped activity row.
          */
@@ -877,6 +910,37 @@ export interface components {
              * @enum {string}
              */
             scorecard_gate: "off" | "met" | "unmet";
+        };
+        /**
+         * BenchmarkSeries
+         * @description D87: a market benchmark (SPY / QQQ) over the Equity card's range, in its own prices.
+         *
+         *     ``start_value`` is the benchmark's close on the day the portfolio range starts (the
+         *     same day as ``EquitySection.start_at``), so ``change_pct`` compares like for like with
+         *     the portfolio's ``change_pct``. The SPA rebases ``series`` onto the equity line.
+         */
+        BenchmarkSeries: {
+            /**
+             * Change Pct
+             * @description value / start_value − 1 (fraction)
+             */
+            change_pct: number;
+            /**
+             * Series
+             * @description Benchmark prices at the equity series' timestamps (subset)
+             */
+            series: components["schemas"]["arc__tower__data_overview__EquityPoint"][];
+            /** Start Value */
+            start_value: string;
+            /** Symbol */
+            symbol: string;
+            /** Value */
+            value: string;
+            /**
+             * Value At
+             * Format: date-time
+             */
+            value_at: string;
         };
         /**
          * BetaDeltaRow
@@ -1897,6 +1961,11 @@ export interface components {
          * @description Hero equity, its change over the selected range and the series to plot.
          */
         EquitySection: {
+            /**
+             * Benchmarks
+             * @description D87: SPY / QQQ over the same range (when known)
+             */
+            benchmarks?: components["schemas"]["BenchmarkSeries"][];
             /** Change */
             change?: string | null;
             /**
@@ -2859,8 +2928,35 @@ export interface components {
             /** Ticker */
             ticker: string | null;
         };
+        /**
+         * GreekAdvisory
+         * @description D87: an uncapped Greek in dollars with an info-only Low / Med / High label.
+         *
+         *     The label is display only (no gate, no halt): ``|value| / equity`` against the
+         *     ``tower.overview.greek_advisory`` bands (``med_pct`` / ``high_pct``).
+         */
+        GreekAdvisory: {
+            /** High Pct */
+            high_pct: number;
+            /** Med Pct */
+            med_pct: number;
+            /**
+             * Pct Of Equity
+             * @description |value| / equity (Θ: decay paid only, max(−Θ, 0))
+             */
+            pct_of_equity?: number | null;
+            /**
+             * Risk
+             * @description None = no value (rendered —)
+             */
+            risk?: ("low" | "med" | "high") | null;
+            /** Value */
+            value?: number | null;
+        };
         /** GreeksSection */
         GreeksSection: {
+            /** @description D87: dollar gamma, $Δ change for a 1% move (Σ Γ × spot² / 100 per underlying; uncapped; advisory band only) */
+            gamma?: components["schemas"]["GreekAdvisory"] | null;
             greeks: components["schemas"]["GreeksView"];
             /** Max Alloc Pct */
             max_alloc_pct: number;
@@ -2873,6 +2969,8 @@ export interface components {
              * @description max_alloc_pct × equity (gate rule)
              */
             per_underlying_cap?: string | null;
+            /** @description D87: Θ, $ per day (uncapped; advisory band only) */
+            theta?: components["schemas"]["GreekAdvisory"] | null;
         };
         /**
          * GreeksView
@@ -3863,6 +3961,8 @@ export interface components {
          * @description ``GET /api/overview``: every Overview card in one read.
          */
         OverviewResponse: {
+            /** @description D87: cash vs in positions */
+            account?: components["schemas"]["AccountSplit"] | null;
             /** Activity */
             activity: components["schemas"]["ActivityItem"][];
             /**

@@ -255,10 +255,17 @@ they are never dropped.
   `tower.overview.activity_hours`, 1–168), repeats of one alert kind grouped into one row
   (`missed_window ×12`, tap to expand), severity dot · message (2-line clamp, full on tap) ·
   age, capped at 8, `VIEW ALL ↗` → `/ops#alerts`, empty state `Nothing in the last 24 h`.
-- **Rows:** Greeks read `used / cap`; position card rows show legs as chips with the P&L pill
-  right-aligned and vertically centred (`CardRow aside`); Movers tiles scroll-snap.
-- **Order** at ≤ 1279 px (one column): status → Equity → P&L Today → Positions → Greeks vs
-  Caps → Today's Proposals → Movers → Recent Activity. Desktop keeps two columns.
+- **Rows:** capped Greeks read `used / cap` (`|$Δ| net dollar delta`, `|β$Δ| beta-weighted net
+  dollar delta`, `|ν| vega dollar/vol pt`); Θ (`dollar/day`) and $Γ (`dollar/1% move`) each
+  get their own line with an info-only `Risk Low/Med/High` pill (D87). Position card rows show
+  legs as chips with the total $ and % change since entry right-aligned (`CardRow aside`);
+  Movers tiles scroll-snap, ranked by today's change best → worst, name line = direction
+  (Bullish / Bearish / Neutral), pill = today's change.
+- **Equity (D87):** dashed SPY / QQQ lines rebased to the range-start equity, legend with each
+  benchmark's % and the gap in points; a Cash vs Invested split (stat pair + bar) below.
+- **Order** at ≤ 1279 px (one column, D87): status → Equity → P&L Today → Movers → Positions →
+  Greeks vs Caps → Today's Proposals → Today's Pick → Recent Activity. Desktop keeps two
+  columns (Movers under P&L Today on the right).
 
 ### 10.2 Ops (E8.8d)
 

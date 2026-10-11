@@ -83,6 +83,45 @@ Defaults: tickers = configured universe (D9); start = provider's earliest date;
 end = the last completed session. Coverage prints a per-ticker table
 (sessions / ok / empty / missing / rows / cached%) and writes the per-date CSV.
 
+## Point-in-time backtest universe (E7.7, D84)
+
+```
+arc history universe build [--stage1-only] [--from 2020-01-01] [--as-of YYYY-MM-DD] \
+    [--data-dir data] [--db data/arc.db | --no-db] [--symbol-master PATH] \
+    [--theta-tier free|value] [--theta-url URL] [--offline] [--top 40]
+arc history universe show [--version <stem>] [--checkpoint c125|c250|c500] [--top 40]
+```
+
+Builds exactly `backtest.universe.target_size` (500) names, stocks and ETFs in one
+list, chosen per quarter start Q from data available before Q
+(`arc/backtest/universe.py`; knobs in `config/ranking.yaml` → `backtest.universe`):
+
+1. Candidates: ThetaData `/v3/option/list/symbols` when the Terminal is up, else the
+   symbol master's optionable rows; plus Alpaca's *inactive* listed assets
+   (`add_inactive_listed`, the delisted names a current list can't hold); plus
+   `always` and the names ever proposed/held. Index roots (SPX, VIX, …) dropped.
+2. Stage 1: median close × volume over the 60 sessions strictly before Q (raw SIP
+   daily bars, cached with a `volume` column in `underlying_daily/`), ≥ 40 bars, a
+   bar within 5 sessions of Q, last close ≥ $10; top 1500 kept.
+3. Stage 2 (skipped by `--stage1-only` or without a Terminal): near-ATM OI on the
+   last session before Q + 20 sessions of option volume (`strike_range` 5, ≤ 60 DTE).
+   Quarters older than the tier serves are skipped and rank by stage 1 (the Value
+   month, E7.8, re-runs them). Probes are cached in
+   `backtest_universe/cache/stage2_<tier>.parquet`, so a re-run resumes.
+4. Pull list = bucket 1 `always`, 2 ever proposed/held (`data/arc.db`, read-only),
+   3 in the top 500 in ≥ 75 % of quarters, 4 the rest; median rank inside a bucket;
+   cut at 500. Buckets 1–2 must fit in C125 (else exit 2). `checkpoint` = c125 /
+   c250 / c500 (nested).
+
+Files under `data/backtest_universe/`: `<version>.parquet` (pull list, priority
+order; `arc history download --tickers-file` reads its `symbol` column in order),
+`<version>.membership.parquet` (`quarter, symbol, rank, stage1_dv, stage2_score,
+in_top, bypass, in_pull_list`; a name is eligible in a quarter when `(in_top or
+bypass) and in_pull_list`) and `<version>.json` (manifest: config + hash, git sha,
+candidate sources, per-quarter counts incl. `top_outside_list` = the coverage gap
+of a fixed 500, `missing_underlying` = the survivorship gap, ETF/stock split per
+checkpoint). Version = `u500-<as_of>-s1|s2-<config hash>`.
+
 ```python
 from arc.data.history import ParquetHistoryStore
 

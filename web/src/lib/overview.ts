@@ -173,10 +173,63 @@ export function stripTone(o: Pick<Overview, "status">): "neg" | "warn" | "ok" {
   return "ok";
 }
 
-/** Movers sorted by |day change| (structures without a day change last). */
+/** Movers ranked by today's change, best to worst (D87; structures without one last). */
 export function sortMovers<T extends { change_today?: number | null }>(movers: T[]): T[] {
-  const key = (m: T) => (m.change_today == null ? -1 : Math.abs(m.change_today));
+  const key = (m: T) => (m.change_today == null ? Number.NEGATIVE_INFINITY : m.change_today);
   return [...movers].sort((a, b) => key(b) - key(a));
+}
+
+/** D87: Low / Med / High advisory label for an uncapped Greek (info only, no gate). */
+export function greekRiskLabel(risk: "low" | "med" | "high" | null | undefined): { text: string; tone: "pos" | "warn" | "neg" | "muted" } {
+  if (risk === "high") return { text: "Risk High", tone: "neg" };
+  if (risk === "med") return { text: "Risk Med", tone: "warn" };
+  if (risk === "low") return { text: "Risk Low", tone: "pos" };
+  return { text: "Risk —", tone: "muted" };
+}
+
+export interface BenchmarkLine {
+  symbol: string;
+  key: string;
+  changePct: number;
+  color: string;
+}
+
+/** D87: benchmarks in neutral shades (theme-aware): SPY near-black, QQQ gray. */
+export const BENCHMARK_COLORS: Record<string, string> = { SPY: "var(--text-primary)", QQQ: "var(--text-muted)" };
+
+/**
+ * D87: the equity series with each benchmark rebased onto it (benchmark ÷ its range-start
+ * price × the portfolio's range-start equity), so all lines start at the same point and the
+ * gap is relative performance. Points without a benchmark price carry no value for it.
+ */
+export function withBenchmarks(
+  e: EquitySection | undefined,
+  series: TrendPoint[],
+  reference: number | undefined,
+): { data: TrendPoint[]; lines: BenchmarkLine[] } {
+  const benches = e?.benchmarks ?? [];
+  const base = reference ?? series[0]?.v;
+  if (!benches.length || base === undefined) return { data: series, lines: [] };
+  const lines: BenchmarkLine[] = [];
+  const byKey = new Map<string, Map<number, number>>();
+  for (const b of benches) {
+    const start = num(b.start_value);
+    if (!start) continue;
+    const key = `b_${b.symbol}`;
+    const pts = new Map<number, number>();
+    for (const p of b.series ?? []) {
+      const v = num(p.v);
+      if (v !== null) pts.set(Date.parse(p.t), (v / start) * base);
+    }
+    byKey.set(key, pts);
+    lines.push({ symbol: b.symbol, key, changePct: b.change_pct, color: BENCHMARK_COLORS[b.symbol] ?? "var(--text-secondary)" });
+  }
+  const data = series.map((p) => {
+    const row: TrendPoint = { ...p };
+    for (const [key, pts] of byKey) row[key] = pts.get(Date.parse(p.t));
+    return row;
+  });
+  return { data, lines };
 }
 
 /** Realized vs unrealized split for the ProportionBar (absolute magnitudes). */

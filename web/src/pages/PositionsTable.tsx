@@ -39,8 +39,8 @@ function Pnl({ p }: { p: PositionRow }) {
   const pl = num(p.status === "closed" ? p.realized_pl : p.unrealized_pl);
   if (pl === null) return <span className="text-muted">—</span>;
   return (
-    <span className="inline-flex items-center gap-2">
-      <Money value={pl} kind="pnl" />
+    <span className="inline-flex items-center gap-2" title={p.status === "open" ? "Total change since entry (unrealized)" : undefined}>
+      <Money value={pl} kind="pnl" explicitSign />
       {p.status === "open" && p.unrealized_pct != null && <ChangePill value={p.unrealized_pct} metric="pnl" />}
     </span>
   );
@@ -135,7 +135,7 @@ export function positionColumns(full: boolean, exits = false): ColumnDef<Positio
     },
     {
       id: "pnl",
-      header: full ? "P&L" : "Unrealized",
+      header: full ? "P&L" : "Total Change",
       accessorFn: (p) => num(p.status === "closed" ? p.realized_pl : p.unrealized_pl),
       cell: (c) => <Pnl p={c.row.original} />,
     },
@@ -207,8 +207,13 @@ export function PositionsTable({ rows, full = false, exits = false }: { rows: Po
             {p.held === false && <span className="text-caption text-neg-text">not held</span>}
           </>
         ),
-        aside: (p) =>
-          p.status === "open" && p.unrealized_pct != null ? <ChangePill value={p.unrealized_pct} metric="pnl" /> : <Pnl p={p} />,
+        // D87: $ and % together, overall since entry (Movers shows today's change).
+        aside: (p) => (
+          <span className="inline-flex flex-col items-end gap-0.5" data-testid="position-total">
+            <Pnl p={p} />
+            {p.status === "open" && <span className="text-micro text-muted">total</span>}
+          </span>
+        ),
         secondary: (p) => (
           <>
             <LegChips p={p} />

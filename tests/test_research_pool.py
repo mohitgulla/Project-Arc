@@ -17,7 +17,7 @@ import yaml
 
 from arc.config import ArcSettings
 from arc.context.store import ContextEntry, ContextSnapshot, ContextStore
-from arc.control.registry import REGISTRY, is_orphaned
+from arc.control.registry import REGISTRY
 from arc.ingest.llm import FixtureScalpLLM
 from arc.journal.reasons import REASON_LABELS, ReasonCode
 from arc.models import Stance
@@ -264,8 +264,8 @@ def test_research_reads_scout_read_in_code_and_yaml() -> None:
 
 
 @pytest.mark.parametrize("key", ["personas.research_idea_pool", "personas.research_compact_prompt"])
-def test_removed_switch_keys_are_orphaned(key: str) -> None:
-    assert is_orphaned(key) and key not in REGISTRY
+def test_removed_switch_keys_are_gone(key: str) -> None:
+    assert key not in REGISTRY
 
 
 def test_old_switch_in_yaml_is_ignored() -> None:

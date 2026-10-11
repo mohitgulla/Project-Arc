@@ -218,7 +218,7 @@ def replay(
             *check_per_underlying(risk_d, acct, pf, settings),
             *check_account_profile(prop, risk_d, acct, settings),
             *check_greek_caps(prop, acct, pf, mkt, settings),
-            *check_structure_whitelist(prop, d, settings),
+            *check_structure_whitelist(prop, d),
         ]
         return [x for x in v if x.code is not RuleCode.MISSING_SPOT], v, (d, risk_d)
 

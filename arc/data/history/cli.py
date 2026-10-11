@@ -209,6 +209,10 @@ def add_history_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser])
     cov = hs.add_parser("coverage", help="Per-ticker/date coverage report")
     common(cov)
 
+    from arc.backtest.universe_cli import add_universe_parser
+
+    add_universe_parser(hs)  # E7.7 (D84): `arc history universe build|show`
+
 
 def _concurrency(name: str, args: argparse.Namespace) -> int:
     if name != "thetadata":
@@ -306,6 +310,10 @@ def _run_download(
 
 
 def run_history(args: argparse.Namespace) -> int:
+    if args.history_command == "universe":
+        from arc.backtest.universe_cli import run_universe
+
+        return run_universe(args)
     tickers = resolve_tickers(args)
     end = args.end or previous_session(now_et().date() + dt.timedelta(days=1))
     store = ParquetHistoryStore(args.data_dir)
