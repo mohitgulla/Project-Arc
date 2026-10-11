@@ -54,6 +54,7 @@ THETA_DEFAULT_URL = "http://127.0.0.1:25503"
 THETA_FREE_LOOKBACK_DAYS = 365
 _EOD_PATH = "/v3/option/history/eod"
 _OI_PATH = "/v3/option/history/open_interest"
+_SYMBOLS_PATH = "/v3/option/list/symbols"
 
 #: Retry these HTTP statuses with backoff (429 OS_LIMIT/queue full, 474 DISCONNECTED,
 #: 571 SERVER_STARTING and any other 5xx except 570, which halves the chunk instead).
@@ -308,6 +309,7 @@ class ThetaDataEodProvider:
         base = base_url.rstrip("/")
         self._eod_url = base + _EOD_PATH
         self._oi_url = base + _OI_PATH
+        self._symbols_url = base + _SYMBOLS_PATH
         self._session: _HttpSession = session or _ThreadLocalSession()
         self._lookback = lookback_days
         self.chunk_days = chunk_days
@@ -409,6 +411,7 @@ class ThetaDataEodProvider:
         kind: str,
         max_dte: int,
         consume: Callable[[str, dt.date, dt.date], int],
+        strike_range: int | None = None,
     ) -> None:
         """Walk [start, end] in adaptive calendar-day chunks; *consume* parses a body -> rows."""
         u = underlying.upper()
@@ -426,6 +429,8 @@ class ThetaDataEodProvider:
                 "max_dte": max_dte,
                 "format": "csv",
             }
+            if strike_range is not None:  # E7.7: n strikes either side of spot (+ ATM)
+                params["strike_range"] = strike_range
             t0 = time.monotonic()
             try:
                 status, text, retries = self._get(url, params)
@@ -476,8 +481,26 @@ class ThetaDataEodProvider:
 
     # -- public ----------------------------------------------------------------
 
+    def list_option_symbols(self) -> list[str]:
+        """Every root with listed options (``GET /v3/option/list/symbols``; all tiers).
+
+        E7.7 (D84): the point-in-time universe's candidate list when the Terminal is up.
+        """
+        status, text, _ = self._get(self._symbols_url, {"format": "csv"})
+        if status != 200:
+            return []
+        reader = csv.DictReader(io.StringIO(text))
+        out = {(r.get("symbol") or r.get("root") or "").strip().upper() for r in reader}
+        return sorted(s for s in out if s)
+
     def fetch_open_interest(
-        self, underlying: str, start: dt.date, end: dt.date, *, max_dte: int
+        self,
+        underlying: str,
+        start: dt.date,
+        end: dt.date,
+        *,
+        max_dte: int,
+        strike_range: int | None = None,
     ) -> dict[OiKey, float]:
         """Open interest per (session, OCC symbol) for every contract ≤ *max_dte* (Value+)."""
         if self.tier not in TIERS_WITH_OI:
@@ -491,7 +514,15 @@ class ThetaDataEodProvider:
             out.update(got)
             return len(got)
 
-        self._chunked(underlying, start, end, kind="oi", max_dte=max_dte, consume=consume)
+        self._chunked(
+            underlying,
+            start,
+            end,
+            kind="oi",
+            max_dte=max_dte,
+            consume=consume,
+            strike_range=strike_range,
+        )
         return out
 
     def fetch_option_eod(
@@ -501,6 +532,7 @@ class ThetaDataEodProvider:
         end: dt.date,
         *,
         max_dte: int,
+        strike_range: int | None = None,
     ) -> list[OptionEodRow]:
         start = max(start, self.earliest_date())
         rows: list[OptionEodRow] = []
@@ -514,11 +546,20 @@ class ThetaDataEodProvider:
             rows.extend(got)
             return len(got)
 
-        self._chunked(underlying, start, end, kind="eod", max_dte=max_dte, consume=consume)
+        self._chunked(
+            underlying,
+            start,
+            end,
+            kind="eod",
+            max_dte=max_dte,
+            consume=consume,
+            strike_range=strike_range,
+        )
         if self.with_oi and start <= end:
-            rows = join_open_interest(
-                rows, self.fetch_open_interest(underlying, start, end, max_dte=max_dte)
+            oi = self.fetch_open_interest(
+                underlying, start, end, max_dte=max_dte, strike_range=strike_range
             )
+            rows = join_open_interest(rows, oi)
         log.info(
             "thetadata.fetched",
             underlying=underlying,

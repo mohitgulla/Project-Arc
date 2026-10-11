@@ -48,7 +48,12 @@ class AlpacaBarsSource:  # pragma: no cover - network
 
 
 class UnderlyingStore:
-    """Parquet cache: ``<root>/underlying_daily/<SYM>.parquet`` with columns date, close."""
+    """Parquet cache: ``<root>/underlying_daily/<SYM>.parquet`` with columns date, close.
+
+    E7.7 (D84) adds an optional raw ``volume`` column (shares) for the point-in-time
+    universe's dollar-volume screen. :meth:`write` keeps an existing volume column for
+    the dates it rewrites, so the closes-only callers never drop it.
+    """
 
     def __init__(self, root: Path | str) -> None:
         self.root = Path(root) / "underlying_daily"
@@ -65,10 +70,37 @@ class UnderlyingStore:
         s = pd.Series(vals, index=list(df["date"]), name=symbol.upper())
         return s.sort_index()
 
+    def read_bars(self, symbol: str) -> pd.DataFrame:
+        """Columns ``close`` and ``volume`` (NaN where never fetched) by session date."""
+        p = self.path_for(symbol)
+        if not p.is_file():
+            return pd.DataFrame({"close": [], "volume": []}, dtype=float)
+        df = pd.read_parquet(p)
+        vol = df["volume"].to_numpy(dtype=float) if "volume" in df.columns else float("nan")
+        out = pd.DataFrame(
+            {"close": df["close"].to_numpy(dtype=float), "volume": vol}, index=list(df["date"])
+        )
+        return out.sort_index()
+
     def write(self, symbol: str, closes: pd.Series) -> Path:
+        old = self.read_bars(symbol)["volume"]
+        vol = [old.get(d, float("nan")) for d in closes.index]
+        return self._write(symbol, list(closes.index), closes.to_numpy(dtype=float), vol)
+
+    def write_bars(self, symbol: str, bars: pd.DataFrame) -> Path:
+        """Write ``close`` + ``volume`` (raw, unadjusted) indexed by session date."""
+        bars = bars.sort_index()
+        return self._write(
+            symbol,
+            list(bars.index),
+            bars["close"].to_numpy(dtype=float),
+            bars["volume"].to_numpy(dtype=float),
+        )
+
+    def _write(self, symbol: str, dates: list[dt.date], close: object, volume: object) -> Path:
         p = self.path_for(symbol)
         p.parent.mkdir(parents=True, exist_ok=True)
-        df = pd.DataFrame({"date": list(closes.index), "close": closes.to_numpy(dtype=float)})
+        df = pd.DataFrame({"date": dates, "close": close, "volume": volume})
         tmp = p.with_suffix(".parquet.tmp")
         df.to_parquet(tmp, index=False)
         tmp.replace(p)
