@@ -5390,6 +5390,16 @@ export interface components {
             health_status?: string | null;
             /** @description Absent until the monitor heartbeat carries it (E6.5) */
             order_budget?: components["schemas"]["OrderBudgetView"] | null;
+            /**
+             * Sessions
+             * @description D92: trading sessions the account has traded since its start (``store:epoch`` fresh start, else the first reconciled day); today counts from the 09:30 ET open
+             */
+            sessions?: number | null;
+            /**
+             * Sessions Since
+             * @description D92: the ET day the session count starts from
+             */
+            sessions_since?: string | null;
             /** Tick At */
             tick_at?: string | null;
             /** Tick Status */

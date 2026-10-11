@@ -74,7 +74,7 @@ from arc.tower.data_exits import (
     ExitWatchView,
     load_exit_path,
 )
-from arc.utils.calendar import ET
+from arc.utils.calendar import ET, sessions_between
 
 if TYPE_CHECKING:
     import sqlite3
@@ -150,6 +150,16 @@ class StatusSection(BaseModel):
     alerts: list[AlertView] = Field(default_factory=list)
     order_budget: OrderBudgetView | None = Field(
         default=None, description="Absent until the monitor heartbeat carries it (E6.5)"
+    )
+    sessions: int | None = Field(
+        default=None,
+        description=(
+            "D92: trading sessions the account has traded since its start (``store:epoch`` "
+            "fresh start, else the first reconciled day); today counts from the 09:30 ET open"
+        ),
+    )
+    sessions_since: _dt.date | None = Field(
+        default=None, description="D92: the ET day the session count starts from"
     )
 
 
@@ -1246,7 +1256,37 @@ def _group_alerts(items: list[ActivityItem], groups: dict[int, str]) -> list[Act
     return out
 
 
-def _status(conn: sqlite3.Connection, monitor: sqlite3.Row | None) -> StatusSection:
+#: D92: a session counts toward the account's total from its regular open.
+SESSION_OPEN = _dt.time(9, 30)
+
+
+def _account_start(conn: sqlite3.Connection) -> _dt.date | None:
+    """The ET day the account's history starts: the D80 ``store:epoch`` fresh start, else
+    the first ``pnl_snapshots`` row (a store that was never reset)."""
+    if _has_table(conn, "routine_state"):
+        row = conn.execute("SELECT value FROM routine_state WHERE key = 'store:epoch'").fetchone()
+        if row is not None:
+            started = parse_ts(_json(row["value"], {}).get("started_at"))
+            if started is not None:
+                return started.astimezone(ET).date()
+    row = conn.execute("SELECT MIN(snapshot_at) AS t FROM pnl_snapshots").fetchone()
+    first = parse_ts(row["t"]) if row is not None else None
+    return first.astimezone(ET).date() if first is not None else None
+
+
+def _session_count(start: _dt.date | None, now_et: _dt.datetime) -> int | None:
+    """Sessions in [*start*, today]; today only once the 09:30 ET open has passed."""
+    if start is None:
+        return None
+    days = sessions_between(start, now_et.date())
+    if days and days[-1] == now_et.date() and now_et.time() < SESSION_OPEN:
+        days = days[:-1]
+    return len(days)
+
+
+def _status(
+    conn: sqlite3.Connection, monitor: sqlite3.Row | None, now_et: _dt.datetime
+) -> StatusSection:
     active = [h for h in _halts(conn, 50) if h.active]
     epoch = _dt.datetime.min.replace(tzinfo=_dt.UTC)
     active.sort(key=lambda h: h.at or epoch, reverse=True)
@@ -1276,6 +1316,8 @@ def _status(conn: sqlite3.Connection, monitor: sqlite3.Row | None) -> StatusSect
         health_status=health["status"] if health else None,
         alerts=alerts,
         order_budget=_order_budget(monitor),
+        sessions=_session_count(start := _account_start(conn), now_et),
+        sessions_since=start,
     )
 
 
@@ -1441,7 +1483,7 @@ def load_overview(
         stale_after_s=int(stale_after.total_seconds()),
         marks_at=latest.at if latest else None,
         marks_stale=latest is None or now_et - latest.at > stale_after,
-        status=_status(conn, monitor),
+        status=_status(conn, monitor, now_et),
         equity=_equity(conn, rng, today, daily, reconciled_at, marks, latest),
         day_pnl=_day_pnl(conn, daily, latest, positions),
         account=_account(monitor),
