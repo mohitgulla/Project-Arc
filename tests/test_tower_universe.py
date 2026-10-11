@@ -124,7 +124,7 @@ def test_todays_resolve_is_shown_as_stored(tmp_path: Path) -> None:
     assert [t.name for t in r.tiers] == ["core", "momentum", "discovery", "trending"]
     assert (tiers["momentum"].listed, tiers["momentum"].active) == (3, 2)
     assert tiers["core"].size_cap == MAX_CORE
-    assert tiers["momentum"].size_cap == ArcSettings().universe_momentum_size_d56
+    assert tiers["momentum"].size_cap == ArcSettings().universe_momentum_size
     assert tiers["discovery"].size_cap == ArcSettings().universe_discovery_size
     assert tiers["trending"].size_cap == ArcSettings().universe_trending_size == 25
     assert sum(t.active for t in r.tiers) == len(r.active)

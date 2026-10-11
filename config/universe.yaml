@@ -7,7 +7,7 @@
 # `arc universe tiers` prints it):
 #   core       the 20 names below (the `universe` registry key); no screen; Scalp
 #              confidence floor 0.4
-#   momentum   top 20 of the momentum feed (universe_momentum_size_d56; E12.2, context
+#   momentum   top 20 of the momentum feed (universe_momentum_size; E12.2, context
 #              `universe_tier`); standard screen; floor 0.5
 #   discovery  <= 25 names the Scout writes from YouTube calls (E13.7;
 #              universe_discovery_size); loose screen; floor 0.6

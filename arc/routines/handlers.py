@@ -1537,7 +1537,7 @@ def symbols_source(ctx: JobContext) -> JobResult:
 
 
 MOMENTUM_SOURCES_DEFAULT = ("stockanalysis", "schwab")
-#: E12.2: rows the momentum feed keeps (the tier takes its top universe_momentum_size_d56).
+#: E12.2: rows the momentum feed keeps (the tier takes its top universe_momentum_size).
 MOMENTUM_FEED_SIZE = 25
 
 

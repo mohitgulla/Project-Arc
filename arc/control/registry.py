@@ -470,7 +470,7 @@ _STATIC: tuple[Tunable, ...] = (
         hard_ceiling=60,
     ),
     _s(
-        "universe_momentum_size_d56",
+        "universe_momentum_size",
         Group.UNIVERSE,
         _I,
         "D56: momentum tier size (top N of the 25-row momentum feed).",
@@ -478,6 +478,7 @@ _STATIC: tuple[Tunable, ...] = (
         min=0,
         max=50,
         hard_ceiling=50,
+        aliases=("universe_momentum_size_d56",),  # E20.2 (D85): the pre-rename key
     ),
     _s(
         "universe_discovery_size",
@@ -2517,12 +2518,10 @@ ORPHANED_KEY_PREFIXES: tuple[str, ...] = (
     "settings.uoa_",
     "universe_screen_relaxed_",  # E13.15: D51 relaxed screen
 )
-# E13.15: exact keys of removed D51 / flag tunables (a prefix would also match
-# ``universe_momentum_size_d56``).
+# E13.15: exact keys of removed D51 / flag tunables.
 ORPHANED_KEYS: frozenset[str] = frozenset(
     {
         "universe.tiers.model",
-        "universe_momentum_size",
         "scalp_max_new_tickers",
         "sweep_max_new_tickers",
         "scout_max_new_tickers",

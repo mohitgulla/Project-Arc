@@ -846,7 +846,7 @@ discoveries, `universe.tiers.model`); an old `model:` / `trending:` key in
 - **Momentum tier (E12.2):** job `universe.momentum`, 06:00 ET on the first trading
   session of each month (`days: month_start`). It writes the top holdings of Invesco
   SPMO (the S&P 500 Momentum proxy) from stockanalysis.com, falling back to Schwab's
-  first 20 rows (`partial`); the tier keeps the first `universe_momentum_size_d56` (20)
+  first 20 rows (`partial`); the tier keeps the first `universe_momentum_size` (20)
   that pass the standard screen. GOOG folds into GOOGL; ETFs/funds and non-optionable
   names are dropped. The entry lives 35 days, so a failed month keeps last month's list;
   if no entry was written since the month-start slot, the job retries every trading

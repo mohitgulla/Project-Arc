@@ -1151,7 +1151,7 @@ class ArcSettings(BaseSettings):
         "universe:over_active_cap.",
     )
     # -- D56 (E13.4) / D58 (E13.19): four tiers, per-tier sizes and floors
-    universe_momentum_size_d56: Annotated[int, Field(ge=0, le=50)] = Field(
+    universe_momentum_size: Annotated[int, Field(ge=0, le=50)] = Field(
         default=20,
         description="D56: momentum tier size (top N of the momentum feed; the feed itself "
         "keeps its 25 rows, universe.momentum `size`).",

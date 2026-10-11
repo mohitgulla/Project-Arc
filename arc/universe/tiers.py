@@ -6,7 +6,7 @@ Four tiers, highest precedence first:
   D26 override when it has at most :data:`MAX_CORE` names). Never screened.
 * ``momentum`` — top holdings of the S&P 500 Momentum index (E12.2), read from the
   latest valid ``universe_tier`` context entry with subject ``momentum``, cut to the
-  top ``universe_momentum_size_d56`` rows by rank.
+  top ``universe_momentum_size`` rows by rank.
 * ``discovery`` — the Scout's ``universe_tier`` entry with subject ``discovery``
   (E13.7), cut to ``universe_discovery_size`` (25); empty until the Scout writes it.
 * ``trending`` — D58 (E13.19): the ``universe.trending`` job's ``universe_tier`` entry
@@ -449,7 +449,7 @@ def market_reference(settings: ArcSettings) -> list[str]:
 def tier_sizes(settings: ArcSettings) -> dict[Tier, int]:
     """Per-tier size cuts (core is bounded by MAX_CORE, never cut here)."""
     return {
-        Tier.MOMENTUM: settings.universe_momentum_size_d56,
+        Tier.MOMENTUM: settings.universe_momentum_size,
         Tier.DISCOVERY: settings.universe_discovery_size,
         Tier.TRENDING: settings.universe_trending_size,
     }
