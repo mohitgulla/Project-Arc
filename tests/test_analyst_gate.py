@@ -67,9 +67,12 @@ def _stub_views(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
     ``test_never_touches_live_db`` keep the real subprocess path end to end.
     """
     calls: list[list[str]] = []
+    real = aa.run_arc
 
     def fake(p: Any, args: list[str], run_dir: Path, name: str, timeout: int = 180) -> str:
         calls.append(list(args))
+        if args[:2] == ["backtest", "study"]:  # E7.15: only fixture specs, keep it real
+            return real(p, args, run_dir, name, timeout)
         out = f"[stub arc view {name}] " + " ".join(args) + "\n" + "x" * 400
         (run_dir / f"{name}.log").write_text(out)
         return out
@@ -118,7 +121,11 @@ def _to_disk(conn: sqlite3.Connection, path: Path) -> Path:
 
 
 def _paths(tmp_path: Path, db: Path) -> Any:
-    return aa.Paths(home=tmp_path / "analyst", repo=REPO, live_db=db, arc=ARC_ARGV)
+    # E7.15: backtest inputs from a per-test root (the worktree's data/ is not the host's)
+    return aa.Paths(
+        home=tmp_path / "analyst", repo=REPO, live_db=db, arc=ARC_ARGV,
+        backtest_root=tmp_path / "bt",
+    )  # fmt: skip
 
 
 def _last_json(out: str) -> dict[str, Any]:
@@ -166,7 +173,7 @@ def test_skip_when_nothing_changed_since_last_run(
     assert aa.main([], p, NOW + _dt.timedelta(days=7)) == 0
     out = capsys.readouterr().out
     assert _last_json(out) == {"wakeAgent": False}
-    assert "no new closed outcome, no halt and no experiment status change" in out
+    assert "no new closed outcome, no halt, no experiment status change and no new backtest" in out
 
 
 @pytest.mark.usefixtures("_stub_views")
@@ -514,6 +521,42 @@ def _prop(key: str = "xp-proposal:tp-level", n: int = 6, **over: Any) -> dict[st
     }  # fmt: skip
 
 
+def _bt_line(
+    sid: str = "BT-3",
+    phase: str = "holdout",
+    universe: str = "c500",
+    switch: bool = True,
+    spec_hash: str = "a" * 64,
+    overlay: dict[str, Any] | None = None,
+    at: str = "2026-10-03T18:00:00-04:00",
+    ranker: str | None = None,
+) -> dict[str, Any]:
+    t1 = {"ranker": ranker, "overlay": _overlay(0.4)["overlay"] if overlay is None else overlay}
+    return {
+        "at": at, "study": sid, "spec_hash": spec_hash, "arm_set_hash": "b" * 64,
+        "arms": {"control": {"ranker": None, "overlay": {}}, "treatments": {"t1": t1}},
+        "profiles": ["margin"], "phase": phase, "universe": universe,
+        "start": "2024-01-01" if phase == "holdout" else "2020-01-01",
+        "end": "2026-09-30" if phase == "holdout" else "2023-12-31",
+        "git_sha": "abc123def456", "primary_metric": "net_pnl", "metrics": {},
+        "verdicts": {"margin": {"t1": {"switch": switch, "pnl_diff": 1234.5 if switch else -50.0,
+                                       "ci_lo": 100.0 if switch else -900.0, "ci_hi": 2400.0}}},
+        "variants": 1, "overfit_warning": False, "run_dir": "x",
+    }  # fmt: skip
+
+
+def _studies(*lines: dict[str, Any], current: dict[str, dict[str, Any]] | None = None) -> list:
+    return aa.study_overview(list(lines), current or {})
+
+
+BT3_HASH = "a" * 64
+BT3 = _studies(
+    _bt_line(phase="dev", universe="c125", at="2026-10-01T18:00:00-04:00"), _bt_line(),
+    current={"BT-3": {"spec_hash": BT3_HASH, "hypothesis": "tp 0.4 beats 0.5",
+                      "max_variants": 3, "universe_ladder": ["c125", "c500"]}},
+)  # fmt: skip
+
+
 def _errs(findings: list[dict[str, Any]], **kw: Any) -> list[str]:
     doc = {"verdict": "findings", "themes": kw.pop("themes", _themes()), "findings": findings,
            "experiments": kw.pop("lines", []),
@@ -523,7 +566,7 @@ def _errs(findings: list[dict[str, Any]], **kw: Any) -> list[str]:
     return aa.validate_findings(
         doc, kw.pop("ledger", {"items": {}}), kw.pop("prev", None), kw.pop("registry", []),
         backlog=kw.pop("backlog", None), seed_ids=kw.pop("seed_ids", frozenset()),
-        max_arms=kw.pop("max_arms", 10),
+        max_arms=kw.pop("max_arms", 10), studies=kw.pop("studies", BT3),
     )  # fmt: skip
 
 
@@ -785,6 +828,11 @@ def test_context_has_backlog_and_record_writes_p_ids(
     metrics = aa.load_json(run_dir / "metrics.json", {})
     assert [e["id"] for e in metrics["experiments"]] == ["XP-1", "XP-2", "XP-3"]
     assert metrics["max_parallel_arms"] == 10
+    # E7.15: no ledger under the test's backtest root -> no studies; record resolves BT-<n>
+    # refs against this snapshot, so give it the BT-3 holdout the proposal cites
+    assert metrics["backtest"] == {"studies": [], "next_study_id": "BT-1"}
+    metrics["backtest"]["studies"] = BT3
+    aa.save_json(run_dir / "metrics.json", metrics)
     # record: the registry snapshot is enforced, the proposal lands in the backlog as P-1
     doc = {"verdict": "findings", "themes": _themes(), "findings": [_prop()], "resolved": [],
            "experiments": LINES, "quick_changes_none": "n < 20 in every bucket",
@@ -1012,6 +1060,354 @@ def test_pre_e10_store_has_no_experiments(_pipeline_db: bytes) -> None:
     assert aa.next_experiment_id([]) == "XP-1"
 
 
+# ---------------------------------------------------------------------------
+# E7.15 (D84/D86): the backtest study framework as evidence
+# ---------------------------------------------------------------------------
+
+
+def _bt_root(tmp_path: Path, *lines: dict[str, Any]) -> Path:
+    """A backtest root: ledger + one committed report + a real BT-3 spec on the base config."""
+    root = tmp_path / "bt"
+    (root / "data" / "backtest").mkdir(parents=True)
+    (root / "data" / "backtest" / "ledger.jsonl").write_text(
+        "".join(json.dumps(x) + "\n" for x in lines) + "not json\n"
+    )
+    studies = root / "docs" / "RESEARCH" / "studies"
+    studies.mkdir(parents=True)
+    (studies / "BT-2.json").write_text(json.dumps(
+        {"header": {"hypothesis": "report-only study", "max_variants": 3}}))  # fmt: skip
+    specs = root / "config" / "backtest_studies"
+    specs.mkdir(parents=True)
+    (specs / "BT-3.yaml").write_text(yaml.safe_dump({
+        "id": "BT-3", "hypothesis": "take profit 0.4 beats 0.5 on margin", "owner": "owner",
+        "created": "2026-10-01", "profiles": ["margin"], "universe_ladder": ["c125", "c500"],
+        "arms": {"treatments": {"t1": {"overlay": {"exits": {"default": {
+            "take_profit_pct_of_max_gain": 0.4}}}}}},
+    }))  # fmt: skip
+    return root
+
+
+def _real_hash(root: Path) -> str:
+    from arc.backtest.study import load_study, study_hash
+
+    return study_hash(load_study(root / "config" / "backtest_studies" / "BT-3.yaml"))
+
+
+TP = {"exits": {"default": {"take_profit_pct_of_max_gain": 0.4}}}
+
+
+def test_backtest_snapshot_reads_ledger_reports_and_the_spec_hash(tmp_path: Path) -> None:
+    root = _bt_root(tmp_path)
+    h = _real_hash(root)
+    ledger = [
+        _bt_line(phase="dev", universe="c125", spec_hash=h, overlay=TP,
+                 at="2026-10-01T18:00:00-04:00"),
+        _bt_line(spec_hash=h, overlay=TP),
+    ]  # fmt: skip
+    root = _bt_root(tmp_path / "x", *ledger)
+    p = aa.Paths(home=tmp_path / "h", repo=REPO, live_db=tmp_path / "db", arc=ARC_ARGV,
+                 backtest_root=root)  # fmt: skip
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    bt = aa.backtest_snapshot(p, run_dir)  # the real `arc backtest study show --json`
+    assert bt["errors"] == ["ledger.jsonl:3 is not JSON (Expecting value: line 1 column 1 "
+                            "(char 0))"]  # fmt: skip
+    assert [s["id"] for s in bt["studies"]] == ["BT-2", "BT-3"]
+    assert bt["next_study_id"] == "BT-4"
+    bt3 = bt["studies"][1]
+    assert bt3["current_hash"] == h and not bt3["hash_changed"]
+    assert bt3["variables"] == ["exits.default.take_profit_pct_of_max_gain"]
+    assert bt3["rungs"] == ["c125", "c500"] and bt3["holdout"]["passes"]
+    assert aa.study_evidence_class(bt3) == "C500 holdout PASS (may back an XP proposal)"
+    assert bt["holdouts"] == [f"BT-3:{h[:12]}:2026-10-03T18:00:00-04:00"]
+    assert json.loads((run_dir / "study-show-BT-3.log").read_text())["spec_hash"] == h
+    # a spec the CLI refuses is named, not fatal
+    (root / "config" / "backtest_studies" / "BT-5.yaml").write_text("id: BT-5\n")
+    bt = aa.backtest_snapshot(p, run_dir)
+    assert any("BT-5: `arc backtest study show --json` failed" in e for e in bt["errors"])
+
+
+def test_study_lines_name_ladder_verdict_ci_variants_and_evidence_class() -> None:
+    dev_only = _studies(_bt_line(sid="BT-1", phase="dev", universe="c125"))
+    c125_hold = _studies(_bt_line(sid="BT-2", universe="c125"))
+    edited = _studies(_bt_line(), current={"BT-3": {"spec_hash": "c" * 64, "max_variants": 1,
+                                                   "variants_tried": 2}})  # fmt: skip
+    lines = aa.study_lines(dev_only + c125_hold + BT3 + edited)
+    assert lines[0].startswith("- BT-1 (no spec/report text) · arms control=incumbent | "
+                               "t1=incumbent +exits.default.take_profit_pct · ladder reached "
+                               "c125 (planned ?) · dev c125 2020-01-01..2023-12-31: margin/t1 "
+                               "SWITCH candidate diff +1,234 CI [100, 2,400]")  # fmt: skip
+    assert "holdout pending" in lines[0] and "hypothesis only (dev, no holdout)" in lines[0]
+    assert "hypothesis only (c125 holdout, not C500)" in lines[1]
+    assert "(no loadable spec: hash unverifiable)" in lines[1]
+    assert "- BT-3 tp 0.4 beats 0.5 · " in lines[2]
+    assert "ladder reached c125,c500 (planned c125->c500)" in lines[2]
+    assert "HOLDOUT c500 2024-01-01..2026-09-30: margin/t1 SWITCH candidate" in lines[2]
+    assert "variants 1/3 · git abc123def456 · 2026-10-03" in lines[2]
+    assert lines[2].endswith("C500 holdout PASS (may back an XP proposal)")
+    assert "variants 2/1 OVERFIT-WARNING" in lines[3]
+    assert "NOT citable (spec edited since the holdout)" in lines[3]
+    lose = _studies(_bt_line(switch=False), current={"BT-3": {"spec_hash": "a" * 64}})
+    assert "keep control (evidence against)" in aa.study_lines(lose)[0]
+    assert aa.study_lines([])[0].startswith("- none yet")
+
+
+def test_capped_section_keeps_full_list_in_run_dir(tmp_path: Path) -> None:
+    lines = [f"- BT-{i} " + "x" * 300 for i in range(1, 30)]
+    out = aa.capped_section(lines, aa.BT_SECTION_MAX, tmp_path / "backtest-studies.log")
+    assert sum(len(x) + 1 for x in out[:-1]) <= aa.BT_SECTION_MAX
+    assert out[-1].startswith("- ...[") and "backtest-studies.log" in out[-1]
+    assert (tmp_path / "backtest-studies.log").read_text().count("- BT-") == 29
+
+
+def test_checkpoints_and_drift_sections(tmp_path: Path) -> None:
+    cp = tmp_path / "checkpoints.json"
+    assert "absent" in aa.checkpoint_lines(cp)[0]
+    cp.write_text(json.dumps({"c125": {"complete_at": "2026-10-12", "sessions": 1700,
+                                       "gb": 9.8}}))  # fmt: skip
+    assert aa.checkpoint_lines(cp) == [
+        "- c125: complete 2026-10-12 · sessions 1700 · 9.8 GB",
+        "- c250: incomplete",
+        "- c500: incomplete",
+    ]
+    rec = tmp_path / "reconciliation.json"
+    assert aa.drift_lines(rec)[0].startswith("- no reconciliation yet")
+    rec.write_text(json.dumps({"generated_at": "2026-10-11", "git_sha": "abc",
+        "sim_slippage_frac": 0.25, "rows": [
+            {"kind": "debit_vertical", "regime": "risk_on", "n": 12, "entry_pred": 1.0,
+             "entry_actual": 1.08, "exit_pred": 1.6, "exit_actual": 1.5,
+             "exit_reason_match": 0.75, "pnl_tracking_error": 18.4,
+             "pnl_bias": -12.0}]}))  # fmt: skip
+    head, row = aa.drift_lines(rec)
+    assert "sim slippage_frac 0.25" in head
+    assert row == (
+        "- debit_vertical · risk_on n=12 LOW (n<20): entry pred 1.00 vs actual 1.08 (+0.08)"
+        " · exit pred 1.60 vs actual 1.50 (-0.10) · exit-reason match 75%"
+        " · P&L tracking error 18.40 (bias -12.00)"
+    )
+
+
+@pytest.mark.parametrize(
+    ("studies", "prop", "needle"),
+    [
+        ([], _prop(), "BT-3 is not in the study ledger"),
+        (_studies(_bt_line(phase="dev", universe="c125"),
+                  current={"BT-3": {"spec_hash": "a" * 64}}),
+         _prop(), "no holdout run (dev-only results are a hypothesis"),
+        (_studies(_bt_line(universe="c125"), current={"BT-3": {"spec_hash": "a" * 64}}),
+         _prop(), "holdout ran on c125, not c500"),
+        (_studies(_bt_line(), current={"BT-3": {"spec_hash": "c" * 64}}),
+         _prop(), "spec hash changed since its holdout (aaaaaaaaaaaa -> cccccccccccc)"),
+        (_studies(_bt_line()), _prop(), "no loadable spec file"),
+        (_studies(_bt_line(switch=False), current={"BT-3": {"spec_hash": "a" * 64}}),
+         _prop(), "holdout verdict is keep-control"),
+        (BT3, _prop(spec=_spec(arms={"control": {}, "treatments": {
+            f"t{i}": {"overlay": {"ranking": {"rank_by": v}}}
+            for i, v in enumerate("abcd", 1)}})), "the proposal varies ['ranking.rank_by']"),
+        (BT3, _prop(spec=_spec(backtest_ref="docs/RESEARCH/old.md"), evidence_kind="live",
+                    evidence_ref=None, n=25), "must be a BT-<n> study id or 'none'"),
+        (BT3, _prop(spec=_spec(backtest_ref="BT-9"), evidence_kind="live", evidence_ref=None,
+                    n=25), "BT-9 is not in the study ledger"),
+    ],
+)  # fmt: skip
+def test_bt_ref_rejections(studies: list, prop: dict[str, Any], needle: str) -> None:
+    errs = _errs([prop], studies=studies)
+    assert any(needle in e for e in errs), errs
+
+
+def test_bt_ref_accepts_a_c500_holdout_and_grandfathers_legacy_refs() -> None:
+    assert _errs([_prop()]) == []
+    # a ranker study backs a menu-ranking proposal
+    rk = _studies(_bt_line(overlay={}, ranker="managed_net_ev"),
+                  current={"BT-3": {"spec_hash": "a" * 64}})  # fmt: skip
+    menu = _prop(spec=_spec(area="ranking", arms={"control": {}, "treatments": {
+        f"t{i}": {"overlay": {"exits": {"pipeline": {"rank_menu_by": v}}}}
+        for i, v in enumerate(("managed_net_ev", "rorc_day", "vrp", "scanner_x"), 1)
+    }}))  # fmt: skip
+    assert _errs([menu], studies=rk) == []
+    # a live proposal may cite none, or a known study
+    live = {"evidence_kind": "live", "evidence_ref": None, "n": 25}
+    assert _errs([_prop(spec=_spec(backtest_ref="none"), **live)]) == []
+    assert _errs([_prop(**live)]) == []
+    # legacy path: only on a backlog entry that already held it
+    old = _prop(spec=_spec(backtest_ref="docs/RESEARCH/e75.md"), **live)
+    b = aa.empty_backlog()
+    aa.apply_backlog(b, {"findings": [old]}, "r0", "t0")
+    assert _errs([old], backlog=b) == []
+    assert any("must be a BT-<n>" in e for e in _errs([old]))
+
+
+def _draft(**over: Any) -> dict[str, Any]:
+    d = {"hypothesis": "take profit 0.4 beats 0.5 on margin condors",
+         "profiles": ["margin"],
+         "arms": {"control": {}, "treatments": {
+             "t1": {"overlay": TP},
+             "t2": {"overlay": {"exits": {"default": {"take_profit_pct_of_max_gain": 0.3}}}}}},
+         **over}  # fmt: skip
+    return {k: v for k, v in d.items() if v is not None}
+
+
+def _theme_finding(**over: Any) -> dict[str, Any]:
+    return {
+        "key": "theme:tp-level", "title": "take-profit level untested", "severity": "info",
+        "category": "theme", "bucket": "kind=iron_condor", "n": 6, "theme": "exit-policy",
+        "evidence": "n=6 condors", "recommendation": "test it in a study",
+        "action": "no-action", "study_spec": _draft(), **over,
+    }  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("spec", "needle"),
+    [
+        (_draft(id="BT-7"), "id is assigned by `record`"),
+        (_draft(universe_ladder=["c125"]), "fixed at [c125, c500]"),
+        (_draft(decision_rule={"kind": "x"}), "D25 rule is copied verbatim"),
+        (_draft(hypothesis=""), "hypothesis is required"),
+        (_draft(profiles=["cash"]), "profiles must be"),
+        (_draft(color="red"), "unknown keys ['color']"),
+        (_draft(primary_metric="vibes"), "primary_metric must be"),
+        (_draft(max_variants=0), "max_variants must be an int >= 1"),
+        (_draft(period={"dev_end": "2024-06-01"}), "need dev_start <= dev_end < holdout_start"),
+        (_draft(period={"holdout_end": "2023-01-01"}), "holdout_end is before"),
+        (_draft(period={"dev_end": "soon"}), "must be an ISO date"),
+        (_draft(period={"settle_days": -1}), "settle_days must be"),
+        (_draft(period={"x": 1}), "holds only"),
+        (_draft(arms={"control": {}, "treatments": {}}), "1-3 arms named t1..t3"),
+        (_draft(arms={"control": {}, "treatments": {"t4": {"overlay": TP}}}), "t1..t3"),
+        (_draft(arms={"control": {}, "treatment": {}}), "control and treatments only"),
+        (_draft(arms={"control": {}, "treatments": {"t1": {"overlay": TP, "x": 1}}}),
+         "holds only ranker and overlay"),
+        (_draft(arms={"control": {}, "treatments": {"t1": {"ranker": "magic"}}}),
+         "ranker must be one of"),
+        (_draft(arms={"control": {}, "treatments": {"t1": {"overlay": {"gate": {"x": 1}}}}}),
+         "not in ('ranking', 'exits', 'costs')"),
+        (_draft(arms={"control": {}, "treatments": {"t1": {"overlay": {"exits": {}}}}}),
+         "empty overlay target"),
+        (_draft(arms={"control": {}, "treatments": {"t1": {"overlay": []}}}),
+         "overlay must be a mapping"),
+        (_draft(arms={"control": {"overlay": TP}, "treatments": {"t1": {"ranker": "rorc_day"}}}),
+         "control is the base config"),
+        (_draft(arms={"control": {}, "treatments": {"t1": {}}}), "identical to control"),
+        (_draft(arms={"control": {}, "treatments": {"t1": {"overlay": TP},
+                                                    "t2": {"overlay": TP}}}), "identical to t1"),
+        (_draft(arms={"control": {}, "treatments": {
+            "t1": {"overlay": TP}, "t2": {"ranker": "rorc_day"}}}), "ONE-VARIABLE"),
+        (_draft(arms={"control": {}, "treatments": {
+            "t1": {"overlay": TP, "ranker": "rorc_day"}}}), "ONE-VARIABLE"),
+        ("not a dict", "must be an object"),
+    ],
+)  # fmt: skip
+def test_study_spec_rules(spec: Any, needle: str) -> None:
+    errs = _errs([_theme_finding(study_spec=spec)])
+    assert any(needle in e for e in errs), errs
+
+
+def test_study_spec_only_on_untested_hypotheses() -> None:
+    assert _errs([_theme_finding()]) == []
+    assert any("only on" in e for e in _errs([{**_flaw(), "study_spec": _draft()}]))
+    tested = {**_prop(), "study_spec": _draft()}
+    assert any("with backtest evidence: it is tested" in e for e in _errs([tested]))
+    live = {**_prop(evidence_kind="live", evidence_ref=None, n=25,
+                    spec=_spec(backtest_ref="none")), "study_spec": _draft()}  # fmt: skip
+    assert _errs([live]) == []
+
+
+def test_record_writes_draft_study_specs_that_load_as_real_specs(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from arc.backtest.study import load_study
+
+    p = _paths(tmp_path, tmp_path / "unused.db")
+    run_dir = p.runs / "2026-10-11-1500"
+    run_dir.mkdir(parents=True)
+    aa.save_json(run_dir / "metrics.json", {"now": aa.iso(NOW), "closed_max_rowid": 7,
+        "backtest": {"studies": BT3, "next_study_id": "BT-4"}})  # fmt: skip
+    ranker = _draft(arms={"control": {"ranker": "credit_width"}, "treatments": {
+        "t1": {"ranker": "managed_net_ev"}, "t2": {"ranker": "rorc_day"}}})  # fmt: skip
+    _write_valid_findings(run_dir, [
+        _theme_finding(),
+        _theme_finding(key="data-gap:ranker", category="data-gap", study_spec=ranker),
+        {**_theme_finding(), "key": "theme:bad", "study_spec": _draft(id="BT-1")},
+    ])  # fmt: skip
+    assert aa.main(["record", str(run_dir)], p, NOW) == 2
+    assert "id is assigned by `record`" in capsys.readouterr().out
+    assert not (run_dir / "study-specs").exists()  # rejection writes nothing
+    doc = json.loads((run_dir / "findings.json").read_text())
+    doc["findings"].pop()
+    (run_dir / "findings.json").write_text(json.dumps(doc))
+    assert aa.main(["record", str(run_dir)], p, NOW) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert [s.split(" (")[0] for s in out["study_specs"]] == ["A-1 -> BT-4", "A-2 -> BT-5"]
+    for sid in ("BT-4", "BT-5"):
+        path = run_dir / "study-specs" / f"{sid}.yaml"
+        text = path.read_text()
+        assert text.startswith("# DRAFT study spec by the Arc Analyst")
+        spec = load_study(path)  # the real StudySpec + overlay validation on the base config
+        assert spec.id == sid and spec.universe_ladder == ["c125", "c500"]
+        assert spec.decision_rule.kind == "d25_challenge" and spec.owner.startswith(
+            "Arc Analyst A-"
+        )
+    item = aa.load_json(p.ledger, {})["items"]["theme:tp-level"]
+    assert item["study_spec"]["id"] == "BT-4"
+
+
+def test_study_spec_mirror_tracks_the_model() -> None:
+    from arc.backtest.study import STUDY_TARGETS, StudyPeriod, StudySpec
+    from arc.scanner.rank import Ranker
+
+    assert set(aa.STUDY_SPEC_KEYS) == set(StudySpec.model_fields)
+    assert set(aa.STUDY_PERIOD_KEYS) == set(StudyPeriod.model_fields)
+    assert aa.STUDY_TARGETS == STUDY_TARGETS
+    assert set(aa.STUDY_RANKERS) == {r.value for r in Ranker}
+    assert StudySpec.model_fields["universe_ladder"].get_default(call_default_factory=True) == (
+        aa.STUDY_LADDER
+    )
+
+
+@pytest.mark.usefixtures("_stub_views")
+def test_new_holdout_verdict_wakes_the_analyst_once(
+    _pipeline_db: bytes, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    conn = _conn(_pipeline_db)
+    _close_one(conn, NOW - _dt.timedelta(days=30))
+    p = _paths(tmp_path, _to_disk(conn, tmp_path / "live.db"))
+    aa.save_json(p.state, {"closed_watermark": 10**9, "last_run_at": aa.iso(NOW)})
+    later = NOW + _dt.timedelta(days=7)
+    _bt_root(tmp_path, _bt_line(phase="dev", universe="c125"))  # dev-only: no wake
+    assert aa.main([], p, later) == 0
+    assert _last_json(capsys.readouterr().out) == {"wakeAgent": False}
+    _bt_root(tmp_path / "y", _bt_line(phase="dev", universe="c125"), _bt_line())
+    (tmp_path / "bt" / "data" / "backtest" / "ledger.jsonl").write_text(
+        (tmp_path / "y" / "bt" / "data" / "backtest" / "ledger.jsonl").read_text()
+    )
+    assert aa.main([], p, later) == 0
+    out = capsys.readouterr().out
+    assert "WAKE: new backtest holdout verdict(s) since the last run: BT-3\n" in out
+    # the context carries the study, drift and checkpoint sections
+    assert "## Backtest studies (D84; E7.12 ledger data/backtest/ledger.jsonl" in out
+    assert "next free id BT-4" in out
+    assert "- WARNING: ledger.jsonl:3 is not JSON" in out
+    assert "- BT-3 (no spec/report text)" not in out  # the real spec's hypothesis is shown
+    assert "- BT-3 take profit 0.4 beats 0.5 on margin · " in out
+    assert "NOT citable (spec edited since the holdout)" in out  # fixture hash != real hash
+    assert "## Backtest <-> live drift (E7.14" in out and "- no reconciliation yet" in out
+    assert "### Data checkpoints (E7.9 checkpoints.json)" in out
+    run_dir = _run_dir(p)
+    assert (run_dir / "backtest-studies.log").read_text().startswith("- BT-2 report-only study")
+    # record + mark store the holdout as seen: the same verdict does not wake again
+    meta = aa.load_json(run_dir / "metrics.json", {})
+    assert meta["bt_holdouts"] == [f"BT-3:{'a' * 12}:2026-10-03T18:00:00-04:00"]
+    _write_valid_findings(run_dir)
+    assert aa.main(["record", str(run_dir)], p, later) == 0
+    assert aa.main(["mark", str(run_dir)], p, later) == 0
+    assert aa.load_json(p.state, {})["bt_holdouts_seen"] == meta["bt_holdouts"]
+    capsys.readouterr()
+    assert aa.main([], p, later + _dt.timedelta(days=7)) == 0
+    assert _last_json(capsys.readouterr().out) == {"wakeAgent": False}
+    assert aa.main(["reset"], p, later) == 0
+    assert "bt_holdouts_seen" not in aa.load_json(p.state, {})
+
+
 def test_skill_documents_the_two_tracks_and_the_backlog() -> None:
     text = _skill()
     for rule in (
@@ -1042,6 +1438,27 @@ def test_skill_documents_the_two_tracks_and_the_backlog() -> None:
         assert gone not in text, gone
     for section in ("Quick changes", "Quick-change review", "Experiments", "Next XP"):
         assert section in aa.REPORT_SECTIONS
+
+
+def test_skill_documents_the_backtest_study_evidence() -> None:
+    text = _skill()
+    for rule in (
+        "**Cite C500 holdout verdicts; a C125-only or dev-only result is a hypothesis, not\n"
+        "   evidence.**",
+        "BACKTEST STUDIES (D84, E7.12 study framework; you never run one)",
+        "`study_spec`",
+        "RUN_DIR/study-specs/BT-<n>.yaml",
+        "## Backtest <-> live drift",
+        "## Backtest studies (D84)",
+        "RUN_DIR/backtest-studies.log",
+        "*Backtest*",
+        "a new backtest holdout verdict",
+    ):
+        assert rule in text, rule
+    assert "E7.5 run" not in text and "E7.5 harness" not in text
+    assert "Backtest" in aa.REPORT_SECTIONS
+    prompt = (ANALYST / "prompt.md").read_text()
+    assert "cite only C500 holdout verdicts" in prompt and "never run a backtest" in prompt
 
 
 # ---------------------------------------------------------------------------

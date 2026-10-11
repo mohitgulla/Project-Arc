@@ -61,6 +61,12 @@ line under "Obvious flaws" as `→ Sentinel` and do not draft a card for it.
    Attribution buckets carry `low_sample` (the gate runs the views with `--min-sample 20`); read
    that flag, do not re-derive it. Option A: a C500 holdout-verified backtest study `BT-<n>`
    (E7.15) may back an **XP proposal** at any live n, never a quick change on its own.
+   **Cite C500 holdout verdicts; a C125-only or dev-only result is a hypothesis, not
+   evidence.** The validator resolves every `BT-<n>` in the study ledger (E7.12 framework,
+   `config/backtest_studies/`, `data/backtest/ledger.jsonl`) and rejects a missing study, a
+   study with no holdout run, a holdout not on C500, a keep-control holdout verdict, a spec
+   whose hash changed since the holdout, and a proposal whose overlay leaves are not the
+   study's arm variable (a ranker study backs `exits.pipeline.rank_menu_by|menu_measure`).
 2. **Two tracks, every run.** *Quick changes* (0–3) ship now without an XP; *XP proposals* test
    what is uncertain enough to need 20–60 sessions. Most improvements ship as quick changes.
    When a track has nothing, say why (`quick_changes_none`, `next_experiment: none: <why>`).
@@ -102,7 +108,8 @@ line under "Obvious flaws" as `→ Sentinel` and do not draft a card for it.
      `arms.control: {}` and **exactly 4** treatments `arms.treatments.t1..t4`, each an `overlay`
      on the **same leaf set** (one variable at 4 levels, or 4 alternatives of one mechanism;
      targets ranking, exits, costs, account_profiles, routines, universe),
-     `non_inferiority_margin` (Sortino) and `backtest_ref` (the `BT-<n>` / E7.5 run, or `none`).
+     `non_inferiority_margin` (Sortino) and `backtest_ref` (a `BT-<n>` study, or `none`; a
+     legacy `docs/RESEARCH` path is kept only on a backlog entry that already held it).
    - `evidence_kind` `live` (bucket n ≥ 20) or `backtest` (`evidence_ref: BT-<n>`, equal to
      `spec.backtest_ref`), and `evidence` (numbers).
    - `expected_effect` `{pct_per_day, source}`, `affected_share` (share of trades the change
@@ -138,6 +145,17 @@ line under "Obvious flaws" as `→ Sentinel` and do not draft a card for it.
      A `win` becomes a quick change (`evidence_kind: xp-winner`): the promotion PR.
    - An A/A (`kind: aa`) never wins: read it for sigma (the plan grid uses it). An A/A `invalid`
      is a harness flaw (→ Sentinel), not a strategy finding.
+8. **BACKTEST STUDIES (D84, E7.12 study framework; you never run one).** A study runs for hours
+   and is the owner's (or a card's) to commit and run. For an untested hypothesis (a `theme`,
+   `data-gap` or live-evidence `xp-proposal`) you may attach `study_spec`: a draft
+   `config/backtest_studies/BT-<next>.yaml` in the E7.12 format (`StudySpec`, extra=forbid):
+   `hypothesis`, `profiles` (margin | cash_debit | cash_long_only), `arms.control` (the base
+   config; a `ranker` is fine, no overlay) and 1–3 treatments `t1..t3`, each a `ranker` and/or an
+   `overlay` on ranking | exits | costs; optional `period`, `primary_metric`, `max_variants`.
+   **One variable**: every treatment changes the same leaf set, or the ranker alone. Omit `id`,
+   `owner`, `created`, `universe_ladder` and `decision_rule`: `record` assigns `BT-<next>`, sets
+   the ladder `[c125, c500]` and keeps the D25 rule, and writes `RUN_DIR/study-specs/BT-<n>.yaml`
+   for the owner. You never edit `config/`. The next run reads the verdict from the ledger.
 
 ## Procedure
 1. Read `references/lessons.md` if it exists (calibration from owner triage).
@@ -147,7 +165,15 @@ line under "Obvious flaws" as `→ Sentinel` and do not draft a card for it.
 3. Read `docs/PLAN.md` §0 (D4, D18, D19, D23, D25, D34, D44, D69, D86) in the repo as the spec
    of the strategy, and the newest `docs/RESEARCH/*.md` listed in the context.
 4. **Performance vs model**: realised vs EV and entry slippage vs modelled, by kind × regime,
-   this week and all time. Where does realised diverge from the model, and with what N?
+   this week and all time, against **both** the managed-EV model and the backtest simulator
+   (`## Backtest <-> live drift`, E7.14: predicted vs actual entry/exit price, exit-reason
+   match, P&L tracking error, with n). Where does realised diverge, and with what N? A
+   persistent drift (e.g. fills worse than the sim's `slippage_frac`) is a `cost-model` theme
+   line or a `→ Sentinel` flaw, never a strategy recommendation.
+4a. **Backtest studies** (`## Backtest studies (D84)`; full list in
+   `RUN_DIR/backtest-studies.log`): each `BT-<n>` with its arms, ladder reached, dev result,
+   holdout verdict + CI or `holdout pending`, variants vs `max_variants` and its evidence class,
+   plus the E7.9 data checkpoints. Only a line marked `C500 holdout PASS` may back a proposal.
 5. **Standing themes**: one status line per theme (gate 3).
 6. **Obvious flaws**: check every gate-4 condition against the effective config
    (`config-show.log`, `RUN_DIR/config/*.yaml`) and the halts. Quote the key and value.
@@ -168,8 +194,8 @@ line under "Obvious flaws" as `→ Sentinel` and do not draft a card for it.
     (≤ 3,500 chars, all sections present, *Quick changes* and *Experiments* not empty).
     Shorten until it passes.
 14. `python3 ~/.hermes/profiles/arc-analyst/scripts/arc_analyst.py mark RUN_DIR` (advances the
-    watermark so the next run wakes only on new closed trades, a halt or an experiment status
-    change).
+    watermark so the next run wakes only on new closed trades, a halt, an experiment status
+    change or a new backtest holdout verdict).
 15. If you learned a rule that should change future judgement, append one dated line to
     `references/lessons.md`.
 16. Your final response IS the report (exactly `RUN_DIR/report.md`). Nothing else.
@@ -205,7 +231,12 @@ line under "Obvious flaws" as `→ Sentinel` and do not draft a card for it.
                  "evidence_kind": "backtest", "evidence_ref": "BT-3", "evidence": "BT-3 holdout: ...",
                  "expected_effect": {"pct_per_day": 0.05, "source": "BT-3 holdout mean diff"},
                  "affected_share": 0.6, "p_success": 0.3, "sessions_needed": 40,
-                 "value_score": 0.000225, "seed_ref": "S-2"}
+                 "value_score": 0.000225, "seed_ref": "S-2"},
+    "study_spec": {"hypothesis": "take profit 0.4 beats 0.5 on margin condors",
+                   "profiles": ["margin"],
+                   "arms": {"control": {}, "treatments": {
+                     "t1": {"overlay": {"exits": {"default": {"take_profit_pct_of_max_gain": 0.4}}}},
+                     "t2": {"overlay": {"exits": {"default": {"take_profit_pct_of_max_gain": 0.3}}}}}}}
   }],
   "resolved": [{"key": "existing key", "evidence": "why it no longer holds (numbers)"}],
   "quick_changes_none": "",
@@ -221,7 +252,8 @@ line under "Obvious flaws" as `→ Sentinel` and do not draft a card for it.
 }
 ```
 `quick_change` is required for (and only on) `quick-change`, `proposal` for (and only on)
-`xp-proposal`; `forward_spec` and `experiment` are retired (D86). `verdict: quiet` only when
+`xp-proposal`; `forward_spec` and `experiment` are retired (D86). `study_spec` (gate 8) only on
+a `theme`, `data-gap` or live-evidence `xp-proposal`, i.e. an untested hypothesis. `verdict: quiet` only when
 nothing is medium or above. With no quick change, `quick_changes_none` says why. `experiments`
 lists every draft/queued/registered/running/stopped experiment in the context with its registry
 status (and `stop_advice` when running); `next_experiment` and `next_slot` are required.
@@ -244,6 +276,8 @@ status (and `stop_advice` when running); `next_experiment` and `next_slot` are r
   T1 <leaf = value> · T2 <…> · T3 <…> · T4 <…>
   value <score> = <pct>%/day × share <s> × p <p> ÷ <sessions> sessions
 • backlog top 5: P-<a> <value> <title> · P-<b> … (or "empty")
+*Backtest* (one line per study with a new verdict since the last run; else "no new verdict")
+• *BT-<n>* <hypothesis> · <c125|c500> <dev|holdout> <switch|keep control> diff $<±d> CI [<lo>, <hi>] · <citable | hypothesis only> · drafts: BT-<m> (RUN_DIR/study-specs)
 *Obvious flaws*
 • *A-<n>* [<severity>] <key = value> — <why it contradicts D#> (or "none")
 *Ledger*: new A-… · still open A-… · resolved A-… (evidence) · backlog new P-… · dropped P-…

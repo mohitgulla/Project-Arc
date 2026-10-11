@@ -27,6 +27,10 @@ Cron pre-run gate (no args):
      sessions-needed grid at K=4 (``arc experiment plan --k 4``); the idea-seed leads
      not yet proposed or dropped; quick changes shipped since the last run (to
      review); and strategy PRs merged since the last run with their XP-advisory line.
+     E7.15 (D84) adds, read-only: the backtest studies (``data/backtest/ledger.jsonl`` +
+     ``docs/RESEARCH/studies/*.json``, each spec's hash from ``arc backtest study show
+     --json``), the E7.9 checkpoints and the E7.14 backtest<->live drift. A holdout
+     verdict not seen at the last ``mark`` also wakes the agent.
 
 Agent subcommands:
   record RUN_DIR              validate RUN_DIR/findings.json, reconcile into the ledger
@@ -119,6 +123,7 @@ REPORT_SECTIONS = (
     "Quick-change review",
     "Experiments",
     "Next XP",
+    "Backtest",
     "Obvious flaws",
     "create A-",
 )
@@ -231,6 +236,66 @@ IDEA_REQUIRED = ("id", "title", "area", "variables", "treatments", "hypothesis",
 IDEA_ID_RE = re.compile(r"^S-[1-9]\d*$")
 MAX_SEED_TREATMENTS = 4
 
+# ---- E7.15 (D84): the backtest study framework (E7.12) as evidence ----
+# Repo-relative inputs, all read-only. The ledger and checkpoints live under the gitignored
+# data/; reports, the reconciliation (E7.14) and specs are committed.
+BT_LEDGER = Path("data") / "backtest" / "ledger.jsonl"
+BT_REPORTS = Path("docs") / "RESEARCH" / "studies"
+BT_SPECS = Path("config") / "backtest_studies"
+BT_CHECKPOINTS = Path("data") / "backtest_universe" / "checkpoints.json"  # E7.9
+# E7.14's backtest<->live reconciliation, aggregates only:
+# {"generated_at", "git_sha", "sim_slippage_frac",
+#  "rows": [{"kind", "regime", "n", "entry_pred", "entry_actual", "exit_pred", "exit_actual",
+#            "exit_reason_match", "pnl_tracking_error", "pnl_bias"}]}  ($ per unit / per trade)
+BT_RECONCILIATION = BT_REPORTS / "reconciliation.json"
+BT_SECTION_MAX = 4_000
+BT_CHECKPOINT_NAMES = ("c125", "c250", "c500")
+BT_CONFIRM_RUNG = "c500"  # D86 option A: only a C500 holdout backs an XP proposal
+# A ranker arm (no overlay) tests the live menu ranking: these proposal leaves carry it.
+BT_RANKER_LEAVES = ("exits.pipeline.rank_menu_by", "exits.pipeline.menu_measure")
+# Mirrors arc.backtest.study.StudySpec (extra=forbid; a test pins the mirror). The Analyst
+# drafts hypothesis / arms / profiles (+ optional primary_metric, max_variants, period);
+# `record` fills id, owner, created and the ladder; the D25 rule is the model default.
+STUDY_SPEC_KEYS = (
+    "id",
+    "hypothesis",
+    "owner",
+    "created",
+    "arms",
+    "profiles",
+    "universe_ladder",
+    "period",
+    "decision_rule",
+    "primary_metric",
+    "max_variants",
+)
+STUDY_SPEC_FILLED = {
+    "id": "the id is assigned by `record` (BT-<next>); omit it",
+    "owner": "filled by `record` (the A-id); omit it",
+    "created": "filled by `record`; omit it",
+    "universe_ladder": "fixed at [c125, c500] for Analyst drafts (E7.15); omit it",
+    "decision_rule": "the D25 rule is copied verbatim (the model default); omit it",
+}
+STUDY_LADDER = ["c125", "c500"]
+STUDY_TARGETS = ("ranking", "exits", "costs")
+STUDY_PROFILES = ("margin", "cash_debit", "cash_long_only")
+STUDY_RANKERS = (
+    "credit_width",
+    "debit_width",
+    "ev_proxy",
+    "managed_net_ev",
+    "rorc_day",
+    "rorc_day_vrp",
+    "managed_net_ev_tilted",
+    "rorc_day_tilted",
+)
+STUDY_PRIMARY = ("net_pnl", "sharpe", "sortino", "cagr", "return_pct", "profit_factor")
+STUDY_PERIOD_KEYS = ("dev_start", "dev_end", "holdout_start", "holdout_end", "settle_days")
+STUDY_SPECS_DIR = "study-specs"
+STUDY_SPEC_CATEGORIES = ("theme", "data-gap", "xp-proposal")  # untested hypotheses only
+# Legacy (pre-E7.15) backtest_ref values: kept only on backlog entries that already held them.
+LEGACY_REF_PREFIXES = ("docs/RESEARCH", "data/backtest")
+
 
 @dataclasses.dataclass(frozen=True)
 class Paths:
@@ -241,6 +306,11 @@ class Paths:
     live_db: Path
     arc: tuple[str, ...]  # argv prefix of the arc CLI
     gh: tuple[str, ...] = ()  # argv prefix of the GitHub CLI; () = skip the merged-PR section
+    backtest_root: Path | None = None  # E7.15: where data/backtest + studies live; None = repo
+
+    @property
+    def bt_root(self) -> Path:
+        return self.backtest_root or self.repo
 
     @property
     def ledger(self) -> Path:
@@ -337,8 +407,11 @@ def snapshot_db(live: Path, dest: Path) -> None:
         dst.close()
 
 
-def wake_decision(conn: sqlite3.Connection, state: dict, now: dt.datetime) -> dict:
-    """Whether the agent should run, and why. Reads the COPY only."""
+def wake_decision(
+    conn: sqlite3.Connection, state: dict, now: dt.datetime, holdouts: list | None = None
+) -> dict:
+    """Whether the agent should run, and why. Reads the COPY only. *holdouts* are the
+    research ledger's holdout run keys (E7.15): one not seen at the last ``mark`` wakes it."""
     closed_total, closed_max = conn.execute(
         f"SELECT COUNT(*), COALESCE(MAX(rowid), 0) FROM outcomes WHERE {closed_filter()}"
     ).fetchone()
@@ -374,12 +447,18 @@ def wake_decision(conn: sqlite3.Connection, state: dict, now: dt.datetime) -> di
         ]
     if exp_events:
         reasons.append(f"experiment status change(s) since the last run: {', '.join(exp_events)}")
+    seen = set(state.get("bt_holdouts_seen") or [])
+    new_holdouts = [h for h in holdouts or [] if h not in seen]
+    if new_holdouts:
+        ids = sorted({h.split(":", 1)[0] for h in new_holdouts}, key=lambda s: int(s[3:]))
+        reasons.append(f"new backtest holdout verdict(s) since the last run: {', '.join(ids)}")
     wake = closed_total > 0 and bool(reasons)
     if closed_total == 0:
         reasons = ["no closed outcome in the journal yet (E9.4 start condition)"]
     elif not reasons:
         reasons = [
-            "no new closed outcome, no halt and no experiment status change since the last run"
+            "no new closed outcome, no halt, no experiment status change and no new backtest "
+            "holdout verdict since the last run"
         ]
     return {
         "wake": wake,
@@ -389,6 +468,7 @@ def wake_decision(conn: sqlite3.Connection, state: dict, now: dt.datetime) -> di
         "new_closed": new_closed,
         "halts": halts,
         "since": iso(since),
+        "new_holdouts": new_holdouts,
     }
 
 
@@ -825,9 +905,15 @@ def value_formula(entry: dict) -> str:
 
 
 def validate_proposal(
-    f: dict, i: int, backlog: dict, seed_ids: frozenset = frozenset()
+    f: dict,
+    i: int,
+    backlog: dict,
+    seed_ids: frozenset = frozenset(),
+    studies: list | None = None,
 ) -> list[str]:
-    """An ``xp-proposal`` finding: the spec plus the D86 value inputs."""
+    """An ``xp-proposal`` finding: the spec plus the D86 value inputs. *studies* is the
+    E7.15 study snapshot (``metrics.json`` ``backtest.studies``) BT-<n> refs resolve in."""
+    studies = studies or []
     where = f"findings[{i}] proposal"
     p = f.get("proposal")
     if not isinstance(p, dict):
@@ -858,6 +944,11 @@ def validate_proposal(
             errs.append(f"{where}.evidence_ref must be a BT-<n> study id for backtest evidence")
         elif (p.get("spec") or {}).get("backtest_ref") != ref:
             errs.append(f"{where}.spec.backtest_ref must equal evidence_ref ({ref})")
+        else:  # option A (D86): only a passing C500 holdout of the same variable
+            errs += [f"findings[{i}] {e}" for e in check_bt_evidence(ref, p.get("spec"), studies)]
+    bref = (p.get("spec") or {}).get("backtest_ref")
+    if kind != "backtest" and isinstance(bref, str) and bref.strip():
+        errs += _check_spec_backtest_ref(bref.strip(), f, i, backlog, studies)
     if not str(p.get("evidence", "")).strip():
         errs.append(f"{where}.evidence must say what backs it (bucket + numbers, or BT-<n>)")
     eff = p.get("expected_effect")
@@ -1531,8 +1622,10 @@ def validate_findings(
     backlog: dict | None = None,
     seed_ids: frozenset = frozenset(),
     max_arms: int = MAX_PARALLEL_ARMS_DEFAULT,
+    studies: list | None = None,
 ) -> list[str]:
     errs: list[str] = []
+    studies = studies or []
     prev_themes = prev_themes or {}
     experiments = experiments or []
     backlog = backlog if backlog is not None else empty_backlog()
@@ -1577,9 +1670,20 @@ def validate_findings(
                 )
         cat = f.get("category")
         if cat == "xp-proposal":
-            errs += validate_proposal(f, i, backlog, seed_ids)
+            errs += validate_proposal(f, i, backlog, seed_ids, studies)
         elif "proposal" in f:
             errs.append(f"findings[{i}] `proposal` is only allowed on an xp-proposal")
+        if "study_spec" in f:  # E7.15: a draft BT-<n> for an untested hypothesis
+            if cat not in STUDY_SPEC_CATEGORIES:
+                errs.append(
+                    f"findings[{i}] `study_spec` drafts a study for an untested hypothesis: "
+                    f"only on {STUDY_SPEC_CATEGORIES}"
+                )
+            if cat == "xp-proposal" and (f.get("proposal") or {}).get("evidence_kind") == (
+                "backtest"
+            ):
+                errs.append(f"findings[{i}] `study_spec` with backtest evidence: it is tested")
+            errs += validate_study_spec(f["study_spec"], f"findings[{i}] study_spec")
         if cat == "quick-change":
             qcs += 1
             errs += validate_quick_change(f, i)
@@ -1725,6 +1829,521 @@ def validate_report(text: str) -> list[str]:
     return errs
 
 
+# ---------- backtest studies (E7.15, D84) ----------
+
+
+def _study_num(sid: str) -> int:
+    return int(sid.split("-", 1)[1])
+
+
+def load_bt_ledger(path: Path) -> tuple[list[dict], list[str]]:
+    """The E7.12 research ledger (``data/backtest/ledger.jsonl``), read-only: ``(rows, errors)``.
+
+    A missing file is no study yet (``[]``), never an error; a bad line is skipped and named.
+    """
+    if not path.exists():
+        return [], []
+    rows, errs = [], []
+    for i, line in enumerate(path.read_text().splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            d = json.loads(line)
+        except ValueError as e:
+            errs.append(f"{path.name}:{i} is not JSON ({e})")
+            continue
+        if (
+            not isinstance(d, dict)
+            or not BACKTEST_ID_RE.match(str(d.get("study", "")))
+            or d.get("phase") not in ("dev", "holdout")
+        ):
+            errs.append(f"{path.name}:{i} is not a study ledger line")
+            continue
+        rows.append(d)
+    return rows, errs
+
+
+def load_study_reports(directory: Path) -> dict[str, dict]:
+    """``BT-<n>`` -> the header of its committed standard report (``docs/RESEARCH/studies``)."""
+    out = {}
+    for f in sorted(directory.glob("BT-*.json")) if directory.is_dir() else []:
+        if not BACKTEST_ID_RE.match(f.stem):
+            continue
+        doc = _loads(f.read_text(), {})
+        if isinstance(doc, dict) and isinstance(doc.get("header"), dict):
+            out[f.stem] = doc["header"]
+    return out
+
+
+def holdout_key(e: dict) -> str:
+    """One holdout run's identity (the wake rule's watermark)."""
+    return f"{e['study']}:{str(e.get('spec_hash', ''))[:12]}:{e.get('at', '')}"
+
+
+def arm_variables(arms: dict) -> list[str]:
+    """Dotted leaves the treatments change: overlay leaves (``exits.default.take_profit_pct``),
+    plus ``ranker`` when a treatment walks a different ranker than the control."""
+    arms = arms if isinstance(arms, dict) else {}
+    ctrl = arms.get("control") or {}
+    out: set[str] = set()
+    for arm in (arms.get("treatments") or {}).values():
+        arm = arm if isinstance(arm, dict) else {}
+        out.update(".".join(x) for x in _leaves(arm.get("overlay") or {}) if x)
+        if arm.get("ranker") != ctrl.get("ranker"):
+            out.add("ranker")
+    return sorted(out)
+
+
+def _run_summary(e: dict) -> dict:
+    rows = [
+        {"profile": p, "treatment": t, **(v if isinstance(v, dict) else {})}
+        for p, tr in sorted((e.get("verdicts") or {}).items())
+        for t, v in sorted((tr or {}).items())
+    ]
+    return {
+        "universe": e.get("universe"),
+        "at": e.get("at"),
+        "start": e.get("start"),
+        "end": e.get("end"),
+        "spec_hash": e.get("spec_hash"),
+        "overfit_warning": bool(e.get("overfit_warning")),
+        "verdicts": rows,
+        "passes": any(bool(r.get("switch")) for r in rows),
+    }
+
+
+def study_overview(entries: list[dict], current: dict[str, dict]) -> list[dict]:
+    """One summary per study: ledger runs (E7.12) joined with the current spec (``arc backtest
+    study show --json``: its hash now) or, without a spec file, its committed report header."""
+    ids = sorted({e["study"] for e in entries} | set(current), key=_study_num)
+    out = []
+    for sid in ids:
+        mine = sorted((e for e in entries if e["study"] == sid), key=lambda e: str(e.get("at")))
+        cur = current.get(sid) or {}
+        dev = [e for e in mine if e["phase"] == "dev"]
+        hold = [e for e in mine if e["phase"] == "holdout"]
+        last = mine[-1] if mine else {}
+        h = hold[-1] if hold else None
+        ref = h or last
+        arms = ref.get("arms") or cur.get("arms") or {}
+        cur_hash = cur.get("spec_hash")
+        variants = [int(e.get("variants") or 0) for e in mine] + [
+            int(cur.get("variants_tried") or 0)
+        ]
+        out.append(
+            {
+                "id": sid,
+                "hypothesis": cur.get("hypothesis") or "",
+                "arms": arms,
+                "variables": arm_variables(arms),
+                "profiles": ref.get("profiles") or cur.get("profiles") or [],
+                "ladder": cur.get("universe_ladder") or [],
+                "rungs": sorted(
+                    {e.get("universe") for e in mine if e.get("universe") in BT_CHECKPOINT_NAMES},
+                    key=BT_CHECKPOINT_NAMES.index,
+                ),
+                "runs": len(mine),
+                "dev": _run_summary(dev[-1]) if dev else None,
+                "holdout": _run_summary(h) if h else None,
+                "variants": max(variants),
+                "max_variants": cur.get("max_variants"),
+                "current_hash": cur_hash,
+                "spec_file": bool(cur_hash),
+                "hash_changed": bool(h and cur_hash and cur_hash != h.get("spec_hash")),
+                "git_sha": last.get("git_sha"),
+                "at": last.get("at"),
+            }
+        )
+    return out
+
+
+def _verdict_text(r: dict) -> str:
+    call = "SWITCH candidate" if r.get("switch") else "keep control"
+    return (
+        f"{r.get('profile')}/{r.get('treatment')} {call} diff {_num(r.get('pnl_diff'), '+,.0f')} "
+        f"CI [{_num(r.get('ci_lo'), ',.0f')}, {_num(r.get('ci_hi'), ',.0f')}]"
+    )
+
+
+def study_evidence_class(s: dict) -> str:
+    """What a study may back (D86 option A): only a passing C500 holdout is evidence."""
+    h = s.get("holdout")
+    if h is None:
+        return "hypothesis only (dev, no holdout)"
+    if h.get("universe") != BT_CONFIRM_RUNG:
+        return f"hypothesis only ({h.get('universe')} holdout, not C500)"
+    if s.get("hash_changed"):
+        return "NOT citable (spec edited since the holdout)"
+    if not h.get("passes"):
+        return "C500 holdout: keep control (evidence against)"
+    return "C500 holdout PASS (may back an XP proposal)"
+
+
+def _treatments(arms: dict) -> dict:
+    return arms.get("treatments") or {}
+
+
+def _arm_label(name: str, arm) -> str:
+    arm = arm or {}
+    ov = arm.get("overlay")
+    leaves = ",".join(".".join(x) for x in _leaves(ov)) if ov else ""
+    return f"{name}={arm.get('ranker') or 'incumbent'}" + (f" +{leaves}" if leaves else "")
+
+
+def study_lines(studies: list[dict]) -> list[str]:
+    """One line per study for the context (the cap is applied by the caller)."""
+    if not studies:
+        return ["- none yet (no BT-<n> in data/backtest/ledger.jsonl or config/backtest_studies)"]
+    out = []
+    for s in studies:
+        arms = s.get("arms") or {}
+        named = [("control", arms.get("control")), *sorted(_treatments(arms).items())]
+        arm_txt = " | ".join(_arm_label(name, a) for name, a in named)
+        dev, h = s.get("dev"), s.get("holdout")
+        dev_txt = (
+            f"dev {dev['universe']} {dev.get('start')}..{dev.get('end')}: "
+            + "; ".join(_verdict_text(r) for r in dev["verdicts"])
+            if dev
+            else "dev: not run"
+        )
+        hold_txt = (
+            f"HOLDOUT {h['universe']} {h.get('start')}..{h.get('end')}: "
+            + "; ".join(_verdict_text(r) for r in h["verdicts"])
+            if h
+            else "holdout pending"
+        )
+        mv = s.get("max_variants")
+        overfit = (isinstance(mv, int) and s["variants"] > mv) or bool(h and h["overfit_warning"])
+        planned = "->".join(s.get("ladder") or []) or "?"
+        out.append(
+            f"- {s['id']} {clip(s.get('hypothesis') or '(no spec/report text)', 160)} · arms "
+            f"{arm_txt} · ladder reached {','.join(s['rungs']) or '-'} (planned {planned}) · "
+            f"{dev_txt} · {hold_txt} · variants {s['variants']}/{mv if mv is not None else '?'}"
+            f"{' OVERFIT-WARNING' if overfit else ''} · git {s.get('git_sha') or '-'} · "
+            f"{str(s.get('at') or '-')[:10]} · {study_evidence_class(s)}"
+            + ("" if s.get("spec_file") else " · (no loadable spec: hash unverifiable)")
+        )
+    return out
+
+
+def checkpoint_lines(path: Path) -> list[str]:
+    """E7.9's ``checkpoints.json`` (``{c125: {complete_at, sessions, gb}, ...}``)."""
+    if not path.exists():
+        return [
+            f"- {path.name} absent (the E7.9 Theta pull has not completed a checkpoint): "
+            "studies so far ran on the partitions their report header names"
+        ]
+    d = _loads(path.read_text(), None)
+    if not isinstance(d, dict):
+        return [f"- {path.name} is not a JSON object"]
+    out = []
+    for c in BT_CHECKPOINT_NAMES:
+        v = d.get(c)
+        if isinstance(v, dict) and v.get("complete_at"):
+            out.append(
+                f"- {c}: complete {v.get('complete_at')} · sessions {v.get('sessions', '?')} · "
+                f"{v.get('gb', '?')} GB"
+            )
+        else:
+            out.append(f"- {c}: incomplete")
+    return out
+
+
+def _diff(a, b) -> str:
+    return f"{b - a:+.2f}" if _is_num(a) and _is_num(b) else "n/a"
+
+
+def drift_lines(path: Path) -> list[str]:
+    """E7.14's backtest<->live reconciliation, per structure kind x regime, with n."""
+    if not path.exists():
+        return [f"- no reconciliation yet (E7.14 writes {BT_RECONCILIATION})"]
+    d = _loads(path.read_text(), None)
+    if not isinstance(d, dict) or not isinstance(d.get("rows"), list):
+        return [f"- {path.name} has no `rows` list"]
+    out = [
+        f"- generated {d.get('generated_at', '?')} · git {d.get('git_sha', '?')} · sim "
+        f"slippage_frac {d.get('sim_slippage_frac', '?')} (predicted = simulator, actual = fills)"
+    ]
+    for r in d["rows"]:
+        if not isinstance(r, dict):
+            continue
+        n = r.get("n")
+        low = isinstance(n, int) and n < MIN_SAMPLE
+        m = r.get("exit_reason_match")
+        match = f"{float(m) * 100:.0f}%" if _is_num(m) else "n/a"
+        e0, e1 = r.get("entry_pred"), r.get("entry_actual")
+        x0, x1 = r.get("exit_pred"), r.get("exit_actual")
+        out.append(
+            f"- {r.get('kind')} · {r.get('regime')} n={n}"
+            f"{f' LOW (n<{MIN_SAMPLE})' if low else ''}: "
+            f"entry pred {_num(e0, '.2f')} vs actual {_num(e1, '.2f')} ({_diff(e0, e1)})"
+            f" · exit pred {_num(x0, '.2f')} vs actual {_num(x1, '.2f')} ({_diff(x0, x1)})"
+            f" · exit-reason match {match}"
+            f" · P&L tracking error {_num(r.get('pnl_tracking_error'), ',.2f')}"
+            f" (bias {_num(r.get('pnl_bias'), '+,.2f')})"
+        )
+    return out
+
+
+def backtest_snapshot(p: Paths, run_dir: Path) -> dict:
+    """Ledger + current specs + reports, read-only. Each spec's hash comes from
+    ``arc backtest study show BT-<n> --json`` (the gate has no YAML/pydantic)."""
+    entries, errs = load_bt_ledger(p.bt_root / BT_LEDGER)
+    reports = load_study_reports(p.bt_root / BT_REPORTS)
+    spec_dir = p.bt_root / BT_SPECS
+    spec_ids = (
+        sorted(
+            (f.stem for f in spec_dir.glob("BT-*.yaml") if BACKTEST_ID_RE.match(f.stem)),
+            key=_study_num,
+        )
+        if spec_dir.is_dir()
+        else []
+    )
+    current: dict[str, dict] = {
+        sid: {
+            "hypothesis": h.get("hypothesis"),
+            "max_variants": h.get("max_variants"),
+            "universe_ladder": h.get("universe_ladder"),
+        }
+        for sid, h in reports.items()
+    }
+    for sid in spec_ids:
+        text = run_arc(
+            p,
+            [
+                "backtest",
+                "study",
+                "show",
+                sid,
+                "--json",
+                "--studies-dir",
+                str(spec_dir),
+                "--ledger",  # spec only: the gate reads the ledger itself (a bad line in
+                str(run_dir / "no-ledger.jsonl"),  # it must not hide the hash)
+            ],
+            run_dir,
+            f"study-show-{sid}",
+            timeout=60,
+        )
+        lines = text.strip().splitlines()
+        d = _loads(lines[-1] if lines else "", None)
+        if not isinstance(d, dict) or not d.get("spec_hash"):
+            errs.append(f"{sid}: `arc backtest study show --json` failed (study-show-{sid}.log)")
+            continue
+        current[sid] = {**current.get(sid, {}), **d}
+    studies = study_overview(entries, current)
+    nums = [_study_num(s["id"]) for s in studies]
+    return {
+        "studies": studies,
+        "errors": errs,
+        "next_study_id": f"BT-{max(nums, default=0) + 1}",
+        "holdouts": [holdout_key(e) for e in entries if e["phase"] == "holdout"],
+    }
+
+
+def capped_section(lines: list[str], cap: int, full: Path) -> list[str]:
+    """*lines* up to about *cap* chars; the full list is written to *full*."""
+    full.write_text("\n".join(lines) + "\n")
+    out, size = [], 0
+    for i, ln in enumerate(lines):
+        if size + len(ln) + 1 > cap:
+            out.append(f"- ...[{len(lines) - i} more line(s); full: {full}]")
+            break
+        out.append(ln)
+        size += len(ln) + 1
+    return out
+
+
+def _check_spec_backtest_ref(ref: str, f: dict, i: int, backlog: dict, studies: list) -> list[str]:
+    """``spec.backtest_ref`` on a live-evidence proposal: ``none``, a known ``BT-<n>``, or a
+    legacy pre-E7.15 path kept only by a backlog entry that already carried it (grandfathered)."""
+    if ref.lower() == "none":
+        return []
+    if BACKTEST_ID_RE.match(ref):
+        if not any(s["id"] == ref for s in studies):
+            return [f"findings[{i}] BT-REF: {ref} is not in the study ledger"]
+        return []
+    entry = (backlog.get("items") or {}).get(f.get("key")) or {}
+    if ref.startswith(LEGACY_REF_PREFIXES) and (entry.get("spec") or {}).get("backtest_ref") == ref:
+        return []  # grandfathered: the entry held this ref before E7.15
+    return [
+        f"findings[{i}] proposal.spec.backtest_ref {ref!r} must be a BT-<n> study id or 'none' "
+        "(legacy docs/RESEARCH refs stay only on backlog entries that already held them)"
+    ]
+
+
+def check_bt_evidence(ref: str, spec, studies: list[dict]) -> list[str]:
+    """Option A (D86): a ``BT-<n>`` backing an XP proposal must resolve to a study whose C500
+    holdout passed under the spec hash still committed, testing the proposal's variable."""
+    s = next((x for x in studies if x["id"] == ref), None)
+    if s is None:
+        return [f"BT-REF: {ref} is not in the study ledger (data/backtest/ledger.jsonl)"]
+    h = s.get("holdout")
+    if h is None:
+        return [
+            f"BT-REF: {ref} has no holdout run (dev-only results are a hypothesis, not evidence)"
+        ]
+    errs = []
+    if h.get("universe") != BT_CONFIRM_RUNG:
+        errs.append(
+            f"BT-REF: {ref}'s holdout ran on {h.get('universe')}, not {BT_CONFIRM_RUNG} "
+            "(a C125/C250 result is a hypothesis, not evidence)"
+        )
+    if not s.get("current_hash"):
+        errs.append(f"BT-REF: {ref} has no loadable spec file: its hash cannot be checked")
+    elif s.get("hash_changed"):
+        errs.append(
+            f"BT-REF: {ref}'s spec hash changed since its holdout "
+            f"({str(h.get('spec_hash'))[:12]} -> {s['current_hash'][:12]})"
+        )
+    if not h.get("passes"):
+        errs.append(f"BT-REF: {ref}'s holdout verdict is keep-control (no treatment passed D25)")
+    want = set()
+    for v in s.get("variables") or []:
+        want.update(BT_RANKER_LEAVES if v == "ranker" else (v,))
+    arms = ((spec or {}).get("arms") or {}).get("treatments") or {}
+    got = {
+        ".".join(x)
+        for a in arms.values()
+        if isinstance(a, dict)
+        for x in _leaves(a.get("overlay") or {})
+        if x
+    }
+    if got and not got <= want:
+        errs.append(
+            f"BT-REF: the proposal varies {sorted(got)} but {ref} tests "
+            f"{s.get('variables') or 'nothing'} (its arm overlay leaves)"
+        )
+    return errs
+
+
+def validate_study_spec(spec, where: str = "study_spec") -> list[str]:
+    """A draft ``config/backtest_studies/BT-<next>.yaml`` (mirror of ``StudySpec``, extra=forbid):
+    hypothesis, arms (control + t1..t3), profiles; ONE variable (the same leaf set in every
+    treatment, or the ranker alone). id/owner/created/ladder/rule are filled by ``record``."""
+    if not isinstance(spec, dict):
+        return [f"{where} must be an object (the E7.12 study spec format)"]
+    errs = [f"{where}.{k}: {why}" for k, why in STUDY_SPEC_FILLED.items() if k in spec]
+    extra = sorted(set(spec) - set(STUDY_SPEC_KEYS))
+    if extra:
+        errs.append(f"{where} has unknown keys {extra} (StudySpec is extra=forbid)")
+    if not str(spec.get("hypothesis", "")).strip():
+        errs.append(f"{where}.hypothesis is required")
+    prof = spec.get("profiles")
+    if (
+        not isinstance(prof, list)
+        or not prof
+        or len(set(map(str, prof))) != len(prof)
+        or any(x not in STUDY_PROFILES for x in prof)
+    ):
+        errs.append(f"{where}.profiles must be a non-empty unique list of {STUDY_PROFILES}")
+    if "primary_metric" in spec and spec["primary_metric"] not in STUDY_PRIMARY:
+        errs.append(f"{where}.primary_metric must be one of {STUDY_PRIMARY}")
+    mv = spec.get("max_variants")
+    if "max_variants" in spec and (not isinstance(mv, int) or isinstance(mv, bool) or mv < 1):
+        errs.append(f"{where}.max_variants must be an int >= 1")
+    errs += _validate_study_period(spec.get("period"), f"{where}.period")
+    arms = spec.get("arms")
+    if not isinstance(arms, dict) or set(arms) - {"control", "treatments"}:
+        return [*errs, f"{where}.arms holds control and treatments only"]
+    ts = arms.get("treatments")
+    if not isinstance(ts, dict) or not 1 <= len(ts) <= 3 or set(ts) - {"t1", "t2", "t3"}:
+        return [*errs, f"{where}.arms.treatments must be 1-3 arms named t1..t3"]
+    named = [("control", arms.get("control") or {}), *sorted(ts.items())]
+    for name, arm in named:
+        if not isinstance(arm, dict) or set(arm) - {"ranker", "overlay"}:
+            errs.append(f"{where}.arms.{name} holds only ranker and overlay")
+            continue
+        if arm.get("ranker") is not None and arm["ranker"] not in STUDY_RANKERS:
+            errs.append(f"{where}.arms.{name}.ranker must be one of {STUDY_RANKERS}")
+        ov = arm.get("overlay")
+        ov = {} if ov is None else ov
+        if not isinstance(ov, dict):
+            errs.append(f"{where}.arms.{name}.overlay must be a mapping")
+            continue
+        bad = sorted(set(ov) - set(STUDY_TARGETS))
+        if bad:
+            errs.append(f"{where}.arms.{name} overlay targets {bad} not in {STUDY_TARGETS}")
+        if any(not v for v in ov.values()):
+            errs.append(f"{where}.arms.{name} has an empty overlay target; drop it")
+    if errs:
+        return errs
+    if (arms.get("control") or {}).get("overlay"):
+        errs.append(f"{where}.arms.control is the base config: no overlay (a ranker is fine)")
+    ctrl_ranker = (arms.get("control") or {}).get("ranker")
+    sets, seen = {}, {}
+    for name, arm in sorted(ts.items()):
+        leaves = sorted(".".join(x) for x in _leaves(arm.get("overlay") or {}) if x)
+        if arm.get("ranker") not in (None, ctrl_ranker):
+            leaves.append("ranker")
+        if not leaves:
+            errs.append(f"{where}.arms.{name} is identical to control")
+        sets[name] = tuple(leaves)
+        canon = json.dumps(arm, sort_keys=True)
+        if canon in seen:
+            errs.append(f"{where}.arms.{name} is identical to {seen[canon]}")
+        seen.setdefault(canon, name)
+    if len(set(sets.values())) > 1 or any("ranker" in v and len(v) > 1 for v in sets.values()):
+        errs.append(
+            f"ONE-VARIABLE: {where} treatments must vary one thing (the same leaf set in every "
+            f"arm, or the ranker alone); got {dict(sets)}"
+        )
+    return errs
+
+
+def _validate_study_period(period, where: str) -> list[str]:
+    if period is None:
+        return []
+    if not isinstance(period, dict) or set(period) - set(STUDY_PERIOD_KEYS):
+        return [f"{where} holds only {STUDY_PERIOD_KEYS}"]
+    days = {}
+    for k in ("dev_start", "dev_end", "holdout_start", "holdout_end"):
+        v = period.get(k)
+        if v is None:
+            continue
+        try:
+            days[k] = dt.date.fromisoformat(str(v))
+        except ValueError:
+            return [f"{where}.{k} must be an ISO date"]
+    sd = period.get("settle_days")
+    if sd is not None and (not isinstance(sd, int) or isinstance(sd, bool) or sd < 0):
+        return [f"{where}.settle_days must be an int >= 0"]
+    d0 = days.get("dev_start", dt.date(2020, 1, 1))
+    d1 = days.get("dev_end", dt.date(2023, 12, 31))
+    h0 = days.get("holdout_start", dt.date(2024, 1, 1))
+    if not d0 <= d1 < h0:
+        return [f"{where}: need dev_start <= dev_end < holdout_start"]
+    if "holdout_end" in days and days["holdout_end"] < h0:
+        return [f"{where}: holdout_end is before holdout_start"]
+    return []
+
+
+def write_study_spec(run_dir: Path, sid: str, spec: dict, f: dict, aid: str, now) -> Path:
+    """The draft for the owner: ``RUN_DIR/study-specs/BT-<n>.yaml`` (JSON is valid YAML)."""
+    doc = {
+        "id": sid,
+        "hypothesis": spec["hypothesis"],
+        "owner": f"Arc Analyst {aid}",
+        "created": now.astimezone(ET).date().isoformat(),
+        "arms": spec["arms"],
+        "profiles": spec["profiles"],
+        "universe_ladder": list(STUDY_LADDER),
+        **{k: spec[k] for k in ("period", "primary_metric", "max_variants") if k in spec},
+    }
+    path = run_dir / STUDY_SPECS_DIR / f"{sid}.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f"# DRAFT study spec by the Arc Analyst ({aid}, {f['key']}). Not committed, not run:\n"
+        "# the Analyst never runs a backtest. Owner (or a card): copy to\n"
+        f"# config/backtest_studies/{sid}.yaml (file name = id; take the next free BT-<n> if\n"
+        f"# {sid} is taken), check `arc backtest study show {sid}`, commit, run dev on c125,\n"
+        f"# then `arc backtest study run {sid} --holdout` (c500). The D25 rule is the default.\n"
+        + json.dumps(doc, indent=2, sort_keys=True)
+        + "\n"
+    )
+    return path
+
+
 # ---------- agent / owner subcommands ----------
 
 
@@ -1767,6 +2386,8 @@ def cmd_record(p: Paths, run_dir: Path, now: dt.datetime) -> int:
     meta = load_json(run_dir / "metrics.json", {})
     experiments = meta.get("experiments", [])
     max_arms = int(meta.get("max_parallel_arms") or MAX_PARALLEL_ARMS_DEFAULT)
+    bt_meta = meta.get("backtest") or {}
+    studies = bt_meta.get("studies") or []
     sync_backlog(
         backlog,
         [{**e, "experiment_id": e["id"]} for e in experiments],
@@ -1780,6 +2401,7 @@ def cmd_record(p: Paths, run_dir: Path, now: dt.datetime) -> int:
         backlog=backlog,
         seed_ids=_seed_ids(p),
         max_arms=max_arms,
+        studies=studies,
     )
     if errs:
         print("findings.json rejected (ledger and backlog unchanged):\n- " + "\n- ".join(errs))
@@ -1790,6 +2412,18 @@ def cmd_record(p: Paths, run_dir: Path, now: dt.datetime) -> int:
         if f.get("category") == "quick-change":
             items[f["key"]]["quick_change"] = f["quick_change"]
             items[f["key"]]["evidence"] = f.get("evidence")
+    # E7.15: draft study specs for the owner, BT-<next> upward in finding order
+    next_bt = _study_num(str(bt_meta.get("next_study_id") or "BT-1"))
+    study_specs = []
+    for f in doc.get("findings", []):
+        if "study_spec" not in f:
+            continue
+        sid = f"BT-{next_bt}"
+        next_bt += 1
+        it = items[f["key"]]
+        path = write_study_spec(run_dir, sid, f["study_spec"], f, it["id"], now)
+        it["study_spec"] = {"id": sid, "path": str(path), "run": run_dir.name}
+        study_specs.append(f"{it['id']} -> {sid} ({path})")
     reviews = apply_reviews(ledger, doc, run_dir.name, iso(now))
     save_json(p.ledger, ledger)
     finding_ids = {k: it["id"] for k, it in items.items()}
@@ -1805,10 +2439,14 @@ def cmd_record(p: Paths, run_dir: Path, now: dt.datetime) -> int:
         t["theme"]: {k: v for k, v in t.items() if k != "theme"} for t in doc.get("themes", [])
     }
     save_json(p.state, state)
-    save_json(run_dir / "reconciled.json", {**report, "backlog": moves, "reviews": reviews})
+    save_json(
+        run_dir / "reconciled.json",
+        {**report, "backlog": moves, "reviews": reviews, "study_specs": study_specs},
+    )
     out: dict = {k: [x["id"] for x in v] for k, v in report.items()}
     out["backlog"] = moves
     out["reviews"] = reviews
+    out["study_specs"] = study_specs
     print(json.dumps(out, indent=2))
     return 0
 
@@ -1828,6 +2466,10 @@ def cmd_mark(p: Paths, run_dir: Path, now: dt.datetime) -> int:
         last_run_dir=str(run_dir),
         last_marked_at=iso(now),
     )
+    if "bt_holdouts" in meta:  # E7.15: the holdout verdicts this run has read
+        state["bt_holdouts_seen"] = sorted(
+            set(state.get("bt_holdouts_seen") or []) | set(meta["bt_holdouts"])
+        )
     save_json(p.state, state)
     print(f"watermark -> outcome rowid {meta['closed_max_rowid']}, last run {meta['now']}")
     return 0
@@ -1972,7 +2614,7 @@ def cmd_backlog(p: Paths) -> int:
 
 def cmd_reset(p: Paths) -> int:
     state = load_json(p.state, {})
-    for k in ("closed_watermark", "last_run_at"):
+    for k in ("closed_watermark", "last_run_at", "bt_holdouts_seen"):
         state.pop(k, None)
     save_json(p.state, state)
     print("next run reviews unconditionally (if the journal has a closed outcome)")
@@ -2209,7 +2851,15 @@ def theme_lines(state: dict) -> list[str]:
     ]
 
 
-def build_context(p: Paths, run_dir: Path, copy: Path, decision: dict, now: dt.datetime) -> str:
+def build_context(
+    p: Paths,
+    run_dir: Path,
+    copy: Path,
+    decision: dict,
+    now: dt.datetime,
+    bt: dict | None = None,
+) -> str:
+    bt = bt if bt is not None else backtest_snapshot(p, run_dir)
     since = now - dt.timedelta(days=WINDOW_DAYS)
     since_day = since.astimezone(ET).date().isoformat()
     week_day = now.astimezone(ET).date().isoformat()
@@ -2334,6 +2984,20 @@ def build_context(p: Paths, run_dir: Path, copy: Path, decision: dict, now: dt.d
         "## Realised vs model, all time (kind x regime)",
         *table_lines(all_rows, frac),
         "",
+        "## Backtest <-> live drift (E7.14 reconciliation: simulator vs real fills; a persistent "
+        "drift is a cost-model theme line or a -> Sentinel flaw, not a strategy change)",
+        *drift_lines(p.bt_root / BT_RECONCILIATION),
+        "",
+        f"## Backtest studies (D84; E7.12 ledger {BT_LEDGER} + {BT_REPORTS}; next free id "
+        f"{bt['next_study_id']}; cite only a C500 holdout verdict, a C125-only or dev-only "
+        "result is a hypothesis)",
+        *[f"- WARNING: {e}" for e in bt.get("errors") or []],
+        *capped_section(
+            study_lines(bt["studies"]), BT_SECTION_MAX, run_dir / "backtest-studies.log"
+        ),
+        "### Data checkpoints (E7.9 checkpoints.json)",
+        *checkpoint_lines(p.bt_root / BT_CHECKPOINTS),
+        "",
         "## Halts this week (and any still active)",
     ]
     out += [f"- {a} {k}: {r} (cleared {c or 'NO, still active'})" for a, k, r, c in halts] or [
@@ -2418,9 +3082,11 @@ def cmd_gate(p: Paths, now: dt.datetime) -> int:
     staging = p.home / "staging-copy.db"
     snapshot_db(p.live_db, staging)
     state = load_json(p.state, {})
+    bt_entries, _ = load_bt_ledger(p.bt_root / BT_LEDGER)
+    holdouts = [holdout_key(e) for e in bt_entries if e["phase"] == "holdout"]
     conn = sqlite3.connect(f"{staging.resolve().as_uri()}?mode=ro", uri=True)
     try:
-        decision = wake_decision(conn, state, now)
+        decision = wake_decision(conn, state, now, holdouts)
         experiments = [
             {
                 "id": e["experiment_id"],
@@ -2443,6 +3109,7 @@ def cmd_gate(p: Paths, now: dt.datetime) -> int:
     run_dir.mkdir(parents=True, exist_ok=True)
     copy = run_dir / "arc-copy.db"
     staging.replace(copy)
+    bt = backtest_snapshot(p, run_dir)
     save_json(
         run_dir / "metrics.json",
         {
@@ -2450,9 +3117,13 @@ def cmd_gate(p: Paths, now: dt.datetime) -> int:
             **{k: v for k, v in decision.items() if k != "wake"},
             "experiments": experiments,  # registry snapshot `record` validates against
             "max_parallel_arms": max_arms,
+            # E7.15: the study snapshot `record` resolves BT-<n> refs against, and the
+            # holdout keys `mark` stores so the same verdict does not wake the next run
+            "backtest": {"studies": bt["studies"], "next_study_id": bt["next_study_id"]},
+            "bt_holdouts": holdouts,
         },
     )
-    ctx = build_context(p, run_dir, copy, decision, now)
+    ctx = build_context(p, run_dir, copy, decision, now, bt)
     (run_dir / "context.md").write_text(ctx)
     tail = f"\n...[truncated; full: {run_dir}/context.md]"
     print(ctx if len(ctx) <= MAX_STDOUT else ctx[: MAX_STDOUT - len(tail)] + tail)
