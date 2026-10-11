@@ -35,15 +35,54 @@ function Held({ p }: { p: PositionRow }) {
   return <span className="text-muted">—</span>;
 }
 
-function Pnl({ p }: { p: PositionRow }) {
+function PnlUsd({ p }: { p: PositionRow }) {
   const pl = num(p.status === "closed" ? p.realized_pl : p.unrealized_pl);
   if (pl === null) return <span className="text-muted">—</span>;
   return (
-    <span className="inline-flex items-center gap-2" title={p.status === "open" ? "Total change since entry (unrealized)" : undefined}>
+    <span title={p.status === "open" ? "Total change since entry (unrealized)" : undefined}>
       <Money value={pl} kind="pnl" explicitSign />
-      {p.status === "open" && p.unrealized_pct != null && <ChangePill value={p.unrealized_pct} metric="pnl" />}
     </span>
   );
+}
+
+function PnlPct({ p }: { p: PositionRow }) {
+  if (p.status !== "open" || p.unrealized_pct == null) return <span className="text-muted">—</span>;
+  return <ChangePill value={p.unrealized_pct} metric="pnl" />;
+}
+
+/** D88: the card row's right side: total $ and total % in two fixed-width, right-aligned
+ * columns, so both line up down the list. */
+function TotalColumns({ p }: { p: PositionRow }) {
+  return (
+    <span
+      className="grid grid-cols-[4.75rem_4.75rem] items-center justify-items-end gap-x-2 tabular-nums"
+      data-testid="position-total"
+      title={p.status === "open" ? "Total change since entry (unrealized)" : undefined}
+    >
+      <span data-testid="position-total-usd">
+        <PnlUsd p={p} />
+      </span>
+      <span data-testid="position-total-pct">
+        <PnlPct p={p} />
+      </span>
+    </span>
+  );
+}
+
+/** D88: the card row's third line (exit state), or null when there is nothing to say. */
+function exitLine(p: PositionRow, exits: boolean) {
+  const parts = [
+    exitStatus(p) !== "—" && <span key="exit">exit {exitStatus(p)}</span>,
+    exits && exitWatchChip(p) && <span key="watch">watch {exitWatchChip(p)?.text.toLowerCase()}</span>,
+    exits && exitCaseText(p) && <span key="case">case {exitCaseText(p)?.toLowerCase()}</span>,
+    exits && exitVerdictChip(p) && <span key="risk">Risk {exitVerdictChip(p)?.text.toLowerCase()}</span>,
+    exits && mandatoryLabel(p.mandatory_signal) && (
+      <span key="mandatory" className="text-neg-text">
+        {mandatoryLabel(p.mandatory_signal)}
+      </span>
+    ),
+  ].filter(Boolean);
+  return parts.length ? <>{parts}</> : null;
 }
 
 const legsText = (p: PositionRow) => p.legs.map(formatLeg).join(" / ");
@@ -133,11 +172,18 @@ export function positionColumns(full: boolean, exits = false): ColumnDef<Positio
       accessorFn: (p) => num(p.status === "closed" ? p.close_net : p.mark_net),
       cell: (c) => <Net v={c.row.original.status === "closed" ? c.row.original.close_net : c.row.original.mark_net} />,
     },
+    // D88: total $ and total % in their own columns (since entry; realised once closed).
     {
       id: "pnl",
-      header: full ? "P&L" : "Total Change",
+      header: full ? "P&L" : "Total $",
       accessorFn: (p) => num(p.status === "closed" ? p.realized_pl : p.unrealized_pl),
-      cell: (c) => <Pnl p={c.row.original} />,
+      cell: (c) => <PnlUsd p={c.row.original} />,
+    },
+    {
+      id: "pnl_pct",
+      header: full ? "P&L %" : "Total %",
+      accessorFn: (p) => (p.status === "open" ? p.unrealized_pct : null),
+      cell: (c) => <PnlPct p={c.row.original} />,
     },
     { accessorKey: "dte", header: "DTE", cell: (c) => (c.getValue() == null ? "—" : String(c.getValue())) },
     { id: "exit", header: "Exit", accessorFn: exitStatus },
@@ -207,30 +253,20 @@ export function PositionsTable({ rows, full = false, exits = false }: { rows: Po
             {p.held === false && <span className="text-caption text-neg-text">not held</span>}
           </>
         ),
-        // D87: $ and % together, overall since entry (Movers shows today's change).
-        aside: (p) => (
-          <span className="inline-flex flex-col items-end gap-0.5" data-testid="position-total">
-            <Pnl p={p} />
-            {p.status === "open" && <span className="text-micro text-muted">total</span>}
-          </span>
-        ),
-        secondary: (p) => (
+        // D88: total since entry as two aligned columns, $ then % (no "total" caption).
+        aside: (p) => <TotalColumns p={p} />,
+        // D88: line 1 legs; line 2 qty · entry → mark · DTE; line 3 exit state, only when set.
+        secondary: (p) => [
+          <LegChips key="legs" p={p} />,
           <>
-            <LegChips p={p} />
             <span>{p.contracts}×</span>
             <span>
               <Net v={p.entry_net} /> → <Net v={p.status === "closed" ? p.close_net : p.mark_net} />
             </span>
             {p.dte != null && <span>{p.dte} DTE</span>}
-            {exitStatus(p) !== "—" && <span>exit {exitStatus(p)}</span>}
-            {exits && exitWatchChip(p) && <span>watch {exitWatchChip(p)?.text.toLowerCase()}</span>}
-            {exits && exitCaseText(p) && <span>case {exitCaseText(p)?.toLowerCase()}</span>}
-            {exits && exitVerdictChip(p) && <span>Risk {exitVerdictChip(p)?.text.toLowerCase()}</span>}
-            {exits && mandatoryLabel(p.mandatory_signal) && (
-              <span className="text-neg-text">{mandatoryLabel(p.mandatory_signal)}</span>
-            )}
-          </>
-        ),
+          </>,
+          exitLine(p, exits),
+        ],
       }}
     />
   );
