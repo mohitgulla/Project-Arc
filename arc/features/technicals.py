@@ -367,7 +367,7 @@ class AntiChaseRule(BaseModel):
 
     ``combine: all`` (D78): a bullish idea is stretched when ``stretch_atr >=
     max_stretch_atr`` **and** ``rsi14 >= rsi_overbought``. ``combine: any`` (the D76
-    card rule, kept for XP-13 variants and the backtest grid): stretched when
+    card rule, kept for later variants and the backtest grid): stretched when
     ``stretch_atr >= max_stretch_atr`` **or** (``rsi14 >= rsi_overbought`` and
     ``dist_high20_atr <= max_dist_high20_atr``). Bearish ideas mirror both
     (``-stretch``, ``rsi_oversold``, ``dist_low20_atr``).

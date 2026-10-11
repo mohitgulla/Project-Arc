@@ -906,7 +906,7 @@ discoveries, `universe.tiers.model`); an old `model:` / `trending:` key in
   (`universe.trending.velocity.smoothing` k = 5; under `min_mentions` 10, or with no 24 h
   count, it is none, never 0), computed in code (`arc.universe.velocity`). Two default-off
   strategy-lane switches: `universe.trending.scoring: rank_gain | velocity` (velocity
-  swaps the Reddit rank-gain half for rank-normalised velocity; draft XP-10) and
+  swaps the Reddit rank-gain half for rank-normalised velocity) and
   `personas.scout_buzz_velocity: off | on` (each Reddit name in the Scout's retail-buzz
   section shows `velocity 4.6× (157 vs 30)`, plus a "Fastest risers" line: top 5 rising,
   leveraged funds and stop words left out). Compare both rankings without a config change:
@@ -928,7 +928,7 @@ discoveries, `universe.tiers.model`); an old `model:` / `trending:` key in
   `49 tickers · 49 with ratio · 49 requests in 86s`, no 429, no rate-limit headers;
   tagged per ticker min 5 / median 11 / max 19. Quiet names span days
   (`window_minutes` 31 067 for YOU), so read a long span as low chatter, not fresh mood.
-  Prompts (strategy lane, `personas.retail_sentiment_context: off | on`, draft XP-12):
+  Prompts (strategy, `personas.retail_sentiment_context: off | on`, default off):
   on adds a `## Retail sentiment (Stocktwits …)` block to the Scout (top 15 by tagged
   count, `- NVDA · 80% bull (10 tagged, 2.7h) of 30 messages`) and one
   `· ST 80% bull (10 tagged, 2.7h)` fact to each Research pool line; the readings join
@@ -1504,8 +1504,8 @@ Specs live in `config/experiments/live/<id>.yaml`; defaults (alpha 0.05, power
 tunable as `experiments.*` (`!arc config experiments`). The treatment overlay uses
 the same deep-merge format as the backtest overlays in `config/experiments/*.yaml`.
 
-    arc experiment create --spec config/experiments/live/xp1_aa_baseline.yaml   # draft
-    arc experiment register XP-1        # locks sha256(canonical spec); queued if the area is busy
+    arc experiment create --spec config/experiments/live/xp1_aa_baseline.yaml --owner-approval P-<n>
+    arc experiment register XP-1 --owner-approval P-<n>   # locks sha256(canonical spec); queued if the area is busy
     arc experiment show XP-1 [--json]
     arc experiment verify XP-1          # exit 1 when the stored spec no longer matches the lock
     arc experiment list [--status running]
@@ -1514,6 +1514,12 @@ the same deep-merge format as the backtest overlays in `config/experiments/*.yam
 - After `register` the spec is locked (store check plus a DB trigger): a change
   needs a new id. One `registered`/`running` experiment per area; the next
   queued one is registered when it stops.
+- **Owner approval (D86, E21.2).** `create` and `register` refuse without
+  `--owner-approval <ref>`: `P-<n>` (an Analyst proposal the owner approved in
+  #arc-analyst), `slack:<ts>` (the owner's message) or `owner:<note>`. The ref is stored
+  in the event `detail` and shown by `arc experiment show`. The refusal names
+  `arc experiment adopt` (E21.4), the normal path. Dev cards never create or register
+  experiments.
 - An `ab` experiment cannot start before an `aa` stopped with sigma recorded
   (E10.4), unless the owner overrides it (journaled `experiment:aa_override`).
 - Every step writes a `decisions` row (stage `experiment`). `arm_id` on
@@ -1643,9 +1649,19 @@ body should carry one line:
 
 A missing line is a warning only. The Analyst and arc-sentinel read these lines (a
 `none` on a PR that obviously changes trading behaviour is a Sentinel info finding).
+
 Old lane lines (`Flag:`, `Lane: fast — …`, `Experiment:`) are still accepted and
 ignored, except `Experiment:` on a promotion. The E10.7 `Flag:` default-off rule, the
 promotion-stem rule and the D78 owner waivers are gone (D86).
+
+**Card and PR conventions (D86, E21.2).** Every dev card that changes strategy ships
+its behaviour on and carries the `XP-advisory:` line in its PR body; infra/process
+cards may use `Lane: fast — <reason>` instead. Cards never add files to
+`config/experiments/live/`, never run `arc experiment create|register` (both need
+`--owner-approval`), and never add a default-off flag just so an experiment can flip
+it. An idea worth testing goes in the `XP-advisory:` line; the weekly Analyst turns
+leads (those lines, plus `hermes/analyst/idea_seed.yaml`, which holds the retired
+dev drafts) into `P-<n>` proposals with 4 treatments.
 
 - `arc experiment report XP-<n>` lists the strategy-path commits that landed since the
   experiment's t0 under "Changes shipped to all arms during this run" (local
@@ -1690,8 +1706,8 @@ Dry run (scratch stores, fixtures, no broker, no orders), any time:
 
 **Start (before the 09:30 ET open, so the first session is the same day):**
 
-    arc experiment create --spec config/experiments/live/xp1_aa_baseline.yaml --db data/arc.db
-    arc experiment register XP-1 --db data/arc.db
+    arc experiment create --spec config/experiments/live/xp1_aa_baseline.yaml --owner-approval slack:<ts> --db data/arc.db
+    arc experiment register XP-1 --owner-approval slack:<ts> --db data/arc.db
     arc experiment start XP-1 --db data/arc.db
 
 `start` reads control's broker equity as t0 equity, creates
@@ -2262,9 +2278,9 @@ key. Code: `arc/ingest/market_movers.py`; handler `market_movers_source`.
   info (age …)`. With the flag off the prompt is byte-identical to before E14.3
   (golden `tests/fixtures/scalp/stage2_prompt_flag_off.txt`). Each block shown is
   recorded in the run's input manifest (`tape_movers`).
-- **Strategy lane:** flip with `arc config set personas.scalp_movers_context on`
-  (confirm code) only after XP-11 (`config/experiments/live/xp11_scalp_movers.yaml`,
-  draft, unregistered) returns `win`.
+- **Strategy:** flip with `arc config set personas.scalp_movers_context on` (confirm
+  code). D86: the retired draft experiment is a lead in the Analyst idea seed
+  (`hermes/analyst/idea_seed.yaml`); the Analyst decides whether it becomes a proposal.
 - Measured 2026-10-08 13:08 ET (live key): 60 raw rows → 2 gainers, 1 loser, 6
   most-actives kept; 51 excluded (27 under $3, 17 warrants/units/rights, 7
   leveraged); INTC and NVDA on the active list; three HTTP calls, < 1 s.
@@ -2364,7 +2380,7 @@ account profile can only structure as long premium** (long call/put, debit verti
   **and** RSI14 ≥ 75. Bears mirror it (≤ −2.5 and RSI ≤ 25). The inputs are the
   `technicals` on the ticker's `regime` entry (E16.2, daily bars ≤ the last close).
 - `combine: any` is the D76 card rule (stretch ≥ the limit **or** RSI at the limit within
-  `max_dist_high20_atr` of the 20-day high/low), kept for XP-13 variants.
+  `max_dist_high20_atr` of the 20-day high/low), kept as a variant.
 - Optional VWAP part (`anti_chase.vwap: on`, default off): one 5-min bars request per
   checked idea (shared `alpaca_data:calls` budget); dropped also when
   (last 5-min close − session VWAP) / ATR14 ≥ `max_vwap_stretch_atr` (0.75; mirrored).
@@ -2379,8 +2395,9 @@ says "move already stretched".
 Knobs (runtime registry, `!arc config` / `arc config set`): `personas.anti_chase`
 (on | off; **off is the rollback**: the pipeline is exactly the pre-E16.3 one),
 `anti_chase.combine`, `.max_stretch_atr`, `.rsi_overbought`, `.rsi_oversold`,
-`.max_dist_high20_atr`, `.vwap`, `.max_vwap_stretch_atr`. Variants go through the
-draft multi-arm `config/experiments/live/xp13_technicals.yaml` (D78: after E15.x).
+`.max_dist_high20_atr`, `.vwap`, `.max_vwap_stretch_atr`. Variants are a lead in the
+Analyst idea seed (`hermes/analyst/idea_seed.yaml`, D86): an experiment on them comes
+from an owner-approved Analyst proposal, not a dev draft.
 
 Backtest: `arc backtest rank ... --entry-filter anti_chase|anti_chase_vwap`
 (`backtest.entry_filter` in `config/ranking.yaml`, default `none`). It needs

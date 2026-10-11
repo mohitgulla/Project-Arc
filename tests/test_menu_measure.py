@@ -542,20 +542,22 @@ def test_chains_cli_json_has_rank_key(capsys: pytest.CaptureFixture[str]) -> Non
     assert {c["rank_measure"] for c in res["candidates"]} == {"rorc_day_full"}
 
 
-def test_draft_xp_menu_measure() -> None:
-    import yaml
+def test_menu_measure_overlays_validate_as_arms() -> None:
+    # D86: the retired menu-measure draft is idea-seed lead S-5; its three arm overlays
+    # must still load as exits.yaml overlays in a multi-arm spec.
+    from arc.experiments.overlay import validate_arms
+    from tests import experiment_fixtures as fx
 
-    from arc.experiments.models import ExperimentSpec
-
-    live = Path(__file__).parent.parent / "config/experiments/live"
-    (path,) = live.glob("*_menu_measure.yaml")
-    spec = ExperimentSpec.model_validate(yaml.safe_load(path.read_text()))
-    arms = {n: spec.arms.arm(n).overlay for n in spec.arms.names}
-    pipe = {n: o["exits"]["pipeline"] for n, o in arms.items()}
-    assert pipe["t1"] == {"menu_measure": "rorc_day_full"}
-    assert pipe["t2"] == {"menu_measure": "rorc_day_tilted", "direction_tilt": 0.25}
-    assert pipe["t3"] == {"menu_measure": "managed_net_ev_full"}
-    assert spec.id == "XP-14" and spec.arms.control.overlay == {}
+    pipe = {
+        "t1": {"menu_measure": "rorc_day_full"},
+        "t2": {"menu_measure": "rorc_day_tilted", "direction_tilt": 0.25},
+        "t3": {"menu_measure": "managed_net_ev_full"},
+    }
+    arms = {n: {"overlay": {"exits": {"pipeline": p}}} for n, p in pipe.items()}
+    spec = fx.spec("XP-20", spec_version=2, arms={"control": {}, "treatments": arms})
+    validate_arms(spec)
+    assert spec.arms.names == ["t1", "t2", "t3"]
+    assert spec.arms.arm("t2").overlay["exits"]["pipeline"]["direction_tilt"] == 0.25
 
 
 def test_backtest_tilt_and_live_shaped_menu_options() -> None:

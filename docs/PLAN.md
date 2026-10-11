@@ -467,7 +467,7 @@ IDs below are the card titles on the board. Dependencies are Kanban parent links
 - E20.3 `config/strategy.yaml` in the strategy lane: persona switches + their blocks merged, Slack keys unchanged (D85) ← E20.2, E21.2
 - E20.4 Universe config in one file (carryover, sizes, floors, momentum/trending options) (D85) ← E20.3
 - E21.1 Strategy lane advisory: dev changes ship to all arms, `XP-advisory:` line, CI blocks only leaves an open XP tests; Sentinel lens 8 updated (D86)
-- E21.2 Retire never-registered XP drafts (XP-11…14) into the Analyst idea seed; `--owner-approval` required for create/register (D86) ← E21.1
+- E21.2 Retire dev-drafted XP specs (XP-10…14; XP-10 too, since the D80 reset left the registry empty) into the Analyst idea seed `hermes/analyst/idea_seed.yaml` (leads S-1…S-5); `--owner-approval` required for create/register (D86) ← E21.1
 - E21.3 Analyst owns the XP backlog: 4-treatment `P-<n>` proposals, value-ranked next XP, quick-change track with review, gate 1 = 20 (D86) ← E21.2
 - E21.4 `approve P-<n>` → `arc experiment adopt` (spec PR auto-merge, register/queue) → pre-open `experiments.autostart`; verdict file per outcome (D86) ← E21.3, E15.4
 

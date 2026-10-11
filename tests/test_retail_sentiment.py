@@ -6,8 +6,8 @@
   page 2), a 404 skips one ticker, ``max_requests``;
 - the config block (defaults, validation at load), the kind round-trip + schema;
 - the handler (writes per ticker, summary, all-fail raises, empty scope skips);
-- the flag (registry, default off, XP-12 draft) and the Scout / Research prompts with
-  the flag on and off (off = byte-identical), plus the D31 loop digest.
+- the flag (registry, default off, an arm overlay owning the Scout) and the Scout /
+  Research prompts with the flag on and off (off = byte-identical), plus the D31 loop digest.
 """
 
 from __future__ import annotations
@@ -465,17 +465,13 @@ def test_flag_registered_default_off() -> None:
     assert on.retail_sentiment_context.scout_top == 15
 
 
-def test_xp12_draft_is_the_flag_and_owns_the_scout() -> None:
+def test_flag_overlay_owns_the_scout() -> None:
+    # D86: the retired Stocktwits draft is idea-seed lead S-3; an arm overlay that turns
+    # the flag on must still give the arm its own Scout and share the source.
     from arc.experiments.config import RunnerConfig
-    from arc.experiments.models import ExperimentSpec
     from arc.experiments.runner import arm_owned_personas, arm_plan
 
-    spec = ExperimentSpec.model_validate(
-        yaml.safe_load((REPO / "config/experiments/live/xp12_retail_sentiment.yaml").read_text())
-    )
-    assert spec.id == "XP-12"
-    ov = spec.arms.treatment.overlay
-    assert ov == {"routines": {"personas": {"retail_sentiment_context": "on"}}}
+    ov = {"routines": {"personas": {"retail_sentiment_context": "on"}}}
     assert arm_owned_personas(ov) == {"scout"}
     routines = load_routines(overrides={("personas", "retail_sentiment_context"): "on"})
     plan = arm_plan(routines, ov, RunnerConfig())

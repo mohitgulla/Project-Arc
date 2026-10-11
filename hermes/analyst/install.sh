@@ -13,7 +13,8 @@
 # - Copies the skill, the pre-run gate script and SOUL.md from this directory into the profile:
 #     <profile>/skills/arc-analyst/SKILL.md, <profile>/scripts/arc_analyst.py, <profile>/SOUL.md
 #   plus the shared helper skills (D42) hermes/shared-skills/{defuddle,agent-reach} to
-#   <profile>/skills/<name>/
+#   <profile>/skills/<name>/, and the experiment idea seed (E21.2, D86) to
+#   <profile>/analyst/idea_seed.yaml
 #   (references/lessons.md is created empty once and never overwritten: it is the Analyst's
 #   own calibration log).
 # - Creates the cron `arc-analyst-weekly-audit` in that profile: Sunday 14:00 PT (after the E7.3 weekly
@@ -44,7 +45,7 @@ run() {
   if (( dry )); then printf '+'; printf ' %q' "$@"; printf '\n'; else "$@"; fi
 }
 
-for f in arc_analyst.py prompt.md skills/arc-analyst/SKILL.md; do
+for f in arc_analyst.py prompt.md skills/arc-analyst/SKILL.md idea_seed.yaml; do
   [[ -f "$HERE/$f" ]] || { echo "error: $HERE/$f missing" >&2; exit 1; }
 done
 if (( ! dry )) && [[ ! -d "$PROFILE_HOME" ]]; then
@@ -57,6 +58,9 @@ run mkdir -p "$PROFILE_HOME/skills/arc-analyst/references" "$PROFILE_HOME/script
   "$PROFILE_HOME/analyst"
 run install -m 0644 "$HERE/skills/arc-analyst/SKILL.md" "$PROFILE_HOME/skills/arc-analyst/SKILL.md"
 run install -m 0755 "$HERE/arc_analyst.py" "$PROFILE_HOME/scripts/arc_analyst.py"
+# E21.2 (D86): the experiment idea seed (retired dev drafts as leads). Repo-owned: every
+# install overwrites it; the Analyst's own backlog lives elsewhere (E21.3).
+run install -m 0644 "$HERE/idea_seed.yaml" "$PROFILE_HOME/analyst/idea_seed.yaml"
 if [[ -f "$HERE/SOUL.md" ]]; then
   run install -m 0644 "$HERE/SOUL.md" "$PROFILE_HOME/SOUL.md"
 else

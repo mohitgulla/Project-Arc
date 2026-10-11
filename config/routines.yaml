@@ -692,8 +692,8 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     min_inputs_first: 2         # names in both inputs rank ahead of single-input names
     exclude_market_reference: true
     # E14.5 (D60): Reddit's second half. rank_gain = 24 h rank gain (control); velocity =
-    # rank-normalised mention velocity (m + k) / (m24 + k). Strategy lane: change only via
-    # `!arc config universe.trending.scoring` or the XP-10 draft (velocity arm).
+    # rank-normalised mention velocity (m + k) / (m24 + k). Strategy: change via
+    # `!arc config universe.trending.scoring` (velocity is an Analyst idea-seed lead, D86).
     scoring: rank_gain
     velocity:                   # also the Scout's velocity lines (personas.scout_buzz_velocity)
       smoothing: 5              # k: a 3 -> 12 jump reads 2.1x, not 4x
@@ -772,7 +772,7 @@ technicals:
 # whose move is already stretched is dropped (journaled `stretched_entry`). Neutral
 # ideas and credit-capable profiles are never filtered; missing technicals keep the
 # idea (`technicals_missing`). Thresholds are the D78 rule; `combine: any` is the D76
-# card rule (stretch, or RSI near the 20-day extreme) for later XP-13 variants.
+# card rule (stretch, or RSI near the 20-day extreme), kept as a variant.
 anti_chase:
   combine: all                  # all (D78): stretch AND RSI | any (D76): stretch OR (RSI AND near 20d extreme)
   max_stretch_atr: 2.5          # (close - SMA20) / ATR14 at or above this (bears: at or below minus this)
@@ -797,10 +797,10 @@ market_health:
 
 personas:
   finnhub_context: "on"         # E4.8a: off | on (D85: on without an experiment, was off; off = rollback)
-  scalp_movers_context: "off"   # E14.3 (D60): off | on, the Scalp's "Tape movers" block (strategy lane; XP-11)
+  scalp_movers_context: "off"   # E14.3 (D60): off | on, the Scalp's "Tape movers" block (strategy; default off)
   director_diversification: relaxed   # E12.5: strict | relaxed (D85: relaxed without an experiment, was strict; strict = rollback)
   scout_buzz_velocity: "off"    # E14.5 (D60): off | on: Reddit mention velocity + "Fastest risers" in the Scout's retail-buzz section (strategy lane)
-  retail_sentiment_context: "off"   # E14.6 (D60): off | on: Stocktwits bull/bear lines for the Scout + one fact per Research pool line (strategy lane; draft XP-12)
+  retail_sentiment_context: "off"   # E14.6 (D60): off | on: Stocktwits bull/bear lines for the Scout + one fact per Research pool line (strategy; default off)
   anti_chase: "on"              # E16.3 (D76/D78): off | on: drop stretched directional long-premium ideas before Quant (D78 ships on; off = rollback, pipeline byte-identical)
   research_technicals: "on"     # E16.2 (D76/D78): off | on: the code-rendered `tech …` segment on Research's regime lines (D78 ships on; off = rollback, prompt byte-identical)
   market_health_context: "on"   # E16.4 (D76/D83): off | on: one code-rendered `Market health (…)` line in Research's market block (D83 ships it on without an experiment; off = rollback, prompt byte-identical)

@@ -28,6 +28,7 @@ Agent subcommands:
                               write draft forward specs to RUN_DIR/forward-specs/<XP-n>.yaml
   mark RUN_DIR                advance the watermark to this run (only after record)
   check-report FILE           the Slack report respects the size cap and sections
+  check-seed [FILE]           validate the idea seed (default: the installed copy)
 Owner subcommands (run by an interactive Hermes session on the owner's thread reply):
   triage A-ID STATUS [NOTE]   STATUS in accepted|wontfix|fixed
   reset                       forget the watermark; next run reviews unconditionally
@@ -136,6 +137,24 @@ EXPERIMENT_ID_RE = re.compile(r"^XP-[1-9]\d*$")
 # Statuses the weekly report must cover (terminal promoted/rejected ones are history).
 REPORTABLE = ("draft", "queued", "registered", "running", "stopped")
 FORWARD_SPECS_DIR = "forward-specs"
+# E21.2 (D86): the idea seed. `#` comment lines, then JSON (valid YAML; stdlib has no YAML).
+IDEA_SEED_FILE = "idea_seed.yaml"
+SEED_KEYS = ("seed_version", "ideas")
+IDEA_KEYS = (
+    "id",
+    "title",
+    "area",
+    "variables",
+    "treatments",
+    "hypothesis",
+    "source",
+    "evidence_refs",
+    "notes",
+    "retired_spec",
+)
+IDEA_REQUIRED = ("id", "title", "area", "variables", "treatments", "hypothesis", "source")
+IDEA_ID_RE = re.compile(r"^S-[1-9]\d*$")
+MAX_SEED_TREATMENTS = 4
 
 
 @dataclasses.dataclass(frozen=True)
@@ -158,6 +177,11 @@ class Paths:
     @property
     def runs(self) -> Path:
         return self.home / "runs"
+
+    @property
+    def idea_seed(self) -> Path:
+        """E21.2 (D86): the retired dev drafts as leads; install.sh copies it here."""
+        return self.home / IDEA_SEED_FILE
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> Paths:
@@ -642,6 +666,115 @@ def validate_forward_spec(
     return errs
 
 
+# ---------- idea seed (E21.2, D86) ----------
+
+
+def parse_seed_text(text: str):
+    """The seed document: drop full-line ``#`` comments, parse the rest as JSON."""
+    body = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+    return json.loads(body)
+
+
+def validate_seed(doc) -> list[str]:
+    """Schema of ``idea_seed.yaml`` (extra keys refused, like a pydantic ``extra=forbid``).
+
+    Leads only: each names an area, its variable(s) as dotted ``<stem>.<path>`` leaves and
+    1-4 treatment overlays in the ``config/experiments/live`` format (stems in
+    ``OVERLAY_TARGETS``), each setting only leaves listed in ``variables``.
+    """
+    if not isinstance(doc, dict):
+        return ["idea seed must be an object with seed_version and ideas"]
+    errs = []
+    extra = sorted(set(doc) - set(SEED_KEYS))
+    if extra:
+        errs.append(f"idea seed has unknown keys {extra}")
+    if doc.get("seed_version") != 1:
+        errs.append("idea seed seed_version must be 1")
+    ideas = doc.get("ideas")
+    if not isinstance(ideas, list):
+        return [*errs, "idea seed ideas must be a list"]
+    seen: set[str] = set()
+    for i, idea in enumerate(ideas):
+        where = f"ideas[{i}]"
+        if not isinstance(idea, dict):
+            errs.append(f"{where} must be an object")
+            continue
+        where = f"{where} ({idea.get('id', '?')})"
+        extra = sorted(set(idea) - set(IDEA_KEYS))
+        if extra:
+            errs.append(f"{where} has unknown keys {extra}")
+        missing = [k for k in IDEA_REQUIRED if idea.get(k) in (None, "", [], {})]
+        if missing:
+            errs.append(f"{where} missing {missing}")
+        iid = str(idea.get("id", ""))
+        if not IDEA_ID_RE.match(iid):
+            errs.append(f"{where}.id must look like S-<n> (a lead, not an XP id)")
+        elif iid in seen:
+            errs.append(f"{where}.id is a duplicate")
+        seen.add(iid)
+        if idea.get("area") is not None and idea["area"] not in EXPERIMENT_AREAS:
+            errs.append(f"{where}.area must be one of {EXPERIMENT_AREAS}")
+        for key in ("title", "hypothesis", "source", "notes", "retired_spec"):
+            if key in idea and not isinstance(idea[key], str):
+                errs.append(f"{where}.{key} must be a string")
+        refs = idea.get("evidence_refs", [])
+        if not isinstance(refs, list) or not all(isinstance(r, str) and r for r in refs):
+            errs.append(f"{where}.evidence_refs must be a list of non-empty strings")
+        variables = idea.get("variables") or []
+        if not isinstance(variables, list) or not all(isinstance(v, str) for v in variables):
+            errs.append(f"{where}.variables must be a list of dotted leaves")
+            variables = []
+        for v in variables:
+            if v.split(".", 1)[0] not in OVERLAY_TARGETS or "." not in v:
+                errs.append(f"{where}.variables {v!r} must be <stem>.<path> ({OVERLAY_TARGETS})")
+        treatments = idea.get("treatments") or {}
+        if not isinstance(treatments, dict):
+            errs.append(f"{where}.treatments must map a label to an overlay")
+            continue
+        if len(treatments) > MAX_SEED_TREATMENTS:
+            errs.append(f"{where}: {len(treatments)} treatments, at most {MAX_SEED_TREATMENTS}")
+        for label, overlay in treatments.items():
+            if not isinstance(overlay, dict) or not overlay:
+                errs.append(f"{where}.treatments.{label} must be a non-empty overlay")
+                continue
+            bad = sorted(set(overlay) - set(OVERLAY_TARGETS))
+            if bad:
+                errs.append(f"{where}.treatments.{label} targets {bad} not in {OVERLAY_TARGETS}")
+            for leaf in _leaves(overlay):
+                dotted = ".".join(leaf)
+                if dotted not in variables:
+                    errs.append(f"{where}.treatments.{label} sets {dotted}, not in variables")
+    return errs
+
+
+def load_seed(path: Path) -> tuple[list[dict], list[str]]:
+    """``(ideas, errors)``; a missing file is no seed (``[]``), never an error."""
+    if not path.exists():
+        return [], []
+    try:
+        doc = parse_seed_text(path.read_text())
+    except ValueError as e:
+        return [], [f"{path.name} is not valid JSON-after-comments: {e}"]
+    errs = validate_seed(doc)
+    return ([] if errs else list(doc["ideas"])), errs
+
+
+def seed_lines(ideas: list[dict], errors: list[str]) -> list[str]:
+    if errors:
+        return [f"- idea seed INVALID (fix hermes/analyst/{IDEA_SEED_FILE}): {e}" for e in errors]
+    if not ideas:
+        return ["- none"]
+    out = []
+    for x in ideas:
+        arms = ", ".join(sorted(x["treatments"]))
+        refs = "; ".join(x.get("evidence_refs") or []) or "none"
+        out.append(
+            f"- {x['id']} [{x['area']}] {x['title']}: vars {', '.join(x['variables'])}; "
+            f"treatments {arms}; source {x['source']}; evidence {refs}"
+        )
+    return out
+
+
 def _validate_experiment_lines(doc: dict, findings: list, experiments: list[dict]) -> list[str]:
     """The weekly "Experiments" section: one line per live experiment + the next proposal."""
     errs = []
@@ -907,7 +1040,8 @@ def write_forward_specs(run_dir: Path, doc: dict, report: dict) -> list[Path]:
         path.write_text(
             f"# DRAFT forward experiment from Arc Analyst {ids[f['key']]} ({f['key']}).\n"
             "# Not registered. Owner: copy to config/experiments/live/, then\n"
-            f"#   arc experiment create --spec <file> && arc experiment register {spec['id']}\n"
+            "#   arc experiment create --spec <file> --owner-approval <ref> && \n"
+            f"#   arc experiment register {spec['id']} --owner-approval <ref>  (D86)\n"
             + json.dumps(spec, indent=2, sort_keys=True)
             + "\n"
         )
@@ -987,6 +1121,18 @@ def cmd_check_report(path: Path) -> int:
         print("report rejected:\n- " + "\n- ".join(errs))
         return 2
     print(f"report ok ({len(path.read_text())} chars)")
+    return 0
+
+
+def cmd_check_seed(path: Path) -> int:
+    if not path.exists():
+        print(f"idea seed missing: {path}")
+        return 2
+    ideas, errs = load_seed(path)
+    if errs:
+        print("idea seed rejected:\n- " + "\n- ".join(errs))
+        return 2
+    print(f"idea seed ok ({len(ideas)} leads: {', '.join(x['id'] for x in ideas)})")
     return 0
 
 
@@ -1160,6 +1306,7 @@ def build_context(p: Paths, run_dir: Path, copy: Path, decision: dict, now: dt.d
     research_names, research_head = newest_research(p.repo)
     ledger = load_json(p.ledger, {"next_id": 1, "items": {}})
     state = load_json(p.state, {})
+    seed, seed_errs = load_seed(p.idea_seed)
 
     out = [
         f"RUN_DIR={run_dir}",
@@ -1186,6 +1333,10 @@ def build_context(p: Paths, run_dir: Path, copy: Path, decision: dict, now: dt.d
         f"## Forward experiments (D44; next free id {next_experiment_id(overview)}; "
         f"full: sqlite3 'file:{copy}?mode=ro' or arc experiment report <id> --stored --db {copy})",
         *experiment_lines(overview),
+        "",
+        f"## Experiment idea seed (D86: leads from retired dev drafts, not proposals; "
+        f"full: {p.idea_seed})",
+        *seed_lines(seed, seed_errs),
         "",
         "## Scorecard attribution, this week",
         clip(views["attribution-7d"], 2500),
@@ -1286,6 +1437,8 @@ def main(argv: list[str], p: Paths | None = None, now: dt.datetime | None = None
         return cmd_reset(p)
     if cmd == "check-report" and len(rest) == 1:
         return cmd_check_report(Path(rest[0]))
+    if cmd == "check-seed" and len(rest) <= 1:
+        return cmd_check_seed(Path(rest[0]) if rest else p.idea_seed)
     print(__doc__)
     return 64
 

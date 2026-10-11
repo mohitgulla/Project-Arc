@@ -4,8 +4,8 @@ Pins: the screener parse, the write-time exclusions (price < $3, warrants / unit
 rights, leveraged funds), the handler outcomes (ok / no key / failed fetch writes
 nothing), the "Tape movers" block (active-list and story names only, <= 10 lines,
 "no fresh info" when nothing fresh is stored), the prompt with the flag off
-(byte-identical golden) and on (one added section), the flag in ``REGISTRY`` and the
-XP-11 draft, and that the payload never reaches candidate / universe_tier.
+(byte-identical golden) and on (one added section), the flag in ``REGISTRY``, an
+arm overlay that turns it on, and that the payload never reaches candidate / universe_tier.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from arc.context.kinds import MarketMoversPayload, MoverRow
 from arc.control.effective import effective_routines
 from arc.control.registry import REGISTRY, lookup, read_raw, write_raw
 from arc.control.service import ControlService
-from arc.experiments.overlay import arm_config_data, load_spec
+from arc.experiments.overlay import arm_config_data
 from arc.ingest import market_movers as mm
 from arc.ingest.scalp import build_stage2_prompt
 from arc.personas.builders import TAPE_MOVERS_NOTE
@@ -41,6 +41,7 @@ from arc.routines.handlers import JobContext, JobSkippedError, market_movers_sou
 from arc.store.db import connect
 from arc.store.migrate import migrate
 from arc.utils.calendar import ET
+from tests import experiment_fixtures as fx
 from tests import scalp_prompt_golden as golden
 
 if TYPE_CHECKING:
@@ -545,10 +546,11 @@ def test_slack_override_reaches_the_effective_routines() -> None:
     assert effective_routines(c).scalp_movers_context.enabled is True
 
 
-def test_xp11_draft_turns_only_the_flag_on() -> None:
-    spec = load_spec(REPO / "config" / "experiments" / "live" / "xp11_scalp_movers.yaml")
-    assert spec.id == "XP-11" and spec.kind.value == "ab"
-    assert spec.arms.treatment.overlay == {"routines": {"personas": {"scalp_movers_context": "on"}}}
+def test_flag_overlay_turns_only_the_flag_on() -> None:
+    # D86: the retired tape-movers draft is idea-seed lead S-2; the overlay shape it
+    # used still has to turn on exactly this flag in an arm's routines config.
+    overlay = {"routines": {"personas": {"scalp_movers_context": "on"}}}
+    spec = fx.spec("XP-20", arms={"treatment": {"overlay": overlay}})
     treat = RoutinesConfig.model_validate(arm_config_data(spec, "treatment", "routines"))
     base = load_routines(DEFAULT_ROUTINES_PATH)
     assert treat.scalp_movers_context.enabled is True

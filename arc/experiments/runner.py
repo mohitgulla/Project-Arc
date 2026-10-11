@@ -149,7 +149,7 @@ PERSONA_OVERLAY_PREFIXES: dict[str, tuple[str, ...]] = {
         "routines.funnel.scalp.*",
         "routines.categories.*",
     ),
-    # E14.5 (D60): a trending-ranker overlay (XP-10 `scoring: velocity`) runs the
+    # E14.5 (D60): a trending-ranker overlay (e.g. `scoring: velocity`) runs the
     # arm's own trending tier job; it also owns the Scout (TIER_COMPANIONS), which
     # re-resolves the active list after it.
     "trending": ("routines.sources.universe.trending.*",),

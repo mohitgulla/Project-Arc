@@ -377,8 +377,11 @@ def test_cli_repair_ledger_on_a_running_experiment(
 
     ctl = tmp_path / "control.db"
     spec = "config/experiments/live/xp1_aa_baseline.yaml"
-    assert _arc("experiment", "create", "--spec", spec, "--db", str(ctl)) == 0
-    assert _arc("experiment", "register", "XP-1", "--db", str(ctl)) == 0
+    assert (
+        _arc("experiment", "create", "--owner-approval", "P-1", "--spec", spec, "--db", str(ctl))
+        == 0
+    )
+    assert _arc("experiment", "register", "--owner-approval", "P-1", "XP-1", "--db", str(ctl)) == 0
     conn = _db(ctl)
     start_arms(
         conn,

@@ -89,7 +89,7 @@ OVERLAY_TARGETS: tuple[str, ...] = (
 )
 
 #: E13.12 (D56): the non-loop personas an experiment arm may run on its own store.
-#: E14.5: ``trending`` = the daily trending tier job (an XP-10-style ranker overlay).
+#: E14.5: ``trending`` = the daily trending tier job (a `universe.trending` ranker overlay).
 ARM_PERSONAS: tuple[str, ...] = ("scout", "scalp", "trending")
 
 
