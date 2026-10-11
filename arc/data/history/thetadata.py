@@ -55,13 +55,6 @@ THETA_FREE_LOOKBACK_DAYS = 365
 _EOD_PATH = "/v3/option/history/eod"
 _OI_PATH = "/v3/option/history/open_interest"
 _SYMBOLS_PATH = "/v3/option/list/symbols"
-_RATE_PATH = "/v3/interest_rate/history/eod"
-
-#: ThetaData interest-rate series (``/v3/interest_rate/history/eod``), D84 / E7.9 step 5c.
-RATE_SYMBOLS: tuple[str, ...] = (
-    "SOFR", "TREASURY_M1", "TREASURY_M3", "TREASURY_M6", "TREASURY_Y1", "TREASURY_Y2",
-    "TREASURY_Y3", "TREASURY_Y5", "TREASURY_Y7", "TREASURY_Y10", "TREASURY_Y20", "TREASURY_Y30",
-)  # fmt: skip
 
 #: Retry these HTTP statuses with backoff (429 OS_LIMIT/queue full, 474 DISCONNECTED,
 #: 571 SERVER_STARTING and any other 5xx except 570, which halves the chunk instead).
@@ -95,17 +88,6 @@ TIER_CONCURRENCY: dict[ThetaTier, int] = {
 
 #: Tiers whose subscription includes the open-interest endpoint.
 TIERS_WITH_OI = frozenset({ThetaTier.VALUE, ThetaTier.STANDARD, ThetaTier.PRO})
-
-#: First interest-rate date per *rate* subscription. It is separate from the options
-#: tier: an Options Value account reports ``INTEREST_RATE: FREE``
-#: (``/v3/terminal/subscriptions``, 2026-10-11), and that refuses any start before
-#: 2024-01-01 with HTTP 400. Paid rate tiers serve from 1970.
-RATE_FIRST_DATE: dict[ThetaTier, dt.date] = {
-    ThetaTier.FREE: dt.date(2024, 1, 1),
-    ThetaTier.VALUE: dt.date(1970, 1, 1),
-    ThetaTier.STANDARD: dt.date(1970, 1, 1),
-    ThetaTier.PRO: dt.date(1970, 1, 1),
-}
 
 
 def tier_earliest_date(
@@ -261,25 +243,6 @@ def parse_oi_csv(text: str, underlying: str) -> dict[OiKey, float]:
     return out
 
 
-def parse_rate_csv(text: str) -> list[tuple[dt.date, float]]:
-    """Parse a Theta v3 ``interest_rate/history/eod`` CSV (``created,rate``; percent).
-
-    Returns ``(date, rate as a decimal)`` sorted by date, one per date (the last wins).
-    Rows with a blank/unparseable rate are skipped.
-    """
-    out: dict[dt.date, float] = {}
-    for rec in csv.DictReader(io.StringIO(text)):
-        stamp = (rec.get("created") or rec.get("date") or "").strip().strip('"')
-        try:
-            pct = _f(rec.get("rate"))
-        except ValueError:
-            pct = None
-        if not stamp or pct is None:
-            continue
-        out[_date(stamp)] = pct / 100.0
-    return sorted(out.items())
-
-
 def join_open_interest(rows: list[OptionEodRow], oi: dict[OiKey, float]) -> list[OptionEodRow]:
     """Attach ``open_interest`` per (date, symbol); unmatched rows keep None."""
     return [
@@ -347,7 +310,6 @@ class ThetaDataEodProvider:
         self._eod_url = base + _EOD_PATH
         self._oi_url = base + _OI_PATH
         self._symbols_url = base + _SYMBOLS_PATH
-        self._rate_url = base + _RATE_PATH
         self._session: _HttpSession = session or _ThreadLocalSession()
         self._lookback = lookback_days
         self.chunk_days = chunk_days
@@ -518,33 +480,6 @@ class ThetaDataEodProvider:
             cur = chunk_end + dt.timedelta(days=1)
 
     # -- public ----------------------------------------------------------------
-
-    def fetch_interest_rate(
-        self, symbol: str, start: dt.date, end: dt.date
-    ) -> list[tuple[dt.date, float]]:
-        """Daily ``(date, rate as a decimal)`` for one rate series (one request, retried).
-
-        HTTP 472 (no data) is an empty list. Any other refusal (e.g. the free rate tier's
-        HTTP 400 for a start before 2024-01-01, an unknown series) raises
-        :class:`ThetaTerminalError` with the Terminal's message.
-        """
-        params = {
-            "symbol": symbol.upper(),
-            "start_date": start.strftime("%Y%m%d"),
-            "end_date": end.strftime("%Y%m%d"),
-            "format": "csv",
-        }
-        t0 = time.monotonic()
-        status, text, retries = self._get(self._rate_url, params)
-        rows = parse_rate_csv(text) if status == 200 else []
-        self._record(
-            RequestLog(
-                ticker=symbol.upper(), kind="rate", start=start, end=end, chunk_days=0,
-                status=status, rows=len(rows), bytes=len(text.encode()),
-                seconds=time.monotonic() - t0, retries=retries,
-            )
-        )  # fmt: skip
-        return [(d, r) for d, r in rows if start <= d <= end]
 
     def list_option_symbols(self) -> list[str]:
         """Every root with listed options (``GET /v3/option/list/symbols``; all tiers).
