@@ -351,6 +351,10 @@ class MoverTile(BaseModel):
     )
     spark: list[float] = Field(default_factory=list, description="Unrealized $ over today's marks")
     at: _dt.datetime | None = None
+    underlying_change: float | None = Field(
+        default=None,
+        description="D88: the stock's own day change (spot ÷ prior session close − 1)",
+    )
 
 
 ActivityKind = Literal["fill", "execution", "exit", "halt", "resume", "reconcile", "alert"]
@@ -1017,7 +1021,56 @@ def _proposal_rows(conn: sqlite3.Connection, now: _dt.datetime) -> list[Proposal
     return out
 
 
-def _movers(positions: list[PositionRow], marks: list[IntradayMark]) -> list[MoverTile]:
+def _underlying_changes(
+    conn: sqlite3.Connection, monitor: sqlite3.Row | None, latest: IntradayMark | None
+) -> dict[str, float]:
+    """D88: each held stock's day change at the latest mark: spot ÷ prior session close − 1.
+
+    Spot is the one the monitor priced the Greeks at (``delta_by_underlying.{root}.spot``,
+    D87). A pre-D87 heartbeat has none; when the mark is at or after the close, that day's
+    stored ``iv_daily`` close stands in. The prior close is ``iv_daily`` ``last_close`` for
+    the latest day before the mark's ET day. No price on either side = no value."""
+    if monitor is None or latest is None or not _has_table(conn, "iv_daily"):
+        return {}
+    day = latest.at.astimezone(ET).date()
+    rows = _json(monitor["detail"], {}).get("delta_by_underlying") or {}
+    if not isinstance(rows, dict) or not rows:
+        return {}
+    syms = [str(s) for s in rows]
+    qmarks = ",".join("?" * len(syms))
+    closes: dict[str, dict[_dt.date, Decimal]] = {s: {} for s in syms}
+    # the backfill writes the official close; a same-day cm30 row labelled last_close is
+    # a 15:50 stand-in, so the backfill wins where both exist
+    for r in conn.execute(
+        f"""SELECT ticker, day, spot FROM iv_daily
+            WHERE ticker IN ({qmarks}) AND spot_basis = 'last_close' AND spot > 0
+              AND day >= ? AND day <= ?
+            ORDER BY (source = 'alpaca_backfill'), created_at""",  # noqa: S608
+        (*syms, (day - _dt.timedelta(days=10)).isoformat(), day.isoformat()),
+    ).fetchall():
+        v = _dec(r["spot"])
+        if v is not None:
+            closes[str(r["ticker"])][_dt.date.fromisoformat(str(r["day"])[:10])] = v
+    after_close = latest.at.astimezone(ET).time() >= _dt.time(16, 0)
+    out: dict[str, float] = {}
+    for sym in syms:
+        row = rows.get(sym)
+        spot = _dec(row.get("spot")) if isinstance(row, dict) else None
+        if spot is None and after_close:
+            spot = closes[sym].get(day)
+        prior_days = [d for d in closes[sym] if d < day]
+        if spot is None or spot <= 0 or not prior_days:
+            continue
+        prior = closes[sym][max(prior_days)]
+        out[sym] = float(spot / prior - 1)
+    return out
+
+
+def _movers(
+    positions: list[PositionRow],
+    marks: list[IntradayMark],
+    underlying: dict[str, float] | None = None,
+) -> list[MoverTile]:
     out: list[MoverTile] = []
     for p in positions:
         if p.status != "open":
@@ -1043,6 +1096,7 @@ def _movers(positions: list[PositionRow], marks: list[IntradayMark]) -> list[Mov
                 change_today=change,
                 spark=spark,
                 at=p.mark_at,
+                underlying_change=(underlying or {}).get(p.ticker),
             )
         )
     return out
@@ -1404,7 +1458,7 @@ def load_overview(
         ),
         proposals=_proposal_rows(conn, now_et),
         proposals_since=now_et - PROPOSAL_WINDOW,
-        movers=_movers(positions, marks),
+        movers=_movers(positions, marks, _underlying_changes(conn, monitor, latest)),
         activity=_activity(conn, activity_since),
         activity_hours=activity_hours,
         activity_since=activity_since,

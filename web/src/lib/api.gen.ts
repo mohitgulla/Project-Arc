@@ -3709,6 +3709,11 @@ export interface components {
             structure_id: string;
             /** Ticker */
             ticker: string;
+            /**
+             * Underlying Change
+             * @description D88: the stock's own day change (spot ÷ prior session close − 1)
+             */
+            underlying_change?: number | null;
             /** Unrealized Pct */
             unrealized_pct?: number | null;
         };

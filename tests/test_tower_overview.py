@@ -682,3 +682,20 @@ def test_day_change_of_a_structure_opened_today_is_since_entry(conn: sqlite3.Con
     for p in today_rows:
         assert movers[p.id].change_today == pytest.approx(p.unrealized_pct, rel=1e-6)
     assert older  # the fixture keeps older structures on broker day marks
+
+
+def test_movers_carry_the_stocks_own_day_change(conn: sqlite3.Connection) -> None:
+    """D88: spot (the one the monitor priced Greeks at) ÷ the prior session's stored close."""
+    o = _overview(conn)
+    movers = {m.ticker: m for m in o.movers}
+    assert o.marks_at is not None
+    day = o.marks_at.astimezone(ET).date()
+    prior = conn.execute(
+        """SELECT spot FROM iv_daily WHERE ticker = 'SPY' AND spot_basis = 'last_close'
+           AND day < ? ORDER BY day DESC LIMIT 1""",
+        (day.isoformat(),),
+    ).fetchone()[0]
+    assert movers["SPY"].underlying_change == pytest.approx(600.0 / prior - 1)
+    # not in the heartbeat's delta_by_underlying -> no spot -> no value, never a guess
+    assert movers["NVDA"].underlying_change is None
+    assert movers["QQQ"].underlying_change is None

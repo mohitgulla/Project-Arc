@@ -770,6 +770,27 @@ function PickCard() {
   );
 }
 
+/** D88: `Play Bearish` / `Play Bullish`: the trade's direction, styled like the `Stock` line. */
+function PlayDirection({ m }: { m: { direction?: Parameters<typeof directionView>[0] } }) {
+  const d = directionView(m.direction);
+  return (
+    <span className="text-secondary">
+      Play <span className={`font-semibold ${d?.className ?? "text-muted"}`}>{d?.label ?? "—"}</span>
+    </span>
+  );
+}
+
+/** D88: the stock's own day change under the Bullish/Bearish tag, so the two read together. */
+function StockChange({ v }: { v: number | null | undefined }) {
+  if (v == null) return <span className="text-muted">Stock —</span>;
+  const tone = v > 0 ? "text-pos-text" : v < 0 ? "text-neg-text" : "text-secondary";
+  return (
+    <span className="text-secondary" title="The stock's change today (spot vs prior close)">
+      Stock <span className={`font-semibold ${tone}`}>{formatPercent(v, { explicitSign: true })}</span>
+    </span>
+  );
+}
+
 function MoversCard({ o, monitorS }: { o: Overview; monitorS?: number }) {
   // D87: ranked by today's change, best to worst; the name line is the trade direction
   // (Bullish / Bearish / Neutral); the pill is today's change (the overall
@@ -785,8 +806,9 @@ function MoversCard({ o, monitorS }: { o: Overview; monitorS?: number }) {
             <Tile
               key={m.structure_id}
               ticker={m.ticker}
-              name={directionView(m.direction)?.label ?? "—"}
-              nameClassName={directionView(m.direction)?.className}
+              name={`Play ${directionView(m.direction)?.label ?? "—"}`}
+              nameNode={<PlayDirection m={m} />}
+              sub={<StockChange v={m.underlying_change} />}
               values={m.spark ?? []}
               change={m.change_today ?? 0}
               to={`/trades/${m.open_proposal_hash}`}

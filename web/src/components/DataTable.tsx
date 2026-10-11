@@ -15,8 +15,9 @@ import { useLayout } from "../lib/layout";
 export interface CardRowSpec<T> {
   /** Primary line: ticker · structure · change pill. */
   primary: (row: T) => ReactNode;
-  /** Secondary line: the three most important columns. */
-  secondary: (row: T) => ReactNode;
+  /** Secondary line: the three most important columns. An array renders one line per item
+   * (D88: Positions legs / size · prices · DTE / exit state), empty items skipped. */
+  secondary: (row: T) => ReactNode | ReactNode[];
   /** Optional right-aligned cell, vertically centred (P&L pill). */
   aside?: (row: T) => ReactNode;
 }
@@ -29,7 +30,7 @@ export function CardRow({
   onClick,
 }: {
   primary: ReactNode;
-  secondary: ReactNode;
+  secondary: ReactNode | ReactNode[];
   /** Right-aligned, vertically centred across both lines (e.g. a P&L pill). */
   aside?: ReactNode;
   onClick?: () => void;
@@ -42,7 +43,13 @@ export function CardRow({
     >
       <span className="flex min-w-0 flex-1 flex-col items-stretch gap-1">
         <span className="flex items-center gap-2 font-semibold text-title">{primary}</span>
-        <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-caption text-secondary tabular-nums">{secondary}</span>
+        {(Array.isArray(secondary) ? secondary.filter((l) => l !== null && l !== undefined && l !== false) : [secondary]).map(
+          (line, i) => (
+            <span key={i} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-caption text-secondary tabular-nums" data-testid="card-row-line">
+              {line}
+            </span>
+          ),
+        )}
       </span>
       {aside !== undefined && <span className="shrink-0">{aside}</span>}
     </button>
