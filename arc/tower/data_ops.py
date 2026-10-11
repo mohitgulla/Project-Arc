@@ -1377,29 +1377,40 @@ def _context_io(
     routines: RoutinesConfig,
 ) -> tuple[dict[str, list[str]], dict[str, list[str]], dict[str, str]]:
     """D89: per kind, the writer and reader labels (``writes:`` / ``reads:`` of jobs and
-    chain steps, config order) and the kind's Timeline group: the group most of its
-    writers sit in, ties going to the earlier group (chain steps count as the loop's)."""
-    from arc.routines.config import TIMELINE_GROUPS
+    chain steps, config order) and the kind's Timeline group: the group where most of
+    its writes happen, each writer weighted by its runs on a reference trading day
+    (D91: Scalp 28 x vs Scout 1 x for ``candidate``; chain steps count as the loop's), ties
+    going to the earlier group."""
+    from arc.routines.config import TIMELINE_GROUPS, JobSpec
+    from arc.routines.schedule import slots_between
 
     rank = {g: i for i, (g, _) in enumerate(TIMELINE_GROUPS)}
+    day = _dt.datetime(2026, 10, 14, tzinfo=ET)  # a Wednesday trading day; weights only
+
+    def runs(spec: StepSpec) -> int:
+        if not isinstance(spec, JobSpec):  # a chain step has no schedule of its own
+            return 1
+        return max(1, len(slots_between(spec, day, day + _dt.timedelta(days=1))))
+
     loop = routines.personas.get(routines.loop.job)
     loop_group = str(loop.options.get("group") or "other") if loop else "other"
-    units: list[tuple[str, str, StepSpec]] = []
+    loop_runs = runs(loop) if loop else 1
+    units: list[tuple[str, str, StepSpec, int]] = []
     for name, (kind, spec) in routines.jobs().items():
         # the loop's label is its whole chain ("Research → Quant → …"); name it by its persona
         label = "Research loop" if name == routines.loop.job else _label(name, spec)
-        units.append((label, _display(name, kind.value, spec, routines)["group"], spec))
+        units.append((label, _display(name, kind.value, spec, routines)["group"], spec, runs(spec)))
     for name, spec in routines.steps.items():
         head, _, tail = name.partition(".")  # quant.open -> "Quant open"
-        units.append((f"{head.capitalize()} {tail}".strip(), loop_group, spec))
+        units.append((f"{head.capitalize()} {tail}".strip(), loop_group, spec, loop_runs))
     writers: dict[str, list[str]] = {}
     readers: dict[str, list[str]] = {}
     votes: dict[str, Counter[str]] = {}
-    for label, group, spec in units:
+    for label, group, spec, weight in units:
         for k in spec.writes or []:
             if label not in writers.setdefault(k, []):
                 writers[k].append(label)
-            votes.setdefault(k, Counter())[group] += 1
+            votes.setdefault(k, Counter())[group] += weight
         for k in spec.reads or []:
             if label not in readers.setdefault(k, []):
                 readers[k].append(label)
