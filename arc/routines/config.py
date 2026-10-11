@@ -94,8 +94,10 @@ DEFAULT_ROUTINES_PATH = REPO_ROOT / "config" / "routines.yaml"
 
 #: E8.8d (D48): Session Timeline bands, in display order (key, label). ``sources`` is
 #: assigned by D47 category (one sub-band per category); ``other`` is the fallback.
+#: The Ops Context Store groups context kinds by the same bands (D89).
 TIMELINE_GROUPS: tuple[tuple[str, str], ...] = (
     ("sources", "Sources"),
+    ("universe", "Universe"),  # D89: active-list resolve + momentum / trending tiers
     ("scout", "Scout"),  # E13.7 (D56): the daily slow-feed read
     ("scalp", "Scalp"),
     ("trading_loop", "Trading loop"),

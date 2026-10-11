@@ -1506,6 +1506,17 @@ export interface components {
             /** Valid From */
             valid_from: string | null;
         };
+        /** ContextGroup */
+        ContextGroup: {
+            /** Active */
+            active: number;
+            /** Key */
+            key: string;
+            /** Kinds */
+            kinds: number;
+            /** Label */
+            label: string;
+        };
         /** ContextKindRead */
         ContextKindRead: {
             /** Count */
@@ -1524,6 +1535,12 @@ export interface components {
             active: number;
             /** Expired 24H */
             expired_24h: number;
+            /**
+             * Group
+             * @description D89: Session Timeline group of the kind's main writer
+             * @default other
+             */
+            group: string;
             /** Kind */
             kind: string;
             /** Latest At */
@@ -1537,6 +1554,11 @@ export interface components {
             /** Next Expiry */
             next_expiry: string | null;
             /**
+             * Readers
+             * @description D89: jobs / chain steps declaring it in `reads:`
+             */
+            readers?: string[];
+            /**
              * Remaining Fraction
              * @description Latest entry's TTL left (0..1); None when it never expires
              */
@@ -1546,6 +1568,11 @@ export interface components {
              * @description Configured TTL (context_ttl in routines.yaml)
              */
             ttl: string | null;
+            /**
+             * Writers
+             * @description D89: jobs / chain steps declaring it in `writes:`
+             */
+            writers?: string[];
         };
         /**
          * ContextReads
@@ -1571,6 +1598,11 @@ export interface components {
             as_of: string;
             /** Expired 24H */
             expired_24h: number;
+            /**
+             * Groups
+             * @description D89: Timeline-group order; only groups with kinds
+             */
+            groups?: components["schemas"]["ContextGroup"][];
             /** Kinds */
             kinds: components["schemas"]["ContextKindRow"][];
             /** Total Active */
@@ -3127,10 +3159,22 @@ export interface components {
              * @default
              */
             chip: string;
+            /**
+             * Detail
+             * @description D89: tile value line, e.g. `OK · 3m`
+             * @default
+             */
+            detail: string;
             /** Key */
             key: string;
             /** Label */
             label: string;
+            /**
+             * Name
+             * @description D89: short tile name, e.g. `Tick`
+             * @default
+             */
+            name: string;
             /**
              * Status
              * @enum {string}

@@ -2233,6 +2233,35 @@
         "title": "ContextEntryResponse",
         "type": "object"
       },
+      "ContextGroup": {
+        "additionalProperties": false,
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "integer"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "kinds": {
+            "title": "Kinds",
+            "type": "integer"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "active",
+          "kinds"
+        ],
+        "title": "ContextGroup",
+        "type": "object"
+      },
       "ContextKindRead": {
         "additionalProperties": false,
         "properties": {
@@ -2270,6 +2299,12 @@
           "expired_24h": {
             "title": "Expired 24H",
             "type": "integer"
+          },
+          "group": {
+            "default": "other",
+            "description": "D89: Session Timeline group of the kind's main writer",
+            "title": "Group",
+            "type": "string"
           },
           "kind": {
             "title": "Kind",
@@ -2332,6 +2367,14 @@
             ],
             "title": "Next Expiry"
           },
+          "readers": {
+            "description": "D89: jobs / chain steps declaring it in `reads:`",
+            "items": {
+              "type": "string"
+            },
+            "title": "Readers",
+            "type": "array"
+          },
           "remaining_fraction": {
             "anyOf": [
               {
@@ -2355,6 +2398,14 @@
             ],
             "description": "Configured TTL (context_ttl in routines.yaml)",
             "title": "Ttl"
+          },
+          "writers": {
+            "description": "D89: jobs / chain steps declaring it in `writes:`",
+            "items": {
+              "type": "string"
+            },
+            "title": "Writers",
+            "type": "array"
           }
         },
         "required": [
@@ -2410,6 +2461,14 @@
           "expired_24h": {
             "title": "Expired 24H",
             "type": "integer"
+          },
+          "groups": {
+            "description": "D89: Timeline-group order; only groups with kinds",
+            "items": {
+              "$ref": "#/components/schemas/ContextGroup"
+            },
+            "title": "Groups",
+            "type": "array"
           },
           "kinds": {
             "items": {
@@ -6424,12 +6483,24 @@
             "title": "Chip",
             "type": "string"
           },
+          "detail": {
+            "default": "",
+            "description": "D89: tile value line, e.g. `OK \u00b7 3m`",
+            "title": "Detail",
+            "type": "string"
+          },
           "key": {
             "title": "Key",
             "type": "string"
           },
           "label": {
             "title": "Label",
+            "type": "string"
+          },
+          "name": {
+            "default": "",
+            "description": "D89: short tile name, e.g. `Tick`",
+            "title": "Name",
             "type": "string"
           },
           "status": {

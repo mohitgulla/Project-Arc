@@ -272,12 +272,13 @@ they are never dropped.
 ### 10.2 Ops (E8.8d)
 
 - **Widget order** (`OPS_WIDGETS` in `lib/ops.ts`, same on phone and desktop): Session
-  Timeline · Sources · Health · LLM Usage · Context Store · Auto-Approve · Config · Alerts ·
-  Halts · Runs (the last three collapsible, closed on a first visit). Config (D50) is two
+  Timeline · Sources · LLM Usage · Context Store · Auto-Approve · Config · Health · Alerts ·
+  Halts · Runs (D89: Health moved from under Sources to under Config) (the last three collapsible, closed on a first visit). Config (D50) is two
   buttons, **Effective Config** (`/ops/config`) and **Change Log** (`/ops/config/changes`),
   plus the `v7 · 196 keys · 7 changes` caption. No Order Budget widget.
 - **Timeline bands come from `config/routines.yaml`**, never code: each job may carry `label`,
-  `group` (`sources | sweep | trading_loop | position_management | post_market | other`),
+  `group` (`sources | universe | scout | scalp | trading_loop | position_management | post_market | other`;
+  D89: `universe` = the active-list resolve and the momentum / trending tiers),
   `persona` (chip; sources declare none) and `about` (one line ≤ 160 chars, the ⓘ text).
   A typo fails config load. Sources band by their D47 category (`sources.<category>`, labels
   from the category registry, so a rename needs no UI change); anything else falls under
@@ -290,8 +291,13 @@ they are never dropped.
   from `SourceRegistry`, never recomputed. Rows add `skipped (stale)` (E4.7) and, for YouTube
   channels, the E4.6 brief state (brief ok / pending: reason / no video in window). On a phone a
   category shows its header only unless its status is pending or worse.
-- **Health** is one chip row (`Tick ok 1m`, `Log 0.2 / 50 MB`); the long text is in each chip's
-  ⓘ, and a degraded or failed chip expands inline with its message.
+- **Health** (D89) is a grid of equal-size tiles (5 across ≥ 768 px, 3 on a phone), each the
+  check name + a Title Case value line (`OK · 1m`, `0.2 / 50 MB`); the long text is in each
+  tile's ⓘ, and a degraded or failed check adds its message under the grid.
+- **Context Store** (D89) groups kinds by the Timeline group of their writer jobs, one
+  collapsible block per group (active count, kinds live, newest entry); each kind shows its ttl,
+  active count, next expiry, **From** / **Read by** (routines.yaml `writes:` / `reads:`) and its
+  latest entry.
 - **Auto-Approve** is a key/value list (paper, live, scorecard gate, last flip), with no
   sub-text (D50: the gate's full reason is on `/ops/config`, `auto_approve.*`); **Alerts /
   Halts** collapse repeats like the Overview (`missed_window ×12`).

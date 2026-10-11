@@ -11,7 +11,6 @@ import { DataTable } from "../components/DataTable";
 import { EmptyState } from "../components/EmptyState";
 import { InfoTip } from "../components/InfoTip";
 import { KeyValueList } from "../components/KeyValueList";
-import { ProgressRow } from "../components/ProgressRow";
 import { Section } from "../components/Section";
 import { StackedBars } from "../components/StackedBars";
 import { formatAge, formatNumber, titleCase } from "../lib/format";
@@ -24,12 +23,14 @@ import {
   bandHasProblem,
   bandRollup,
   bandRows,
+  contextGroups,
   dayParam,
   formatDuration,
   formatSeconds,
   groupRepeats,
   hourTicks,
   isSourceProblem,
+  kindLabel,
   llmBars,
   llmCost,
   loopSplit,
@@ -38,6 +39,7 @@ import {
   runApiQuery,
   runQuery,
   sharePct,
+  shortList,
   slotCounts,
   slotTitle,
   sourceGroups,
@@ -46,6 +48,8 @@ import {
   type Alerts,
   type AutoApprove,
   type BandView,
+  type ContextGroupView,
+  type ContextKind,
   type ContextStore,
   type Halts,
   type HealthItem,
@@ -340,7 +344,7 @@ function SessionCard({ s, day, setDay }: { s?: Session; day: string; setDay: (d:
 }
 
 // ---------------------------------------------------------------------------
-// 2. Health (E8.8d: one chip row; the long text is in each chip's ⓘ)
+// 2. Health (E8.8d; D89: equal-size tiles under Config; the long text is in each ⓘ)
 // ---------------------------------------------------------------------------
 
 const HEALTH_TONE: Record<HealthItem["status"], PillTone> = {
@@ -358,37 +362,45 @@ const HEALTH_TEXT: Record<HealthItem["status"], string> = {
 };
 
 function HealthStripCard({ h }: { h?: HealthStrip }) {
+  // D89: equal-size tiles (like the Overview Movers tiles), one per check; the long text is in
+  // each tile's ⓘ and a degraded / failed check adds its message under the grid.
+  const bad = (h?.items ?? []).filter((it) => it.status === "degraded" || it.status === "failed");
   return (
     <Card title="Health">
       {!h ? (
         <Loading what="health" />
       ) : (
-        <ul className="flex flex-wrap gap-2" data-testid="health-strip">
-          {h.items.map((it) => {
-            const bad = it.status === "degraded" || it.status === "failed";
-            return (
+        <>
+          <ul className="grid grid-cols-3 gap-2 tablet:grid-cols-5" data-testid="health-strip">
+            {h.items.map((it) => (
               <li
                 key={it.key}
                 data-status={it.status}
+                data-key={it.key}
                 data-testid="health-chip"
-                className={`min-w-0 rounded-control border border-line px-2.5 py-1 ${bad ? "basis-full" : ""}`}
+                className="flex min-h-[64px] min-w-0 flex-col justify-between rounded-control border border-line px-3 py-2"
               >
-                <div className="flex min-h-[32px] items-center gap-1.5 max-tablet:min-h-[44px]">
+                <div className="flex min-w-0 items-center gap-1.5">
                   <span aria-hidden="true" className={`h-2 w-2 shrink-0 rounded-full ${DOT[HEALTH_TONE[it.status]]}`} />
-                  <span className={`text-caption font-semibold tabular-nums ${HEALTH_TEXT[it.status]}`}>{it.chip || `${it.label} ${it.status}`}</span>
+                  <span className="min-w-0 flex-1 truncate text-caption font-semibold text-primary" data-testid="health-name">
+                    {it.name || it.label}
+                  </span>
                   <InfoTip label={`About ${it.label}`} formula={it.threshold}>
                     {it.label}: {it.value}
                   </InfoTip>
                 </div>
-                {bad && (
-                  <p className={`pb-1 text-caption [overflow-wrap:anywhere] ${HEALTH_TEXT[it.status]}`} data-testid="health-message">
-                    {it.value} <span className="text-muted">({it.threshold})</span>
-                  </p>
-                )}
+                <span className={`truncate text-caption tabular-nums ${HEALTH_TEXT[it.status]}`} data-testid="health-detail" title={it.chip}>
+                  {it.detail || it.chip}
+                </span>
               </li>
-            );
-          })}
-        </ul>
+            ))}
+          </ul>
+          {bad.map((it) => (
+            <p key={it.key} className={`mt-2 text-caption [overflow-wrap:anywhere] ${HEALTH_TEXT[it.status]}`} data-testid="health-message" data-key={it.key}>
+              <span className="font-semibold">{it.name || it.label}:</span> {it.value} <span className="text-muted">({it.threshold})</span>
+            </p>
+          ))}
+        </>
       )}
     </Card>
   );
@@ -686,39 +698,103 @@ function RunsSection() {
 // 7. Context, 8. Sources, 9. LLM, 10. Auto-Approve, 11. Config
 // ---------------------------------------------------------------------------
 
+function ContextKindItem({ k, now }: { k: ContextKind; now: number }) {
+  const expiry = k.next_expiry ? timeLeft(k.next_expiry, now) : k.active ? "no expiry" : null;
+  return (
+    <li className="py-2" data-testid="context-kind" data-kind={k.kind} data-active={k.active}>
+      <div className="flex flex-wrap items-center gap-x-2">
+        <span className="font-semibold text-primary">{titleCase(kindLabel(k.kind))}</span>
+        {k.ttl && <span className="text-micro text-muted">ttl {k.ttl}</span>}
+        <span className="ml-auto text-caption tabular-nums">
+          <span className={k.active ? "font-semibold text-primary" : "text-muted"}>{k.active} active</span>
+          {expiry && <span className="text-muted"> · next {expiry}</span>}
+        </span>
+      </div>
+      <div className="mt-0.5 grid grid-cols-[auto_1fr] gap-x-2 text-caption text-secondary">
+        <span className="text-muted">From</span>
+        <span className="min-w-0 truncate" title={(k.writers ?? []).join(", ")} data-testid="context-writers">
+          {shortList(k.writers, 3)}
+        </span>
+        <span className="text-muted">Read by</span>
+        <span className="min-w-0 truncate" title={(k.readers ?? []).join(", ")} data-testid="context-readers">
+          {k.readers?.length ? shortList(k.readers, 3) : "Tower only"}
+        </span>
+      </div>
+      {k.latest_id ? (
+        <div className="text-micro text-muted">
+          latest{" "}
+          <Link to={`/ops/context/${k.latest_id}`} className="arc-action">
+            {k.latest_subject}
+          </Link>{" "}
+          · {k.latest_at ? formatAge(k.latest_at, now) : "—"}
+          {k.expired_24h ? ` · ${k.expired_24h} expired 24 h` : ""}
+        </div>
+      ) : (
+        <div className="text-micro text-muted">never written</div>
+      )}
+    </li>
+  );
+}
+
+function ContextGroupBlock({ g, now }: { g: ContextGroupView; now: number }) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  const live = g.kinds.filter((k) => k.active > 0).length;
+  return (
+    <li data-testid="context-group" data-group={g.key} data-open={open} className="py-1">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => setOpen(!open)}
+        className="flex min-h-[40px] w-full flex-wrap items-center gap-x-2 text-left max-tablet:min-h-[44px]"
+      >
+        <span className="w-3 text-caption text-muted" aria-hidden="true">
+          {open ? "▼" : "▶"}
+        </span>
+        <span className="font-semibold text-primary">{titleCase(g.label)}</span>
+        <span className="text-caption text-secondary tabular-nums">
+          {formatNumber(g.active)} active · {live}/{g.kinds.length} kinds live · newest {g.latestAt ? formatAge(g.latestAt, now) : "—"}
+        </span>
+      </button>
+      <ul id={id} hidden={!open} className="divide-y divide-line pl-5">
+        {g.kinds.map((k) => (
+          <ContextKindItem key={k.kind} k={k} now={now} />
+        ))}
+      </ul>
+    </li>
+  );
+}
+
 function ContextCard({ c, now }: { c?: ContextStore; now: number }) {
+  // D89: kinds grouped by the Session Timeline band of the job that writes them, each kind with
+  // its writers and readers (from routines.yaml) and its latest entry.
+  const groups = useMemo(() => (c ? contextGroups(c) : []), [c]);
   return (
     <Card
       title="Context Store"
-      subtitle={c ? <>{c.total_active} active · {c.expired_24h} expired in 24 h</> : undefined}
+      freshness={{ at: c?.as_of, label: "loaded" }}
+      headerExtra={
+        <InfoTip label="About the context store">
+          Typed entries the jobs hand to each other (D16). Each kind sits under the Timeline band of the job that writes it; From / Read by come from
+          the writes: and reads: lists in routines.yaml. Active = not yet expired.
+        </InfoTip>
+      }
     >
       {!c ? (
         <Loading what="context" />
       ) : (
-        <div data-testid="context-kinds" className="max-h-[520px] overflow-auto pr-1">
-          {c.kinds.map((k) => (
-            <div key={k.kind} className="border-b border-line last:border-b-0">
-              <ProgressRow
-                label={k.kind}
-                value={k.active}
-                right={k.next_expiry ? timeLeft(k.next_expiry, now) : k.active ? "no expiry" : "none active"}
-                fraction={k.remaining_fraction ?? (k.active ? 1 : 0)}
-                color="var(--series-2)"
-              />
-              {k.latest_id && (
-                <div className="-mt-1 pb-2 text-micro text-muted">
-                  latest{" "}
-                  <Link to={`/ops/context/${k.latest_id}`} className="arc-action">
-                    {k.latest_subject}
-                  </Link>{" "}
-                  by {k.latest_by} · {et(k.latest_at)}
-                  {k.ttl ? ` · ttl ${k.ttl}` : ""}
-                  {k.expired_24h ? ` · ${k.expired_24h} expired 24 h` : ""}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
+        <>
+          <p className="mb-2 text-caption text-secondary tabular-nums" data-testid="context-summary">
+            {formatNumber(c.total_active)} active · {c.kinds.filter((k) => k.active > 0).length}/{c.kinds.length} kinds live ·{" "}
+            {formatNumber(c.expired_24h)} expired in 24 h
+          </p>
+          <ul className="divide-y divide-line" data-testid="context-kinds">
+            {groups.map((g) => (
+              <ContextGroupBlock key={g.key} g={g} now={now} />
+            ))}
+          </ul>
+        </>
       )}
     </Card>
   );
@@ -979,16 +1055,16 @@ export function OpsPage() {
     setParams(next, { replace: true });
   };
   const cfg = config.data as OpsConfig | undefined;
-  // Owner order (D48, OPS_WIDGETS): the same on phone and desktop, one column.
+  // Owner order (D48, D89: Health under Config; OPS_WIDGETS): the same on phone and desktop, one column.
   return (
     <div className="grid gap-6 desktop:gap-10" data-testid="ops">
       <SessionCard s={session.data as Session | undefined} day={day} setDay={setDay} />
       <SourcesCard s={sources.data as Sources | undefined} now={now} />
-      <HealthStripCard h={health.data as HealthStrip | undefined} />
       <LlmCard l={llm.data as Llm | undefined} />
       <ContextCard c={context.data as ContextStore | undefined} now={now} />
       <AutoApproveCard a={cfg?.auto_approve} line={cfg?.scorecard_gate} />
       <ConfigLink c={cfg} />
+      <HealthStripCard h={health.data as HealthStrip | undefined} />
       <div id="alerts" className="min-w-0 scroll-mt-20">
         <AlertsSection a={alerts.data as Alerts | undefined} />
       </div>
