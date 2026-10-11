@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  beAtrHint,
   defaultTab,
   focusStage,
   lifecycleStages,
@@ -236,5 +237,15 @@ describe("lifecycleStages / focusStage", () => {
     const s = lifecycleStages(life({ gate: [{ passed: true }], approval: { status: "pending" }, execution: { status: "working" } }));
     expect(s.slice(1, 3).map((x) => x.state)).toEqual(["active", "active"]);
     expect(focusStage(lifecycleStages(life({})))).toBeUndefined();
+  });
+});
+
+describe("beAtrHint (E16.5)", () => {
+  it("joins each breakeven's ATR multiple", () => {
+    expect(beAtrHint([{ atr_multiple: 1.08 }, { atr_multiple: 0.5 }])).toBe("1.1 / 0.5 ATR√t");
+  });
+  it("is undefined without ATR (old rows, missing technicals)", () => {
+    expect(beAtrHint([{ atr_multiple: null }, {}])).toBeUndefined();
+    expect(beAtrHint(undefined)).toBeUndefined();
   });
 });

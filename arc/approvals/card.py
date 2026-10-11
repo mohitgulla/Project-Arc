@@ -102,6 +102,11 @@ def _sig(v: float | None) -> str:
     return NA if v is None else f"{abs(v):.1f}σ"
 
 
+def _atr(v: float | None) -> str:
+    """E16.5: the breakeven in ATR terms, e.g. ``, 1.4 ATR√t``; empty without ATR14."""
+    return "" if v is None else f", {v:.1f} ATR√t"
+
+
 def _size(v: float | None) -> str:
     return NA if v is None else f"{v:,.0f}"
 
@@ -237,7 +242,10 @@ def _position(p: Proposal) -> str:
 
 def _breakevens(p: Proposal, a: ProposalAnalytics | None) -> str:
     if a is not None and a.breakevens:
-        return "\n".join(f"BE {b.price:.2f} ({b.pct:+.1%}, {_sig(b.sigma)})" for b in a.breakevens)
+        return "\n".join(
+            f"BE {b.price:.2f} ({b.pct:+.1%}, {_sig(b.sigma)}{_atr(b.atr_multiple)})"
+            for b in a.breakevens
+        )
     bes = p.structure.breakevens
     return "\n".join(f"BE {b:.2f}" for b in bes) if bes else NA
 
@@ -473,7 +481,10 @@ def _moneyness(a: ProposalAnalytics) -> str:
         f"{_spct(la.moneyness_pct)}, {_sig(la.sigma_distance)}"
         for la in a.legs
     ]
-    rows += [f"BE {b.price:.2f}: {b.pct:+.1%}, {_sig(b.sigma)}" for b in a.breakevens]
+    rows += [
+        f"BE {b.price:.2f}: {b.pct:+.1%}, {_sig(b.sigma)}{_atr(b.atr_multiple)}"
+        for b in a.breakevens
+    ]
     return "\n".join(rows)
 
 

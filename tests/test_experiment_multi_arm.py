@@ -54,13 +54,12 @@ ACCT = "PA3EXP0001"
 OTHER_ACCT = "PA3EXP9999"
 
 # Hashes locked before D69 (spec v1): loading under v2 must reproduce every one.
+# D85 retired the XP-2 / XP-3 drafts (their treatments became the shipped defaults).
 V1_HASHES = {
     "xp10_trending_velocity.yaml": "9c159cb68a47d3b8574a66b21eda55d78eee6762a0478a4d664196d49f96e245",  # noqa: E501
     "xp11_scalp_movers.yaml": "b511804da283981b3622a0c166e245a19325a2ad7b80f258775c1af2610d6ee9",  # noqa: E501
     "xp12_retail_sentiment.yaml": "c88e20f231a67444653ba5d29c0e596ceadd7aea7336c6159faf5803c1b518fb",  # noqa: E501
     "xp1_aa_baseline.yaml": "7d02a85573156876e3b8d0a4e57e195d9ce04f6399966103843224d8749d8d20",  # noqa: E501
-    "xp2_finnhub_context.yaml": "250081383bbbea670a666c2a6ee3e2934c81e752c864fbe17bc9541f1ae8665b",  # noqa: E501
-    "xp3_relaxed_diversification.yaml": "e4a3731068aa835adee26df6265ad5a824a423304eb3d21703ee56634c281c74",  # noqa: E501
 }
 
 
@@ -186,7 +185,7 @@ def test_committed_v2_specs_load_with_their_arms(name: str) -> None:
 
 def test_a_v1_spec_round_trips_through_its_stored_json() -> None:
     sp = ExperimentSpec.model_validate(
-        yaml.safe_load((LIVE / "xp2_finnhub_context.yaml").read_text())
+        yaml.safe_load((LIVE / "xp11_scalp_movers.yaml").read_text())
     )
     again = ExperimentSpec.model_validate(json.loads(canonical_json(sp)))
     assert spec_hash(again) == spec_hash(sp) and again.spec_version == 1

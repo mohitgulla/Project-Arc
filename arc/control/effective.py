@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from arc.exits.policy import ExitConfig
     from arc.experiments.config import ExperimentsConfig
     from arc.routines.config import RoutinesConfig
+    from arc.scanner.be_atr import ScannerFilters
     from arc.scanner.rank import RankingConfig
 
 __all__ = [
@@ -52,6 +53,7 @@ __all__ = [
     "open_store",
     "ranking_config",
     "raw_yaml",
+    "scanner_filters",
     "yaml_overrides",
 ]
 
@@ -327,6 +329,16 @@ def ranking_config(
     """``config/ranking.yaml`` (``ranking:``) with the D26 overrides carried by *settings*."""
     ov = settings.yaml_overrides(Target.RANKING.value) if settings is not None else None
     return load_ranking_config(path, overrides=ov)
+
+
+def scanner_filters(
+    settings: ArcSettings | None = None, path: Path | str | None = None
+) -> ScannerFilters:
+    """E16.5: ``config/ranking.yaml`` ``scanner:`` with the D26 overrides carried by *settings*."""
+    from arc.scanner.be_atr import load_scanner_filters
+
+    ov = settings.yaml_overrides(Target.RANKING.value) if settings is not None else None
+    return load_scanner_filters(path, overrides=ov)
 
 
 def experiments_config(

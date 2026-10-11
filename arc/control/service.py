@@ -231,7 +231,11 @@ class ControlService:
     def _default(self, t: Tunable) -> Any:
         if t.target is Target.SETTINGS:
             if t.env is not None and t.env != self.base.env.value and t.field in PER_ENV_SWITCHES:
-                return False  # a per-env switch for another env: off unless overridden
+                # A per-env switch for another env: its shipped default (D85: paper on,
+                # live off; a live process validates every switch to off).
+                if t.env != "paper":
+                    return False
+                return bool(ArcSettings.model_fields[t.field].default)
             v = getattr(self.base, t.field or t.key)
             return list(v) if isinstance(v, list) else v
         return copy.deepcopy(read_raw(t, self._raw(t.target)))
@@ -372,9 +376,11 @@ class ControlService:
 
                 load_cost_model(overrides=ov.get("costs"))
             elif t.target is Target.RANKING:
+                from arc.scanner.be_atr import load_scanner_filters
                 from arc.scanner.rank import load_ranking_config
 
                 load_ranking_config(overrides=ov.get("ranking"))
+                load_scanner_filters(overrides=ov.get("ranking"))  # E16.5: scanner: block
             elif t.target is Target.EXPERIMENTS:
                 from arc.experiments.config import load_experiments_config
 

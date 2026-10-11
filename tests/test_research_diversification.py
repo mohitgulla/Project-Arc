@@ -22,7 +22,6 @@ from arc.config import ArcSettings
 from arc.control.effective import effective_routines
 from arc.control.registry import REGISTRY, lookup, read_raw, write_raw
 from arc.control.service import ControlService
-from arc.experiments.overlay import arm_config_data, load_spec
 from arc.ingest.llm import FixtureScalpLLM
 from arc.ingest.scalp import load_fixture_docs
 from arc.personas.builders import RELAXED_DIVERSIFICATION_FIT
@@ -102,12 +101,13 @@ def _tickers(items: list[Any]) -> list[tuple[str, int]]:
 # ---------------------------------------------------------------------------
 
 
-def test_flag_defaults_strict_in_the_shipped_config() -> None:
+def test_flag_defaults_relaxed_in_the_shipped_config() -> None:
+    # D85: relaxed is the shipped default without an experiment (strict = rollback).
     raw = yaml.safe_load(DEFAULT_ROUTINES_PATH.read_text())
-    assert raw["personas"]["director_diversification"] == "strict"
+    assert raw["personas"]["director_diversification"] == "relaxed"
     cfg = load_routines(DEFAULT_ROUTINES_PATH)
     dd = cfg.director_diversification
-    assert dd.mode == "strict" and not dd.is_relaxed
+    assert dd.mode == "relaxed" and dd.is_relaxed
     assert dd.max_names_per_industry == 2
     assert (dd.relaxed.sector_max_pct, dd.relaxed.stance_max_pct) == (0.55, 0.85)
     assert dd.relaxed.expiry_max_pct == 0.70
@@ -166,28 +166,20 @@ def test_slack_override_needs_a_confirm_and_reaches_the_effective_routines() -> 
     now = dt.datetime(2026, 10, 6, 9, 0, tzinfo=ET)
     base = ArcSettings(_env_file=None, approver_slack_user_ids=["U0OWNER"])  # type: ignore[call-arg]
     svc = ControlService(conn, base=base, now=lambda: now)
-    assert svc.view("personas.director_diversification").value == "strict"
+    assert svc.view("personas.director_diversification").value == "relaxed"  # D85 default
+    r = svc.set("personas.director_diversification", "strict", actor="U0OWNER", source="slack")
+    assert r.outcome == "applied"  # relaxed -> strict (the rollback) applies at once
+    assert not effective_routines(conn).director_diversification.is_relaxed
     r = svc.set("personas.director_diversification", "relaxed", actor="U0OWNER", source="slack")
     assert r.pending is not None  # strict -> relaxed is the riskier direction
     svc.confirm(r.pending.code, actor="U0OWNER", source="slack")
     assert effective_routines(conn).director_diversification.is_relaxed
-    r = svc.set("personas.director_diversification", "strict", actor="U0OWNER", source="slack")
-    assert r.outcome == "applied"
-    assert not effective_routines(conn).director_diversification.is_relaxed
 
 
-def test_xp3_draft_spec_turns_only_the_flag_on() -> None:
-    spec = load_spec(REPO / "config" / "experiments" / "live" / "xp3_relaxed_diversification.yaml")
-    assert spec.id == "XP-3" and spec.kind.value == "ab"
-    assert spec.arms.treatment.overlay == {
-        "routines": {"personas": {"director_diversification": "relaxed"}}
-    }
-    treat = RoutinesConfig.model_validate(arm_config_data(spec, "treatment", "routines"))
-    base = load_routines(DEFAULT_ROUTINES_PATH)
-    assert treat.director_diversification.is_relaxed
-    assert (
-        treat.model_copy(update={"director_diversification": base.director_diversification}) == base
-    )
+def test_xp3_draft_is_retired() -> None:
+    # D85: the treatment is now the shipped default, so the draft A/B is gone.
+    live = REPO / "config" / "experiments" / "live"
+    assert not (live / "xp3_relaxed_diversification.yaml").exists()
 
 
 def test_every_core_semis_name_has_an_industry() -> None:

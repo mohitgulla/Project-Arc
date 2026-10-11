@@ -17,7 +17,7 @@ import { formatAge, formatEt, formatLeg, formatNumber, formatPercent } from "../
 import { useLayout } from "../lib/layout";
 import { usePersonaLabel } from "../lib/personas";
 import { humanize, shortHash, STAGE_LABEL, type TradeDetail } from "../lib/trades";
-import { parseRiskNarrative, splitTrail, thesisPersona } from "../lib/tradeDetail";
+import { beAtrHint, parseRiskNarrative, splitTrail, thesisPersona } from "../lib/tradeDetail";
 
 // ---------------------------------------------------------------------------
 // Small pieces
@@ -337,7 +337,7 @@ export function QuantBlocks({ d }: { d: TradeDetail }) {
       ),
       hint: "at expiry",
     },
-    { label: "Breakeven", value: p.breakevens?.length ? p.breakevens.map((b) => formatNumber(b, 2)).join(" / ") : DASH },
+    { label: "Breakeven", value: p.breakevens?.length ? p.breakevens.map((b) => formatNumber(b, 2)).join(" / ") : DASH, hint: beAtrHint(a?.breakevens) },
   ];
   if (realized != null && r.net_ev != null && r.net_ev !== 0)
     value.push({

@@ -117,6 +117,9 @@ def test_every_registry_key_maps_to_a_real_setting_or_yaml_value() -> None:
         from arc.control.registry import read_raw
 
         raw = raw_yaml(t.target)
+        if t.key == "scanner.max_be_atr":  # E16.5: ships null (off); the key must exist
+            assert "max_be_atr" in raw["scanner"] and read_raw(t, raw) is None, t.key
+            continue
         assert read_raw(t, raw) is not None or t.key.endswith(("stop_value", "profit_lock")), t.key
     assert s.config_version is None
 
@@ -625,7 +628,8 @@ def test_loop_overrides_reach_the_dispatcher_config(
     """E5.8 (D31/D36): the loop knobs are Slack-tunable and land in `RoutinesConfig.loop`."""
     import datetime as dt
 
-    assert svc.view("loop.max_idle").value == 30 and svc.view("loop.max_runtime").value == 7
+    assert svc.view("loop.max_idle").value == 15  # D85 (was 30)
+    assert svc.view("loop.max_runtime").value == 7
     r = svc.set("loop.max_idle", "60", actor=OWNER, source="slack")
     assert r.pending is not None  # riskier direction (fewer full runs) → confirm
     svc.confirm(r.pending.code, actor=OWNER, source="slack")

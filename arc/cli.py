@@ -129,6 +129,14 @@ def _add_scan_args(p: argparse.ArgumentParser) -> None:
         "(default exits.yaml pipeline.menu_pool_max)",
     )
     p.add_argument(
+        "--max-be-atr",
+        type=float,
+        default=None,
+        help="E16.5: drop debit structures whose directional breakeven is more than this many "
+        "ATR14 x sqrt(DTE) from spot, before ranking (the pipeline's scanner.max_be_atr; "
+        "default off). ATR14 is read from --db's latest regime entry; none = nothing dropped",
+    )
+    p.add_argument(
         "--profile",
         default=None,
         help="Account profile (margin | cash_debit | cash_long_only); default ARC_ACCOUNT_PROFILE. "
@@ -493,6 +501,48 @@ def _measure_menu(
     return res.model_copy(update={"candidates": out}), vals
 
 
+def _fmt_be(key: tuple[str, int], vals: dict[tuple[str, int], float | None]) -> str:
+    """E16.5: ``  BE 1.4 ATR√t`` for a debit row when ATR14 is known; else nothing."""
+    v = vals.get(key)
+    return "" if v is None else f"  BE {v:.1f} ATR√t"
+
+
+def _be_filter_scan(
+    res: Any, atr14: float | None, max_be: float, *, cut: int | None
+) -> tuple[Any, str]:
+    """E16.5: the pipeline's breakeven-realism filter on one scan (then ``--top`` when
+    no measure re-ranks it), ranks renumbered; returns the result and a summary line."""
+    from arc.scanner.be_atr import filter_menu
+
+    if atr14 is None:
+        return res, f"max_be_atr {max_be:g}: no ATR14 in --db's regime entry, nothing dropped"
+    out = filter_menu(res.candidates, spot=res.spot, atr14=atr14, max_be_atr=max_be)
+    kept = out.kept[:cut] if cut else out.kept
+    ranked = [c.model_copy(update={"rank": i}) for i, c in enumerate(kept, start=1)]
+    note = (
+        f"max_be_atr {max_be:g} (ATR14 {atr14:.2f}): dropped {len(out.dropped)} of "
+        f"{len(res.candidates)} candidates as be_unrealistic"
+    )
+    return res.model_copy(update={"candidates": ranked}), note
+
+
+def _regime_atr14(conn: sqlite3.Connection | None, ticker: str) -> float | None:
+    """E16.5: ATR14 from the latest ``regime`` entry's E16.2 technicals, if any."""
+    if conn is None:
+        return None
+    from arc.pipeline.analytics import regime_atr14
+
+    try:
+        row = conn.execute(
+            "select payload from context_entries where kind='regime' and subject=? "
+            "order by valid_from desc limit 1",
+            (ticker.upper(),),
+        ).fetchone()
+    except sqlite3.Error:
+        return None
+    return None if row is None else regime_atr14(json.loads(row[0]))
+
+
 def _regime_rv(conn: sqlite3.Connection | None, ticker: str) -> float | None:
     """Realised-vol forecast (mean HV20/HV60) from the latest ``regime`` entry, if any."""
     if conn is None:
@@ -591,9 +641,13 @@ def _chains(args: argparse.Namespace) -> int:
 
     dte = args.dte or (None, None)
     measure = args.rank_by if args.rank_by in _MENU_MEASURES else None
+    max_be = args.max_be_atr
+    if max_be is not None and not 0.5 <= max_be <= 5.0:
+        sys.stderr.write("arc chains: --max-be-atr must be between 0.5 and 5\n")
+        return 2
     exits = None
     pool = args.top
-    if measure is not None:
+    if measure is not None or max_be is not None:
         from arc.control.effective import exit_config
 
         exits = exit_config(settings)
@@ -625,6 +679,8 @@ def _chains(args: argparse.Namespace) -> int:
     iv_conn = _chains_iv_conn(args)
     results = []
     menu_keys: dict[tuple[str, int], float | None] = {}
+    be_vals: dict[tuple[str, int], float | None] = {}  # E16.5: (ticker, rank) -> be_atr
+    be_notes: dict[str, str] = {}
     for ticker in args.tickers:
         if args.as_of is not None:
             as_of = args.as_of
@@ -643,9 +699,23 @@ def _chains(args: argparse.Namespace) -> int:
         res = scan(provider, ticker, params, as_of=as_of, iv_history=history)
         if args.record_iv and store is not None:
             _record_chain_iv(store, provider, ticker, as_of, settings)
+        atr14 = _regime_atr14(iv_conn, res.ticker)
+        if max_be is not None:  # E16.5: before the measure ranking / the --top cut
+            res, be_notes[res.ticker] = _be_filter_scan(
+                res, atr14, max_be, cut=measure is None and args.top or None
+            )
         if measure is not None and exits is not None:
             res, keys = _measure_menu(res, measure, args, settings, exits, iv_conn)
             menu_keys.update(keys)
+        if atr14 is not None:
+            from arc.scanner.be_atr import structure_be_atr
+
+            be_vals.update(
+                {
+                    (res.ticker, c.rank): structure_be_atr(c.structure, res.spot, atr14)
+                    for c in res.candidates
+                }
+            )
         results.append(res)
 
     if args.json:
@@ -655,6 +725,10 @@ def _chains(args: argparse.Namespace) -> int:
                 for c, row in zip(r.candidates, d["candidates"], strict=True):
                     k = menu_keys.get((r.ticker, c.rank))
                     row["rank_measure"], row["rank_key"] = measure, k
+        for r, d in zip(results, payload, strict=True):
+            for c, row in zip(r.candidates, d["candidates"], strict=True):
+                if (r.ticker, c.rank) in be_vals:
+                    row["be_atr"] = be_vals[(r.ticker, c.rank)]
         sys.stdout.write(json.dumps(payload, indent=2) + "\n")
         return 0
 
@@ -683,10 +757,13 @@ def _chains(args: argparse.Namespace) -> int:
                 else ""
             )
             lines.append(f"  ranked by {measure}{tilt} (credit and debit on one key)")
+        if r.ticker in be_notes:
+            lines.append(f"  {be_notes[r.ticker]}")
         lines.extend(
             "  "
             + _fmt_candidate(c)
             + ("" if measure is None else f"  key {_fmt_key(menu_keys.get((r.ticker, c.rank)))}")
+            + _fmt_be((r.ticker, c.rank), be_vals)
             for c in r.candidates
         )
         lines.append("")

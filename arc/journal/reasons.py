@@ -163,8 +163,10 @@ class ReasonCode(StrEnum):
     DROP_AT_CAP = "drop_at_cap"  # underlying already at the per-underlying max-loss cap
     # E16.3 (D76/D78): the deterministic anti-chase entry filter (personas.anti_chase)
     STRETCHED_ENTRY = "stretched_entry"  # directional long premium on a stretched move
-    TECHNICALS_MISSING = "technicals_missing"  # filter on, no technicals: idea kept (noted)
+    TECHNICALS_MISSING = "technicals_missing"  # a technical filter on, no technicals: kept (noted)
     VWAP_MISSING = "vwap_missing"  # anti_chase.vwap on, intraday fetch failed: daily rule only
+    # E16.5 (D76): scanner.max_be_atr dropped debit structures needing an unrealistic move
+    BE_UNREALISTIC = "be_unrealistic"
     DEDUPE_EXECUTED = "dedupe_executed"  # same idea is open / closed within the cooldown
     DEDUPE_PROPOSED = "dedupe_proposed"  # same idea proposed within the cooldown
     DEDUPE_REJECTED = "dedupe_rejected"  # same idea rejected by the owner within the cooldown
@@ -408,8 +410,9 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.DROP_CONCENTRATION: "Dropped: adds concentration",
     ReasonCode.DROP_AT_CAP: "Dropped: underlying already at its max-loss cap",
     ReasonCode.STRETCHED_ENTRY: "Skipped: move already stretched",
-    ReasonCode.TECHNICALS_MISSING: "Anti-chase check skipped: no technicals",
+    ReasonCode.TECHNICALS_MISSING: "Technical filter skipped: no technicals",
     ReasonCode.VWAP_MISSING: "VWAP check skipped: no intraday bars",
+    ReasonCode.BE_UNREALISTIC: "Dropped: breakeven needs an unrealistic move",
     ReasonCode.DEDUPE_EXECUTED: "Same idea already traded recently",
     ReasonCode.DEDUPE_PROPOSED: "Same idea already proposed recently",
     ReasonCode.DEDUPE_REJECTED: "Same idea rejected by the owner recently",
