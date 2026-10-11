@@ -414,6 +414,7 @@ class TestThetaData:
         assert r.expiration == dt.date(2024, 11, 15) and r.date == dt.date(2024, 11, 4)
 
     def _provider(self, session: FakeSession, **kw: Any) -> ThetaDataEodProvider:
+        kw.setdefault("sleep", lambda _s: None)
         return ThetaDataEodProvider(
             "http://theta:1/", session, today=lambda: dt.date(2025, 11, 10), **kw
         )
@@ -421,7 +422,9 @@ class TestThetaData:
     def test_fetch_chunks_and_clamps(self) -> None:
         sess = FakeSession([FakeResp(200, THETA_CSV), FakeResp(472, "No data"), FakeResp(200, "")])
         sleeps: list[float] = []
-        p = self._provider(sess, chunk_days=3, min_interval_s=60, sleep=sleeps.append)
+        p = self._provider(
+            sess, chunk_days=3, max_chunk_days=3, min_interval_s=60, sleep=sleeps.append
+        )
         assert isinstance(p, HistoricalDataProvider)
         assert p.earliest_date() == dt.date(2024, 11, 10)
         # start before free-tier window is clamped; AAPL row on 11-04 is thus outside → filtered
@@ -439,12 +442,16 @@ class TestThetaData:
         assert len(rows) == 2 and rows[0].provider == "thetadata"
 
     def test_http_error(self) -> None:
-        p = self._provider(FakeSession([FakeResp(500, "oops")]), lookback_days=10_000)
+        p = self._provider(
+            FakeSession([FakeResp(500, "oops")]), lookback_days=10_000, max_retries=0
+        )
         with pytest.raises(ThetaTerminalError, match="HTTP 500"):
             p.fetch_option_eod("AAPL", dt.date(2024, 11, 4), dt.date(2024, 11, 4), max_dte=45)
 
     def test_unreachable(self) -> None:
-        p = self._provider(FakeSession([ConnectionError("refused")]), lookback_days=10_000)
+        p = self._provider(
+            FakeSession([ConnectionError("refused")]), lookback_days=10_000, max_retries=0
+        )
         with pytest.raises(ThetaTerminalError, match="unreachable"):
             p.fetch_option_eod("AAPL", dt.date(2024, 11, 4), dt.date(2024, 11, 4), max_dte=45)
 
@@ -466,7 +473,7 @@ class TestCli:
 
         fake = FakeProvider()
         fake.name = "alpaca"  # type: ignore[misc]
-        monkeypatch.setattr(hcli, "_make_provider", lambda name, args: fake)
+        monkeypatch.setattr(hcli, "_make_provider", lambda name, args, **kw: fake)
         argv = ["history", "download", "--provider", "alpaca", "--tickers", "spy",
                 "--start", "2024-02-01", "--end", "2024-02-09",
                 "--data-dir", str(tmp_path)]  # fmt: skip
@@ -484,7 +491,7 @@ class TestCli:
         from arc.cli import main
 
         fake = FakeProvider(fail_on="SPY")
-        monkeypatch.setattr(hcli, "_make_provider", lambda name, args: fake)
+        monkeypatch.setattr(hcli, "_make_provider", lambda name, args, **kw: fake)
         argv = ["history", "download", "--provider", "thetadata", "--tickers", "SPY",
                 "--start", "2024-02-01", "--end", "2024-02-02",
                 "--data-dir", str(tmp_path)]  # fmt: skip
