@@ -197,7 +197,6 @@ class TestConfig:
             "options_fast",  # E13.6: ~50 chain requests, ~45 s
             "retail_sentiment",  # E14.6: ~55 paced Stocktwits requests, ~90 s
             "scalp",
-            "scalp.overnight",
             "scout",  # E13.7: one daily cheap LLM call
             "ticker_news",  # E14.1: up to 20 pages per symbol chunk + Finnhub fallback
             "youtube.briefs",

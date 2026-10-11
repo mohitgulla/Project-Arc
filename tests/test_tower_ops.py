@@ -409,7 +409,7 @@ def test_context_counts_every_kind(conn, routines) -> None:
     assert shortlist.latest_id and shortlist.latest_at
     # D89: each kind carries its writers / readers (routines.yaml) and its Timeline group
     assert "Scalp" in kinds["candidate"].writers and "Research loop" in kinds["candidate"].readers
-    assert kinds["candidate"].group == "scalp"
+    assert kinds["candidate"].group == "scalp"  # D91: weighted by runs (Scalp 28x vs Scout 1x)
     assert kinds["structures"].writers == ["Quant open", "Quant revise"]
     assert kinds["structures"].group == "trading_loop"
     assert kinds["universe_tier"].group == "universe"

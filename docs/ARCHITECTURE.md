@@ -128,7 +128,7 @@ Shipped defaults in `config/routines.yaml`, all times ET:
 | 09:30 trading days | pre-market chain `director -> quant -> risk -> propose` |
 | 09:30-16:00 trading days, every 30m | `monitor`: positions, net Greeks, expiries, daily-loss halt. Read-only, no LLM, halt-exempt |
 | 02:00 trading days | `youtube.briefs`: newest video per channel from the last 48 h (D60; 7 channels: 2 youtube_macro, 5 youtube_micro) → one `channel_brief` each, read by the Director (D45). YouTube docs never reach the Sweep |
-| 22:00 daily | `sweep.overnight` (fast sources only) |
+| 06:30-20:00 trading days, every 30m | `scalp` (fast sources; D91 dropped the 22:00 `scalp.overnight`) |
 | 16:30 trading days | `broker.reconcile` |
 | 16:45 Fridays (`days: [fri]`) | `scorecard` (weekly) |
 

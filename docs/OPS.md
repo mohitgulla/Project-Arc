@@ -1305,8 +1305,7 @@ fires without the `arc routines tick` cron (E5.3).
 | job | cadence | what |
 |---|---|---|
 | `rss`, `edgar` | every 15m 06:00-20:00 | sources, at least as often as the Sweep |
-| `sweep` | every 30m 09:00-16:00 (15 runs) | candidates from the last 30 min of sources; ttl 20m, no catch-up |
-| `sweep.overnight` | 22:00 daily | the after-close pass over fast sources; ttl 3h (YouTube moved to `youtube.briefs`, §5.22) |
+| `scalp` | every 30m 06:30-20:00 (28 runs, D91; was 09:00-16:00 + a 22:00 `scalp.overnight`, dropped) | candidates from the last 30 min of sources; ttl 20m, no catch-up |
 | `director` | every 10m 09:40-15:50 (38 slots, D52) | the trading loop: director → quant → risk → propose → execute; ttl 5m |
 | `monitor` | every 10m 09:30-16:00 (40 slots, D52) | positions, Greeks, marks (D35) |
 
@@ -2297,7 +2296,7 @@ key. Code: `arc/ingest/market_movers.py`; handler `market_movers_source`.
   `failed`, nothing written; a failed snapshot call only drops the most-actives
   (`no_price`) and lands in `metrics.snapshot_error`.
 - **Context only (D60):** never a `candidate`, `universe_tier` or discovery/trending
-  input; D56 stands. Only `scalp` / `scalp.overnight` list it in `reads`.
+  input; D56 stands. Only `scalp` lists it in `reads` (D91 dropped `scalp.overnight`).
 - **Scalp block (flag `personas.scalp_movers_context`, default `off`):** with it on,
   the stage-2 prompt gets a `## Tape movers (Alpaca screener, code-built)` section of
   at most `scalp_movers_context.max_lines` (10) lines, listing only active-list names
