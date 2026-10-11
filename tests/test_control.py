@@ -823,7 +823,7 @@ def test_e64a_keys_reach_exits_and_ranking(svc: ControlService) -> None:
 
 
 def test_dollar_delta_and_vega_cap_tunables() -> None:
-    from arc.control.registry import Risk, is_orphaned
+    from arc.control.registry import Risk
 
     t = lookup("portfolio_dollar_delta_cap_pct")
     assert t.field == "portfolio_dollar_delta_cap_pct" and t.risk is Risk.UP
@@ -833,14 +833,14 @@ def test_dollar_delta_and_vega_cap_tunables() -> None:
     assert (v.max, v.hard_ceiling) == (0.02, 0.02)
     with pytest.raises(TunableError):
         lookup("portfolio_delta_cap")
-    assert "portfolio_delta_cap" not in REGISTRY and is_orphaned("portfolio_delta_cap")
+    assert "portfolio_delta_cap" not in REGISTRY
 
 
 def test_orphaned_share_delta_cap_override_is_ignored_and_logged(
     conn: sqlite3.Connection,
 ) -> None:
     """A stored override on the removed `portfolio_delta_cap` cannot convert to a share of
-    equity: it is logged (config.override_orphaned) and the D57 defaults stand."""
+    equity: it is logged (control.override_unknown_key) and the D57 defaults stand."""
     import structlog
 
     repo = ConfigChangeRepo(conn)
@@ -851,9 +851,8 @@ def test_orphaned_share_delta_cap_override_is_ignored_and_logged(
     with structlog.testing.capture_logs() as logs:
         s = effective_settings(conn, base=base())
     assert s.portfolio_dollar_delta_cap_pct == 1.00 and s.portfolio_vega_cap_pct == 0.010
-    orphaned = [e["key"] for e in logs if e["event"] == "config.override_orphaned"]
-    assert set(orphaned) == {"portfolio_delta_cap"}
-    assert not [e for e in logs if e["event"] == "control.override_unknown_key"]
+    unknown = [e["key"] for e in logs if e["event"] == "control.override_unknown_key"]
+    assert set(unknown) == {"portfolio_delta_cap"}
 
 
 # -- D82: parsed-YAML cache on the read path ---------------------------------------------

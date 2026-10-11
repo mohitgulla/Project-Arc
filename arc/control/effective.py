@@ -27,7 +27,7 @@ import yaml
 from arc.account_profiles import DEFAULT_PROFILES_PATH, load_account_profiles
 from arc.backtest.costs import DEFAULT_COSTS_PATH, load_cost_model
 from arc.config import ArcSettings
-from arc.control.registry import Target, TunableError, is_orphaned, lookup, write_raw
+from arc.control.registry import Target, TunableError, lookup, write_raw
 from arc.control.store import ConfigChange, ConfigChangeRepo
 from arc.exits.policy import DEFAULT_EXITS_PATH, load_exit_config
 from arc.experiments.config import DEFAULT_EXPERIMENTS_PATH, load_experiments_config
@@ -142,11 +142,8 @@ def yaml_overrides(
     for key, change in sorted(changes.items(), key=lambda kv: kv[1].id):
         try:
             t = lookup(key)
-        except TunableError:
-            if is_orphaned(key):  # D56: a removed category / UOA key; no successor
-                log.warning("config.override_orphaned", key=key, change_id=change.id)
-            else:
-                log.error("control.override_unknown_key", key=key, change_id=change.id)
+        except TunableError:  # a removed key: reported and ignored
+            log.error("control.override_unknown_key", key=key, change_id=change.id)
             continue
         if t.target is Target.SETTINGS:
             continue
@@ -272,11 +269,8 @@ def apply_changes(
     for key, change in sorted(changes.items(), key=lambda kv: kv[1].id):
         try:
             t = lookup(key)
-        except TunableError:
-            if is_orphaned(key):  # D56: a removed category / UOA key; no successor
-                log.warning("config.override_orphaned", key=key, change_id=change.id)
-            else:
-                log.error("control.override_unknown_key", key=key, change_id=change.id)
+        except TunableError:  # a removed key: reported and ignored
+            log.error("control.override_unknown_key", key=key, change_id=change.id)
             continue
         if t.target is not Target.SETTINGS or t.field is None:
             continue
