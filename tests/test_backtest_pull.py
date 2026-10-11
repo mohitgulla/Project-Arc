@@ -400,3 +400,60 @@ def test_optliq_cli(
     assert "1 rows for c1" in out and "weights oi 1.0 volume 1.0" in out
     df = pd.read_parquet(pull.optliq_path(tmp_path, VERSION))
     assert len(df) == 1 and df.iloc[0]["score"] > 0
+
+
+def _script(name: str):  # noqa: ANN202 - a loaded script module
+    import importlib.util
+    from pathlib import Path as _P
+
+    path = _P(__file__).resolve().parents[1] / "scripts" / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_history_report_script_aggregates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The coverage report renders every section from cached parquet (aggregates only)."""
+    _write_universe(tmp_path)
+    fill(tmp_path, "AAA", SESS)
+    fill(tmp_path, "BBB", SESS[:5] + SESS[8:])  # a 3-session gap
+    sess_i = pd.Index(SESS)
+    UnderlyingStore(tmp_path).write("AAA", pd.Series([100.0] * len(SESS), index=sess_i))
+    UnderlyingStore(tmp_path).write("BBB", pd.Series([100.0] * len(SESS), index=sess_i))
+    out = tmp_path / "report.md"
+    rc = _script("theta_history_report").main(
+        [
+            "--version",
+            VERSION,
+            "--data-dir",
+            str(tmp_path),
+            "--start",
+            "2020-01-02",
+            "--end",
+            "2020-01-30",
+            "--sample-every",
+            "1",
+            "--out",
+            str(out),
+        ]
+    )
+    assert rc == 0
+    md = out.read_text()
+    for head in (
+        "Pull summary",
+        "Sessions covered",
+        "Rows per session",
+        "Quote quality",
+        "Quoted spread vs the costs.yaml",
+        "Theta vs Alpaca",
+        "Option-liquidity",
+        "Survivorship",
+    ):
+        assert f"## {head}" in md
+    assert "BBB: 3 (" in md  # the gap inside BBB's own span
+    assert "two-sided quote (bid > 0 and ask > 0): **100.0%**" in md
+    assert "AAA2001" not in md  # no contract symbols (ThetaData terms)
