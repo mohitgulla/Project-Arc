@@ -677,7 +677,9 @@ def _trades(
     return sorted(out, key=lambda t: (t.closed_at, t.proposal_hash))
 
 
-def _bucket(key: dict[str, str], rows: list[AttributedTrade]) -> AttributionBucket:
+def _bucket(
+    key: dict[str, str], rows: list[AttributedTrade], min_sample: int = MIN_SAMPLE
+) -> AttributionBucket:
     evs = [r.pnl_vs_ev for r in rows if r.pnl_vs_ev is not None]
     slips = [r for r in rows if r.slippage_modelled_usd is not None]
     n = len(rows)
@@ -695,7 +697,7 @@ def _bucket(key: dict[str, str], rows: list[AttributedTrade]) -> AttributionBuck
             sum(r.slippage_modelled_usd or 0.0 for r in slips) if slips else None
         ),
         n_slippage=len(slips),
-        low_sample=n < MIN_SAMPLE,
+        low_sample=n < min_sample,
     )
 
 
@@ -716,19 +718,33 @@ def attribution(
     since: _dt.datetime | None,
     until: _dt.datetime,
     by: Iterable[str] = ("kind", "regime", "persona_model"),
+    min_sample: int = MIN_SAMPLE,
 ) -> AttributionReport:
-    """Closed trades in ``[since, until)`` bucketed by the *by* dimensions."""
+    """Closed trades in ``[since, until)`` bucketed by the *by* dimensions.
+
+    *min_sample* sets the ``low_sample`` threshold (E21.3: the Analyst passes its gate 1,
+    20 per D86; every other caller keeps :data:`MIN_SAMPLE`).
+    """
+    if min_sample < 1:
+        msg = f"--min-sample must be >= 1 (got {min_sample})"
+        raise ValueError(msg)
     dims = parse_by(by)
     rows = _trades(conn, since, until)
     groups: dict[tuple[str, ...], list[AttributedTrade]] = defaultdict(list)
     for r in rows:
         groups[tuple(str(getattr(r, d)) for d in dims)].append(r)
     buckets = [
-        _bucket(dict(zip(dims, k, strict=True)), v)
+        _bucket(dict(zip(dims, k, strict=True)), v, min_sample)
         for k, v in sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0]))
     ]
     return AttributionReport(
-        since=since, until=until, by=dims, trades=len(rows), buckets=buckets, rows=rows
+        since=since,
+        until=until,
+        by=dims,
+        min_sample=min_sample,
+        trades=len(rows),
+        buckets=buckets,
+        rows=rows,
     )
 
 

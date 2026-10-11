@@ -152,7 +152,7 @@ def add_journal_parser(sub: argparse._SubParsersAction) -> None:  # type: ignore
 
 def add_scorecard_parser(sub: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
     """``arc scorecard attribution`` (E9.3). The weekly report stays ``arc journal scorecard``."""
-    from arc.journal.views import ATTRIBUTION_DIMENSIONS
+    from arc.journal.views import ATTRIBUTION_DIMENSIONS, MIN_SAMPLE
 
     p = sub.add_parser("scorecard", help="Scorecard views of the audit store (read-only)")
     ssub = p.add_subparsers(dest="scorecard_command", required=True)
@@ -163,6 +163,13 @@ def add_scorecard_parser(sub: argparse._SubParsersAction) -> None:  # type: igno
         "--by",
         default="kind,regime,persona_model",
         help=f"Comma-separated dimensions: {', '.join(ATTRIBUTION_DIMENSIONS)}",
+    )
+    a.add_argument(
+        "--min-sample",
+        type=int,
+        default=MIN_SAMPLE,
+        help=f"Flag buckets below this many trades low_sample (default {MIN_SAMPLE}; "
+        "the Analyst passes its gate 1, 20, per D86)",
     )
     a.add_argument("--json", action="store_true", help="Print the report as JSON")
     a.add_argument("--db", default=None, help="SQLite path (default: data/arc.db)")
@@ -245,7 +252,7 @@ def run_scorecard(args: argparse.Namespace) -> int:
         sys.stderr.write(f"arc scorecard {args.scorecard_command}: {exc}\n")
         return 2
     try:
-        rep = attribution(conn, since=since, until=until, by=args.by)
+        rep = attribution(conn, since=since, until=until, by=args.by, min_sample=args.min_sample)
     except ValueError as exc:
         sys.stderr.write(f"arc scorecard attribution: {exc}\n")
         return 2

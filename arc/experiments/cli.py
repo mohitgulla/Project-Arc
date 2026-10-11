@@ -92,10 +92,27 @@ def add_experiment_parser(sub: argparse._SubParsersAction[argparse.ArgumentParse
             "plan", help="D69: sessions needed for K arms with Holm at the A/A sigma (read-only)"
         )
     )
-    pl.add_argument("spec", help="config/experiments/live/<x>.yaml, or a stored experiment id")
+    pl.add_argument(
+        "spec",
+        nargs="?",
+        default=None,
+        help="config/experiments/live/<x>.yaml, or a stored experiment id (default: an ab "
+        "spec with the config/experiments.yaml defaults, e.g. for an Analyst P-<n> proposal)",
+    )
     pl.add_argument("--sigma", type=float, default=None, help="sigma of d_t (default: A/A's)")
     pl.add_argument(
         "--effect", type=float, default=None, help="daily effect to detect (default: spec mde)"
+    )
+    pl.add_argument(
+        "--k",
+        type=int,
+        default=None,
+        help="treatments to plan for (default: the spec's; 4 without a spec, D86)",
+    )
+    pl.add_argument(
+        "--effects",
+        default=None,
+        help="E21.3: comma list of daily effects; sessions needed at --k for each",
     )
     # E10.2 arm runner: start | pair | arms-tick
     from arc.experiments.cli_arms import add_arm_parsers
@@ -345,6 +362,41 @@ def plan_rows(
     return out
 
 
+def effect_grid(
+    *, sigma: float, effects: list[float], k: int, alpha: float, power: float,
+    min_sessions: int, max_sessions: int, mde: float | None,
+) -> list[dict[str, Any]]:  # fmt: skip
+    """E21.3 (D86): sessions one arm of a *k*-treatment run needs per daily effect.
+
+    What the Analyst's pre-run gate puts in context, so a ``P-<n>`` proposal's
+    ``sessions_needed`` is read off this table, not guessed.
+    """
+    from arc.experiments import stats
+
+    tau = stats.mixing_tau(sigma, mde=mde, min_sessions=min_sessions)
+    out = []
+    for e in effects:
+        need = stats.sessions_needed(sigma, e, tau=tau, alpha=alpha, power=power, k=k)
+        out.append(
+            {
+                "effect": e,
+                "sessions_needed": need,
+                "fits_window": need is not None and need <= max_sessions,
+            }
+        )
+    return out
+
+
+def _parse_effects(text: str | None) -> list[float]:
+    if not text:
+        return []
+    vals = [float(x) for x in text.split(",") if x.strip()]
+    if any(v <= 0 for v in vals):
+        msg = "--effects must be positive daily fractions of t0 equity"
+        raise ValueError(msg)
+    return vals
+
+
 def _run_plan(args: argparse.Namespace, store: Any, conn: sqlite3.Connection) -> int:
     from pathlib import Path
 
@@ -352,10 +404,29 @@ def _run_plan(args: argparse.Namespace, store: Any, conn: sqlite3.Connection) ->
     from arc.experiments.overlay import fill_defaults, load_spec
 
     defaults = experiments_config(effective_settings(conn)).defaults
-    if Path(args.spec).is_file():
-        spec = fill_defaults(load_spec(args.spec), defaults)
+    if args.spec is None:
+        # D86: an Analyst proposal has no id yet; plan it at the registry defaults.
+        exp_id, alpha, power = "(defaults)", defaults.alpha, defaults.power
+        min_s, max_s, mde, k = defaults.min_sessions, defaults.max_sessions, None, 4
     else:
-        spec = store.require(args.spec).spec
+        if Path(args.spec).is_file():
+            spec = fill_defaults(load_spec(args.spec), defaults)
+        else:
+            spec = store.require(args.spec).spec
+        assert spec.alpha is not None and spec.power is not None  # noqa: S101 - filled
+        assert spec.min_sessions is not None and spec.max_sessions is not None  # noqa: S101
+        exp_id, alpha, power = spec.id, spec.alpha, spec.power
+        min_s, max_s, mde, k = spec.min_sessions, spec.max_sessions, spec.mde, len(spec.arms.names)
+    if args.k is not None:
+        if args.k < 1:
+            _err("arc experiment plan: --k must be >= 1")
+            return 2
+        k = args.k
+    try:
+        effects = _parse_effects(args.effects)
+    except ValueError as exc:
+        _err(f"arc experiment plan: {exc}")
+        return 2
     sigma = args.sigma if args.sigma is not None else store.aa_sigma()
     if sigma is None or sigma <= 0:
         _err(
@@ -363,40 +434,41 @@ def _run_plan(args: argparse.Namespace, store: Any, conn: sqlite3.Connection) ->
             "pass --sigma <fraction of t0 equity>"
         )
         return 2
-    assert spec.alpha is not None and spec.power is not None  # noqa: S101 - filled
-    assert spec.min_sessions is not None and spec.max_sessions is not None  # noqa: S101
-    effect = args.effect if args.effect is not None else spec.mde
-    k = len(spec.arms.names)
+    effect = args.effect if args.effect is not None else mde
     rows = plan_rows(
-        sigma=sigma, effect=effect, k_max=max(k, 4), alpha=spec.alpha,
-        power=spec.power, min_sessions=spec.min_sessions, max_sessions=spec.max_sessions,
-        mde=spec.mde,
+        sigma=sigma, effect=effect, k_max=max(k, 4), alpha=alpha,
+        power=power, min_sessions=min_s, max_sessions=max_s, mde=mde,
+    )  # fmt: skip
+    grid = effect_grid(
+        sigma=sigma, effects=effects, k=k, alpha=alpha, power=power,
+        min_sessions=min_s, max_sessions=max_s, mde=mde,
     )  # fmt: skip
     if args.json:
         _out(
             json.dumps(
                 {
-                    "experiment_id": spec.id,
+                    "experiment_id": exp_id,
                     "k": k,
                     "sigma": sigma,
                     "sigma_source": "flag" if args.sigma is not None else "aa",
                     "effect": effect,
-                    "alpha": spec.alpha,
-                    "power": spec.power,
-                    "min_sessions": spec.min_sessions,
-                    "max_sessions": spec.max_sessions,
+                    "alpha": alpha,
+                    "power": power,
+                    "min_sessions": min_s,
+                    "max_sessions": max_s,
                     "rows": rows,
+                    "effects": grid,
                 },
                 indent=2,
             )
         )
         return 0
     _out(
-        f"{spec.id}  K={k} treatment(s)  sigma {_pct(sigma)}/day "
+        f"{exp_id}  K={k} treatment(s)  sigma {_pct(sigma)}/day "
         f"({'--sigma' if args.sigma is not None else 'A/A'})  effect "
         f"{_pct(effect) if effect is not None else '- (no spec mde; pass --effect)'}  "
-        f"alpha {spec.alpha} (Holm)  power {spec.power:.0%}  "
-        f"window {spec.min_sessions}-{spec.max_sessions}"
+        f"alpha {alpha} (Holm)  power {power:.0%}  "
+        f"window {min_s}-{max_s}"
     )
     _out("    K  alpha/K   sessions needed   MDE at max_sessions")
     for r in rows:
@@ -409,6 +481,13 @@ def _run_plan(args: argparse.Namespace, store: Any, conn: sqlite3.Connection) ->
             f"{_pct(r['mde_at_max'])}/day{mark}"
         )
     _out("  each extra arm lowers Holm's first step alpha/K, so every arm needs more sessions")
+    if grid:
+        _out(f"  effect -> sessions needed at K={k}:")
+        for g in grid:
+            need = "-" if g["sessions_needed"] is None else str(g["sessions_needed"])
+            if not g["fits_window"]:
+                need += " (> max)"
+            _out(f"    {_pct(g['effect'])}/day -> {need}")
     return 0
 
 

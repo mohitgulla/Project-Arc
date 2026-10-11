@@ -330,6 +330,12 @@ def test_attribution_bucket_at_min_sample_is_not_low(conn: sqlite3.Connection) -
     assert by["trend"].n == MIN_SAMPLE and by["trend"].low_sample is False
     assert by["trend"].win_rate == pytest.approx(10 / 30)
     assert all(r.source == "outcome" for r in rep.rows)
+    # D86: the Analyst passes its own gate 1 (20); the library default stays 30
+    rep20 = attribution(conn, since=None, until=NOW, by=["regime"], min_sample=MIN_SAMPLE + 1)
+    assert rep20.min_sample == 31
+    assert {b.key["regime"]: b for b in rep20.buckets}["trend"].low_sample is True
+    with pytest.raises(ValueError, match="--min-sample must be >= 1"):
+        attribution(conn, since=None, until=NOW, min_sample=0)
 
 
 def test_attribution_rejects_unknown_dimension() -> None:
@@ -488,6 +494,12 @@ def test_journal_cli_is_read_only(
     assert json.loads(outs[0])["proposals"][0]["status"] == "closed"
     assert json.loads(outs[2])["closed"][0]["source"] == "position"
     assert json.loads(outs[4])["buckets"][0]["low_sample"] is True
+    assert main(["scorecard", "attribution", "--min-sample", "1", "--json", "--db", str(db)]) == 0
+    rep = json.loads(capsys.readouterr().out)
+    assert rep["min_sample"] == 1 and rep["buckets"][0]["low_sample"] is False
+    assert main(["scorecard", "attribution", "--min-sample", "20", "--db", str(db)]) == 0
+    assert "low_sample below n=20" in capsys.readouterr().out
+    assert main(["scorecard", "attribution", "--min-sample", "0", "--db", str(db)]) == 2
     # mode=ro really refuses a write, and a missing store is never created
     with real(db) as ro, pytest.raises(sqlite3.OperationalError):
         ro.execute("INSERT INTO halts (id, at) VALUES ('x', 'y')")
