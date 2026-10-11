@@ -274,18 +274,6 @@ export function shortAge(at: string | null | undefined, now: number): string {
   return a === "just now" ? "now" : a.replace(/ ago$/, "");
 }
 
-/** D92: minutes and seconds, `4m 07s` (`42s` under a minute; hours past 60 min). */
-export function minSecAge(at: string | null | undefined, now: number): string {
-  if (!at) return "—";
-  const t = Date.parse(at);
-  if (Number.isNaN(t)) return "—";
-  const secs = Math.max(0, Math.floor((now - t) / 1000));
-  if (secs < 60) return `${secs}s`;
-  const m = Math.floor(secs / 60);
-  if (m >= 60) return shortAge(at, now);
-  return `${m}m ${String(secs % 60).padStart(2, "0")}s`;
-}
-
 /** Heartbeat status in Title Case: `ok` -> `OK`, `failed` -> `Failed`. */
 export function statusWord(status: string | null | undefined): string {
   if (!status) return "?";
@@ -306,7 +294,7 @@ export function accountLabel(env?: string, account: string = ARC_INVESTOR): stri
  * Slot order (fixed, D92; was D50 Trading · env · Health · Orders · Tick · Alerts):
  * Account · Trading · Orders · Tick · Health · Alerts. The account slot reads
  * `Paper Trade · Arc Investor`; Trading carries the account's session count, `Enabled (7)`;
- * Tick shows minutes and seconds. A halt replaces the Trading slot (`HALTED`, reason, age);
+ * Tick shows minutes (`4m`; D92 rev, owner dropped seconds). A halt replaces the Trading slot (`HALTED`, reason, age);
  * a stale or non-ok heartbeat turns its slot --warn. Values are Title Case.
  */
 export function statusRow(o: Pick<Overview, "status">, ctx: StatusContext): StatusSlot[] {
@@ -357,7 +345,7 @@ export function statusRow(o: Pick<Overview, "status">, ctx: StatusContext): Stat
     if (!at) return { key, label, value: "No data", tone: "none", title: `${label}: no heartbeat yet` };
     const stale = cadence !== undefined && isStale(at, cadence, ctx.now);
     const bad = !!status && status !== "ok";
-    const age = key === "tick" ? minSecAge(at, ctx.now) : shortAge(at, ctx.now);
+    const age = shortAge(at, ctx.now);
     const value = key === "health" || bad ? `${statusWord(status)} ${age}` : age;
     const note = stale ? ` · stale (after ${Math.round((STALE_FACTOR * (cadence ?? 0)) / 60)}m)` : "";
     return {
