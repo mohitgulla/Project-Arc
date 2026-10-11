@@ -85,7 +85,6 @@ from arc.context.ttl import Ttl, parse_duration
 from arc.features.market_health import HealthThresholds  # noqa: TC001 - pydantic field
 from arc.monitoring.config import MonitoringSettings
 from arc.routines.conditions import parse_condition
-from arc.universe.tiers import CarryoverSettings
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -1042,15 +1041,6 @@ class IvBackfillSettings(BaseModel):
     since: _dt.date = _dt.date(2024, 3, 1)
 
 
-class RoutinesUniverseSettings(BaseModel):
-    """D64 (E14.7): the ``universe:`` block (tier-writer knobs shared by the Scout's
-    discovery tier and ``universe.trending``)."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    carryover: CarryoverSettings = Field(default_factory=CarryoverSettings)
-
-
 class RoutinesConfig(BaseModel):
     """Top-level ``config/routines.yaml``."""
 
@@ -1105,7 +1095,6 @@ class RoutinesConfig(BaseModel):
     funnel: FunnelConfig = Field(default_factory=FunnelConfig)  # D56 (E13.3)
     options_slow: OptionsSlowSettings = Field(default_factory=OptionsSlowSettings)  # E13.5
     options_fast: OptionsFastSettings = Field(default_factory=OptionsFastSettings)  # E13.6
-    universe: RoutinesUniverseSettings = Field(default_factory=RoutinesUniverseSettings)  # D64
     iv_backfill: IvBackfillSettings = Field(default_factory=IvBackfillSettings)  # E16.1 (D76)
 
     @model_validator(mode="before")
@@ -1562,6 +1551,11 @@ def load_routines(
     routines YAML before validation; a pre-E20.3 routines path of a moved knob
     (``personas.anti_chase``, ``funnel.…``) is mapped to its strategy.yaml path.
     *strategy_overrides* patch strategy.yaml directly.
+
+    E20.4 (D85): the universe knobs (``universe: carryover:``, the ``universe.trending``
+    ranker options and the ``universe.momentum`` source order / size) live in
+    ``config/universe.yaml``; a routines file or an override that still sets one is
+    refused (read them with :func:`arc.universe.config.universe_config`).
     """
     from arc.routines.strategy import (
         load_strategy_data,
@@ -1569,6 +1563,7 @@ def load_routines(
         split_overrides,
         strategy_path_for,
     )
+    from arc.universe.config import moved_universe_keys, split_universe_overrides
     from arc.utils.yamlpatch import apply_overrides
 
     p = Path(path) if path is not None else DEFAULT_ROUTINES_PATH
@@ -1581,6 +1576,21 @@ def load_routines(
         msg = (
             f"{p}: {', '.join(moved)} moved to config/strategy.yaml (E20.3, PLAN D85): "
             "set each switch with its settings there, e.g. `anti_chase: {enabled: on, ...}`"
+        )
+        raise ValueError(msg)
+    moved_u = moved_universe_keys(data)
+    if moved_u:
+        msg = (
+            f"{p}: {', '.join(moved_u)} moved to config/universe.yaml (E20.4, PLAN D85): "
+            "`carryover:`, `momentum: {source_order, size}`, `trending: {pool, ...}`"
+        )
+        raise ValueError(msg)
+    overrides, u_ov = split_universe_overrides(overrides)
+    if u_ov:
+        msg = (
+            "universe knobs are not routines overrides since E20.4 (PLAN D85): "
+            f"{sorted('.'.join(k) for k in u_ov)} -> config/universe.yaml "
+            "(arc.control.effective maps old paths to the universe target)"
         )
         raise ValueError(msg)
     r_ov, s_ov = split_overrides(overrides)

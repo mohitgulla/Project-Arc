@@ -78,7 +78,7 @@ scalp_movers_context:
   enabled: off                  # key personas.scalp_movers_context
 
 # E14.5 (D60): Reddit mention velocity + "Fastest risers" in the Scout's retail-buzz
-# section (the velocity knobs are the universe.trending job's `velocity` block).
+# section (the velocity knobs are `trending.velocity` in config/universe.yaml).
 scout_buzz_velocity:
   enabled: off                  # key personas.scout_buzz_velocity
 

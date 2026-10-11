@@ -211,7 +211,10 @@ class TestConfig:
 
 class TestRegistry:
     def test_new_knobs(self) -> None:
-        s = ArcSettings(_env_file=None, env="paper")  # type: ignore[call-arg]
+        from arc.control.effective import raw_yaml
+        from arc.control.registry import Target, read_raw
+
+        raw = raw_yaml(Target.UNIVERSE)  # E20.4 (D85): the values live in universe.yaml
         for key, default in (
             ("universe_momentum_size", 20),
             ("universe_discovery_size", 25),  # D58: 25 (was 20)
@@ -222,7 +225,8 @@ class TestRegistry:
             ("universe_floor_trending", 0.6),
         ):
             assert key in REGISTRY, key
-            assert getattr(s, key) == default
+            assert REGISTRY[key].target is Target.UNIVERSE, key
+            assert read_raw(REGISTRY[key], raw) == default, key
         for tier in ("core", "momentum", "discovery", "trending"):
             t = lookup(f"universe_floor_{tier}")
             assert t.risk is Risk.DOWN and t.min == 0.30
@@ -246,7 +250,7 @@ class TestRegistry:
         assert "universe_momentum_size" in REGISTRY
         # E20.2 (D85): renamed from universe_momentum_size_d56; the old key is an alias
         assert lookup("universe_momentum_size_d56").key == "universe_momentum_size"
-        assert lookup("universe_momentum_size").field == "universe_momentum_size"
+        assert lookup("universe_momentum_size").path == ("sizes", "momentum")  # E20.4
         # the single D51 floor now names the core floor
         assert lookup("scalp_min_confidence").key == "universe_floor_core"
         s = _settings()

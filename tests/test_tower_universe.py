@@ -31,6 +31,7 @@ from arc.universe.tiers import (
     UniverseTierPayload,
     ignored_core_override,
     resolve_active,
+    tier_sizes,
     yaml_core,
 )
 from arc.utils.calendar import ET
@@ -124,9 +125,10 @@ def test_todays_resolve_is_shown_as_stored(tmp_path: Path) -> None:
     assert [t.name for t in r.tiers] == ["core", "momentum", "discovery", "trending"]
     assert (tiers["momentum"].listed, tiers["momentum"].active) == (3, 2)
     assert tiers["core"].size_cap == MAX_CORE
-    assert tiers["momentum"].size_cap == ArcSettings().universe_momentum_size
-    assert tiers["discovery"].size_cap == ArcSettings().universe_discovery_size
-    assert tiers["trending"].size_cap == ArcSettings().universe_trending_size == 25
+    sizes = tier_sizes(ArcSettings())  # E20.4 (D85): universe.yaml sizes
+    assert tiers["momentum"].size_cap == sizes[Tier.MOMENTUM]
+    assert tiers["discovery"].size_cap == sizes[Tier.DISCOVERY]
+    assert tiers["trending"].size_cap == sizes[Tier.TRENDING] == 25
     assert sum(t.active for t in r.tiers) == len(r.active)
     assert r.market_reference == ["SPY", "QQQ", "IWM"]
     assert r.core_override_ignored is None

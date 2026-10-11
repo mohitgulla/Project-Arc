@@ -228,8 +228,10 @@ def test_moved_keys_target_strategy_and_keep_their_names() -> None:
     for alias in ("anti_chase", "routines.personas.anti_chase", "finnhub_context"):
         assert lookup(alias).target is Target.STRATEGY
     # Non-strategy routines keys stay on routines.yaml.
-    for key in ("loop.max_idle", "monitoring.coverage_min", "universe.trending.scoring"):
+    for key in ("loop.max_idle", "monitoring.coverage_min"):
         assert lookup(key).target is Target.ROUTINES
+    # E20.4 (D85): the trending ranker knob moved to universe.yaml, same key.
+    assert lookup("universe.trending.scoring").target is Target.UNIVERSE
 
 
 @pytest.mark.parametrize("key", sorted(MOVED_KEYS))

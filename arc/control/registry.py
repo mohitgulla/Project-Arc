@@ -470,86 +470,102 @@ _STATIC: tuple[Tunable, ...] = (
         Risk.GROW,
         max_items=MAX_UNIVERSE,
     ),
-    _s(
-        "universe_active_max",
-        Group.UNIVERSE,
-        _I,
-        "D56: the deduped active list (core > momentum > discovery) is capped "
+    Tunable(
+        key="universe_active_max",
+        group=Group.UNIVERSE,
+        type=_I,
+        description="D56: the deduped active list (core > momentum > discovery) is capped "
         "at this many names; the rest are journaled universe:over_active_cap.",
-        Risk.UP,
+        target=Target.UNIVERSE,  # E20.4 (D85): was ArcSettings.universe_active_max
+        risk=Risk.UP,
+        path=("active_max",),
         min=1,
         max=60,
         hard_ceiling=60,
     ),
-    _s(
-        "universe_momentum_size",
-        Group.UNIVERSE,
-        _I,
-        "D56: momentum tier size (top N of the 25-row momentum feed).",
-        Risk.UP,
+    Tunable(
+        key="universe_momentum_size",
+        group=Group.UNIVERSE,
+        type=_I,
+        description="D56: momentum tier size (top N of the 25-row momentum feed).",
+        target=Target.UNIVERSE,  # E20.4 (D85): was ArcSettings.universe_momentum_size
+        risk=Risk.UP,
+        path=("sizes", "momentum"),
         min=0,
         max=50,
         hard_ceiling=50,
         aliases=("universe_momentum_size_d56",),  # E20.2 (D85): the pre-rename key
     ),
-    _s(
-        "universe_discovery_size",
-        Group.UNIVERSE,
-        _I,
-        "D58: discovery tier size (the Scout's YouTube calls, ranked).",
-        Risk.UP,
+    Tunable(
+        key="universe_discovery_size",
+        group=Group.UNIVERSE,
+        type=_I,
+        description="D58: discovery tier size (the Scout's YouTube calls, ranked).",
+        target=Target.UNIVERSE,  # E20.4 (D85): was ArcSettings.universe_discovery_size
+        risk=Risk.UP,
+        path=("sizes", "discovery"),
         min=0,
         max=25,
         hard_ceiling=25,
     ),
-    _s(
-        "universe_trending_size",
-        Group.UNIVERSE,
-        _I,
-        "D58: trending tier size (the daily Reddit + Stocktwits ranking).",
-        Risk.UP,
+    Tunable(
+        key="universe_trending_size",
+        group=Group.UNIVERSE,
+        type=_I,
+        description="D58: trending tier size (the daily Reddit + Stocktwits ranking).",
+        target=Target.UNIVERSE,  # E20.4 (D85): was ArcSettings.universe_trending_size
+        risk=Risk.UP,
+        path=("sizes", "trending"),
         min=0,
         max=25,
         hard_ceiling=25,
     ),
-    _s(
-        "universe_floor_core",
-        Group.UNIVERSE,
-        _F,
-        "D56: min Scalp confidence for a core name's candidate.",
-        Risk.DOWN,
+    Tunable(
+        key="universe_floor_core",
+        group=Group.UNIVERSE,
+        type=_F,
+        description="D56: min Scalp confidence for a core name's candidate.",
+        target=Target.UNIVERSE,  # E20.4 (D85): was ArcSettings.universe_floor_core
+        risk=Risk.DOWN,
+        path=("floors", "core"),
         min=0.30,
         max=0.95,
         hard_ceiling=0.30,
         # E13.15: the single D51 Scalp floor (and its pre-rename keys) became per tier
         aliases=("scalp_min_confidence", "sweep_min_confidence", "scout_min_confidence"),
     ),
-    _s(
-        "universe_floor_momentum",
-        Group.UNIVERSE,
-        _F,
-        "D56: min Scalp confidence for a momentum name's candidate.",
-        Risk.DOWN,
+    Tunable(
+        key="universe_floor_momentum",
+        group=Group.UNIVERSE,
+        type=_F,
+        description="D56: min Scalp confidence for a momentum name's candidate.",
+        target=Target.UNIVERSE,  # E20.4 (D85): was ArcSettings.universe_floor_momentum
+        risk=Risk.DOWN,
+        path=("floors", "momentum"),
         min=0.30,
         max=0.95,
         hard_ceiling=0.30,
     ),
-    _s(
-        "universe_floor_discovery",
-        Group.UNIVERSE,
-        _F,
-        "D56: min Scalp confidence for a discovery name's candidate (owner: >= 0.6).",
-        Risk.DOWN,
+    Tunable(
+        key="universe_floor_discovery",
+        group=Group.UNIVERSE,
+        type=_F,
+        description="D56: min Scalp confidence for a discovery name's candidate (owner: >= 0.6).",
+        target=Target.UNIVERSE,  # E20.4 (D85): was ArcSettings.universe_floor_discovery
+        risk=Risk.DOWN,
+        path=("floors", "discovery"),
         min=0.30,
         max=0.95,
         hard_ceiling=0.30,
     ),
-    _s(
-        "universe_floor_trending",
-        Group.UNIVERSE,
-        _F,
-        "D58: min Scalp confidence for a trending name's candidate.",
-        Risk.DOWN,
+    Tunable(
+        key="universe_floor_trending",
+        group=Group.UNIVERSE,
+        type=_F,
+        description="D58: min Scalp confidence for a trending name's candidate.",
+        target=Target.UNIVERSE,  # E20.4 (D85): was ArcSettings.universe_floor_trending
+        risk=Risk.DOWN,
+        path=("floors", "trending"),
         min=0.30,
         max=0.95,
         hard_ceiling=0.30,
@@ -2474,7 +2490,6 @@ _ANTI_CHASE_TUNABLES: tuple[Tunable, ...] = (
 _SOURCE_OPTION_PATHS: frozenset[tuple[str, ...]] = frozenset(
     {
         ("sources", "options_fast", "max_tickers"),
-        ("sources", "universe.trending", "scoring"),  # E14.5
     }
 )
 _OPTIONS_FAST_TUNABLES: tuple[Tunable, ...] = (
@@ -2493,15 +2508,16 @@ _OPTIONS_FAST_TUNABLES: tuple[Tunable, ...] = (
     ),
     # E14.5 (D60/D44): the trending ranker's Reddit scoring. Strategy (a selection
     # change): rank_gain is the default (D86: velocity is an Analyst idea-seed lead).
+    # E20.4 (D85): universe.yaml `trending.scoring` (was the universe.trending job option).
     Tunable(
         key="universe.trending.scoring",
         group=Group.ROUTINES,
         type=ValueType.CHOICE,
         description="E14.5: how the trending tier scores Reddit: mentions plus the 24 h "
         "rank gain (rank_gain) or plus the mention velocity (m + k) / (m24 + k) (velocity).",
-        target=Target.ROUTINES,
+        target=Target.UNIVERSE,
         risk=Risk.ORDER,
-        path=("sources", "universe.trending", "scoring"),
+        path=("trending", "scoring"),
         choices=("rank_gain", "velocity"),
         aliases=(
             "routines.universe.trending.scoring",
@@ -2512,8 +2528,9 @@ _OPTIONS_FAST_TUNABLES: tuple[Tunable, ...] = (
 )
 
 
-# D64 (E14.7): the `universe.carryover` block in routines.yaml (discovery + trending
-# two-run merge). On by default (owner decision, not an experiment).
+# D64 (E14.7): the `carryover:` block in universe.yaml (E20.4; was routines.yaml
+# `universe: carryover:`; discovery + trending two-run merge). On by default (owner
+# decision, not an experiment).
 _CARRYOVER_TUNABLES: tuple[Tunable, ...] = (
     Tunable(
         key="universe.carryover.enabled",
@@ -2521,9 +2538,9 @@ _CARRYOVER_TUNABLES: tuple[Tunable, ...] = (
         type=_B,
         description="D64: discovery + trending entries merge the previous run's names "
         "(48 h, 0.6 x today + 0.4 x previous). Off = each run's list only.",
-        target=Target.ROUTINES,
+        target=Target.UNIVERSE,
         risk=Risk.TRUE,
-        path=("universe", "carryover", "enabled"),
+        path=("carryover", "enabled"),
         aliases=("routines.universe.carryover.enabled", "carryover.enabled"),
     ),
     Tunable(
@@ -2532,10 +2549,10 @@ _CARRYOVER_TUNABLES: tuple[Tunable, ...] = (
         type=_I,
         description="D64: the previous run is merged only when written this many hours "
         "before the new run (strict clock hours; Monday's run has no previous run at 48).",
-        target=Target.ROUTINES,
+        target=Target.UNIVERSE,
         risk=Risk.UP,
         unit="h",
-        path=("universe", "carryover", "window_h"),
+        path=("carryover", "window_h"),
         min=24,
         max=96,
         hard_ceiling=96,
@@ -2547,9 +2564,9 @@ _CARRYOVER_TUNABLES: tuple[Tunable, ...] = (
         type=_F,
         description="D64: weight of this run's score in the combined score (the previous "
         "run gets 1 - w_today).",
-        target=Target.ROUTINES,
+        target=Target.UNIVERSE,
         risk=Risk.DOWN,
-        path=("universe", "carryover", "w_today"),
+        path=("carryover", "w_today"),
         min=0.5,
         max=1.0,
         hard_ceiling=0.5,
@@ -3129,7 +3146,6 @@ _PLAIN_ROUTINE_SECTIONS = (
     ("tower",),
     ("funnel",),
     ("options_slow",),  # E13.5
-    ("universe",),  # D64 (E14.7): universe.carryover.*
     ("iv_backfill",),  # E16.1 (D76)
 )
 # E20.3 (D85): feature switches in strategy.yaml, `<block>.enabled` (a YAML bool), shown

@@ -207,9 +207,8 @@ def llm(cfg: Tower, conn: Conn, days: Annotated[int, Query(ge=1, le=365)] = 30) 
 def universe(cfg: Tower, conn: Conn) -> UniverseResponse:
     """E12.6 (D51): the stored active list by tier, tier feeds, drops, ignored override."""
     settings, routines = effective(cfg)
-    from arc.universe.velocity import VelocityOptions
+    from arc.universe.config import universe_config
 
-    tjob = routines.job("universe.trending")
     yjob = routines.job("youtube.briefs")
     labels = {
         str(c["slug"]): str(c.get("label") or c["slug"])
@@ -221,9 +220,7 @@ def universe(cfg: Tower, conn: Conn) -> UniverseResponse:
         settings,
         now=cfg.clock(),
         director_diversification=routines.director_diversification.mode,
-        velocity=VelocityOptions.model_validate(
-            (tjob[1].options.get("velocity") if tjob else None) or {}
-        ),
+        velocity=universe_config(settings).trending.velocity,  # E20.4: universe.yaml
         channel_labels=labels,
     )
 

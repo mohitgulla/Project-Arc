@@ -347,6 +347,21 @@ class TestRegistry:
         want = {
             f"universe_screen_{p}_{leaf}" for p in ("standard", "loose") for leaf in SCREEN_KEYS
         } | {"universe.active_fill"}  # D67 (E14.9)
+        # E20.4 (D85): the active cap, sizes, floors, carry-over and trending scoring
+        want |= {
+            "universe_active_max",
+            "universe_momentum_size",
+            "universe_discovery_size",
+            "universe_trending_size",
+            "universe_floor_core",
+            "universe_floor_momentum",
+            "universe_floor_discovery",
+            "universe_floor_trending",
+            "universe.carryover.enabled",
+            "universe.carryover.window_h",
+            "universe.carryover.w_today",
+            "universe.trending.scoring",
+        }
         assert got == want
         screens = LiquidityScreens()
         for prof in ("standard", "loose"):

@@ -393,13 +393,10 @@ def render_doc(doc: _Doc, *, max_chars: int) -> str:
 def scalp_prompt_floor(settings: ArcSettings) -> float:
     """The lowest tier floor (D56): the prompt's "only report at or above" line. Each
     candidate is then held to its own tier's floor (core 0.4 / momentum 0.5 /
-    discovery 0.6 / trending 0.6)."""
-    return min(
-        settings.universe_floor_core,
-        settings.universe_floor_momentum,
-        settings.universe_floor_discovery,
-        settings.universe_floor_trending,
-    )
+    discovery 0.6 / trending 0.6; universe.yaml ``floors:``)."""
+    from arc.universe.tiers import tier_floors
+
+    return min(tier_floors(settings).values())
 
 
 def build_prompt(

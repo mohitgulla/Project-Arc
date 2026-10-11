@@ -188,16 +188,6 @@ iv_backfill:
   max_runtime_s: 900            # no new ticker starts after this (resumable next run)
   since: 2024-03-01             # first day backfilled (change by PR)
 
-# D64 (E14.7) two-run carry-over for discovery + trending: score = w_today x this run +
-# (1 - w_today) x the previous run's entry (<= window_h old, earlier ET day), cut to the
-# tier size; carried names are re-checked against exclusions, never re-screened. Off =
-# this run only. Tunable: `!arc config set universe.carryover.enabled|window_h|w_today`.
-universe:
-  carryover:
-    enabled: true               # owner decision D64: on by default (not an experiment)
-    window_h: 48                # 24-96: strict clock hours (Monday's run has no previous run)
-    w_today: 0.6                # 0.5-1.0; previous run weight = 1 - w_today
-
 # D30 source registry: every raw_doc_ref source (each RSS feed separately) is a Scalp
 # source and declares exactly one of `category:` or `reference: true`. Knobs: weight,
 # max_docs_per_run, label. The Scalp reads `scalp_doc_budget` docs per run, equal per
@@ -545,8 +535,7 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
       until_written: "universe_tier:momentum"
     context: {ttl: 35d, supersede: latest}  # a missed month never empties the tier
     writes: [universe_tier, active_universe]   # re-resolves today's active list after the write
-    source_order: [stockanalysis, schwab]      # Schwab only when stockanalysis fails or < 20 rows
-    size: 25
+    # E20.4 (D85): source order + feed size are `momentum:` in config/universe.yaml
   # E13.19 (D58): Trending tier v2. One daily pull of Reddit (ApeWisdom) + Stocktwits
   # (category retail_buzz, Scout slow feed), then a code ranking (no LLM) into the
   # trending tier: names in both inputs first, then the best single-input names.
@@ -584,20 +573,13 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     schedule: ["05:50"]         # after retail_buzz 05:40, before the 06:00 Scout; `arc universe trending` = by hand
     days: trading
     ttl: 1h
-    # D64: the entry lives 48 h and merges the previous run's (universe.carryover); a
+    # D64: the entry lives 48 h and merges the previous run's (universe.yaml carryover); a
     # failed run writes nothing, so the previous list stays valid.
     context: {ttl: 48h, supersede: latest}
     reads: [retail_buzz, universe_tier]
     writes: [universe_tier, active_universe]   # re-resolves today's active list after the write
-    pool: 40                    # first 40 in rank order get the tier's screen
-    min_inputs_first: 2         # names in both inputs rank ahead of single-input names
-    exclude_market_reference: true
-    # E14.5 (D60): rank_gain = 24 h rank gain (control); velocity = (m + k) / (m24 + k).
-    # Strategy lane: `!arc config universe.trending.scoring` (velocity is an Analyst idea-seed lead, D86).
-    scoring: rank_gain
-    velocity:                   # also the Scout's velocity lines (personas.scout_buzz_velocity)
-      smoothing: 5              # k: a 3 -> 12 jump reads 2.1x, not 4x
-      min_mentions: 10          # fewer 24 h mentions -> no velocity (never ranked as growth)
+    # E20.4 (D85): the ranker knobs (pool, min_inputs_first, exclude_market_reference,
+    # scoring, velocity) and the D64 carry-over are in config/universe.yaml.
   # E14.6 (D60): Stocktwits per-ticker sentiment (latest 30 messages, user-tagged
   # Bullish/Bearish counted). Context only, behind personas.retail_sentiment_context; a 429
   # stops the run and keeps what was fetched. OPS "Stocktwits per-ticker sentiment".
@@ -636,7 +618,7 @@ personas:
     notify: card
     reads: [channel_brief, options_daily, vx_curve, vol_term, retail_buzz, retail_sentiment, universe_tier, active_universe]   # retail_buzz: D58, context only (E13.20); retail_sentiment: E14.6, read only with personas.retail_sentiment_context on
     writes: [scout_read, candidate, note, universe_tier, active_universe]   # universe_tier: discovery only; active_universe: re-resolve after
-    context_kinds:              # D64 (E14.7): discovery lives 48 h and merges the previous run (universe.carryover)
+    context_kinds:              # D64 (E14.7): discovery lives 48 h and merges the previous run (universe.yaml carryover)
       universe_tier: {ttl: 48h, supersede: latest}
   scalp:                        # D31: every 30 min in session (15 runs), after the fast sources
     label: Scalp

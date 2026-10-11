@@ -897,7 +897,8 @@ discoveries, `universe.tiers.model`); an old `model:` / `trending:` key in
   carries `merged_from` (previous entry id) and `merge` (knobs). A failed run writes
   nothing, so the previous list serves until its 48 h end. Knobs:
   `universe.carryover.enabled` (true; off = each run's list only), `.window_h` (48,
-  24–96), `.w_today` (0.6, 0.5–1.0) in `config/routines.yaml` / `!arc config set`.
+  24–96), `.w_today` (0.6, 0.5–1.0) in `config/universe.yaml` `carryover:` (E20.4) /
+  `!arc config set`.
   Rehearse on a scratch copy: `arc universe trending --db <scratch> --now <next 05:50>`
   (`--now` on a real run needs an explicit `--db`); the printout shows
   `score (today · prev)` per name. `/api/ops/universe` active rows carry the same fields.

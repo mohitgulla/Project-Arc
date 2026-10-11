@@ -243,7 +243,7 @@ def _run_tiers(args: argparse.Namespace, settings: ArcSettings, now: _dt.datetim
     """Resolve the active list now from the store (read-only) and print every stage."""
     from arc.control.effective import effective_settings
     from arc.store.db import connect_ro
-    from arc.universe.tiers import TIER_ORDER, build_active, market_reference
+    from arc.universe.tiers import TIER_ORDER, active_max, build_active, market_reference
 
     if args.now:
         import datetime as dt
@@ -279,7 +279,7 @@ def _run_tiers(args: argparse.Namespace, settings: ArcSettings, now: _dt.datetim
         "model": active.model,
         "as_of": active.as_of.isoformat(),
         "config_version": eff.config_version,
-        "active_max": eff.universe_active_max,
+        "active_max": active_max(eff),
         "tiers": {k: [m.ticker for m in v] for k, v in tiers.items()},
         "raw_counts": active.raw_counts,
         "expired_tiers": [t.value for t in active.expired_tiers],
@@ -360,7 +360,6 @@ def _run_trending(args: argparse.Namespace, settings: ArcSettings, now: _dt.date
     from arc.universe.config import universe_config
     from arc.universe.trending import (
         TrendingError,
-        TrendingOptions,
         fastest_risers,
         table,
         velocity_text,
@@ -368,11 +367,9 @@ def _run_trending(args: argparse.Namespace, settings: ArcSettings, now: _dt.date
 
     now = _parse_now(args.now, now)
     routines = load_routines()
-    job = routines.jobs().get("universe.trending")
-    options: dict[str, object] = dict(job[1].options) if job is not None else {}
+    options: dict[str, object] = {}
     if args.scoring:  # E14.5: compare the two Reddit scorings without a config change
         options["scoring"] = args.scoring
-    vopts = TrendingOptions.from_options(options).velocity
     try:
         conn = connect_ro(args.db)
     except FileNotFoundError as exc:
@@ -380,6 +377,8 @@ def _run_trending(args: argparse.Namespace, settings: ArcSettings, now: _dt.date
         return 1
     try:
         eff = effective_settings(conn, base=settings)
+        # E20.4 (D85): the ranker knobs are universe.yaml `trending:` (+ D26 overrides)
+        vopts = universe_config(eff).trending.velocity
         res = run_trending_tier(
             conn=conn,
             settings=eff,
@@ -449,14 +448,10 @@ def _run_momentum(args: argparse.Namespace, settings: ArcSettings, now: _dt.date
             _out({"error": "--source is only valid with --dry-run"}, args.json)
             return 2
         return _run_momentum_job(args)
-    from arc.routines.config import load_routines
     from arc.routines.handlers import run_momentum
     from arc.universe.momentum import MomentumError
 
-    options: dict[str, object] = {}
-    job = load_routines().jobs().get("universe.momentum")
-    if job is not None:
-        options = job[1].options
+    options: dict[str, object] = {}  # E20.4: source order = universe.yaml momentum
     if args.source:
         options["source_order"] = [args.source]
     try:

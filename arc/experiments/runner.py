@@ -157,8 +157,15 @@ PERSONA_OVERLAY_PREFIXES: dict[str, tuple[str, ...]] = {
     ),
     # E14.5 (D60): a trending-ranker overlay (e.g. `scoring: velocity`) runs the
     # arm's own trending tier job; it also owns the Scout (TIER_COMPANIONS), which
-    # re-resolves the active list after it.
-    "trending": ("routines.sources.universe.trending.*",),
+    # re-resolves the active list after it. E20.4 (D85): the ranker knobs and the
+    # carry-over live in universe.yaml (old `routines.sources.universe.trending.*`
+    # overlay leaves are mapped there by arc.control.effective.overlay_overrides).
+    "trending": (
+        "routines.sources.universe.trending.*",
+        "universe.trending.*",
+        "universe.carryover.*",
+        "universe.sizes.trending",
+    ),
 }
 # The routine jobs each arm persona runs (the 30-min Scalp and its 22:00 run).
 PERSONA_JOBS: dict[str, tuple[str, ...]] = {

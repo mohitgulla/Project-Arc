@@ -1536,11 +1536,6 @@ def symbols_source(ctx: JobContext) -> JobResult:
     return JobResult(summary=" · ".join(parts), metrics=metrics)
 
 
-MOMENTUM_SOURCES_DEFAULT = ("stockanalysis", "schwab")
-#: E12.2: rows the momentum feed keeps (the tier takes its top universe_momentum_size).
-MOMENTUM_FEED_SIZE = 25
-
-
 def run_momentum(
     *,
     settings: ArcSettings,
@@ -1550,22 +1545,24 @@ def run_momentum(
 ) -> Any:
     """E12.2: fetch + select the momentum tier (no write). Returns a ``MomentumFetch``.
 
+    Source order and feed size are universe.yaml ``momentum.source_order`` / ``size``
+    (E20.4, D85); *options* ``source_order`` (the CLI's ``--source``) overrides the order.
     Raises :class:`arc.universe.momentum.MomentumError` when every source fails.
     """
     from arc.pipeline.market import ETF_UNDERLYINGS
-    from arc.universe import load_symbol_master, load_universe_config
+    from arc.universe import load_symbol_master
+    from arc.universe.config import universe_config
     from arc.universe.momentum import fetch_momentum
 
-    cfg = load_universe_config(settings.universe_config_file)
+    cfg = universe_config(settings)
     master = load_symbol_master(
         cfg.symbol_master, user_agent=settings.edgar_user_agent, now=now, fetch_if_missing=False
     )
-    order = [str(s) for s in options.get("source_order", MOMENTUM_SOURCES_DEFAULT)]
-    size = int(options.get("size", MOMENTUM_FEED_SIZE))
+    order = [str(s) for s in options.get("source_order", cfg.momentum.source_order)]
     return fetch_momentum(
         cfg.momentum,
         source_order=order,
-        size=size,
+        size=cfg.momentum.size,
         user_agent=settings.edgar_user_agent,
         master=master,
         etfs=ETF_UNDERLYINGS | set(cfg.tiers.reference()),
@@ -1584,7 +1581,7 @@ def universe_momentum_source(ctx: JobContext) -> JobResult:
     """
     import datetime as dt
 
-    from arc.universe import load_universe_config
+    from arc.universe.config import universe_config
     from arc.universe.momentum import (
         build_payload,
         is_stale,
@@ -1593,16 +1590,16 @@ def universe_momentum_source(ctx: JobContext) -> JobResult:
         tier_diff,
     )
 
-    fetch = run_momentum(settings=ctx.settings, options=ctx.options, now=ctx.now)
+    fetch = run_momentum(settings=ctx.settings, options={}, now=ctx.now)
     today = ctx.now.astimezone(ET).date()
-    cfg = load_universe_config(ctx.settings.universe_config_file).momentum
+    cfg = universe_config(ctx.settings).momentum
     stale = is_stale(fetch.as_of, today, cfg.stale_after_days)
     as_of_dt = dt.datetime.combine(fetch.as_of, dt.time(), tzinfo=ET) if fetch.as_of else None
     ctx.record_input(
         "spmo_holdings", fetch.url, None, as_of=as_of_dt, count=len(fetch.rows), digest=fetch.digest
     )
     previous = previous_members(ctx.conn)
-    order = [str(s) for s in ctx.options.get("source_order", MOMENTUM_SOURCES_DEFAULT)]
+    order = cfg.source_order
     line = notice_line(fetch, previous, stale=stale, primary=order[0] if order else "")
     ctx.write("universe_tier", "momentum", build_payload(fetch, now=ctx.now))
     # The job's `context:` (35d) is for the tier entry; the active list keeps its own
@@ -1751,14 +1748,17 @@ def run_trending_tier(
     conn: sqlite3.Connection,
     settings: ArcSettings,
     routines: RoutinesConfig,
-    options: Mapping[str, Any],
+    options: Mapping[str, Any] | None = None,
     now: _dt.datetime,
     screen: bool = True,
     market_factory: Callable[[], Any] | None = None,
 ) -> Any:
     """E13.19 (D58): rank the latest ``retail_buzz`` entry into the trending tier
     (no write). Returns a ``TrendingResult``; raises ``TrendingError`` when the tier
-    cannot be built (0 live inputs, no symbol master)."""
+    cannot be built (0 live inputs, no symbol master).
+
+    The ranker knobs are universe.yaml ``trending:`` (E20.4, D85) with the D26 overrides
+    on *settings*; *options* (e.g. the CLI's ``--scoring``) patch them for this run."""
     from datetime import timedelta
 
     from arc.context.categories import SourceCategory
@@ -1774,7 +1774,8 @@ def run_trending_tier(
         run_trending,
     )
 
-    opts = TrendingOptions.from_options(options)
+    ucfg = universe_config(settings)
+    opts = TrendingOptions.from_options({**ucfg.trending.model_dump(), **(options or {})})
     buzz_spec = routines.sources.get("retail_buzz")
     enabled = (
         list(RetailBuzzConfig.from_options(buzz_spec.options).enabled)
@@ -1783,7 +1784,6 @@ def run_trending_tier(
     )
     max_age = routines.source_max_age("retail_buzz", SourceCategory.RETAIL_BUZZ).duration
     buzz, stale = latest_buzz(conn, now=now, max_age=max_age or timedelta(hours=24))
-    ucfg = universe_config(settings)
     master = load_symbol_master(
         ucfg.symbol_master, user_agent=settings.edgar_user_agent, now=now, fetch_if_missing=False
     )
@@ -1816,7 +1816,7 @@ def run_trending_tier(
         opts=opts,
         now=now,
         master=master,
-        size=settings.universe_trending_size,
+        size=ucfg.sizes.trending,
         exclude=exclude,
         screen=guard_screen,
     )
@@ -1828,11 +1828,12 @@ def universe_trending_source(ctx: JobContext) -> JobResult:
 
     Journals every admission / screen fail / leveraged drop and posts the daily diff as
     a notice. D64 (E14.7): the written list merges the previous run's entry (48 h,
-    ``universe.carryover``); carried names are journaled ``universe:carried_over``.
+    universe.yaml ``carryover``); carried names are journaled ``universe:carried_over``.
     0 live inputs raises: ``failed`` + alerted, nothing written, so the previous entry
     stays valid until its 48 h end.
     """
     from arc.universe.carryover import apply_carryover, journal_carried
+    from arc.universe.config import universe_config
     from arc.universe.tiers import Tier
     from arc.universe.trending import (
         build_payload,
@@ -1841,11 +1842,12 @@ def universe_trending_source(ctx: JobContext) -> JobResult:
         previous_members,
     )
 
+    ucfg = universe_config(ctx.settings)
     res = run_trending_tier(
         conn=ctx.conn,
         settings=ctx.settings,
         routines=ctx.routines,
-        options=ctx.options,
+        options={},
         now=ctx.now,
     )
     for i in res.inputs:
@@ -1866,8 +1868,8 @@ def universe_trending_source(ctx: JobContext) -> JobResult:
         ctx.conn,
         build_payload(res, now=ctx.now),
         now=ctx.now,
-        cfg=ctx.routines.universe.carryover,
-        size=ctx.settings.universe_trending_size,
+        cfg=ucfg.carryover,
+        size=ucfg.sizes.trending,
         excluded=res.carry_excluded,
     )
     tickers = [m.ticker for m in payload.members]
@@ -2464,6 +2466,7 @@ def scout_persona(
     from arc.slack.digests import TrendingFact, scout_card
     from arc.store.repos import CandidateRepo
     from arc.universe.carryover import apply_carryover, journal_carried
+    from arc.universe.config import universe_config
     from arc.universe.guard import UniverseGuard
     from arc.universe.tiers import (
         Tier,
@@ -2481,23 +2484,20 @@ def scout_persona(
     channels = configured_channels(found[1].options if found else None)
     membership = tier_membership(ctx.conn, settings, ctx.now)
     higher = {t: tier.value for t, tier in membership.items() if tier in (Tier.CORE, Tier.MOMENTUM)}
-    floor = settings.universe_floor_discovery
+    ucfg = universe_config(settings)  # E20.4 (D85): floors, sizes, carryover, trending
+    floor = ucfg.floors.discovery
     # E13.20 (D58): today's trending tier (code-ranked, E13.19), read as context only
     trending = load_tier_inputs(ctx.conn, settings, ctx.now).trending
     trending_names = [m.ticker for m in sorted(trending, key=lambda m: m.rank)][
-        : settings.universe_trending_size
+        : ucfg.sizes.trending
     ]
     buzz_velocity = None
     if ctx.routines.scout_buzz_velocity.enabled:  # E14.5 (D60), strategy lane, default off
         from arc.personas.scout import BuzzVelocity
-        from arc.universe.config import universe_config
-        from arc.universe.trending import TrendingOptions
 
-        tjob = ctx.routines.job("universe.trending")
-        topts = TrendingOptions.from_options(tjob[1].options if tjob else {})
         buzz_velocity = BuzzVelocity(
-            options=topts.velocity,
-            stop_words=tuple(universe_config(settings).extraction.stop_words),
+            options=ucfg.trending.velocity,
+            stop_words=tuple(ucfg.extraction.stop_words),
         )
     inp = scout_input_from_context(
         ctx.snapshot,
@@ -2666,8 +2666,8 @@ def scout_persona(
             digest=sha256(",".join(disc.tickers)),
         ),
         now=ctx.now,
-        cfg=ctx.routines.universe.carryover,
-        size=settings.universe_discovery_size,
+        cfg=ucfg.carryover,
+        size=ucfg.sizes.discovery,
         excluded=lambda sym: "excluded" if sym in excluded else None,
     )
     journal_carried(
@@ -2751,7 +2751,7 @@ def scout_persona(
             chain_run_id=ctx.chain_run_id,
             trending=TrendingFact(
                 names=len(trending_names),
-                size=settings.universe_trending_size,
+                size=ucfg.sizes.trending,
                 both=sum(
                     1 for m in trending if m.ticker in set(trending_names) and (m.inputs or 0) >= 2
                 ),

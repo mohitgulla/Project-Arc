@@ -221,8 +221,25 @@ def _flatten(node: Any, prefix: tuple[str, ...] = ()) -> dict[tuple[str, ...], A
 def overlay_overrides(
     overlay: dict[str, dict[str, Any]] | None,
 ) -> dict[str, dict[tuple[str, ...], Any]]:
-    """An experiment arm overlay (``target -> partial file``) as D26-style overrides."""
-    return {t: _flatten(data) for t, data in (overlay or {}).items() if data}
+    """An experiment arm overlay (``target -> partial file``) as D26-style overrides.
+
+    E20.4 (D85): a pre-E20.4 routines leaf of a moved universe knob (``routines:
+    universe: carryover: …``, ``routines: sources: universe.trending: scoring``) lands
+    on the ``universe`` target at its new path (an explicit ``universe:`` leaf wins).
+    """
+    from arc.universe.config import split_universe_overrides
+
+    out = {t: _flatten(data) for t, data in (overlay or {}).items() if data}
+    routines = out.get(Target.ROUTINES.value)
+    if routines:
+        rest, moved = split_universe_overrides(routines)
+        if moved:
+            out[Target.UNIVERSE.value] = {**moved, **out.get(Target.UNIVERSE.value, {})}
+            if rest:
+                out[Target.ROUTINES.value] = rest
+            else:
+                del out[Target.ROUTINES.value]
+    return out
 
 
 def effective_settings(

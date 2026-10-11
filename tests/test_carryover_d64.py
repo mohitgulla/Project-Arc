@@ -35,6 +35,7 @@ from arc.universe.carryover import (
     parse_reason_score,
     previous_entry,
 )
+from arc.universe.config import load_universe_config, universe_config
 from arc.universe.guard import UniverseGuard
 from arc.universe.master import SymbolInfo, SymbolMaster
 from arc.universe.screen import LiquidityMetrics, ScreenResult
@@ -374,8 +375,11 @@ def test_journal_carried_once_per_day(db: sqlite3.Connection) -> None:
 
 class TestConfig:
     def test_shipped_yaml(self) -> None:
+        # E20.4 (D85): the carry-over lives in config/universe.yaml
+        assert load_universe_config().carryover == CarryoverSettings(
+            enabled=True, window_h=48, w_today=0.6
+        )
         c = load_routines(DEFAULT_ROUTINES_PATH)
-        assert c.universe.carryover == CarryoverSettings(enabled=True, window_h=48, w_today=0.6)
         for job in ("scout", "universe.trending"):
             pol = c.context_policy("universe_tier", job)
             assert pol.ttl is not None and pol.ttl.duration == dt.timedelta(hours=48), job
@@ -425,7 +429,8 @@ class TestConfig:
         from arc.control.effective import raw_yaml
         from arc.control.registry import Target
 
-        raw = raw_yaml(Target.ROUTINES)
+        assert REGISTRY["universe.carryover.enabled"].target is Target.UNIVERSE  # E20.4
+        raw = raw_yaml(Target.UNIVERSE)
         assert read_raw(REGISTRY["universe.carryover.enabled"], raw) is True
         assert read_raw(REGISTRY["universe.carryover.window_h"], raw) == 48
         assert read_raw(REGISTRY["universe.carryover.w_today"], raw) == 0.6
@@ -433,14 +438,26 @@ class TestConfig:
         t = REGISTRY["universe.carryover.window_h"]
         assert (t.min, t.max) == (24, 96)
         assert write_raw(REGISTRY["universe.carryover.enabled"], False, raw) == [
-            (("universe", "carryover", "enabled"), False)
+            (("carryover", "enabled"), False)
         ]
 
     def test_override_applies(self) -> None:
-        c = load_routines(
-            DEFAULT_ROUTINES_PATH, overrides={("universe", "carryover", "enabled"): False}
+        s = _settings().with_yaml_overrides("universe", {("carryover", "enabled"): False})
+        assert universe_config(s).carryover.enabled is False
+        assert universe_config(_settings()).carryover.enabled is True
+
+    def test_routines_refuses_the_old_block(self, tmp_path: Path) -> None:
+        """E20.4: a routines.yaml / override still carrying `universe: carryover:` is refused."""
+        p = tmp_path / "routines.yaml"
+        p.write_text(
+            DEFAULT_ROUTINES_PATH.read_text() + "\nuniverse:\n  carryover:\n    enabled: false\n"
         )
-        assert c.universe.carryover.enabled is False
+        with pytest.raises(ValueError, match="moved to config/universe.yaml"):
+            load_routines(p)
+        with pytest.raises(ValueError, match="not routines overrides"):
+            load_routines(
+                DEFAULT_ROUTINES_PATH, overrides={("universe", "carryover", "enabled"): False}
+            )
 
 
 # -- writers end to end -------------------------------------------------------------------
@@ -500,6 +517,7 @@ def _run_trending(
     reddit: list[str],
     stocktwits: list[str],
     master: SymbolMaster,
+    settings: ArcSettings | None = None,
 ) -> Any:
     at = now - dt.timedelta(minutes=10)
     ContextStore(db).write(
@@ -524,7 +542,7 @@ def _run_trending(
         conn=db,
         snapshot=ContextStore(db).snapshot(now, kinds=[]),
         routines=routines,
-        settings_factory=_settings,
+        settings_factory=(lambda: settings) if settings is not None else _settings,
     )
 
     def screen(sym: str, _p: Any = None) -> ScreenResult:
@@ -596,12 +614,11 @@ class TestTrendingJob:
         assert "SOXL" not in {m.ticker for m in _stored(db, "trending").members}
 
     def test_off_switch(self, db: sqlite3.Connection) -> None:
-        routines = load_routines(
-            DEFAULT_ROUTINES_PATH, overrides={("universe", "carryover", "enabled"): False}
-        )
+        routines = load_routines(DEFAULT_ROUTINES_PATH)
+        off = _settings().with_yaml_overrides("universe", {("carryover", "enabled"): False})
         master = _master(*self.SYMS)
-        _run_trending(db, routines, THU, ["TEM", "AAA"], ["TEM"], master)
-        _run_trending(db, routines, FRI, ["CCC"], ["CCC"], master)
+        _run_trending(db, routines, THU, ["TEM", "AAA"], ["TEM"], master, off)
+        _run_trending(db, routines, FRI, ["CCC"], ["CCC"], master, off)
         fri = _stored(db, "trending")
         assert [m.ticker for m in fri.members] == ["CCC"]
         assert fri.merge is None and fri.merged_from is None
@@ -621,7 +638,6 @@ class TestScoutJob:
                         update={"context_kinds": scout.context_kinds}
                     )
                 },
-                "universe": routines.universe,
             }
         )
         # yesterday's discovery entry (Scout NOW - 1 day): OKLO carried, RKLB in both

@@ -6,12 +6,12 @@ Four tiers, highest precedence first:
   D26 override when it has at most :data:`MAX_CORE` names). Never screened.
 * ``momentum`` — top holdings of the S&P 500 Momentum index (E12.2), read from the
   latest valid ``universe_tier`` context entry with subject ``momentum``, cut to the
-  top ``universe_momentum_size`` rows by rank.
+  top ``sizes.momentum`` (``universe_momentum_size``) rows by rank.
 * ``discovery`` — the Scout's ``universe_tier`` entry with subject ``discovery``
-  (E13.7), cut to ``universe_discovery_size`` (25); empty until the Scout writes it.
+  (E13.7), cut to ``sizes.discovery`` (25); empty until the Scout writes it.
 * ``trending`` — D58 (E13.19): the ``universe.trending`` job's ``universe_tier`` entry
   (subject ``trending``), ranked by code from the daily ``retail_buzz`` pull (Reddit +
-  Stocktwits), cut to ``universe_trending_size`` (25).
+  Stocktwits), cut to ``sizes.trending`` (25).
 
 :func:`resolve_active` is pure and deterministic: a name keeps its **highest** tier
 (core > momentum > discovery > trending) and records the others in ``also_in``; each
@@ -67,6 +67,7 @@ __all__ = [
     "TierMember",
     "UniverseTierPayload",
     "active_by_tier",
+    "active_max",
     "active_tickers",
     "active_tickers_ro",
     "build_active",
@@ -78,7 +79,9 @@ __all__ = [
     "resolve_active",
     "seed_tickers",
     "tier_floor",
+    "tier_floors",
     "tier_membership",
+    "tier_size",
     "tier_sizes",
     "watch_tickers",
     "yaml_core",
@@ -175,7 +178,8 @@ class CarryoverKnobs(BaseModel):
 
 
 class CarryoverSettings(BaseModel):
-    """D64 (E14.7): ``universe.carryover`` in ``config/routines.yaml`` (D26 tunables).
+    """D64 (E14.7): ``carryover:`` in ``config/universe.yaml`` (E20.4; D26 tunables
+    ``universe.carryover.*``).
 
     Read by both writers of a merged tier (the Scout's discovery, ``universe.trending``);
     :mod:`arc.universe.carryover` applies it.
@@ -447,26 +451,43 @@ def market_reference(settings: ArcSettings) -> list[str]:
 
 
 def tier_sizes(settings: ArcSettings) -> dict[Tier, int]:
-    """Per-tier size cuts (core is bounded by MAX_CORE, never cut here)."""
+    """Per-tier size cuts (core is bounded by MAX_CORE, never cut here); universe.yaml
+    ``sizes:`` with the D26 overrides (E20.4, D85)."""
+    sizes = _universe_cfg(settings).sizes
     return {
-        Tier.MOMENTUM: settings.universe_momentum_size,
-        Tier.DISCOVERY: settings.universe_discovery_size,
-        Tier.TRENDING: settings.universe_trending_size,
+        Tier.MOMENTUM: sizes.momentum,
+        Tier.DISCOVERY: sizes.discovery,
+        Tier.TRENDING: sizes.trending,
+    }
+
+
+def tier_size(settings: ArcSettings, tier: Tier) -> int:
+    """One tier's size cut (``sizes.<tier>``, registry ``universe_<tier>_size``)."""
+    return tier_sizes(settings)[tier]
+
+
+def active_max(settings: ArcSettings) -> int:
+    """The active-list cap (universe.yaml ``active_max``, registry ``universe_active_max``)."""
+    return int(_universe_cfg(settings).active_max)
+
+
+def tier_floors(settings: ArcSettings) -> dict[Tier, float]:
+    """Scalp confidence floor per tier (universe.yaml ``floors:``, E20.4)."""
+    f = _universe_cfg(settings).floors
+    return {
+        Tier.CORE: f.core,
+        Tier.MOMENTUM: f.momentum,
+        Tier.DISCOVERY: f.discovery,
+        Tier.TRENDING: f.trending,
     }
 
 
 def tier_floor(settings: ArcSettings, tier: Tier | None) -> float | None:
-    """Scalp confidence floor of *tier* (``universe_floor_<tier>``); ``None`` for a
-    name in no tier (never admitted)."""
-    if tier is Tier.CORE:
-        return settings.universe_floor_core
-    if tier is Tier.MOMENTUM:
-        return settings.universe_floor_momentum
-    if tier is Tier.DISCOVERY:
-        return settings.universe_floor_discovery
-    if tier is Tier.TRENDING:
-        return settings.universe_floor_trending
-    return None
+    """Scalp confidence floor of *tier* (``floors.<tier>``, registry
+    ``universe_floor_<tier>``); ``None`` for a name in no tier (never admitted)."""
+    if tier is None:
+        return None
+    return tier_floors(settings).get(tier)
 
 
 class TierInputs(BaseModel):
@@ -548,14 +569,19 @@ def build_active(
 ) -> tuple[ActiveUniverse, TierInputs]:
     """Gather the inputs and resolve today's active list (no write)."""
     inputs = load_tier_inputs(conn, settings, now)
-    fill: ActiveFill = _universe_cfg(settings).active_fill
+    ucfg = _universe_cfg(settings)
+    fill: ActiveFill = ucfg.active_fill
     active = resolve_active(
         core=inputs.core,
         momentum=inputs.momentum,
         discoveries=inputs.discoveries,
         trending=inputs.trending,
-        active_max=settings.universe_active_max,
-        tier_sizes=tier_sizes(settings),
+        active_max=ucfg.active_max,
+        tier_sizes={
+            Tier.MOMENTUM: ucfg.sizes.momentum,
+            Tier.DISCOVERY: ucfg.sizes.discovery,
+            Tier.TRENDING: ucfg.sizes.trending,
+        },
         as_of=_today(now),
         config_version=settings.config_version,
         expired_tiers=inputs.expired_tiers,
