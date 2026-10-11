@@ -25,7 +25,6 @@ from arc.context.store import ContextSnapshot
 from arc.control.effective import effective_routines
 from arc.control.registry import REGISTRY, lookup, read_raw, write_raw
 from arc.control.service import ControlService
-from arc.experiments.overlay import arm_config_data, load_spec
 from arc.ingest.llm import FixtureScalpLLM
 from arc.ingest.scalp import run_scalp, scalp_facts_tickers
 from arc.ingest.store import RawDocRepo
@@ -80,14 +79,15 @@ def _opts(tickers: list[str], **kw: Any) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def test_flag_defaults_off_in_the_shipped_config() -> None:
+def test_flag_defaults_on_in_the_shipped_config() -> None:
+    # D85: shipped on without an experiment (was off; off = rollback, prompts unchanged).
     raw = yaml.safe_load(DEFAULT_ROUTINES_PATH.read_text())
-    assert raw["personas"]["finnhub_context"] == "off"
+    assert raw["personas"]["finnhub_context"] == "on"
     cfg = load_routines(DEFAULT_ROUTINES_PATH)
-    assert cfg.finnhub_context.enabled is False
+    assert cfg.finnhub_context.enabled is True
     assert cfg.finnhub_context.max_chars_per_ticker == 300
     assert "finnhub_context" not in cfg.personas  # a switch, not a job
-    assert RoutinesConfig().finnhub_context.enabled is False  # absent = off
+    assert RoutinesConfig().finnhub_context.enabled is False  # absent = off (the rollback)
 
 
 @pytest.mark.parametrize(
@@ -138,25 +138,20 @@ def test_slack_override_reaches_the_effective_routines() -> None:
     now = dt.datetime(2026, 10, 6, 9, 0, tzinfo=ET)
     base = ArcSettings(_env_file=None, approver_slack_user_ids=["U0OWNER"])  # type: ignore[call-arg]
     svc = ControlService(conn, base=base, now=lambda: now)
-    assert svc.view("personas.finnhub_context").value == "off"
+    assert svc.view("personas.finnhub_context").value == "on"  # D85 default
+    r = svc.set("personas.finnhub_context", "off", actor="U0OWNER", source="slack")
+    assert r.outcome == "applied"  # on -> off (the rollback) applies at once
+    assert effective_routines(conn).finnhub_context.enabled is False
     r = svc.set("personas.finnhub_context", "on", actor="U0OWNER", source="slack")
     assert r.pending is not None  # off -> on is the riskier direction: confirm step
     svc.confirm(r.pending.code, actor="U0OWNER", source="slack")
     assert effective_routines(conn).finnhub_context.enabled is True
     assert svc.view("personas.finnhub_context").value == "on"
-    r = svc.set("personas.finnhub_context", "off", actor="U0OWNER", source="slack")
-    assert r.outcome == "applied"
-    assert effective_routines(conn).finnhub_context.enabled is False
 
 
-def test_xp2_draft_spec_turns_only_the_flag_on() -> None:
-    spec = load_spec(REPO / "config" / "experiments" / "live" / "xp2_finnhub_context.yaml")
-    assert spec.id == "XP-2" and spec.kind.value == "ab"
-    assert spec.arms.treatment.overlay == {"routines": {"personas": {"finnhub_context": "on"}}}
-    treat = RoutinesConfig.model_validate(arm_config_data(spec, "treatment", "routines"))
-    base = load_routines(DEFAULT_ROUTINES_PATH)
-    assert treat.finnhub_context.enabled is True
-    assert treat.model_copy(update={"finnhub_context": base.finnhub_context}) == base
+def test_xp2_draft_is_retired() -> None:
+    # D85: the treatment is now the shipped default, so the draft A/B is gone.
+    assert not (REPO / "config" / "experiments" / "live" / "xp2_finnhub_context.yaml").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -436,7 +431,7 @@ def test_research_facts_tickers_follow_candidates_and_the_flag() -> None:
     from arc.pipeline.steps import _research_facts_tickers, _research_ticker_facts
 
     cands = [e for e in g.snapshot().entries if e.kind == "candidate"]
-    off = SimpleNamespace(routines=load_routines(DEFAULT_ROUTINES_PATH))
+    off = SimpleNamespace(routines=RoutinesConfig.model_validate({}))  # absent = off
     assert _research_facts_tickers(off, cands) == []  # type: ignore[arg-type]
     assert _research_ticker_facts(off, cands) is None  # type: ignore[arg-type]
     on_cfg = RoutinesConfig.model_validate(

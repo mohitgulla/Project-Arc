@@ -207,7 +207,7 @@ class TestConfig:
         assert c.personas["scalp.overnight"].schedule == [dt.time(22, 0)]
         assert c.sources["youtube.briefs"].schedule == [dt.time(2, 0)]  # D45 / E4.6 (02:00 ET)
         assert c.monitoring.stuck_after_for("research") == dt.timedelta(minutes=20)
-        assert c.loop.max_idle == dt.timedelta(minutes=30)
+        assert c.loop.max_idle == dt.timedelta(minutes=15)  # D85 (was 30m)
         assert c.loop.max_runtime == dt.timedelta(minutes=7)  # D61
         assert {r.run for r in c.triggers_for("approval")} == {"broker"}
         yt = c.sources["youtube.briefs"]

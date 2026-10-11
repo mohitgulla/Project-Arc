@@ -716,10 +716,11 @@ that at the first attempt, the ladder re-prices at the current mid and re-anchor
 there (`PriceBand.reanchor`, pure gate code; the band is never widened). A mid outside the
 signed band sends nothing (journal `order:stale_band`); the next loop may propose afresh.
 
-Runbook (paper):
-1. `cd ~/GitHub/Project-Arc && .venv/bin/arc approve auto on --reason "paper loop"`
-2. `.venv/bin/arc approve auto status` → `auto_approve: on (paper); paper=on live=off`
-3. Off at any time: `.venv/bin/arc approve auto off`, or `!halt` to stop all trading.
+Runbook (paper): auto-approve and auto-exit are **on by default in paper** (D85, was off);
+live defaults stay off.
+1. `.venv/bin/arc approve auto status` → `auto_approve: on (paper); paper=on live=off`
+2. Off at any time: `.venv/bin/arc approve auto off`, or `!halt` to stop all trading.
+3. Back on after an `off`: `.venv/bin/arc approve auto on --reason "paper loop"`.
 
 Live: `arc approve auto on --env live` only *stages* the change and prints a one-time code;
 re-run within 10 min with `--confirm-live <code>`. `off` is immediate. `ARC_AUTO_APPROVE`
@@ -728,7 +729,7 @@ Every flip is a `config_changes` row (`arc config history auto_approve.paper|liv
 revertable) and posts `Auto-approve: ON|OFF (env)` to the day thread; each day thread's
 first line repeats the current state. The same keys are Slack-tunable
 (`!arc config set auto_approve.paper true` → confirm code, owner only).
-`auto_exit_defined_risk` (D24) is per-env the same way.
+`auto_exit_defined_risk` (D24) is per-env the same way (D85: paper default on, live off).
 
 Approval event lifecycle (E6.2d): every `approval` routine event is started exactly once,
 by exactly one path. `created` (the approval service writes it with the decision) →
@@ -786,7 +787,7 @@ With `auto_approve` on, an **open** is only auto-approved when the E7.3 scorecar
 
 | Key (`!arc config set …` / `arc config set …`) | Default | Bounds | Meaning |
 |---|---|---|---|
-| `auto_approve.scorecard_gate` | `on` | on/off; off needs a confirm | off = explicit opt-out (paper as pure calibration) |
+| `auto_approve.scorecard_gate` | `off` (paper, D85; was `on`) | on/off; off needs a confirm | off = explicit opt-out (paper as pure calibration); live always runs the gate (D70) |
 | `auto_approve.min_closed_trades` | 30 | 10–500 (never below 10) | closed trades required; also the window for the next two |
 | `auto_approve.slippage_tolerance` | 1.5 | 0.5–3.0 (never above 3.0) | realised entry slippage ≤ modelled half-spread × this |
 
@@ -1252,7 +1253,7 @@ Before every entry chain the Director step runs three deterministic pieces
    structure with its mark P&L, max loss, Greeks, sector
    (`config/sectors.yaml`; unmapped → `unknown`), expiry bucket and original
    thesis, plus aggregates (allocation by underlying/sector/stance/expiry, HHI,
-   Greeks vs caps, flags, underlyings at the 5% cap). With an empty book the
+   Greeks vs caps, flags, underlyings at the 10% cap). With an empty book the
    prompt is E5.7's plus one line; otherwise the rendered block (capped at
    `portfolio.context_max_positions`) is added and the Director must return a
    `portfolio_view`, a `portfolio_fit` per pick and `thesis_checks` per holding.
@@ -1319,7 +1320,7 @@ up within one slot.
 - *Change-aware.* The Director digests its inputs (candidate ids, regime entries,
   positions, day-P&L bucket of `loop.pnl_bucket_pct` % equity, pending orders,
   budget tier, suppressed ideas). Same digest as the last full run and less than
-  `loop.max_idle` (30m) since it → `no_change`: Director/Quant/Risk/Propose are
+  `loop.max_idle` (15m, D85; was 30m) since it → `no_change`: Director/Quant/Risk/Propose are
   skipped (no LLM call), `broker.execute` still runs (`on_no_change: run` in `steps:`)
   so pending approvals and ladders carry on. Journal row `loop_no_change`; the
   run manifest carries `loop_inputs` (digest). A manual `arc propose` never skips.
@@ -1839,15 +1840,13 @@ sqlite3 ~/.hermes/cache/scratch/fh.db \
 
 The four kinds above reach the Sweep and the Director only when the switch is on:
 
-    personas.finnhub_context: "off"     # config/routines.yaml; off | on
+    personas.finnhub_context: "on"      # config/routines.yaml; off | on
 
-Off (the shipped default), both prompts are byte-identical to the pre-E4.8a prompts
+On is the shipped default since D85 (owner decision, D44 waived; the XP-2 draft was
+retired). Off is the rollback: both prompts are byte-identical to the pre-E4.8a prompts
 (golden hashes in `tests/test_finnhub_persona_context.py`) and the D31 no-change
-digest is unchanged. It is strategy lane: the default flips only on an XP-2 `win`
-verdict (`config/experiments/live/xp2_finnhub_context.yaml`, a draft A/B whose
-treatment overlay is just this switch; `arc experiment create/register` it after the
-A/A). `!arc set personas.finnhub_context on` turns it on for paper without a PR (a
-riskier change, so it asks for a confirm).
+digest is unchanged. `!arc set personas.finnhub_context off` rolls it back without a
+PR (a safer change, applied at once).
 
 On, the prompt gets a `Ticker facts (Finnhub, code-built)` block: one line per ticker,
 at most `finnhub_context.max_chars_per_ticker` (300) characters, whole parts dropped
@@ -1870,9 +1869,10 @@ in order to fit:
 
 ### 5.25 Director diversification: strict | relaxed (E12.5, D51, D44)
 
-    personas.director_diversification: strict   # config/routines.yaml; strict | relaxed
+    personas.director_diversification: relaxed   # config/routines.yaml; strict | relaxed
 
-`strict` (the shipped default) is the E5.9 behaviour: the prompt and the Director
+`relaxed` is the shipped default since D85 (owner decision, D44 waived; the XP-3 draft
+was retired). `strict` (the rollback) is the E5.9 behaviour: the prompt and the Director
 rules are byte-identical to the pre-E12.5 ones (golden hashes in
 `tests/test_director_diversification.py`), and the prompt input `diversification` is
 not recorded, so `arc journal replay` of older calls is unchanged. `relaxed`:
@@ -1892,10 +1892,8 @@ not recorded, so `arc journal replay` of older calls is unchanged. `relaxed`:
 
 Unchanged in both modes: the gate's per-underlying cap (`max_alloc_pct`), the
 8-position max, the Greek caps, the D33 idea dedupe, and Risk's advisory
-`concentration_warning`. Two ways to turn it on: `!arc config
-personas.director_diversification relaxed` (riskier, asks for a confirm), or run the
-draft A/B `config/experiments/live/xp3_relaxed_diversification.yaml` (XP-3, not
-registered). Flipping the shipped default needs an XP-3 `win` verdict.
+`concentration_warning`. Roll back with `!arc config
+personas.director_diversification strict` (safer, applied at once).
 
 ### 5.26 IV history: `iv_daily`, `iv.record`, backfill, Option Strategist (E4.12, D55)
 

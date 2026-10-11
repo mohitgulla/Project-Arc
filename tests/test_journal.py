@@ -47,6 +47,7 @@ from arc.routines.config import load_routines
 from arc.sizing import size_contracts
 from arc.store.db import connect
 from arc.store.migrate import migrate
+from tests.pre_d85_env import reset_env
 
 OWNER = "U0C5KUMH28G"
 STRANGER = "U0STRANGER"
@@ -291,7 +292,7 @@ def test_unknown_reason_code_is_refused(conn: sqlite3.Connection) -> None:
 
 
 def _svc(conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch) -> ApprovalService:
-    monkeypatch.delenv("ARC_AUTO_APPROVE", raising=False)
+    reset_env(monkeypatch, "ARC_AUTO_APPROVE")
     monkeypatch.setenv("ARC_APPROVER_SLACK_USER_IDS", OWNER)
     return ApprovalService(
         conn, ArcSettings(_env_file=None, account_profile="margin"), LogCardPoster()

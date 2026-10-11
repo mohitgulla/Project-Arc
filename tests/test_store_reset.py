@@ -174,8 +174,8 @@ def build_store(path: Path, *, halted: bool = True, experiment: str = "stopped")
     svc = ControlService(conn, base=settings(), now=lambda: BUILT, is_halted=lambda: False)
     for key, raw in [
         ("max_alloc_pct", "7.5%"),
-        ("loop.max_idle", "15"),
-        ("personas.finnhub_context", "on"),
+        ("loop.max_idle", "20"),  # D85: 15 is the shipped default now, so not an override
+        ("personas.finnhub_context", "off"),  # D85: on is the shipped default now
         ("auto_approve.paper", "on"),
         ("max_alloc_pct", "7.5%"),  # unchanged: no row
     ]:

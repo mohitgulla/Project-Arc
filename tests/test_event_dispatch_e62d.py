@@ -29,6 +29,7 @@ from arc.store.migrate import migrate
 from arc.store.repos import CandidateRepo, HaltRepo, ProposalRepo
 from tests import test_execution_ladder as L
 from tests import test_execution_submit as S
+from tests.pre_d85_env import reset_env
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -37,8 +38,9 @@ if TYPE_CHECKING:
 
 @pytest.fixture(autouse=True)
 def _no_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    for var in ("ARC_AUTO_APPROVE", "ARC_AUTO_EXIT_DEFINED_RISK", "ARC_ENV", "ARC_GATE_SECRET"):
-        monkeypatch.delenv(var, raising=False)
+    reset_env(
+        monkeypatch, "ARC_AUTO_APPROVE", "ARC_AUTO_EXIT_DEFINED_RISK", "ARC_ENV", "ARC_GATE_SECRET"
+    )
 
 
 def margin(**kw: object) -> ArcSettings:

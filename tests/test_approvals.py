@@ -36,6 +36,7 @@ from arc.pipeline.env import FIXTURE_NOW
 from arc.pipeline.runner import fixture_run
 from arc.routines.config import load_routines
 from arc.routines.runs import RoutineEventRepo
+from tests.pre_d85_env import reset_env
 
 OWNER = "U0C5KUMH28G"
 STRANGER = "U0STRANGER"
@@ -49,8 +50,9 @@ TTL = _dt.timedelta(seconds=1200)
 
 @pytest.fixture
 def arc_settings(monkeypatch: pytest.MonkeyPatch) -> ArcSettings:
-    for var in ("ARC_AUTO_APPROVE", "ARC_APPROVER_SLACK_USER_IDS", "ARC_APPROVAL_TTL_SECONDS"):
-        monkeypatch.delenv(var, raising=False)
+    reset_env(
+        monkeypatch, "ARC_AUTO_APPROVE", "ARC_APPROVER_SLACK_USER_IDS", "ARC_APPROVAL_TTL_SECONDS"
+    )
     return ArcSettings(_env_file=None, account_profile="margin")  # type: ignore[call-arg]
 
 

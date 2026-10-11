@@ -30,6 +30,7 @@ from arc.pipeline.runner import fixture_run
 from arc.routines.config import load_routines
 from arc.store.execution import ExecutionRepo, OpenStructureRepo
 from arc.utils.calendar import ET
+from tests.pre_d85_env import reset_env
 
 NOW = _dt.datetime(2026, 9, 25, 16, 0, tzinfo=ET)  # fixture proposal expires 16:20 ET
 # Fixture condor: modelled spread of all legs = $12.90 per unit, so half = $6.45;
@@ -61,13 +62,13 @@ def conn(_pipeline_db: bytes) -> sqlite3.Connection:
 
 @pytest.fixture(autouse=True)
 def _no_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    for k in (
+    reset_env(
+        monkeypatch,
         "ARC_AUTO_APPROVE",
         "ARC_AUTO_APPROVE_SCORECARD_GATE",
         "ARC_AUTO_APPROVE_MIN_CLOSED_TRADES",
         "ARC_AUTO_APPROVE_SLIPPAGE_TOLERANCE",
-    ):
-        monkeypatch.delenv(k, raising=False)
+    )
 
 
 def settings(**kw: Any) -> ArcSettings:
@@ -273,9 +274,11 @@ def test_scorecard_gate_off_logs_warning_and_approves(conn: sqlite3.Connection) 
 # ---------------------------------------------------------------------------
 
 
-def test_gate_default_on_and_keys_default() -> None:
+def test_gate_default_off_in_paper_and_keys_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    # D85: the shipped paper default is off (was on); D70 forces it on in live.
+    monkeypatch.delenv("ARC_AUTO_APPROVE_SCORECARD_GATE", raising=False)
     s = ArcSettings(_env_file=None)  # type: ignore[call-arg]
-    assert s.auto_approve_scorecard_gate is True
+    assert s.auto_approve_scorecard_gate is False
     assert s.auto_approve_min_closed_trades == 30
     assert s.auto_approve_slippage_tolerance == 1.5
 

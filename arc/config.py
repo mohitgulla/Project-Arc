@@ -258,8 +258,8 @@ class ArcSettings(BaseSettings):
 
     # -- Risk limits (PLAN.md §5) -------------------------------------------
     max_alloc_pct: Annotated[float, Field(gt=0.0, le=1.0)] = Field(
-        default=0.05,
-        description="Max allocation per underlying as fraction of equity (5%).",
+        default=0.10,
+        description="Max allocation per underlying as fraction of equity (10%, D85; was 5%).",
     )
     daily_loss_halt_pct: Annotated[float, Field(gt=0.0, le=1.0)] = Field(
         default=0.03,
@@ -493,12 +493,12 @@ class ArcSettings(BaseSettings):
         ),
     )
     auto_exit_defined_risk: bool = Field(
-        default=False,
+        default=True,
         description=(
             "D24: when true, fired exits on defined-risk positions skip the Slack approval. "
-            "Default false: every exit is a proposal that needs an approval. Per environment "
-            "(D34): ARC_AUTO_EXIT_DEFINED_RISK is the paper shortcut; live is only switched "
-            "through the config store (`auto_exit_defined_risk.live`)."
+            "Per environment (D34): the paper default is on (D85, was off); a live process "
+            "validates it to off and only the config store (`auto_exit_defined_risk.live`, "
+            "confirm code) turns it on there. ARC_AUTO_EXIT_DEFINED_RISK sets paper only."
         ),
     )
     # -- Daily options order budget (E6.5, D32) ---------------------------------
@@ -711,8 +711,9 @@ class ArcSettings(BaseSettings):
         ),
     )
     auto_approve: bool = Field(
-        default=False,
+        default=True,
         description=(
+            "D85: paper default on (was off); a live process validates it to off. "
             "D34: auto-approve gate-passed proposals (approver arc:auto-approve) and execute "
             "them in the same chain run. The effective value is per environment: the "
             "ARC_AUTO_APPROVE env var is a paper-only shortcut (ignored when env=live); the "
@@ -723,14 +724,15 @@ class ArcSettings(BaseSettings):
     )
     # -- E7.5a: scorecard gate in front of D34 auto-approve ---------------------
     auto_approve_scorecard_gate: bool = Field(
-        default=True,
+        default=False,
         description=(
             "E7.5a: D34 auto-approve opens a new position only when the E7.3 scorecard shows "
             ">= auto_approve_min_closed_trades closed trades, realised net EV >= 0 over the "
             "latest that many, and realised entry slippage <= modelled half-spread x "
             "auto_approve_slippage_tolerance. Otherwise the card waits for a manual approval "
             "(journal auto_approve_gated). Off = explicit opt-out (paper as pure "
-            "calibration), logged as a warning on every auto-approval. Closes are not gated."
+            "calibration), logged as a warning on every auto-approval. Closes are not gated. "
+            "D85: paper default off (was on); a live process always forces it on (D70)."
         ),
     )
     auto_approve_min_closed_trades: Annotated[int, Field(ge=1, le=1000)] = Field(
@@ -1400,7 +1402,11 @@ class ArcSettings(BaseSettings):
             return self
         for name in sorted(PER_ENV_SWITCHES):
             if getattr(self, name):
-                log.warning("per-env switch forced off in live (env var is paper-only)", key=name)
+                # D85: the paper default is on, so only an explicit value is worth a warning.
+                if name in self.model_fields_set:
+                    log.warning(
+                        "per-env switch forced off in live (env var is paper-only)", key=name
+                    )
                 setattr(self, name, False)
         return self
 
@@ -1422,10 +1428,12 @@ class ArcSettings(BaseSettings):
         if self.env is not ArcEnv.LIVE:
             return self
         if not self.auto_approve_scorecard_gate:
-            log.warning(
-                "scorecard gate forced on in live (auto_approve.scorecard_gate is paper-only)",
-                key="auto_approve_scorecard_gate",
-            )
+            # D85: the paper default is off, so only an explicit opt-out is worth a warning.
+            if "auto_approve_scorecard_gate" in self.model_fields_set:
+                log.warning(
+                    "scorecard gate forced on in live (auto_approve.scorecard_gate is paper-only)",
+                    key="auto_approve_scorecard_gate",
+                )
             self.auto_approve_scorecard_gate = True
         if not self.live_auto_approve_requires_gate:
             log.warning(

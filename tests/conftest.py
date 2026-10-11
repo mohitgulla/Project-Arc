@@ -9,6 +9,7 @@ import pytest
 import yaml
 
 from arc.universe.config import DEFAULT_UNIVERSE_CONFIG
+from tests.pre_d85_env import PRE_D85_ENV
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -30,6 +31,18 @@ def _hermetic_symbol_master(tmp_path_factory: pytest.TempPathFactory, monkeypatc
     cfg.write_text(yaml.safe_dump(data))
     monkeypatch.setenv("ARC_UNIVERSE_CONFIG_FILE", str(cfg))
     return cfg
+
+
+# D85 (E20.1): the suite runs on the pre-D85 defaults; see tests/pre_d85_env.py.
+# Session scope so module-scoped fixtures (the shared fixture-pipeline DBs) see it too;
+# a test's own monkeypatch.setenv/delenv still restores to these values afterwards.
+@pytest.fixture(autouse=True, scope="session")
+def _pre_d85_defaults() -> Iterator[None]:
+    """Pin the pre-D85 per-env switches, scorecard gate and per-underlying cap."""
+    with pytest.MonkeyPatch.context() as mp:
+        for var, value in PRE_D85_ENV.items():
+            mp.setenv(var, value)
+        yield
 
 
 @pytest.fixture(autouse=True)
