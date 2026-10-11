@@ -258,9 +258,11 @@ they are never dropped.
 - **Rows:** capped Greeks read `used / cap` (`|$Δ| net dollar delta`, `|β$Δ| beta-weighted net
   dollar delta`, `|ν| vega dollar/vol pt`); Θ (`dollar/day`) and $Γ (`dollar/1% move`) each
   get their own line with an info-only `Risk Low/Med/High` pill (D87). Position card rows show
-  legs as chips with the total $ and % change since entry right-aligned (`CardRow aside`);
-  Movers tiles scroll-snap, ranked by today's change best → worst, name line = direction
-  (Bullish / Bearish / Neutral), pill = today's change.
+  three lines (D88): legs as chips; qty · entry → mark · DTE; exit state when set. Total $
+  and total % since entry sit right-aligned in two fixed-width columns (`CardRow aside`); the
+  desktop table has `Total $` and `Total %` columns. Movers tiles scroll-snap, ranked by
+  today's change best → worst: name line = direction (Bullish / Bearish / Neutral), then
+  `Stock ±x%` (the stock's own day change), pill = the position's change today.
 - **Equity (D87):** dashed SPY / QQQ lines rebased to the range-start equity, legend with each
   benchmark's % and the gap in points; a Cash vs Invested split (stat pair + bar) below.
 - **Order** at ≤ 1279 px (one column, D87): status → Equity → P&L Today → Movers → Positions →

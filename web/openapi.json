@@ -8016,6 +8016,18 @@
             "title": "Ticker",
             "type": "string"
           },
+          "underlying_change": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D88: the stock's own day change (spot \u00f7 prior session close \u2212 1)",
+            "title": "Underlying Change"
+          },
           "unrealized_pct": {
             "anyOf": [
               {
