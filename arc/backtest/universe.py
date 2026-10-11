@@ -926,7 +926,13 @@ def write_build(build: UniverseBuild, data_dir: Path) -> dict[str, Path]:
 
 def _latest_version(data_dir: Path) -> str:
     out = universe_dir(data_dir)
-    manifests = sorted(out.glob("*.json")) if out.is_dir() else []
+    # A manifest has its pull list beside it; other JSON here (E7.9's checkpoints.json)
+    # is not a build.
+    manifests = (
+        sorted(p for p in out.glob("*.json") if p.with_suffix(".parquet").is_file())
+        if out.is_dir()
+        else []
+    )
     if not manifests:
         msg = f"no universe built under {out} (run `arc history universe build`)"
         raise FileNotFoundError(msg)

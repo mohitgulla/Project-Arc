@@ -80,10 +80,18 @@ def add_universe_parser(hs: argparse._SubParsersAction[argparse.ArgumentParser])
     s.add_argument("--checkpoint", help="Print only the symbols of c125|c250|c500")
     s.add_argument("--top", type=int, default=40)
 
+    from arc.backtest.pull_cli import add_pull_parsers
+
+    add_pull_parsers(us)  # E7.9: `pull-status`, `optliq`
+
 
 def run_universe(args: argparse.Namespace) -> int:
     if args.universe_command == "show":
         return _show(args)
+    if args.universe_command in ("pull-status", "optliq"):
+        from arc.backtest.pull_cli import run_optliq, run_pull_status
+
+        return run_pull_status(args) if args.universe_command == "pull-status" else run_optliq(args)
     return _build(args)
 
 

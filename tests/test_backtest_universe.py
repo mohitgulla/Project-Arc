@@ -475,6 +475,9 @@ def test_write_and_load_round_trip(tmp_path: Path) -> None:
     assert "c2" in text and "top_outside_list" in text and "SPY" in text
     with pytest.raises(FileNotFoundError):
         load_universe(tmp_path / "nothing")
+    # E7.9 writes checkpoints.json beside the builds: it is not a manifest
+    (paths["manifest"].parent / "checkpoints.json").write_text('{"c125": {"sessions": 1}}')
+    assert load_universe(tmp_path)[0] == b.manifest
 
 
 def test_gather_candidates_sources_and_index_roots() -> None:
