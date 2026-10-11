@@ -77,8 +77,8 @@ _ID_RE = re.compile(r"^XP-[1-9]\d*$")
 _PROPOSER_RE = re.compile(r"^(owner|A-[1-9]\d*)$")
 
 # Config files a forward overlay may patch (key = file stem under config/).
-# E13.12: ``universe`` (tiers / liquidity screens; e.g. a discovery screen arm). It is NOT a
-# strategy-lane promotion stem (config/strategy_lane.yaml says why).
+# E13.12: ``universe`` (tiers / liquidity screens; e.g. a discovery screen arm). Any leaf
+# an open experiment's overlay sets is locked by the strategy-lane check (D86, E21.1).
 OVERLAY_TARGETS: tuple[str, ...] = (
     "ranking",
     "exits",

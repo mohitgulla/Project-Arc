@@ -812,6 +812,7 @@ def test_cli_report_and_evaluate(tmp_path, capsys: pytest.CaptureFixture[str]) -
     out = capsys.readouterr().out
     assert "verdict CONTINUE" in out and "always-valid 95% CI" in out
     assert "guardrails" not in out and "arms:" in out
+    assert "Changes shipped to all arms during this run" in out  # D86 (E21.1)
     assert run_experiment(_cli("report", "XP-2", "--db", str(db), "--stored")) == 2  # none yet
     capsys.readouterr()
     assert run_experiment(_cli("evaluate", "--db", str(db), "--now", now, "--json")) == 0
@@ -823,7 +824,8 @@ def test_cli_report_and_evaluate(tmp_path, capsys: pytest.CaptureFixture[str]) -
     again = json.loads(out[out.index("{\n") :])
     assert again == stored[0]
     assert run_experiment(_cli("evaluate", "XP-2", "--db", str(db), "--now", now)) == 0
-    assert "XP-2" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "XP-2" in out and "Changes shipped" not in out  # report only
     assert run_experiment(_cli("report", "XP-9", "--db", str(db))) == 2
     assert run_experiment(_cli("evaluate", "--db", str(tmp_path / "e.db"))) == 0
     assert "no running experiments" in capsys.readouterr().out
