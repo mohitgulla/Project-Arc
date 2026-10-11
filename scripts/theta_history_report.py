@@ -19,7 +19,7 @@ Sampling: quality statistics use every ``--sample-every``-th session per ticker 
 so a C500 run stays minutes, not hours; coverage counts use every session (file names).
 ThetaData retail terms: no raw rows, symbols with prices, or contract-level output.
 
-    .venv/bin/python scripts/theta_history_report.py --version u500-20261009-s1-cbfbdeb9 \
+    .venv/bin/python scripts/theta_history_report.py --version u500-20261009-s1-e52ff301 \
         --end 2026-10-09 [--checkpoint c125] [--out docs/RESEARCH/theta-history-coverage.md]
 """
 

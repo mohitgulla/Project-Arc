@@ -33,7 +33,10 @@ Rules (all knobs in ``config/ranking.yaml`` → ``backtest.universe``):
    in ≥ ``persistent_frac`` of quarters, 4 every other ranked name; inside a bucket
    by median rank. Truncated at ``target_size``; position → checkpoint label
    (``c125`` = 1–125, ``c250`` = 126–250, ``c500`` = 251–500). Buckets 1–2 must fit
-   in the first checkpoint or the build fails.
+   in the first checkpoint or the build fails. ``include_ever_traded: false`` drops
+   bucket 2. ``etf_caps`` (e.g. ``{c125: 25, c250: 50, c500: 100}``) bounds the ETFs
+   in each checkpoint: an ETF over the cap is deferred to the next checkpoint and the
+   next stock takes its place; bucket-1 ETFs count against the first cap.
 6. **Membership**: ``(quarter, symbol, rank, stage1_dv, stage2_score, …)``; a name is
    eligible in a quarter when ``in_top`` (or ``bypass``) **and** ``in_pull_list``.
 
@@ -181,12 +184,28 @@ class UniverseConfig(BaseModel):
         True, description="Add Alpaca inactive listed-exchange assets (delisted names)"
     )
     etf_name_pattern: str = DEFAULT_ETF_PATTERN
+    etf_caps: dict[str, int] = Field(
+        default_factory=dict,
+        description=(
+            "Max ETFs within the first N positions, keyed by checkpoint label (c125: 25). "
+            "An ETF over its checkpoint's cap is deferred; the next stock takes its place. "
+            "A checkpoint without a key is uncapped."
+        ),
+    )
     fetch_batch: int = Field(100, ge=1, le=1000, description="Symbols per Alpaca bars request")
 
     @field_validator("always", "index_roots")
     @classmethod
     def _upper(cls, v: list[str]) -> list[str]:
         return list(dict.fromkeys(s.strip().upper() for s in v if s.strip()))
+
+    @field_validator("etf_caps")
+    @classmethod
+    def _caps_nonneg(cls, v: dict[str, int]) -> dict[str, int]:
+        if any(n < 0 for n in v.values()):
+            msg = f"etf_caps must be >= 0, got {v}"
+            raise ValueError(msg)
+        return v
 
     @model_validator(mode="after")
     def _checks(self) -> UniverseConfig:
@@ -204,10 +223,30 @@ class UniverseConfig(BaseModel):
             msg = "max_stale_sessions cannot exceed dv_window"
             raise ValueError(msg)
         re.compile(self.etf_name_pattern)
+        labels = {f"c{cp}" for cp in cps}
+        unknown = sorted(set(self.etf_caps) - labels)
+        if unknown:
+            msg = f"etf_caps keys {unknown} are not checkpoints {sorted(labels)}"
+            raise ValueError(msg)
+        capped = [(cp, self.etf_caps[f"c{cp}"]) for cp in cps if f"c{cp}" in self.etf_caps]
+        for (a, ca), (b, cb) in zip(capped, capped[1:], strict=False):
+            if cb < ca:
+                msg = f"etf_caps must not shrink: c{a}={ca} > c{b}={cb}"
+                raise ValueError(msg)
+        for cp, cap in capped:
+            if cap > cp:
+                msg = f"etf_caps c{cp}={cap} exceeds the checkpoint size"
+                raise ValueError(msg)
         return self
 
+    def etf_cap_at(self, position: int) -> int | None:
+        """Max ETFs allowed in positions 1..*position*'s checkpoint (``None`` = uncapped)."""
+        return self.etf_caps.get(self.checkpoint_label(position))
+
     def config_hash(self) -> str:
-        blob = json.dumps(self.model_dump(mode="json"), sort_keys=True).encode()
+        # an unset etf_caps is left out so builds from before the knob keep their hash
+        dumped = self.model_dump(mode="json", exclude={"etf_caps"} if not self.etf_caps else None)
+        blob = json.dumps(dumped, sort_keys=True).encode()
         return hashlib.sha256(blob).hexdigest()
 
     def checkpoint_label(self, position: int) -> str:
@@ -587,6 +626,50 @@ def stage1_survivors(
     return out
 
 
+def _apply_etf_caps(
+    ordered: Sequence[tuple[str, int]],
+    cfg: UniverseConfig,
+    atype: Callable[[str], AssetType],
+    *,
+    pinned: int,
+) -> list[tuple[str, int]]:
+    """Truncate *ordered* to ``target_size`` honouring ``etf_caps`` per checkpoint.
+
+    Position by position, the first remaining name that fits is taken: a stock always
+    fits; an ETF fits while the ETFs placed so far are under the cap of the position's
+    checkpoint. A deferred ETF keeps its place in the queue, so it is the first ETF
+    taken once a later checkpoint's cap has room. The first *pinned* names (buckets
+    1–2) are never deferred; their ETFs count against the first checkpoint's cap, and
+    the build fails if they exceed it.
+    """
+    if not cfg.etf_caps:
+        return list(ordered[: cfg.target_size])
+    head = list(ordered[:pinned])
+    head_etf = sum(1 for s, _ in head if atype(s) == "etf")
+    first_cap = cfg.etf_cap_at(1)
+    if first_cap is not None and head_etf > first_cap:
+        msg = (
+            f"buckets 1-2 hold {head_etf} ETFs, over the c{cfg.checkpoints[0]} "
+            f"etf_caps limit of {first_cap}"
+        )
+        raise UniverseError(msg)
+    out = head[: cfg.target_size]
+    etf = head_etf
+    queue = list(ordered[pinned:])
+    while len(out) < cfg.target_size and queue:
+        cap = cfg.etf_cap_at(len(out) + 1)
+        for i, (s, b) in enumerate(queue):
+            is_etf = atype(s) == "etf"
+            if not is_etf or cap is None or etf < cap:
+                out.append((s, b))
+                etf += is_etf
+                del queue[i]
+                break
+        else:  # only ETFs left and the cap is full
+            break
+    return out
+
+
 def build_universe(
     *,
     candidates: Mapping[str, str | None],
@@ -692,12 +775,19 @@ def build_universe(
     )
     b3_set = set(b3)
     b4 = sorted((s for s in rest if s not in b3_set), key=key)
-    ordered_all = (
+
+    def atype(s: str) -> AssetType:
+        return classify_asset(candidates.get(s), cfg.etf_name_pattern)
+
+    ordered_all = _apply_etf_caps(
         [(s, Bucket.ALWAYS) for s in b1]
         + [(s, Bucket.EVER_TRADED) for s in b2]
         + [(s, Bucket.PERSISTENT) for s in b3]
-        + [(s, Bucket.REST) for s in b4]
-    )[: cfg.target_size]
+        + [(s, Bucket.REST) for s in b4],
+        cfg,
+        atype,
+        pinned=len(b1) + len(b2),
+    )
 
     rows: list[UniverseRow] = []
     for i, (s, b) in enumerate(ordered_all, start=1):
@@ -708,7 +798,7 @@ def build_universe(
                 symbol=s,
                 bucket=b,
                 bucket_name=Bucket.NAMES[b],
-                asset_type=classify_asset(candidates.get(s), cfg.etf_name_pattern),
+                asset_type=atype(s),
                 first_q=min(qs) if qs else None,
                 last_q=max(qs) if qs else None,
                 quarters_in=len(qs),

@@ -5,7 +5,7 @@ For each name of an E7.7 universe (priority order): raw daily closes from Alpaca
 and split-adjusted daily OHLC via ``arc.backtest.entry_filter.load_ohlc`` (``ohlc_for``).
 Names Alpaca has no bars for are listed as excluded: they are the survivorship gap.
 
-    .venv/bin/python scripts/theta_underlying_fill.py --version u500-20261009-s1-cbfbdeb9 \
+    .venv/bin/python scripts/theta_underlying_fill.py --version u500-20261009-s1-e52ff301 \
         --start 2020-01-01 --end 2026-10-09 [--offline] [--json out.json]
 
 Free data only; never touches the Theta Terminal or the audit DB. Prints aggregates.
