@@ -34,6 +34,7 @@ import {
   OVERVIEW_RANGES,
   equityDates,
   equityView,
+  greekRiskLabel,
   parseOverviewRange,
   pnlSplit,
   proposalStage,
@@ -43,6 +44,7 @@ import {
   stripTone,
   usedOfCap,
   violationCode,
+  withBenchmarks,
   type StatusSlot,
   type ActivityItem,
   type Overview,
@@ -199,6 +201,7 @@ function StatusStrip({ o, cad, now }: { o: Overview; cad: ReturnType<typeof useC
 function EquityCard({ o, range, cad, now }: { o: Overview; range: OverviewRange; cad: ReturnType<typeof useCadences>; now: number }) {
   const e = o.equity;
   const v = equityView(e, range);
+  const bench = withBenchmarks(e.range === range ? e : undefined, v.series, v.reference);
   const value = num(e.value);
   return (
     <StatCard
@@ -248,11 +251,91 @@ function EquityCard({ o, range, cad, now }: { o: Overview; range: OverviewRange;
         </span>
       </div>
       {v.series.length > 1 ? (
-        <TrendChart data={v.series} reference={v.reference} kind="equity" />
+        <TrendChart
+          data={bench.data}
+          reference={v.reference}
+          kind="equity"
+          overlays={bench.lines.map((l) => ({ key: l.key, label: l.symbol, color: l.color }))}
+        />
       ) : (
         <EmptyState caption={range === "1D" ? "No monitor marks today yet." : "No reconciled days in this range."} />
       )}
+      {v.series.length > 1 && bench.lines.length > 0 && (
+        <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-caption tabular-nums" data-testid="equity-benchmarks">
+          <li className="flex items-center gap-1.5">
+            <span className="h-0.5 w-3 rounded-full" style={{ background: "var(--text-primary)" }} aria-hidden="true" />
+            <span className="text-secondary">Portfolio</span>
+            <span className="font-semibold text-primary">{v.changePct == null ? "—" : formatPercent(v.changePct, { explicitSign: true })}</span>
+          </li>
+          {bench.lines.map((l) => {
+            const gap = v.changePct == null ? null : (v.changePct - l.changePct) * 100;
+            return (
+              <li key={l.symbol} className="flex items-center gap-1.5" data-testid={`benchmark-${l.symbol}`}>
+                <span className="h-0 w-3 border-t-2 border-dashed" style={{ borderColor: l.color }} aria-hidden="true" />
+                <span className="text-secondary">{l.symbol}</span>
+                <span className="font-semibold text-primary">{formatPercent(l.changePct, { explicitSign: true })}</span>
+                {gap !== null && (
+                  <span className={gap >= 0 ? "text-pos-text" : "text-neg-text"} title={`Portfolio minus ${l.symbol}, percentage points`}>
+                    ({gap >= 0 ? "+" : "−"}
+                    {formatNumber(Math.abs(gap), 2)} pts)
+                  </span>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <AccountSplitRow o={o} cad={cad} />
     </StatCard>
+  );
+}
+
+/** D87: cash available to trade vs equity held in open positions (latest monitor mark). */
+function AccountSplitRow({ o, cad }: { o: Overview; cad: ReturnType<typeof useCadences> }) {
+  const a = o.account;
+  if (!a) return null;
+  const cash = num(a.cash) ?? 0;
+  const held = num(a.in_positions) ?? 0;
+  const equity = num(a.equity) ?? 0;
+  const share = (x: number) => (equity ? formatPercent(x / equity) : "—");
+  return (
+    <div className="mt-4 border-t border-line pt-3" data-testid="account-split">
+      <div className="mb-2 flex items-center gap-2 text-caption text-secondary">
+        Cash vs In Positions
+        <Freshness at={a.at} cadenceS={cad.monitor} label="monitor mark" />
+        <InfoTip label="About the cash split" testid="account-split-info" formula="In positions = equity − cash">
+          Cash is what the account can spend on new debit trades (cash account: options buying power = cash). In
+          positions is the marked value of the open structures, locked up until they close.
+        </InfoTip>
+      </div>
+      <dl className="grid grid-cols-2 gap-3">
+        {(
+          [
+            ["Cash (available)", cash, "var(--accent-bar)"],
+            ["In positions", held, "var(--series-1)"],
+          ] as const
+        ).map(([label, value, color]) => (
+          <div key={label} className="min-w-0">
+            <dt className="flex items-center gap-2 text-caption text-secondary">
+              <span className="h-2 w-2 rounded-full" style={{ background: color }} aria-hidden="true" />
+              {label}
+            </dt>
+            <dd className="text-title font-semibold tabular-nums">
+              <Money value={value} kind="equity" /> <span className="text-caption font-normal text-secondary">{share(value)}</span>
+            </dd>
+          </div>
+        ))}
+      </dl>
+      <div className="mt-2">
+        <ProportionBar
+          legend={false}
+          segments={[
+            { label: "Cash (available)", value: cash, color: "var(--accent-bar)" },
+            { label: "In positions", value: held, color: "var(--series-1)" },
+          ]}
+        />
+      </div>
+    </div>
   );
 }
 
@@ -352,6 +435,54 @@ type GateCapsMeta = {
   portfolio_vega_cap_pct?: number;
 };
 
+/** An advisory band for tip text: `0.25%` of equity. */
+function bandText(pct: number | undefined): string {
+  return pct == null ? "—" : `${formatNumber(pct * 100, 2)}%`;
+}
+
+const RISK_TONE = {
+  pos: "bg-pos-bg text-pos-text",
+  warn: "bg-warn-bg text-warn-text",
+  neg: "bg-neg-bg text-neg-text",
+  muted: "bg-control text-muted",
+} as const;
+
+/** D87: an uncapped Greek on its own line: label · value · info-only Risk Low/Med/High. */
+function AdvisoryRow({
+  label,
+  value,
+  risk,
+  info,
+  testid,
+}: {
+  label: string;
+  value: number | null;
+  risk: "low" | "med" | "high" | null | undefined;
+  info: React.ReactNode;
+  testid: string;
+}) {
+  const r = greekRiskLabel(risk);
+  return (
+    <div className="flex items-center justify-between gap-3 border-t border-line py-2 text-caption" data-testid={testid}>
+      <span className="flex min-w-0 items-center text-secondary">
+        {label}
+        {info}
+      </span>
+      <span className="flex shrink-0 items-center gap-2">
+        <span className="font-semibold text-primary tabular-nums">{value == null ? "—" : formatMoney(value, "pnl")}</span>
+        <span
+          className={`rounded-pill px-2 py-0.5 text-micro font-semibold ${RISK_TONE[r.tone]}`}
+          data-testid={`${testid}-risk`}
+          data-risk={risk ?? "none"}
+          title="Advisory only: no cap, the gate does not read it"
+        >
+          {r.text}
+        </span>
+      </span>
+    </div>
+  );
+}
+
 /** A cap share for tip text, from /api/meta (effective config): `100%`, `1%`, or `cap`. */
 function capText(pct: number | undefined): string {
   return pct == null ? "cap" : `${formatNumber(pct * 100, 2)}%`;
@@ -403,10 +534,10 @@ function GreeksCard({ o, monitorS, caps }: { o: Overview; monitorS?: number; cap
             warnAt={0.8}
           />
           <ProgressRow
-            label="|β$Δ| beta-weighted net delta (SPY-eq)"
+            label="|β$Δ| beta-weighted net dollar delta"
             info={
               <InfoTip
-                label="About beta-weighted net delta"
+                label="About beta-weighted net dollar delta"
                 testid="greeks-info-beta-delta"
                 formula={
                   <>
@@ -425,7 +556,7 @@ function GreeksCard({ o, monitorS, caps }: { o: Overview; monitorS?: number; cap
                   </>
                 }
               >
-                The same, in S&amp;P 500 dollars: high-beta names count more.
+                The same, in S&amp;P 500 (SPY-equivalent) dollars: high-beta names count more.
               </InfoTip>
             }
             value={usedOfCap(
@@ -436,7 +567,7 @@ function GreeksCard({ o, monitorS, caps }: { o: Overview; monitorS?: number; cap
             warnAt={0.8}
           />
           <ProgressRow
-            label="|ν| vega $/vol pt"
+            label="|ν| vega dollar/vol pt"
             info={
               <InfoTip
                 label="About vega"
@@ -453,22 +584,46 @@ function GreeksCard({ o, monitorS, caps }: { o: Overview; monitorS?: number; cap
             fraction={vegaUsd !== null && g.vega_cap_usd ? Math.abs(vegaUsd) / g.vega_cap_usd : 0}
             warnAt={0.8}
           />
-          <div className="grid grid-cols-2 gap-3 border-t border-line py-2 text-caption">
-            <span className="flex items-center text-secondary">
-              Θ / day
-              <InfoTip label="About theta" testid="greeks-info-theta" formula="Σ Θ ($ per day, share-equivalent) · no cap">
-                Dollars the book gains or loses per day from time decay alone.
+          <AdvisoryRow
+            label="Θ theta dollar/day"
+            testid="greeks-theta"
+            value={o.greeks.theta?.value ?? g.theta ?? null}
+            risk={o.greeks.theta?.risk}
+            info={
+              <InfoTip
+                label="About theta"
+                testid="greeks-info-theta"
+                formula={
+                  <>
+                    Σ Θ ($ per day) · no cap · decay paid vs equity: Med ≥ {bandText(o.greeks.theta?.med_pct)}, High ≥{" "}
+                    {bandText(o.greeks.theta?.high_pct)}
+                  </>
+                }
+              >
+                Dollars the book gains or loses per day from time decay alone. The risk label is for info only.
               </InfoTip>
-              <span className="ml-2 font-semibold text-primary tabular-nums">{g.theta == null ? "—" : formatMoney(g.theta, "pnl")}</span>
-            </span>
-            <span className="flex items-center text-secondary">
-              Γ
-              <InfoTip label="About gamma" testid="greeks-info-gamma" formula="Σ Γ (share-equivalent Δ per $1 move) · no cap">
-                How fast net delta changes when the stocks move a dollar.
+            }
+          />
+          <AdvisoryRow
+            label="$Γ gamma dollar/1% move"
+            testid="greeks-gamma"
+            value={o.greeks.gamma?.value ?? null}
+            risk={o.greeks.gamma?.risk}
+            info={
+              <InfoTip
+                label="About gamma"
+                testid="greeks-info-gamma"
+                formula={
+                  <>
+                    Σ Γ × spot² / 100 per underlying · no cap · vs equity: Med ≥ {bandText(o.greeks.gamma?.med_pct)}, High ≥{" "}
+                    {bandText(o.greeks.gamma?.high_pct)} · net Γ {g.gamma == null ? "—" : formatNumber(g.gamma, 2)} sh/$1
+                  </>
+                }
+              >
+                How many dollars the net dollar delta shifts when every stock moves 1%. The risk label is for info only.
               </InfoTip>
-              <span className="ml-2 font-semibold text-primary tabular-nums">{g.gamma == null ? "—" : formatNumber(g.gamma, 2)}</span>
-            </span>
-          </div>
+            }
+          />
           <div className="border-t border-line pt-2 text-caption text-secondary" data-testid="max-loss-caps">
             <p className="flex items-center">
               <span>
@@ -620,9 +775,11 @@ function PickCard() {
 }
 
 function MoversCard({ o, monitorS }: { o: Overview; monitorS?: number }) {
+  // D87: ranked by today's change, best to worst; the pill is today's change (the overall
+  // change since entry lives on the Positions card below).
   const movers = sortMovers(o.movers ?? []);
   return (
-    <Card title="Movers" freshness={{ at: o.marks_at, cadenceS: monitorS, label: "monitor mark" }}>
+    <Card title="Movers" subtitle="today's change, best to worst" freshness={{ at: o.marks_at, cadenceS: monitorS, label: "monitor mark" }}>
       {movers.length === 0 ? (
         <EmptyState caption="No open structures." />
       ) : (
@@ -631,9 +788,9 @@ function MoversCard({ o, monitorS }: { o: Overview; monitorS?: number }) {
             <Tile
               key={m.structure_id}
               ticker={m.ticker}
-              name={m.change_today == null ? structureText(m.kind, m.direction) : `day ${formatPercent(m.change_today, { explicitSign: true })}`}
+              name={structureText(m.kind, m.direction)}
               values={m.spark ?? []}
-              change={m.unrealized_pct ?? 0}
+              change={m.change_today ?? 0}
               to={`/trades/${m.open_proposal_hash}`}
             />
           ))}
@@ -745,8 +902,9 @@ export function OverviewPage() {
     );
   }
   const positions = o.positions ?? [];
-  // Mobile/tablet (one column, E8.8b order): status → Equity → P&L Today → Positions → Greeks
-  // vs Caps → Today's Proposals → Today's Pick → Movers → Recent Activity. The column wrappers are
+  // Mobile/tablet (one column, D87 order): status → Equity → P&L Today → Movers → Positions →
+  // Greeks vs Caps → Today's Proposals → Today's Pick → Recent Activity. Desktop: Movers sits
+  // under P&L Today in the right column. The column wrappers are
   // `display: contents` below desktop so `order` interleaves them; desktop keeps two stacks.
   const col = "contents desktop:grid desktop:min-w-0 desktop:content-start desktop:gap-10";
   return (
@@ -757,19 +915,20 @@ export function OverviewPage() {
           <div className="order-1 min-w-0 desktop:order-none">
             <EquityCard o={o} range={range} cad={cad} now={now} />
           </div>
-          <div className="order-3 min-w-0 desktop:order-none">
+          <div className="order-4 min-w-0 desktop:order-none">
             <Card
               title="Positions"
+              subtitle="overall change since entry (not today's)"
               action={{ label: "VIEW ALL", to: "/positions" }}
               freshness={{ at: o.marks_at, cadenceS: cad.monitor, label: "monitor mark" }}
             >
               {positions.length === 0 ? <EmptyState caption="No open structures." /> : <PositionsTable rows={positions} />}
             </Card>
           </div>
-          <div className="order-5 min-w-0 desktop:order-none">
+          <div className="order-6 min-w-0 desktop:order-none">
             <ProposalsCard o={o} />
           </div>
-          <div className="order-6 min-w-0 desktop:order-none">
+          <div className="order-7 min-w-0 desktop:order-none">
             <PickCard />
           </div>
         </div>
@@ -777,11 +936,11 @@ export function OverviewPage() {
           <div className="order-2 min-w-0 desktop:order-none">
             <PnlCard o={o} cad={cad} />
           </div>
-          <div className="order-4 min-w-0 desktop:order-none">
-            <GreeksCard o={o} monitorS={cad.monitor} caps={cad.caps} />
-          </div>
-          <div className="order-7 min-w-0 desktop:order-none">
+          <div className="order-3 min-w-0 desktop:order-none">
             <MoversCard o={o} monitorS={cad.monitor} />
+          </div>
+          <div className="order-5 min-w-0 desktop:order-none">
+            <GreeksCard o={o} monitorS={cad.monitor} caps={cad.caps} />
           </div>
           <div className="order-8 min-w-0 desktop:order-none">
             <ActivityCard o={o} />

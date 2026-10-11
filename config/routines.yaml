@@ -127,6 +127,11 @@ loop:
 tower:
   overview:
     activity_hours: 24     # Recent Activity is a rolling window of this many hours (1-168)
+    # D87: info-only Low / Med / High label next to the uncapped Greeks (no gate reads it).
+    # |value| / equity: below med_pct = Low, from med_pct = Med, from high_pct = High.
+    greek_advisory:
+      theta: {med_pct: 0.001, high_pct: 0.0025}   # Θ $/day: $100 / $250 a day per $100k
+      gamma: {med_pct: 0.005, high_pct: 0.015}    # $Γ per 1% move: $500 / $1,500 per $100k
   # E8.8e: change-log actor display names (Slack user id -> name); unknown ids show as is.
   actor_names:
     U0C5KUMH28G: Mohit
@@ -873,6 +878,7 @@ personas:
     expiry_warn_days: 1
     exits: false                # E6.4: the positions.evaluate chain below owns exit proposals
     eod_marks_from: "15:50"     # D35: marks from here count as end of day (stops EOD-only, D23)
+    benchmarks: [SPY, QQQ]      # D87: marked each run for the Tower's equity benchmark lines ([] = off)
   positions.evaluate:           # E6.4 (D19): review open positions -> mandatory exits (D56)
     label: Position marks         # D56 (E13.2), persona quant
     about: "Marks open positions (deterministic); mandatory exits (stop, DTE exit, expiry)"

@@ -472,9 +472,18 @@ def build(
                 "beta_dollar_delta": 29_300.0 + 304 * i,
                 "delta_by_underlying": {
                     "AMD": {"dollar_delta": 12_000.0 + 160 * i, "beta": 1.9,
-                            "beta_dollar_delta": 22_800.0 + 304 * i, "beta_source": "stored"},
+                            "beta_dollar_delta": 22_800.0 + 304 * i, "beta_source": "stored",
+                            "gamma": 0.5, "spot": 160.0},
                     "SPY": {"dollar_delta": 6_500.0, "beta": 1.0,
-                            "beta_dollar_delta": 6_500.0, "beta_source": "default"},
+                            "beta_dollar_delta": 6_500.0, "beta_source": "default",
+                            "gamma": 0.3, "spot": 600.0},
+                },
+                # D87: benchmark marks for the Equity card (prior close + live spot)
+                "benchmarks": {
+                    "SPY": {"price": round(600.0 + 0.9 * math.sin(i / 5) + 0.05 * i, 2),
+                            "basis": "mid", "prev_close": 598.5},
+                    "QQQ": {"price": round(520.0 + 1.4 * math.sin(i / 4) - 0.04 * i, 2),
+                            "basis": "mid", "prev_close": 521.0},
                 },
                 "gamma": 0.8, "vega": 21000.0 + 150 * i,
                 "theta": -34.2, "max_loss": 3910.0, "halted": True,
@@ -482,6 +491,17 @@ def build(
                 "orders_used": 31, "orders_limit": 200, "broker_requests": 6, "legs": legs,
             },
         )  # fmt: skip
+
+    # -- D87: SPY / QQQ daily closes (iv_daily last_close spots) for the benchmark lines ---
+    for i, day in enumerate(days):
+        for sym, base, amp in (("SPY", 590.0, 4.0), ("QQQ", 512.0, 6.0)):
+            conn.execute(
+                """INSERT INTO iv_daily (ticker, day, iv30, method, source, spot, spot_basis,
+                   n_contracts, created_at) VALUES (?, ?, 0.15, 'bars_bs_cm30',
+                   'alpaca_backfill', ?, 'last_close', 4, ?)""",
+                (sym, day.isoformat(), round(base + amp * math.sin(i * 0.9) + 0.8 * i, 2),
+                 to_db(now)),
+            )  # fmt: skip
 
     # -- reconciled daily P&L: 10 weekdays before today ----------------------------------
     prev = BASE_EQUITY

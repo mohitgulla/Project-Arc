@@ -583,3 +583,102 @@ def test_overview_under_300ms_on_a_50mb_db(tmp_path: Path) -> None:
     finally:
         ro.close()
     assert per_call < 0.3, f"{per_call * 1000:.0f} ms on {size_mb:.0f} MB"
+
+
+# ---------------------------------------------------------------------------
+# D87: benchmarks, cash split, advisory Greeks
+# ---------------------------------------------------------------------------
+
+
+def test_benchmarks_start_where_the_portfolio_starts(conn: sqlite3.Connection) -> None:
+    one = _overview(conn, "1D").equity
+    spy = {b.symbol: b for b in one.benchmarks}["SPY"]
+    # 1D: the portfolio starts at prev close, so SPY starts at its own prior close
+    assert one.start_label == "prev close" and spy.start_value == D("598.5")
+    assert len(spy.series) == len(one.series)
+    assert spy.change_pct == pytest.approx(float(spy.value / spy.start_value - 1))
+    week = _overview(conn, "1W").equity
+    assert week.start_at is not None
+    for b in week.benchmarks:
+        row = conn.execute(
+            "SELECT spot FROM iv_daily WHERE ticker = ? AND day = ? AND spot_basis = 'last_close'",
+            (b.symbol, week.start_at.date().isoformat()),
+        ).fetchone()
+        assert b.start_value == D(str(row[0]))  # the close on the portfolio's start day
+        # the last point is today's live mark, like the equity line's
+        assert b.series[-1].t == week.series[-1].t
+
+
+def test_benchmark_without_a_start_price_is_left_out(fx_db: Path, tmp_path: Path) -> None:
+    import shutil
+    import sqlite3 as _sq
+
+    db = tmp_path / "nobench.db"
+    shutil.copy(fx_db, db)
+    w = _sq.connect(db)
+    w.execute("DELETE FROM iv_daily WHERE ticker = 'QQQ'")
+    w.commit()
+    w.close()
+    c = connect_ro(db)
+    try:
+        syms = [b.symbol for b in _overview(c, "1W").equity.benchmarks]
+    finally:
+        c.close()
+    assert syms == ["SPY"]
+
+
+def test_account_split_is_cash_vs_equity_minus_cash(conn: sqlite3.Connection) -> None:
+    a = _overview(conn).account
+    assert a is not None
+    assert a.cash == D("88000.0") and a.in_positions == a.equity - a.cash
+    assert a.cash_pct == pytest.approx(float(a.cash / a.equity))
+
+
+def test_uncapped_greeks_carry_an_advisory_band(conn: sqlite3.Connection) -> None:
+    g = _overview(conn).greeks
+    assert g.theta is not None and g.gamma is not None
+    assert g.theta.value == -34.2 and g.theta.risk == "low"
+    # $Γ = Σ Γ × spot² / 100: AMD 0.5 × 160² / 100 + SPY 0.3 × 600² / 100
+    assert g.gamma.value == pytest.approx(0.5 * 160**2 / 100 + 0.3 * 600**2 / 100)
+    assert g.gamma.pct_of_equity == pytest.approx(g.gamma.value / g.greeks.equity)
+    assert g.gamma.risk == "med"
+
+
+def test_advisory_bands() -> None:
+    from arc.routines.config import AdvisoryBand
+    from arc.tower.data_overview import _advisory
+
+    band = AdvisoryBand(med_pct=0.01, high_pct=0.02)
+    assert _advisory(500.0, 100_000.0, band).risk == "low"
+    assert _advisory(-1_000.0, 100_000.0, band).risk == "med"
+    assert _advisory(2_000.0, 100_000.0, band).risk == "high"
+    assert _advisory(None, 100_000.0, band).risk is None
+    # Θ: collecting decay is never a risk; paying it is
+    assert _advisory(5_000.0, 100_000.0, band, cost_only=True).risk == "low"
+    assert _advisory(-5_000.0, 100_000.0, band, cost_only=True).risk == "high"
+    with pytest.raises(ValueError, match="high_pct"):
+        AdvisoryBand(med_pct=0.02, high_pct=0.01)
+
+
+def test_pre_d87_heartbeat_has_no_dollar_gamma() -> None:
+    from arc.tower.data_overview import _dollar_gamma
+
+    row = {"detail": json.dumps({"delta_by_underlying": {"X": {"dollar_delta": 1.0}}})}
+    assert _dollar_gamma(row) is None  # type: ignore[arg-type]
+
+
+def test_day_change_of_a_structure_opened_today_is_since_entry(conn: sqlite3.Connection) -> None:
+    """D87: the broker's change_today is vs the contract's prior close; a structure opened
+    on the mark's day ranks by its change since entry instead."""
+    o = _overview(conn)
+    marks_day = o.marks_at.astimezone(ET).date() if o.marks_at else None
+    today_rows = [
+        p for p in o.positions if p.opened_at and p.opened_at.astimezone(ET).date() == marks_day
+    ]
+    older = [p for p in o.positions if p not in today_rows]
+    for p in today_rows:
+        assert p.day_change == p.unrealized_pl
+    movers = {m.structure_id: m for m in o.movers}
+    for p in today_rows:
+        assert movers[p.id].change_today == pytest.approx(p.unrealized_pct, rel=1e-6)
+    assert older  # the fixture keeps older structures on broker day marks

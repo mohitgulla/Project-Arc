@@ -62,7 +62,7 @@ describe("Greeks card shows dollar delta (D57)", () => {
 describe("Greeks card: beta-weighted delta + an ⓘ on every row (D62)", () => {
   const src = PAGES["../pages/Overview.tsx"]!;
   it("shows the β$Δ row against its cap", () => {
-    expect(src).toContain('label="|β$Δ| beta-weighted net delta (SPY-eq)"');
+    expect(src).toContain('label="|β$Δ| beta-weighted net dollar delta"');
     expect(src).toContain("g.beta_delta_cap");
   });
   it("every row carries an InfoTip test id", () => {

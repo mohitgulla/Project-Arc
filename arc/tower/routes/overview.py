@@ -53,6 +53,7 @@ def overview(
         max_alloc_pct=settings.max_alloc_pct,
         stale_after=monitor_stale_after(conn),
         activity_hours=hours,
+        greek_advisory=routines.tower.overview.greek_advisory,
     )
 
 

@@ -1,6 +1,67 @@
 {
   "components": {
     "schemas": {
+      "AccountSplit": {
+        "additionalProperties": false,
+        "description": "D87: how much of the account is free cash vs held in open positions.",
+        "properties": {
+          "at": {
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "cash": {
+            "description": "Broker cash: available to open new debit trades",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Cash",
+            "type": "string"
+          },
+          "cash_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "cash / equity (fraction)",
+            "title": "Cash Pct"
+          },
+          "equity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Equity",
+            "type": "string"
+          },
+          "in_positions": {
+            "description": "equity \u2212 cash: the open positions' marked value (locked up)",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "In Positions",
+            "type": "string"
+          },
+          "options_buying_power": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Broker options buying power (cash account: = cash)",
+            "title": "Options Buying Power"
+          }
+        },
+        "required": [
+          "at",
+          "equity",
+          "cash",
+          "in_positions"
+        ],
+        "title": "AccountSplit",
+        "type": "object"
+      },
       "ActivityEntry": {
         "additionalProperties": false,
         "description": "One event inside a grouped activity row.",
@@ -785,6 +846,54 @@
           "blocks"
         ],
         "title": "AutoApproveView",
+        "type": "object"
+      },
+      "BenchmarkSeries": {
+        "additionalProperties": false,
+        "description": "D87: a market benchmark (SPY / QQQ) over the Equity card's range, in its own prices.\n\n``start_value`` is the benchmark's close on the day the portfolio range starts (the\nsame day as ``EquitySection.start_at``), so ``change_pct`` compares like for like with\nthe portfolio's ``change_pct``. The SPA rebases ``series`` onto the equity line.",
+        "properties": {
+          "change_pct": {
+            "description": "value / start_value \u2212 1 (fraction)",
+            "title": "Change Pct",
+            "type": "number"
+          },
+          "series": {
+            "description": "Benchmark prices at the equity series' timestamps (subset)",
+            "items": {
+              "$ref": "#/components/schemas/arc__tower__data_overview__EquityPoint"
+            },
+            "title": "Series",
+            "type": "array"
+          },
+          "start_value": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Start Value",
+            "type": "string"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          },
+          "value": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Value",
+            "type": "string"
+          },
+          "value_at": {
+            "format": "date-time",
+            "title": "Value At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "symbol",
+          "start_value",
+          "value",
+          "value_at",
+          "change_pct",
+          "series"
+        ],
+        "title": "BenchmarkSeries",
         "type": "object"
       },
       "BetaDeltaRow": {
@@ -3240,6 +3349,14 @@
         "additionalProperties": false,
         "description": "Hero equity, its change over the selected range and the series to plot.",
         "properties": {
+          "benchmarks": {
+            "description": "D87: SPY / QQQ over the same range (when known)",
+            "items": {
+              "$ref": "#/components/schemas/BenchmarkSeries"
+            },
+            "title": "Benchmarks",
+            "type": "array"
+          },
           "change": {
             "anyOf": [
               {
@@ -5753,9 +5870,80 @@
         "title": "GateViolation",
         "type": "object"
       },
+      "GreekAdvisory": {
+        "additionalProperties": false,
+        "description": "D87: an uncapped Greek in dollars with an info-only Low / Med / High label.\n\nThe label is display only (no gate, no halt): ``|value| / equity`` against the\n``tower.overview.greek_advisory`` bands (``med_pct`` / ``high_pct``).",
+        "properties": {
+          "high_pct": {
+            "title": "High Pct",
+            "type": "number"
+          },
+          "med_pct": {
+            "title": "Med Pct",
+            "type": "number"
+          },
+          "pct_of_equity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "|value| / equity (\u0398: decay paid only, max(\u2212\u0398, 0))",
+            "title": "Pct Of Equity"
+          },
+          "risk": {
+            "anyOf": [
+              {
+                "enum": [
+                  "low",
+                  "med",
+                  "high"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "None = no value (rendered \u2014)",
+            "title": "Risk"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "med_pct",
+          "high_pct"
+        ],
+        "title": "GreekAdvisory",
+        "type": "object"
+      },
       "GreeksSection": {
         "additionalProperties": false,
         "properties": {
+          "gamma": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GreekAdvisory"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D87: dollar gamma, $\u0394 change for a 1% move (\u03a3 \u0393 \u00d7 spot\u00b2 / 100 per underlying; uncapped; advisory band only)"
+          },
           "greeks": {
             "$ref": "#/components/schemas/GreeksView"
           },
@@ -5783,6 +5971,17 @@
             ],
             "description": "max_alloc_pct \u00d7 equity (gate rule)",
             "title": "Per Underlying Cap"
+          },
+          "theta": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GreekAdvisory"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D87: \u0398, $ per day (uncapped; advisory band only)"
           }
         },
         "required": [
@@ -8613,6 +8812,17 @@
         "additionalProperties": false,
         "description": "``GET /api/overview``: every Overview card in one read.",
         "properties": {
+          "account": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccountSplit"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D87: cash vs in positions"
+          },
           "activity": {
             "items": {
               "$ref": "#/components/schemas/ActivityItem"

@@ -14,7 +14,11 @@ Status strip              active ``halts`` row, ``tick`` / ``health`` heartbeats
                           ``monitor`` heartbeat
 Equity                    ``1D``: today's ``monitor`` heartbeats (:func:`equity_intraday`);
                           other ranges: ``pnl_snapshots`` daily equity
-                          (:func:`arc.reconcile.performance.daily_equity`)
+                          (:func:`arc.reconcile.performance.daily_equity`). D87 benchmarks:
+                          SPY/QQQ marks on the same heartbeats (``benchmarks``), daily
+                          closes from ``iv_daily`` (``spot_basis = last_close``)
+Account split             latest ``monitor`` heartbeat: ``cash`` (available) vs
+                          ``equity − cash`` (held in open positions), D87
 P&L today                 latest ``monitor`` heartbeat (``equity − prev_close``, D43), else
                           the reconciled ``pnl_snapshots`` row; MTD / YTD from
                           :func:`arc.reconcile.performance.performance_from`
@@ -41,6 +45,7 @@ from arc.context.ttl import to_db
 from arc.models import Performance  # noqa: TC001 - pydantic field
 from arc.reconcile.baseline import BaselineSource  # noqa: TC001 - pydantic field
 from arc.reconcile.performance import DailyEquity, daily_equity, performance_from
+from arc.routines.config import AdvisoryBand, GreekAdvisorySettings
 from arc.tower.data import (
     Direction,
     GreeksView,
@@ -177,6 +182,66 @@ class EquitySection(BaseModel):
     change_pct: float | None = Field(default=None, description="change / start_value (fraction)")
     series_source: Literal["intraday", "daily"] = "daily"
     series: list[EquityPoint] = Field(default_factory=list)
+    benchmarks: list[BenchmarkSeries] = Field(
+        default_factory=list, description="D87: SPY / QQQ over the same range (when known)"
+    )
+
+
+class BenchmarkSeries(BaseModel):
+    """D87: a market benchmark (SPY / QQQ) over the Equity card's range, in its own prices.
+
+    ``start_value`` is the benchmark's close on the day the portfolio range starts (the
+    same day as ``EquitySection.start_at``), so ``change_pct`` compares like for like with
+    the portfolio's ``change_pct``. The SPA rebases ``series`` onto the equity line.
+    """
+
+    model_config = _STRICT
+
+    symbol: str
+    start_value: Decimal
+    value: Decimal
+    value_at: _dt.datetime
+    change_pct: float = Field(description="value / start_value − 1 (fraction)")
+    series: list[EquityPoint] = Field(
+        description="Benchmark prices at the equity series' timestamps (subset)"
+    )
+
+
+class AccountSplit(BaseModel):
+    """D87: how much of the account is free cash vs held in open positions."""
+
+    model_config = _STRICT
+
+    at: _dt.datetime
+    equity: Decimal
+    cash: Decimal = Field(description="Broker cash: available to open new debit trades")
+    in_positions: Decimal = Field(
+        description="equity − cash: the open positions' marked value (locked up)"
+    )
+    cash_pct: float | None = Field(default=None, description="cash / equity (fraction)")
+    options_buying_power: Decimal | None = Field(
+        default=None, description="Broker options buying power (cash account: = cash)"
+    )
+
+
+GreekRisk = Literal["low", "med", "high"]
+
+
+class GreekAdvisory(BaseModel):
+    """D87: an uncapped Greek in dollars with an info-only Low / Med / High label.
+
+    The label is display only (no gate, no halt): ``|value| / equity`` against the
+    ``tower.overview.greek_advisory`` bands (``med_pct`` / ``high_pct``)."""
+
+    model_config = _STRICT
+
+    value: float | None = None
+    pct_of_equity: float | None = Field(
+        default=None, description="|value| / equity (Θ: decay paid only, max(−Θ, 0))"
+    )
+    risk: GreekRisk | None = Field(default=None, description="None = no value (rendered —)")
+    med_pct: float
+    high_pct: float
 
 
 class DayPnlSection(BaseModel):
@@ -255,6 +320,14 @@ class GreeksSection(BaseModel):
         default=None, description="max_alloc_pct × equity (gate rule)"
     )
     max_alloc_pct: float
+    theta: GreekAdvisory | None = Field(
+        default=None, description="D87: Θ, $ per day (uncapped; advisory band only)"
+    )
+    gamma: GreekAdvisory | None = Field(
+        default=None,
+        description="D87: dollar gamma, $Δ change for a 1% move (Σ Γ × spot² / 100 per "
+        "underlying; uncapped; advisory band only)",
+    )
 
 
 class ProposalRow(ProposalView):
@@ -327,6 +400,7 @@ class OverviewResponse(BaseModel):
     status: StatusSection
     equity: EquitySection
     day_pnl: DayPnlSection
+    account: AccountSplit | None = Field(default=None, description="D87: cash vs in positions")
     positions: list[PositionRow]
     greeks: GreeksSection
     proposals: list[ProposalRow]
@@ -370,6 +444,10 @@ class IntradayMark(BaseModel):
     )
     prev_close_source: BaselineSource | None = None
     legs: list[LegView] = Field(default_factory=list)
+    benchmarks: dict[str, Decimal] = Field(
+        default_factory=dict, description="D87: benchmark price at this mark"
+    )
+    benchmark_prev_close: dict[str, Decimal] = Field(default_factory=dict)
 
 
 def _mark(conn: sqlite3.Connection, row: sqlite3.Row) -> IntradayMark | None:
@@ -379,8 +457,25 @@ def _mark(conn: sqlite3.Connection, row: sqlite3.Row) -> IntradayMark | None:
     if at is None or eq is None:
         return None
     prev, source = prev_close_of(conn, d, at.date())
+    bench: dict[str, Decimal] = {}
+    bench_prev: dict[str, Decimal] = {}
+    raw = d.get("benchmarks")
+    for sym, b in (raw if isinstance(raw, dict) else {}).items():
+        if not isinstance(b, dict):
+            continue
+        price, prior = _dec(b.get("price")), _dec(b.get("prev_close"))
+        if price is not None and price > 0:
+            bench[str(sym)] = price
+        if prior is not None and prior > 0:
+            bench_prev[str(sym)] = prior
     return IntradayMark(
-        at=at, equity=eq, prev_close=prev, prev_close_source=source, legs=_legs(row)
+        at=at,
+        equity=eq,
+        prev_close=prev,
+        prev_close_source=source,
+        legs=_legs(row),
+        benchmarks=bench,
+        benchmark_prev_close=bench_prev,
     )
 
 
@@ -433,6 +528,7 @@ def _pct(change: Decimal | None, base: Decimal | None) -> float | None:
 
 
 def _equity(
+    conn: sqlite3.Connection,
     rng: OverviewRange,
     today: _dt.date,
     daily: list[DailyEquity],
@@ -489,6 +585,16 @@ def _equity(
             series.append(EquityPoint(t=latest.at, v=latest.equity))
 
     change = value - start_value if value is not None and start_value is not None else None
+    benchmarks = _benchmarks(
+        conn,
+        rng,
+        series,
+        series_source,
+        marks,
+        latest if source == "intraday" else None,
+        start_at,
+        start_label,
+    )
     return EquitySection(
         range=rng,
         value=value,
@@ -502,7 +608,106 @@ def _equity(
         change_pct=_pct(change, start_value),
         series_source=series_source,
         series=series,
+        benchmarks=benchmarks,
     )
+
+
+#: D87: the benchmarks drawn next to the portfolio (the monitor marks the same list).
+BENCHMARKS = ("SPY", "QQQ")
+
+
+def _daily_closes(conn: sqlite3.Connection, symbol: str) -> dict[_dt.date, Decimal]:
+    """*symbol*'s daily closes: ``iv_daily`` ``last_close`` spots, filled from the last
+    monitor mark of each day at or after 15:50 ET (D87)."""
+    out: dict[_dt.date, Decimal] = {}
+    if _has_table(conn, "heartbeats"):
+        for r in conn.execute(
+            """SELECT at, json_extract(detail, '$.benchmarks') AS b FROM heartbeats
+               WHERE component = 'monitor' AND json_extract(detail, '$.benchmarks') IS NOT NULL
+               ORDER BY at, rowid"""
+        ).fetchall():
+            at = parse_ts(r["at"])
+            row = _json(r["b"], {}).get(symbol)
+            if at is None or not isinstance(row, dict):
+                continue
+            et = at.astimezone(ET)
+            price = _dec(row.get("price"))
+            if price is not None and price > 0 and et.time() >= _dt.time(15, 50):
+                out[et.date()] = price
+            prior = _dec(row.get("prev_close"))
+            if prior is not None and prior > 0:
+                # the prior session's close: keyed on the latest day before *et* we know
+                out.setdefault(_prev_session(et.date()), prior)
+    if _has_table(conn, "iv_daily"):
+        for r in conn.execute(
+            """SELECT day, spot FROM iv_daily
+               WHERE ticker = ? AND spot_basis = 'last_close' AND spot > 0""",
+            (symbol,),
+        ).fetchall():
+            v = _dec(r["spot"])
+            if v is not None:
+                out[_dt.date.fromisoformat(str(r["day"])[:10])] = v
+    return out
+
+
+def _prev_session(day: _dt.date) -> _dt.date:
+    from arc.utils.calendar import previous_session
+
+    return previous_session(day)
+
+
+def _benchmarks(
+    conn: sqlite3.Connection,
+    rng: OverviewRange,
+    series: list[EquityPoint],
+    series_source: Literal["intraday", "daily"],
+    marks: list[IntradayMark],
+    live: IntradayMark | None,
+    start_at: _dt.datetime | None,
+    start_label: str | None,
+) -> list[BenchmarkSeries]:
+    """D87: SPY / QQQ over the Equity card's range, starting where the portfolio starts.
+
+    ``1D`` uses the monitor marks (start = the benchmark's prior close when the portfolio
+    starts at prev close, else its first mark). Longer ranges use daily closes (start = the
+    close on the portfolio's start day) plus today's live mark. A benchmark with no start
+    price is left out, never guessed.
+    """
+    out: list[BenchmarkSeries] = []
+    for sym in BENCHMARKS:
+        pts: list[EquityPoint] = []
+        start: Decimal | None = None
+        if series_source == "intraday":
+            pts = [EquityPoint(t=m.at, v=m.benchmarks[sym]) for m in marks if sym in m.benchmarks]
+            if start_label == "prev close" and marks and sym in marks[-1].benchmark_prev_close:
+                start = marks[-1].benchmark_prev_close[sym]
+            elif pts:
+                start = pts[0].v
+        else:
+            closes = _daily_closes(conn, sym)
+            for p in series:
+                day = p.t.astimezone(ET).date()
+                if live is not None and p.t == live.at:
+                    if sym in live.benchmarks:
+                        pts.append(EquityPoint(t=p.t, v=live.benchmarks[sym]))
+                elif day in closes:
+                    pts.append(EquityPoint(t=p.t, v=closes[day]))
+            if start_at is not None:
+                start = closes.get(start_at.astimezone(ET).date())
+        if start is None or start <= 0 or not pts:
+            continue
+        last = pts[-1]
+        out.append(
+            BenchmarkSeries(
+                symbol=sym,
+                start_value=start,
+                value=last.v,
+                value_at=last.t,
+                change_pct=float(last.v / start - 1),
+                series=pts,
+            )
+        )
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -694,6 +899,17 @@ def _position_rows(
                     ),
                     start=Decimal(0),
                 )
+            # D87: a structure opened on the mark's day has no prior close of its own; the
+            # broker's change_today is vs the contract's prior close (before we held it), so
+            # its day change is the change since entry.
+            opened = parse_ts(r["opened_at"])
+            if (
+                pl is not None
+                and opened is not None
+                and latest is not None
+                and opened.astimezone(ET).date() == latest.at.astimezone(ET).date()
+            ):
+                day = pl
         close_net = _dec(r["close_net"])
         realized = -(entry + close_net) * 100 * n if close_net is not None else None
         basis = abs(entry) * 100 * n
@@ -994,7 +1210,9 @@ def _greeks_section(
     max_alloc_pct: float,
     stale_after: _dt.timedelta,
     beta_delta_cap_pct: float = 2.00,
+    advisory: GreekAdvisorySettings | None = None,
 ) -> GreeksSection:
+    advisory = advisory or GreekAdvisorySettings()
     g = _greeks(
         monitor,
         dollar_delta_cap_pct,
@@ -1012,6 +1230,59 @@ def _greeks_section(
         max_loss_by_underlying=dict(sorted(by.items(), key=lambda kv: kv[1], reverse=True)),
         per_underlying_cap=cap,
         max_alloc_pct=max_alloc_pct,
+        theta=_advisory(g.theta, g.equity, advisory.theta, cost_only=True),
+        gamma=_advisory(_dollar_gamma(monitor), g.equity, advisory.gamma),
+    )
+
+
+def _dollar_gamma(monitor: sqlite3.Row | None) -> float | None:
+    """D87: Σ over underlyings of Γ (share-eq) × spot² / 100: how many dollars the book's
+    dollar delta moves when every underlying moves 1%. ``None`` on a heartbeat written
+    before D87 (no per-root Γ / spot), never a guess from the net Γ."""
+    if monitor is None:
+        return None
+    rows = (_json(monitor["detail"], {}).get("delta_by_underlying") or {}).values()
+    total = 0.0
+    seen = False
+    for r in rows:
+        if not isinstance(r, dict) or r.get("gamma") is None or not r.get("spot"):
+            return None
+        total += float(r["gamma"]) * float(r["spot"]) ** 2 / 100.0
+        seen = True
+    return total if seen else (0.0 if not rows else None)
+
+
+def _advisory(
+    value: float | None, equity: float | None, band: AdvisoryBand, *, cost_only: bool = False
+) -> GreekAdvisory:
+    """D87: Low / Med / High from |value| / equity against *band* (info only).
+
+    *cost_only* (Θ): only a negative value (time decay paid) counts; collecting Θ is Low."""
+    size = None if value is None else (max(-value, 0.0) if cost_only else abs(value))
+    pct = None if size is None or not equity else size / float(equity)
+    risk: GreekRisk | None = None
+    if pct is not None:
+        risk = "high" if pct >= band.high_pct else "med" if pct >= band.med_pct else "low"
+    return GreekAdvisory(
+        value=value, pct_of_equity=pct, risk=risk, med_pct=band.med_pct, high_pct=band.high_pct
+    )
+
+
+def _account(monitor: sqlite3.Row | None) -> AccountSplit | None:
+    """D87: cash (available) vs equity − cash (held in open positions), latest monitor."""
+    if monitor is None:
+        return None
+    d = _json(monitor["detail"], {})
+    eq, cash, at = _dec(d.get("equity")), _dec(d.get("cash")), parse_ts(monitor["at"])
+    if eq is None or cash is None or at is None:
+        return None
+    return AccountSplit(
+        at=at,
+        equity=eq,
+        cash=cash,
+        in_positions=eq - cash,
+        cash_pct=float(cash / eq) if eq else None,
+        options_buying_power=_dec(d.get("options_buying_power")),
     )
 
 
@@ -1065,6 +1336,7 @@ def load_overview(
     stale_after: _dt.timedelta,
     activity_hours: int = ACTIVITY_HOURS,
     beta_delta_cap_pct: float = 2.00,
+    greek_advisory: GreekAdvisorySettings | None = None,
 ) -> OverviewResponse:
     """Every Overview section read in one pass as of *now* (SELECT only).
 
@@ -1092,8 +1364,9 @@ def load_overview(
         marks_at=latest.at if latest else None,
         marks_stale=latest is None or now_et - latest.at > stale_after,
         status=_status(conn, monitor),
-        equity=_equity(rng, today, daily, reconciled_at, marks, latest),
+        equity=_equity(conn, rng, today, daily, reconciled_at, marks, latest),
         day_pnl=_day_pnl(conn, daily, latest, positions),
+        account=_account(monitor),
         positions=positions,
         greeks=_greeks_section(
             monitor,
@@ -1103,6 +1376,7 @@ def load_overview(
             max_alloc_pct=max_alloc_pct,
             stale_after=stale_after,
             beta_delta_cap_pct=beta_delta_cap_pct,
+            advisory=greek_advisory,
         ),
         proposals=_proposal_rows(conn, now_et),
         proposals_since=now_et - PROPOSAL_WINDOW,
