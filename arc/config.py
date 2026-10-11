@@ -8,7 +8,7 @@ from __future__ import annotations
 import enum
 from decimal import Decimal
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 import structlog
 from pydantic import (
@@ -23,6 +23,9 @@ from pydantic import (
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from arc.account_profiles import DEFAULT_ACCOUNT_PROFILE, AccountProfile, load_account_profiles
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 log = structlog.get_logger()
 
@@ -193,6 +196,22 @@ class TickRules(BaseModel):
 # ---------------------------------------------------------------------------
 # Settings
 # ---------------------------------------------------------------------------
+
+
+#: E20.4 (D85): ArcSettings fields that moved to config/universe.yaml (`active_max`,
+#: `sizes.<tier>`, `floors.<tier>`); passing one is refused, not silently ignored.
+MOVED_UNIVERSE_FIELDS: frozenset[str] = frozenset(
+    {
+        "universe_active_max",
+        "universe_momentum_size",
+        "universe_discovery_size",
+        "universe_trending_size",
+        "universe_floor_core",
+        "universe_floor_momentum",
+        "universe_floor_discovery",
+        "universe_floor_trending",
+    }
+)
 
 
 class ArcSettings(BaseSettings):
@@ -1144,43 +1163,10 @@ class ArcSettings(BaseSettings):
             "active list is the allow-list."
         ),
     )
-    universe_active_max: Annotated[int, Field(ge=1, le=60)] = Field(
-        default=50,
-        description="D58/D67: the deduped active list (core, momentum, then discovery ⇄ "
-        "trending by round robin) is capped at this many names; the rest are journaled "
-        "universe:over_active_cap.",
-    )
-    # -- D56 (E13.4) / D58 (E13.19): four tiers, per-tier sizes and floors
-    universe_momentum_size: Annotated[int, Field(ge=0, le=50)] = Field(
-        default=20,
-        description="D56: momentum tier size (top N of the momentum feed; the feed itself "
-        "keeps its 25 rows, universe.momentum `size`).",
-    )
-    universe_discovery_size: Annotated[int, Field(ge=0, le=25)] = Field(
-        default=25,
-        description="D58: discovery tier size (the Scout's YouTube calls, ranked; was 20).",
-    )
-    universe_trending_size: Annotated[int, Field(ge=0, le=25)] = Field(
-        default=25,
-        description="D58: trending tier size (the daily retail_buzz ranking, E13.19).",
-    )
-    universe_floor_core: Annotated[float, Field(ge=0.0, le=1.0)] = Field(
-        default=0.4,
-        description="D56: Scalp confidence floor for core names.",
-    )
-    universe_floor_momentum: Annotated[float, Field(ge=0.0, le=1.0)] = Field(
-        default=0.5,
-        description="D56: Scalp confidence floor for momentum names.",
-    )
-    universe_floor_discovery: Annotated[float, Field(ge=0.0, le=1.0)] = Field(
-        default=0.6,
-        description="D56: Scalp confidence floor for discovery names (owner: >= 0.6).",
-    )
-    universe_floor_trending: Annotated[float, Field(ge=0.0, le=1.0)] = Field(
-        default=0.6,
-        description="D58: Scalp confidence floor for trending names (default pending owner "
-        "confirmation; same as discovery).",
-    )
+    # E20.4 (D85): the active cap, per-tier sizes and floors moved to config/universe.yaml
+    # (`active_max`, `sizes:`, `floors:`); registry keys `universe_active_max`,
+    # `universe_<tier>_size`, `universe_floor_<tier>` are unchanged. `universe_mode`
+    # stays here: D9 documents `ARC_UNIVERSE_MODE=strict` as an env switch.
     universe_mode: UniverseMode = Field(
         default=UniverseMode.SEED,
         description=(
@@ -1210,7 +1196,31 @@ class ArcSettings(BaseSettings):
         """D26 overrides for one YAML config (``exits``, ``costs``, ...); ``{}`` if none."""
         return dict(self._yaml_overrides.get(target, {}))
 
+    def with_yaml_overrides(
+        self, target: str, overrides: Mapping[tuple[str, ...], object]
+    ) -> ArcSettings:
+        """A copy whose *target* YAML overrides are patched with *overrides* (tests, CLIs)."""
+        out = self.model_copy()
+        merged = {k: dict(v) for k, v in self._yaml_overrides.items()}
+        merged[target] = {**merged.get(target, {}), **dict(overrides)}
+        out._yaml_overrides = merged  # noqa: SLF001 - same class
+        return out
+
     # -- Validators ----------------------------------------------------------
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_moved_universe_fields(cls, data: Any) -> Any:
+        """E20.4 (D85): the active cap, tier sizes and floors moved to universe.yaml."""
+        if isinstance(data, dict):
+            moved = sorted(k for k in data if str(k).lower() in MOVED_UNIVERSE_FIELDS)
+            if moved:
+                msg = (
+                    f"{', '.join(moved)} moved to config/universe.yaml (E20.4, PLAN D85): "
+                    "`active_max`, `sizes.<tier>`, `floors.<tier>` (registry keys unchanged)"
+                )
+                raise ValueError(msg)
+        return data
 
     @field_validator(
         "universe",

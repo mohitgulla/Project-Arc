@@ -33,6 +33,7 @@ from arc.universe.tiers import (
     Tier,
     TierMember,
     UniverseTierPayload,
+    active_max,
     active_tickers,
     build_active,
     core_tickers,
@@ -40,6 +41,7 @@ from arc.universe.tiers import (
     record_active,
     resolve_active,
     seed_tickers,
+    tier_sizes,
     watch_tickers,
 )
 from arc.utils.calendar import ET
@@ -177,14 +179,18 @@ class TestCoreConfig:
 
     def test_registry_keys_and_ceiling(self) -> None:
         assert MAX_UNIVERSE == MAX_CORE == 25  # D58: every tier capped at 25
-        for key, default in (
-            ("universe_active_max", 50),
-            ("universe_momentum_size", 20),
-            ("universe_discovery_size", 25),
-            ("universe_trending_size", 25),
+        s = _settings()
+        assert active_max(s) == 50  # E20.4 (D85): universe.yaml active_max / sizes
+        assert tier_sizes(s) == {Tier.MOMENTUM: 20, Tier.DISCOVERY: 25, Tier.TRENDING: 25}
+        for key in (
+            "universe_active_max",
+            "universe_momentum_size",
+            "universe_discovery_size",
+            "universe_trending_size",
         ):
             assert key in REGISTRY
-            assert getattr(_settings(), key) == default
+            with pytest.raises(ValueError, match="moved to config/universe.yaml"):
+                _settings(**{key: 1})
 
     def test_over_active_cap_reason_has_label(self) -> None:
         assert ReasonCode.UNIVERSE_OVER_ACTIVE_CAP.value == "universe:over_active_cap"
@@ -357,7 +363,7 @@ class TestStore:
         assert seed_tickers(db, _settings(), NOW) == CORE_20
 
     def test_record_writes_entry_and_journals_overflow_once(self, db: sqlite3.Connection) -> None:
-        s = _settings(universe_active_max=21)
+        s = _settings().with_yaml_overrides("universe", {("active_max",): 21})
         _write_tier(db, Tier.MOMENTUM, ["LRCX", "KLAC", "AMAT"], at=NOW, ttl="8d")
         store = ContextStore(db)
 

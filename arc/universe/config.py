@@ -11,6 +11,8 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from arc.config import UniverseMode
+from arc.universe.tiers import CarryoverSettings
+from arc.universe.velocity import VelocityOptions
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -32,12 +34,19 @@ __all__ = [
     "PolicyTier",
     "ScreenProfile",
     "SymbolMasterConfig",
+    "TierFloors",
     "TierPolicy",
     "TierScreenName",
+    "TierSizes",
     "TiersConfig",
+    "TrendingOptions",
     "UniverseConfig",
     "UniverseMode",
+    "extract_legacy_universe",
+    "legacy_universe_path",
     "load_universe_config",
+    "moved_universe_keys",
+    "split_universe_overrides",
     "universe_config",
 ]
 
@@ -180,17 +189,26 @@ class EarningsConfig(BaseModel):
         return data
 
 
+MomentumSource = Literal["stockanalysis", "schwab"]
+
+
 class MomentumConfig(BaseModel):
     """E12.2 momentum tier source (S&P 500 Momentum via Invesco SPMO holdings).
 
-    Which sources run, in what order, and how many names the tier writes are job
-    options in ``config/routines.yaml`` (``universe.momentum``); this block holds the
-    source URLs and the deterministic selection rules.
+    E20.4 (D85): which sources run and in what order (``source_order``) and how many
+    rows the feed keeps (``size``) moved here from the ``universe.momentum`` job options
+    in ``config/routines.yaml``; the tier itself takes the top ``sizes.momentum``.
     """
 
     model_config = _FORBID
 
-    urls: dict[Literal["stockanalysis", "schwab"], str] = Field(
+    # Schwab only when stockanalysis fails or parses fewer than min_rows rows.
+    source_order: list[MomentumSource] = Field(
+        default_factory=lambda: ["stockanalysis", "schwab"], min_length=1
+    )
+    # Rows the momentum feed keeps (the tier takes the top sizes.momentum of them).
+    size: int = Field(25, ge=1, le=100)
+    urls: dict[MomentumSource, str] = Field(
         default_factory=lambda: {
             "stockanalysis": "https://stockanalysis.com/etf/spmo/holdings/",
             "schwab": (
@@ -211,12 +229,59 @@ class MomentumConfig(BaseModel):
 
 
 class TierPolicy(BaseModel):
-    """D56 admission screen of one tier. The tier's Scalp confidence floor is the
-    runtime tunable ``universe_floor_<tier>`` (ArcSettings), one source of truth."""
+    """D56 admission screen of one tier. The tier's Scalp confidence floor is
+    ``floors.<tier>`` (the ``universe_floor_<tier>`` registry key)."""
 
     model_config = _FORBID
 
     screen: TierScreenName
+
+
+class TierSizes(BaseModel):
+    """E20.4 (D85): per-tier size cuts (registry ``universe_<tier>_size``; core is
+    bounded by MAX_CORE, never cut). Was ArcSettings ``universe_*_size``."""
+
+    model_config = _FORBID
+
+    momentum: int = Field(20, ge=0, le=50)  # top N of the momentum feed (momentum.size rows)
+    discovery: int = Field(25, ge=0, le=25)  # D58: was 20
+    trending: int = Field(25, ge=0, le=25)  # D58 (E13.19)
+
+
+class TierFloors(BaseModel):
+    """E20.4 (D85): Scalp confidence floor per tier (registry ``universe_floor_<tier>``).
+    Was ArcSettings ``universe_floor_*``."""
+
+    model_config = _FORBID
+
+    core: float = Field(0.4, ge=0.0, le=1.0)
+    momentum: float = Field(0.5, ge=0.0, le=1.0)
+    discovery: float = Field(0.6, ge=0.0, le=1.0)  # owner: >= 0.6
+    trending: float = Field(0.6, ge=0.0, le=1.0)  # D58, same as discovery
+
+
+#: E14.5: ``trending.scoring`` choices, the control first.
+TrendingScoring = Literal["rank_gain", "velocity"]
+
+
+class TrendingOptions(BaseModel):
+    """E13.19 (D58) trending ranker knobs, the ``trending:`` block (E20.4, D85: was the
+    ``universe.trending`` job options in ``config/routines.yaml``)."""
+
+    model_config = _FORBID
+
+    pool: int = Field(40, ge=1, le=200)
+    min_inputs_first: int = Field(2, ge=1, le=10)
+    exclude_market_reference: bool = True
+    # E14.5 (D60): Reddit's second half; rank_gain = the E13.19 ranking (control).
+    scoring: TrendingScoring = "rank_gain"
+    velocity: VelocityOptions = Field(default_factory=VelocityOptions)
+
+    @classmethod
+    def from_options(cls, options: Mapping[str, Any]) -> TrendingOptions:
+        """The model from a mapping that may carry other keys (they are ignored)."""
+        keys = set(cls.model_fields)
+        return cls.model_validate({k: v for k, v in options.items() if k in keys})
 
 
 def _default_policy() -> dict[PolicyTier, TierPolicy]:
@@ -282,15 +347,32 @@ class TiersConfig(BaseModel):
 
 
 class UniverseConfig(BaseModel):
+    """Top-level ``config/universe.yaml``: every universe setting in one file (E20.4, D85).
+
+    Besides the tier layout, screens, symbol master and extraction, it holds the active
+    cap, per-tier sizes and floors, the D64 carry-over and the momentum / trending tier
+    knobs (pre-E20.4: ArcSettings ``universe_*`` and ``config/routines.yaml``). Registry
+    keys are unchanged; :func:`legacy_universe_path` maps the old routines paths.
+    """
+
     model_config = _FORBID
 
     core: list[str] = Field(default_factory=list, max_length=25)  # D58 MAX_CORE
+    # D58/D67: the deduped active list is capped at this many names (registry
+    # `universe_active_max`; was ArcSettings).
+    active_max: int = Field(50, ge=1, le=60)
     # D67 (E14.9): how discovery + trending share the active slots left after core +
     # momentum. round_robin = D1, T1, D2, T2, … with spill (owner default); precedence =
     # D58 (all of discovery first). Registry key `universe.active_fill`.
     active_fill: Literal["round_robin", "precedence"] = "round_robin"
+    sizes: TierSizes = Field(default_factory=TierSizes)
+    floors: TierFloors = Field(default_factory=TierFloors)
+    # D64 (E14.7): two-run carry-over for discovery + trending (was routines.yaml
+    # `universe: carryover:`).
+    carryover: CarryoverSettings = Field(default_factory=CarryoverSettings)
     tiers: TiersConfig = Field(default_factory=TiersConfig)
     momentum: MomentumConfig = Field(default_factory=MomentumConfig)
+    trending: TrendingOptions = Field(default_factory=TrendingOptions)
     symbol_master: SymbolMasterConfig = Field(default_factory=SymbolMasterConfig)
     liquidity_screen: LiquidityScreens = Field(default_factory=LiquidityScreens)
     extraction: ExtractionConfig = Field(default_factory=ExtractionConfig)
@@ -331,3 +413,106 @@ def universe_config(settings: ArcSettings) -> UniverseConfig:
     return load_universe_config(
         settings.universe_config_file, overrides=settings.yaml_overrides("universe") or None
     )
+
+
+# ---------------------------------------------------------------------------
+# E20.4 (D85): pre-E20.4 routines.yaml paths of the moved universe knobs
+# ---------------------------------------------------------------------------
+
+_TRENDING_JOB = "universe.trending"
+_MOMENTUM_JOB = "universe.momentum"
+#: ``universe.momentum`` job options that moved to ``momentum:``.
+_MOMENTUM_KEYS: tuple[str, ...] = ("source_order", "size")
+
+
+def _trending_keys() -> tuple[str, ...]:
+    return tuple(TrendingOptions.model_fields)
+
+
+def legacy_universe_path(path: tuple[str, ...]) -> tuple[str, ...] | None:
+    """The universe.yaml path of a pre-E20.4 routines.yaml path, ``None`` if it did not move.
+
+    ``universe.carryover.*`` -> ``carryover.*``; ``sources.universe.trending.<k>`` ->
+    ``trending.<k>`` (pool, min_inputs_first, exclude_market_reference, scoring,
+    velocity); ``sources.universe.momentum.<k>`` -> ``momentum.<k>`` (source_order, size).
+    Old experiment overlays (``routines: universe: carryover``) still reach the setting.
+    """
+    if len(path) >= 2 and path[0] == "universe" and path[1] == "carryover":  # noqa: PLR2004
+        return path[1:]
+    if len(path) >= 3 and path[0] == "sources":  # noqa: PLR2004
+        job, key = path[1], path[2]
+        if job == _TRENDING_JOB and key in _trending_keys():
+            return ("trending", *path[2:])
+        if job == _MOMENTUM_JOB and key in _MOMENTUM_KEYS:
+            return ("momentum", *path[2:])
+    return None
+
+
+def split_universe_overrides(
+    overrides: Mapping[tuple[str, ...], Any] | None,
+) -> tuple[dict[tuple[str, ...], Any], dict[tuple[str, ...], Any]]:
+    """``(routines, universe)``: pre-E20.4 routines paths of moved knobs go to universe.yaml."""
+    routines: dict[tuple[str, ...], Any] = {}
+    universe: dict[tuple[str, ...], Any] = {}
+    for path, value in (overrides or {}).items():
+        new = legacy_universe_path(tuple(path))
+        if new is None:
+            routines[tuple(path)] = value
+        else:
+            universe[new] = value
+    return routines, universe
+
+
+def moved_universe_keys(data: Mapping[str, Any]) -> list[str]:
+    """Moved universe knobs still present in raw routines.yaml *data* (dotted paths)."""
+    found: list[str] = []
+    if "universe" in data:
+        found.append("universe")
+    sources = data.get("sources")
+    if isinstance(sources, dict):
+        for job, keys in ((_TRENDING_JOB, _trending_keys()), (_MOMENTUM_JOB, _MOMENTUM_KEYS)):
+            spec = sources.get(job)
+            if isinstance(spec, dict):
+                found += [f"sources.{job}.{k}" for k in keys if k in spec]
+    return found
+
+
+def extract_legacy_universe(
+    data: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[tuple[str, ...], Any]]:
+    """``(routines data without the moved knobs, universe.yaml overrides)``.
+
+    For an experiment overlay merged into routines.yaml the pre-E20.4 way
+    (``routines: {universe: {carryover: {enabled: false}}}``): the moved leaves become
+    universe.yaml overrides, as :func:`split_universe_overrides` maps them at runtime.
+    """
+    out = dict(data)
+    moved: dict[tuple[str, ...], Any] = {}
+    block = out.pop("universe", None)
+    if isinstance(block, dict):
+        moved.update(_leaves(block, ("universe",)))
+    sources = out.get("sources")
+    if isinstance(sources, dict):
+        sources = dict(sources)
+        for job, keys in ((_TRENDING_JOB, _trending_keys()), (_MOMENTUM_JOB, _MOMENTUM_KEYS)):
+            spec = sources.get(job)
+            if not isinstance(spec, dict):
+                continue
+            spec = dict(spec)
+            for k in keys:
+                if k in spec:
+                    moved.update(_leaves(spec.pop(k), ("sources", job, k)))
+            sources[job] = spec
+        out["sources"] = sources
+    _, universe = split_universe_overrides(moved)
+    return out, universe
+
+
+def _leaves(node: Any, prefix: tuple[str, ...]) -> dict[tuple[str, ...], Any]:
+    """Leaf ``path -> value`` pairs of a nested mapping (a list is one leaf)."""
+    if isinstance(node, dict) and node:
+        out: dict[tuple[str, ...], Any] = {}
+        for k, v in node.items():
+            out.update(_leaves(v, (*prefix, str(k))))
+        return out
+    return {prefix: node}

@@ -46,6 +46,7 @@ from typing import TYPE_CHECKING, Any, Literal
 import structlog
 from pydantic import BaseModel, ConfigDict, Field
 
+from arc.universe.config import TrendingOptions, TrendingScoring
 from arc.universe.master import normalize_symbol
 from arc.universe.velocity import (
     Velocity,
@@ -103,27 +104,8 @@ class TrendingError(RuntimeError):
     """The trending tier cannot be built today (nothing is written)."""
 
 
-TrendingScoring = Literal["rank_gain", "velocity"]
-#: E14.5: ``universe.trending.scoring`` choices, the control first.
+#: E14.5: ``trending.scoring`` choices, the control first.
 SCORING_CHOICES: tuple[str, ...] = ("rank_gain", "velocity")
-
-
-class TrendingOptions(BaseModel):
-    """``universe.trending`` job options (``config/routines.yaml``)."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    pool: int = Field(40, ge=1, le=200)
-    min_inputs_first: int = Field(2, ge=1, le=10)
-    exclude_market_reference: bool = True
-    # E14.5 (D60): Reddit's second half; rank_gain = the E13.19 ranking (control).
-    scoring: TrendingScoring = "rank_gain"
-    velocity: VelocityOptions = Field(default_factory=VelocityOptions)
-
-    @classmethod
-    def from_options(cls, options: Mapping[str, Any]) -> TrendingOptions:
-        keys = set(cls.model_fields)
-        return cls.model_validate({k: v for k, v in options.items() if k in keys})
 
 
 # ---------------------------------------------------------------------------

@@ -72,9 +72,21 @@ def _validator(target: str) -> Callable[[dict[str, Any]], object]:
     def _routines(d: dict[str, Any]) -> object:
         # E20.3: a pre-E20.3 overlay leaf (`personas: {anti_chase: off}`) validates
         # against strategy.yaml, as the runtime maps it (arc.routines.strategy).
+        # E20.4: a pre-E20.4 universe leaf (`universe: {carryover: …}`, the trending /
+        # momentum job options) validates against universe.yaml.
         from arc.routines.config import routines_with_strategy
         from arc.routines.strategy import extract_legacy, load_strategy_data
+        from arc.universe.config import (
+            DEFAULT_UNIVERSE_CONFIG,
+            UniverseConfig,
+            extract_legacy_universe,
+        )
+        from arc.utils.yamlpatch import apply_overrides
 
+        d, universe_ov = extract_legacy_universe(d)
+        if universe_ov:
+            base = yaml.safe_load(DEFAULT_UNIVERSE_CONFIG.read_text()) or {}
+            UniverseConfig.model_validate(apply_overrides(base, universe_ov))
         rest, strategy_ov = extract_legacy(d)
         return routines_with_strategy(rest, load_strategy_data(None), strategy_ov)
 

@@ -536,10 +536,10 @@ def test_shipped_config() -> None:
     assert [t.strftime("%H:%M") for t in spec.schedule] == ["06:00"]
     assert spec.catch_up is not None and spec.catch_up.target == ("universe_tier", "momentum")
     assert str(r.context_policy("universe_tier", "universe.momentum").ttl) == "35d"
-    assert spec.options["source_order"] == ["stockanalysis", "schwab"]
-    assert spec.options["size"] == 25
+    assert "source_order" not in spec.options and "size" not in spec.options  # E20.4
     assert "universe.momentum" in BUILTIN_HANDLERS
     u = load_universe_config()
+    assert u.momentum.source_order == ["stockanalysis", "schwab"] and u.momentum.size == 25
     assert u.momentum.share_class_aliases == {"GOOG": "GOOGL"} and u.momentum.min_rows == 20
 
 

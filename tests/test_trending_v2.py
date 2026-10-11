@@ -208,7 +208,9 @@ class TestCategory:
         }
         assert len(cfg.inputs["reddit"].urls) == 2
         trend = r.sources["universe.trending"]
-        assert trend.options["pool"] == 40 and trend.options["min_inputs_first"] == 2
+        t_opts = load_universe_config().trending  # E20.4 (D85): ranker knobs in universe.yaml
+        assert t_opts.pool == 40 and t_opts.min_inputs_first == 2
+        assert "pool" not in trend.options
         assert trend.reads == ["retail_buzz", "universe_tier"]
         assert "retail_buzz" in (r.personas["scout"].reads or [])
         assert r.funnel.scout.max_discovery == 25
@@ -232,14 +234,18 @@ class TestSizes:
 
     def test_size_caps_25(self) -> None:
         s = _settings()
-        assert s.universe_trending_size == 25 and s.universe_discovery_size == 25
-        assert s.universe_momentum_size == 20 and s.universe_active_max == 50
-        assert s.universe_floor_trending == 0.6
-        for key in ("universe_trending_size", "universe_discovery_size"):
+        u = load_universe_config(REPO / "config" / "universe.yaml")  # E20.4 (D85)
+        assert u.sizes.trending == 25 and u.sizes.discovery == 25
+        assert u.sizes.momentum == 20 and u.active_max == 50
+        assert u.floors.trending == 0.6
+        for key, tier in (
+            ("universe_trending_size", "trending"),
+            ("universe_discovery_size", "discovery"),
+        ):
             t = lookup(key)
             assert t.max == 25 and t.hard_ceiling == 25
             with pytest.raises(ValueError):
-                _settings(**{key: 26})
+                UniverseConfig.model_validate({"sizes": {tier: 26}})
         assert lookup("universe_floor_trending").min == 0.30
         assert tier_sizes(s) == {Tier.MOMENTUM: 20, Tier.DISCOVERY: 25, Tier.TRENDING: 25}
         assert tier_floor(s, Tier.TRENDING) == 0.6

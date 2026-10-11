@@ -210,30 +210,29 @@ def test_buzz_velocities_and_fastest_risers() -> None:
 
 
 def test_flags_in_the_registry_default_control() -> None:
-    from arc.control.registry import lookup, read_raw
+    from arc.config import ArcSettings
+    from arc.control.registry import Target, lookup, read_raw
     from arc.routines.config import load_routines
+    from arc.universe.config import universe_config
 
-    raw = yaml.safe_load((REPO / "config/routines.yaml").read_text())
+    # E20.4 (D85): the ranker knobs are universe.yaml `trending:` (same registry key)
+    uraw = yaml.safe_load((REPO / "config/universe.yaml").read_text())
     s = lookup("universe.trending.scoring")
-    assert s.choices == ("rank_gain", "velocity") and read_raw(s, raw) == "rank_gain"
+    assert s.target is Target.UNIVERSE and s.path == ("trending", "scoring")
+    assert s.choices == ("rank_gain", "velocity") and read_raw(s, uraw) == "rank_gain"
+    sraw = yaml.safe_load((REPO / "config/strategy.yaml").read_text())
     f = lookup("personas.scout_buzz_velocity")
-    assert f.choices == ("off", "on") and read_raw(f, raw) == "off"
+    assert f.choices == ("off", "on") and read_raw(f, sraw) == "off"
     r = load_routines()
     assert r.scout_buzz_velocity.enabled is False
-    job = r.job("universe.trending")
-    assert job is not None
-    opts = TrendingOptions.from_options(job[1].options)
+    base = ArcSettings(_env_file=None, env="paper")  # type: ignore[call-arg]
+    opts = universe_config(base).trending
+    assert isinstance(opts, TrendingOptions)
     assert opts.scoring == "rank_gain" and opts.velocity == VelocityOptions()
-    on = load_routines(
-        overrides={
-            ("personas", "scout_buzz_velocity"): "on",
-            ("sources", "universe.trending", "scoring"): "velocity",
-        }
-    )
-    job = on.job("universe.trending")
-    assert job is not None
+    on = load_routines(overrides={("personas", "scout_buzz_velocity"): "on"})
     assert on.scout_buzz_velocity.enabled is True
-    assert TrendingOptions.from_options(job[1].options).scoring == "velocity"
+    vel = base.with_yaml_overrides("universe", {("trending", "scoring"): "velocity"})
+    assert universe_config(vel).trending.scoring == "velocity"
 
 
 def test_velocity_overlay_owns_the_trending_job_and_the_scout() -> None:
@@ -248,8 +247,12 @@ def test_velocity_overlay_owns_the_trending_job_and_the_scout() -> None:
     assert arm_owned_personas({"routines": {"personas": {"scout_buzz_velocity": "on"}}}) == {
         "scout"
     }
-    routines = load_routines(overrides={("sources", "universe.trending", "scoring"): "velocity"})
-    plan = arm_plan(routines, ov, RunnerConfig())
+    # E20.4 (D85): the old routines path maps to universe.yaml `trending.scoring`
+    assert arm_owned_personas({"universe": {"trending": {"scoring": "velocity"}}}) == {
+        "trending",
+        "scout",
+    }
+    plan = arm_plan(load_routines(), ov, RunnerConfig())
     assert plan.fork_step == "research"
     assert persona_jobs(plan.arm_personas) == ["scout", "universe.trending"]
     assert {"universe.trending", "scout"} <= set(plan.own_producers)

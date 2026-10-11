@@ -1,5 +1,7 @@
 # Tiered universe (PLAN D56, E13.4; cut over in E13.15). Validated by
-# arc.universe.config.
+# arc.universe.config. E20.4 (PLAN D85): every universe setting lives here (the active
+# cap, tier sizes and floors were ArcSettings; carry-over and the momentum / trending
+# job options were in routines.yaml, which now refuses them). Registry keys unchanged.
 #
 # Four tiers (D56 + D58), deduped (a name keeps its highest tier:
 # core > momentum > discovery > trending)
@@ -7,23 +9,23 @@
 # `arc universe tiers` prints it):
 #   core       the 20 names below (the `universe` registry key); no screen; Scalp
 #              confidence floor 0.4
-#   momentum   top 20 of the momentum feed (universe_momentum_size; E12.2, context
+#   momentum   top 20 of the momentum feed (sizes.momentum; E12.2, context
 #              `universe_tier`); standard screen; floor 0.5
 #   discovery  <= 25 names the Scout writes from YouTube calls (E13.7;
-#              universe_discovery_size); loose screen; floor 0.6
+#              sizes.discovery); loose screen; floor 0.6
 #   trending   <= 25 names ranked by code from the daily retail_buzz pull (Reddit via
 #              ApeWisdom + Stocktwits; D58, E13.19, job universe.trending;
-#              universe_trending_size): names in both inputs first, then the best
+#              sizes.trending): names in both inputs first, then the best
 #              single-input names; loose screen (owner to confirm); floor 0.6
-# Active list <= 50 (universe_active_max): core, then momentum, then the slots left
+# Active list <= 50 (active_max): core, then momentum, then the slots left
 # go to discovery and trending by round robin (D67: D1, T1, D2, T2, ...; discovery
 # takes the odd slot; a tier that runs out spills its slots to the other). Overflow is
 # journaled universe:over_active_cap,
 # never dropped silently. A Scalp idea for a name in no tier is never admitted
-# (not_in_tier): it is only mentioned. Floors are the runtime tunables
-# universe_floor_core / _momentum / _discovery / _trending.
+# (not_in_tier): it is only mentioned. Floors: `floors:` below.
 #
-# ARC_UNIVERSE_MODE picks the admission mode (no code change):
+# ARC_UNIVERSE_MODE picks the admission mode (no code change; stays an env /
+# ArcSettings field, registry `universe_mode`):
 #   seed    (default) a name is admitted only through its tier: core never screened,
 #           momentum, discovery and trending screened with their tier's profile below.
 #   strict  the active list is a plain allow-list (the pre-D28 behaviour).
@@ -43,6 +45,33 @@ core: [NVDA, AAPL, MSFT, AMZN, GOOGL, META, TSLA, AMD, AVGO, MU, JPM, XOM, UNH, 
 # universe.active_fill precedence` turns it off.
 active_fill: round_robin
 
+# D58/D67: the deduped active list is capped here; the rest is journaled
+# universe:over_active_cap. `!arc config set universe_active_max`.
+active_max: 50
+
+# Per-tier size cuts (core is bounded by its 25-name ceiling, never cut).
+# `!arc config set universe_momentum_size|universe_discovery_size|universe_trending_size`.
+sizes:
+  momentum: 20                  # top 20 of the 25-row momentum feed (momentum.size)
+  discovery: 25                 # D58 (was 20)
+  trending: 25                  # D58 (E13.19)
+
+# Scalp confidence floor per tier. `!arc config set universe_floor_<tier>`.
+floors:
+  core: 0.4
+  momentum: 0.5
+  discovery: 0.6                # owner: >= 0.6
+  trending: 0.6                 # D58 default, same as discovery
+
+# D64 (E14.7) two-run carry-over for discovery + trending: score = w_today x this run +
+# (1 - w_today) x the previous run's entry (<= window_h old, earlier ET day), cut to the
+# tier size; carried names are re-checked against exclusions, never re-screened. Off =
+# this run only. Tunable: `!arc config set universe.carryover.enabled|window_h|w_today`.
+carryover:
+  enabled: true                 # owner decision D64: on by default (not an experiment)
+  window_h: 48                  # 24-96: strict clock hours (Monday's run has no previous run)
+  w_today: 0.6                  # 0.5-1.0; previous run weight = 1 - w_today
+
 tiers:
   # order is fixed (core, momentum, discovery, trending) and defaults to it. E13.15: the D51
   # layout switch (`model:`) is gone; an old `model:` key still loads, ignored.
@@ -60,8 +89,10 @@ tiers:
 
 momentum:
   # E12.2 momentum tier: S&P 500 Momentum index constituents are not free, so the
-  # holdings of Invesco SPMO (tracks the index) are the proxy. Source order and size
-  # are `universe.momentum` job options in config/routines.yaml.
+  # holdings of Invesco SPMO (tracks the index) are the proxy. The `universe.momentum`
+  # job (config/routines.yaml) keeps only its schedule.
+  source_order: [stockanalysis, schwab]   # Schwab only when stockanalysis fails or < min_rows rows
+  size: 25                             # rows the feed keeps; the tier takes sizes.momentum
   urls:
     stockanalysis: https://stockanalysis.com/etf/spmo/holdings/   # embedded top-25 array
     schwab: https://www.schwab.wallst.com/schwab/Prospect/research/etfs/schwabETF/index.asp?type=holdings&symbol=SPMO
@@ -70,6 +101,19 @@ momentum:
   stale_after_days: 40                 # page as-of older -> keep it, raise coverage:universe.momentum
   timeout_s: 20
   retries: 2                           # connection errors / 5xx only
+
+trending:
+  # E13.19 (D58): the code ranker of the `universe.trending` job (config/routines.yaml
+  # keeps its schedule / IO).
+  pool: 40                      # first 40 in rank order get the tier's screen
+  min_inputs_first: 2           # names in both inputs rank ahead of single-input names
+  exclude_market_reference: true
+  # E14.5 (D60): rank_gain = 24 h rank gain (control); velocity = (m + k) / (m24 + k).
+  # `!arc config universe.trending.scoring` (velocity is an Analyst idea-seed lead, D86).
+  scoring: rank_gain
+  velocity:                     # also the Scout's velocity lines (personas.scout_buzz_velocity)
+    smoothing: 5                # k: a 3 -> 12 jump reads 2.1x, not 4x
+    min_mentions: 10            # fewer 24 h mentions -> no velocity (never ranked as growth)
 
 symbol_master:
   # Local cache of the SEC ticker file + Alpaca active US-equity assets
