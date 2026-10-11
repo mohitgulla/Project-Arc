@@ -95,6 +95,14 @@ class DataSettings(BaseModel):
     pit: bool = Field(True, description="Also require E7.7 membership for d's quarter")
     universe_version: str | None = Field(None, description="E7.7 build (None = latest)")
     iv_lookback: int = Field(IV_LOOKBACK, ge=2)
+    iv_source: Literal["compute", "option_stats"] = Field(
+        "compute",
+        description=(
+            "E7.16: option_stats = read IV30/rank/percentile from "
+            "<data-dir>/option_stats/daily when built with the same settings (same numbers, "
+            "faster); otherwise recompute"
+        ),
+    )
     earnings: EarningsRule = Field(default_factory=lambda: EarningsRule())
     screen: LiquidityThresholds = Field(
         default_factory=lambda: LiquidityThresholds(),
@@ -284,7 +292,9 @@ class HistoryView:
             fallback=s.quoted_fallback,
         )
         points = term_points_by_day(chains, closes)
-        iv = iv_points(t, points, lookback=s.iv_lookback, min_obs=self.min_iv_obs)
+        iv = self._stats_iv(t, provider) if s.iv_source == "option_stats" else None
+        if iv is None:
+            iv = iv_points(t, points, lookback=s.iv_lookback, min_obs=self.min_iv_obs)
         market = None
         ref = s.earnings.earn_market_ref
         if ref and ref.upper() != t and not self.is_etf(t) and self.provider_for(ref):
@@ -307,6 +317,26 @@ class HistoryView:
         self._cache[t] = h
         log.info("backtest.data.loaded", ticker=t, provider=h.provider, sessions=len(chains))
         return h
+
+    def _stats_iv(self, ticker: str, provider: str | None) -> dict[dt.date, IvPoint] | None:
+        """E7.16 hook: the precomputed IvPoints, only when built with this view's settings.
+
+        Equal to :func:`iv_points` on every decision session: the warm-up (400 calendar
+        days ≈ 275 sessions) covers the 252-observation rank window, so the trailing
+        window at any d ≥ start is the same in both.
+        """
+        from arc.backtest.option_stats import iv_settings_hash, read_iv_points
+
+        s = self.settings
+        if provider != s.provider:
+            return None
+        want = iv_settings_hash(
+            s, provider=s.provider, flat_rate=self.rates.flat, min_iv_obs=self.min_iv_obs
+        )
+        got = read_iv_points(self.data_dir, ticker, expect_settings=want)
+        if got is None:
+            return None
+        return {d: p for d, p in got.items() if self.read_from <= d <= self.end}
 
     # -- per ticker-day ------------------------------------------------------
 
@@ -337,46 +367,15 @@ class HistoryView:
 
     def liquidity_metrics(self, h: TickerHistory, day: dt.date) -> LiquidityMetrics:
         """The live D9 screen's inputs from day d's own rows (and ADV ending at d)."""
-        th = self.settings.screen
-        out: dict[str, object] = {"ticker": h.ticker, "as_of": day}
-        if day in h.closes.index:
-            out["price"] = float(h.closes[day])
-        vol = h.volume[pd.Index(h.volume.index) <= day].dropna().iloc[-th.adv_days :]
-        out["adv_sessions"] = len(vol)
-        if len(vol) >= th.adv_days:
-            out["adv_shares"] = float(vol.mean())
-        raw = h.raw_day(day)
-        price = out.get("price")
-        if raw.empty or price is None:
-            if raw.empty:
-                out["error"] = "no option rows"
-            return LiquidityMetrics.model_validate(out)
-        lo, hi = self.settings.screen_dte_window
-        dte = (pd.to_datetime(raw["expiration"]) - pd.to_datetime(raw["date"])).dt.days
-        win = raw[(dte >= lo) & (dte <= hi)]
-        expiries = sorted(set(win["expiration"]))
-        out["expiries_in_window"] = len(expiries)
-        if expiries:
-            exp = min(expiries, key=lambda e: (abs((e - day).days - ATM_TARGET_DTE), e))
-            near = win[win["expiration"] == exp]
-            p = float(price)  # type: ignore[arg-type]
-            ks = sorted(set(near["strike"].astype(float)), key=lambda k: (abs(k - p), k))
-            strike = ks[0]
-            near_atm = set(ks[: th.atm_strikes])
-            oi = near[near["strike"].isin(near_atm)]["open_interest"].dropna()
-            atm = near[near["strike"] == strike]
-            spreads = [
-                (a - b) / ((a + b) / 2)
-                for b, a in zip(atm["bid"], atm["ask"], strict=True)
-                if pd.notna(b) and pd.notna(a) and b > 0 and a > 0 and a >= b
-            ]
-            out |= {
-                "atm_expiry": exp,
-                "atm_strike": strike,
-                "atm_open_interest": int(oi.sum()) if len(oi) else None,
-                "atm_spread_pct": sum(spreads) / len(spreads) if spreads else None,
-            }
-        return LiquidityMetrics.model_validate(out)
+        return day_liquidity_metrics(
+            h.ticker,
+            day,
+            h.raw_day(day),
+            closes=h.closes,
+            volume=h.volume,
+            thresholds=self.settings.screen,
+            dte_window=self.settings.screen_dte_window,
+        )
 
     def day(self, ticker: str, day: dt.date) -> ChainDay:
         h = self.load(ticker)
@@ -411,6 +410,62 @@ class HistoryView:
     def eligible(self, day: dt.date, tickers: Sequence[str] | None = None) -> list[str]:
         """Checkpoint names eligible on *day* (priority order)."""
         return [t for t in (tickers or self.symbols) if self.eligibility(t, day).eligible]
+
+
+def day_liquidity_metrics(
+    ticker: str,
+    day: dt.date,
+    raw: pd.DataFrame,
+    *,
+    closes: pd.Series,
+    volume: pd.Series,
+    thresholds: LiquidityThresholds,
+    dte_window: tuple[int, int],
+) -> LiquidityMetrics:
+    """The live D9 screen's inputs from day *d*'s raw option rows (ADV ending at d).
+
+    Shared by :meth:`HistoryView.liquidity_metrics` and the E7.16 option stats, so the
+    backtest flag and the stats' ``d9_pass`` are the same computation.
+    """
+    th = thresholds
+    out: dict[str, object] = {"ticker": ticker, "as_of": day}
+    if day in closes.index:
+        out["price"] = float(closes[day])
+    vol = volume[pd.Index(volume.index) <= day].dropna().iloc[-th.adv_days :]
+    out["adv_sessions"] = len(vol)
+    if len(vol) >= th.adv_days:
+        out["adv_shares"] = float(vol.mean())
+    price = out.get("price")
+    if raw.empty or price is None:
+        if raw.empty:
+            out["error"] = "no option rows"
+        return LiquidityMetrics.model_validate(out)
+    lo, hi = dte_window
+    dte = (pd.to_datetime(raw["expiration"]) - pd.to_datetime(raw["date"])).dt.days
+    win = raw[(dte >= lo) & (dte <= hi)]
+    expiries = sorted(set(win["expiration"]))
+    out["expiries_in_window"] = len(expiries)
+    if expiries:
+        exp = min(expiries, key=lambda e: (abs((e - day).days - ATM_TARGET_DTE), e))
+        near = win[win["expiration"] == exp]
+        p = float(price)  # type: ignore[arg-type]
+        ks = sorted(set(near["strike"].astype(float)), key=lambda k: (abs(k - p), k))
+        strike = ks[0]
+        near_atm = set(ks[: th.atm_strikes])
+        oi = near[near["strike"].isin(near_atm)]["open_interest"].dropna()
+        atm = near[near["strike"] == strike]
+        spreads = [
+            (a - b) / ((a + b) / 2)
+            for b, a in zip(atm["bid"], atm["ask"], strict=True)
+            if pd.notna(b) and pd.notna(a) and b > 0 and a > 0 and a >= b
+        ]
+        out |= {
+            "atm_expiry": exp,
+            "atm_strike": strike,
+            "atm_open_interest": int(oi.sum()) if len(oi) else None,
+            "atm_spread_pct": sum(spreads) / len(spreads) if spreads else None,
+        }
+    return LiquidityMetrics.model_validate(out)
 
 
 def _as_date(v: object) -> dt.date:
