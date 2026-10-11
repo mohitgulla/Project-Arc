@@ -165,6 +165,15 @@ def add_backtest_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     rk.add_argument(
         "--offline", action="store_true", help="Use cached underlying closes only (no Alpaca)"
     )
+    rk.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="E7.10: bypass the menu cache (<data-dir>/backtest_cache/menus/)",
+    )
+    from arc.backtest.data_cli import add_cache_parser, add_data_parser
+
+    add_data_parser(bs)
+    add_cache_parser(bs)
     cmp_ = bs.add_parser(
         "rank-compare",
         help="E7.5a: experiment vs baseline `backtest rank` output, same ranker, D25 rule",
@@ -286,6 +295,7 @@ def run_rank_cli(args: argparse.Namespace) -> int:
         charts=not args.no_charts,
         ohlc_by_ticker=ohlc,
         label_closes_by_ticker=label_closes,
+        cache_dir=None if getattr(args, "no_cache", False) else args.data_dir,
     )
     sys.stdout.write(f"report: {args.out / 'report.md'}\n")
     return 0
@@ -335,6 +345,10 @@ def run_backtest_cli(args: argparse.Namespace) -> int:
         return run_rank_cli(args)
     if getattr(args, "backtest_command", None) == "rank-compare":
         return run_rank_compare_cli(args)
+    if getattr(args, "backtest_command", None) in ("data", "cache"):
+        from arc.backtest.data_cli import run_cache_cli, run_data_cli
+
+        return run_data_cli(args) if args.backtest_command == "data" else run_cache_cli(args)
     if args.start is None or args.end is None:
         sys.stderr.write("arc backtest: --start and --end are required\n")
         return 2

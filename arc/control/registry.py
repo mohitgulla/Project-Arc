@@ -36,6 +36,7 @@ __all__ = [
     "NEVER_TUNABLE_PATHS",
     "NOT_EXPOSED",
     "NOT_EXPOSED_PATHS",
+    "NOT_EXPOSED_RANKING_SECTIONS",
     "REGISTRY",
     "Direction",
     "Group",
@@ -276,6 +277,14 @@ NOT_EXPOSED_PATHS: dict[str, str] = {
     "options_fast.vix_flags.vix_gt_35": "tape label only (the gate's no_trade_vix_max rules)",
     # E16.1 (D76): no date value type; the backfill start is a data-range choice.
     "iv_backfill.since": "backfill start date (data range); change by PR",
+}
+
+# config/ranking.yaml ``backtest.*`` sections that are deliberately NOT runtime-tunable:
+# offline backtest/data infra (D84) that nothing live reads; change by PR. ``lookup``
+# refuses their leaves like any unknown key.
+NOT_EXPOSED_RANKING_SECTIONS: dict[str, str] = {
+    "backtest.universe": "E7.7 point-in-time pull list (offline backtest infra); change by PR",
+    "backtest.data": "E7.10 backtest data layer (offline, read by backtests only); change by PR",
 }
 
 # routines.yaml paths that are never runtime-tunable (path/limit guards; change by PR).

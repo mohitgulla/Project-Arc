@@ -122,6 +122,59 @@ candidate sources, per-quarter counts incl. `top_outside_list` = the coverage ga
 of a fixed 500, `missing_underlying` = the survivorship gap, ETF/stock split per
 checkpoint). Version = `u500-<as_of>-s1|s2-<config hash>`.
 
+## Backtest data layer (E7.10, D84)
+
+```
+arc backtest data check --universe c125|c250|c500 --from D --to D [--data-dir data] \
+    [--tickers A,B] [--provider thetadata|alpaca] [--db data/arc.db] [--json out.json]
+arc backtest cache stats|clear [--ticker T] [--data-dir data]
+arc backtest rank ... [--no-cache]
+```
+
+`arc/backtest/data.py` `HistoryView` is the one point-in-time loader every backtest
+uses (knobs: `config/ranking.yaml` → `backtest.data`; offline infra, not runtime
+tunable). Per `(ticker, session d)` it serves only what was known at d's close:
+
+- **Marks** (`arc/backtest/marks.py`). `quoted` (default, `thetadata` partition):
+  `mid = (bid+ask)/2`, `spread = ask − bid` from the closing NBBO, IV/greeks inverted
+  from the mid. A contract is dropped for the first rule it fails, counted per rule:
+  `no_quote`, `ask_le_zero`, `crossed_locked` (bid ≥ ask), `zero_bid` (bid 0 and the
+  spread rule fails), `wide_spread` (spread/mid > `max_quoted_spread_pct`, 0.35 per
+  leg). A zero-bid contract the spread rule keeps carries `sellable=False` and is
+  never a short leg. `quoted_fallback: smile` re-prices dropped contracts off a smile
+  fitted on the surviving quotes (default `drop`). Names with no `thetadata`
+  sessions fall back to the `alpaca` partition in `alpaca_marks` (`smile`, E7.5;
+  Alpaca rows carry no bid/ask). `smile`/`close` were moved from `ranking.py`
+  unchanged (golden `tests/fixtures/marks_golden.json`).
+- **Rate**: `rate_source: flat` (`risk_free_rate`) or `treasury`
+  (`data/rates/treasury_3m.parquet`, latest value on/before d).
+- **IV30 / IV rank / percentile** (`arc/backtest/ivhist.py`): ATM term points and
+  the 30-day constant-maturity IV through the live `arc.features.vol` functions on
+  7–75 DTE (the `iv.record` window); rank/percentile over IV30 on days ≤ d,
+  lookback 252, ≥ `iv_min_obs_rank` (120) obs (D55). On the real Alpaca history it
+  matches live `iv_daily alpaca_cm30` within ~0.5 vol pts.
+- **Earnings** (`arc/backtest/earnings_hist.py`, no paid source, an
+  approximation): an event on d when the front expiry spanning prev→d trades
+  ≥ `earn_iv_jump` (10 %) over the next expiry on prev **and** its IV is crushed
+  ≥ `earn_crush` (15 %) on d, both in excess of SPY's move at the same expiries
+  (`earn_market_ref`; market-wide crushes are not earnings); one per
+  `earn_min_gap_sessions`. `next_earnings(d)` = last event detected by d +
+  `earn_projection_days` (91, stepped past d); `unknown` before the first detection;
+  ETFs never. `data check --db` prints precision/recall vs the Finnhub
+  `raw_docs` calendar on the sessions both cover.
+- **Eligibility**: in the checkpoint **and** E7.7 membership for d's quarter (`pit`)
+  **and** a close on d. The live D9 liquidity screen (`screen_liquidity`, price /
+  20-day ADV ending d / near-ATM OI / ATM spread in `screen_dte_window`) is exposed
+  as `screen_pass` + reasons only; E7.11 decides whether to apply it.
+- **Menu cache** (`arc/backtest/menucache.py`): `<data-dir>/backtest_cache/menus/
+  <T>/<day>/<key hash>.parquet`. Key = ticker, day, specs + costs + rate + stance/tilt
+  + content of the day's chain and trailing closes, marks mode, exit + MC config,
+  paths, seed, provider. Ranking/portfolio-only changes reuse every menu.
+
+No look-ahead is enforced by a test that multiplies every row after d by 3 and
+asserts the day-d view is unchanged. `data check` prints aggregates only (ThetaData
+retail terms: no raw rows leave the machine).
+
 ```python
 from arc.data.history import ParquetHistoryStore
 
