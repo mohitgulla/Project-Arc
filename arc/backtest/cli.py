@@ -228,6 +228,9 @@ def add_backtest_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     sm.add_argument(
         "--cache-dir", type=Path, default=None, help="Menu cache root (default: --data-dir)"
     )
+    from arc.backtest.study_cli import add_study_parser
+
+    add_study_parser(bs)
     cmp_ = bs.add_parser(
         "rank-compare",
         help="E7.5a: experiment vs baseline `backtest rank` output, same ranker, D25 rule",
@@ -457,6 +460,10 @@ def run_sim_cli(args: argparse.Namespace) -> int:
 def run_backtest_cli(args: argparse.Namespace) -> int:
     if getattr(args, "backtest_command", None) == "sim":
         return run_sim_cli(args)
+    if getattr(args, "backtest_command", None) == "study":
+        from arc.backtest.study_cli import run_study_cli
+
+        return run_study_cli(args)
     if getattr(args, "backtest_command", None) == "rank":
         return run_rank_cli(args)
     if getattr(args, "backtest_command", None) == "rank-compare":

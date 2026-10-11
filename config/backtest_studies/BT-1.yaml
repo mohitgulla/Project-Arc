@@ -1,0 +1,35 @@
+# E7.12 (D84) smoke study. A pre-registered backtest study: the spec is hash-locked
+# (arc backtest study show BT-1), every run is appended to data/backtest/ledger.jsonl,
+# and the holdout (2024-01-01 -> latest) runs once per spec hash. Editing any field
+# below makes a new spec hash; the old ledger lines stay attached to the old hash.
+# Report only: a verdict recommends, live changes still go through D44.
+id: BT-1
+hypothesis: >-
+  On the cash_debit profile, ranking the menu by managed Net EV picks better
+  trades than the incumbent debit_width ranker.
+owner: owner
+created: 2026-10-10
+arms:
+  control:
+    ranker: debit_width        # the cash_debit incumbent (arc.scanner.rank.INCUMBENT)
+  treatments:
+    t1:
+      ranker: managed_net_ev
+profiles: [cash_debit]
+universe_ladder: [c125]        # smoke spec: C125 dev only
+# Smoke period: until the ThetaData pull (E7.9) lands, the only history is the alpaca
+# partition, 2024-02 -> now, which lies wholly inside the default 2024+ holdout. So this
+# smoke spec splits that range instead of spending the D84 holdout. Real studies (E7.14)
+# keep the default split: dev 2020-01-01 -> 2023-12-31, holdout 2024-01-01 -> latest.
+period:
+  dev_start: 2024-03-01        # first session with 20 sessions of warm-up history
+  dev_end: 2025-08-29
+  holdout_start: 2025-09-02
+  holdout_end: null            # latest data session
+decision_rule:
+  kind: d25_challenge          # arc.backtest.ranking.challenge, applied verbatim
+  min_subperiod_wins: 2
+  subperiods: [bear, sideways, bull]
+  bootstrap: {resamples: 2000, block_days: 20, ci: 0.90, seed: 7}
+primary_metric: net_pnl
+max_variants: 3

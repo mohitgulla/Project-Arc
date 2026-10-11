@@ -29,6 +29,7 @@ __all__ = [
     "load_spec",
     "target_path",
     "validate_arms",
+    "validate_target",
 ]
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -79,6 +80,18 @@ def _validator(target: str) -> Callable[[dict[str, Any]], object]:
         return routines_with_strategy(rest, load_strategy_data(None), strategy_ov)
 
     return _routines
+
+
+def validate_target(target: str, data: dict[str, Any]) -> object:
+    """*data* (a whole ``config/<target>.yaml`` document) validated by that file's model.
+
+    E7.12 backtest studies validate their arm overlays through this, the same
+    validators ``arc experiment create`` uses (raises ``ValueError``/``ValidationError``).
+    """
+    if target not in OVERLAY_TARGETS:
+        msg = f"unknown overlay target {target!r}"
+        raise ValueError(msg)
+    return _validator(target)(data)
 
 
 def arm_config_data(
