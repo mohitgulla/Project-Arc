@@ -448,6 +448,14 @@ def _write(root: Path, rel: str, data: Any) -> None:
     p.write_text(data if isinstance(data, str) else yaml.safe_dump(data))
 
 
+@pytest.fixture(autouse=True)
+def _not_under_github_actions(monkeypatch: pytest.MonkeyPatch) -> None:
+    # CI sets GITHUB_ACTIONS=true, which makes the check print ::warning:: annotations;
+    # tests opt in explicitly (test_github_annotations_and_summary).
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+
+
 @pytest.fixture
 def repo(tmp_path: Path) -> Path:
     root = tmp_path / "r"
