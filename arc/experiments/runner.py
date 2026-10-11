@@ -116,9 +116,10 @@ _RESEARCH = "research"
 STEP_TARGETS: dict[str, frozenset[str]] = {
     # E13.12: routines = funnel.research and the research job settings; universe =
     # the market_reference regime reads and the pool's tier column.
-    "research": frozenset({"account_profiles", "routines", "universe"}),
+    # E20.3: strategy = the persona switches + knobs (anti_chase, technicals, ...).
+    "research": frozenset({"account_profiles", "routines", "strategy", "universe"}),
     # E13.17: exit cases read the exit policy + realloc settings (no orders).
-    "quant.exit": frozenset({"account_profiles", "exits", "costs", "routines"}),
+    "quant.exit": frozenset({"account_profiles", "exits", "costs", "routines", "strategy"}),
     # E13.18: the mandatory floor closes against the arm's own book (an ACCOUNT_STEP);
     # Risk's exit review reads the exit policy and the account profile.
     "exits.mandatory": frozenset({"exits"}),
@@ -140,6 +141,9 @@ PERSONA_OVERLAY_PREFIXES: dict[str, tuple[str, ...]] = {
         "routines.personas.retail_sentiment_context",  # E14.6: also the Scout's prompt
         "routines.personas.scout.*",
         "routines.funnel.scout.*",
+        "strategy.scout_buzz_velocity.*",  # E20.3: the same switches in strategy.yaml
+        "strategy.retail_sentiment_context.*",
+        "strategy.funnel.scout.*",
         "universe.*",
     ),
     "scalp": (
@@ -148,6 +152,8 @@ PERSONA_OVERLAY_PREFIXES: dict[str, tuple[str, ...]] = {
         "routines.personas.scalp.*",
         "routines.funnel.scalp.*",
         "routines.categories.*",
+        "strategy.scalp_movers_context.*",  # E20.3
+        "strategy.funnel.scalp.*",
     ),
     # E14.5 (D60): a trending-ranker overlay (e.g. `scoring: velocity`) runs the
     # arm's own trending tier job; it also owns the Scout (TIER_COMPANIONS), which

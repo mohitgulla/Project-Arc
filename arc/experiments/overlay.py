@@ -64,9 +64,21 @@ def _validator(target: str) -> Callable[[dict[str, Any]], object]:
         from arc.universe.config import UniverseConfig
 
         return UniverseConfig.model_validate
-    from arc.routines.config import RoutinesConfig
+    if target == "strategy":  # E20.3 (D85): persona switches + knobs
+        from arc.routines.strategy import StrategyConfig
 
-    return RoutinesConfig.model_validate
+        return StrategyConfig.model_validate
+
+    def _routines(d: dict[str, Any]) -> object:
+        # E20.3: a pre-E20.3 overlay leaf (`personas: {anti_chase: off}`) validates
+        # against strategy.yaml, as the runtime maps it (arc.routines.strategy).
+        from arc.routines.config import routines_with_strategy
+        from arc.routines.strategy import extract_legacy, load_strategy_data
+
+        rest, strategy_ov = extract_legacy(d)
+        return routines_with_strategy(rest, load_strategy_data(None), strategy_ov)
+
+    return _routines
 
 
 def arm_config_data(

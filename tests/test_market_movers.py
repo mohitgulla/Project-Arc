@@ -38,6 +38,7 @@ from arc.routines.config import (
     load_routines,
 )
 from arc.routines.handlers import JobContext, JobSkippedError, market_movers_source
+from arc.routines.strategy import DEFAULT_STRATEGY_PATH
 from arc.store.db import connect
 from arc.store.migrate import migrate
 from arc.utils.calendar import ET
@@ -490,8 +491,8 @@ def test_block_no_fresh_info(payload: str | None, now: dt.datetime, want: str) -
 
 
 def test_flag_defaults_off_in_the_shipped_config() -> None:
-    raw = yaml.safe_load(DEFAULT_ROUTINES_PATH.read_text())
-    assert raw["personas"]["scalp_movers_context"] == "off"
+    raw = yaml.safe_load(DEFAULT_STRATEGY_PATH.read_text())  # E20.3: config/strategy.yaml
+    assert raw["scalp_movers_context"]["enabled"] is False
     cfg = load_routines(DEFAULT_ROUTINES_PATH)
     assert cfg.scalp_movers_context.enabled is False
     assert cfg.scalp_movers_context.max_lines == 10
@@ -530,9 +531,9 @@ def test_flag_registered_in_registry() -> None:
     assert t is REGISTRY["personas.scalp_movers_context"]
     assert lookup("routines.personas.scalp_movers_context") is t
     assert t.choices == ("off", "on")
-    assert read_raw(t, {"personas": {"scalp_movers_context": "off"}}) == "off"
-    assert read_raw(t, {"personas": {}}) == "off"
-    assert write_raw(t, "on", {}) == [(("personas", "scalp_movers_context"), "on")]
+    assert read_raw(t, {"scalp_movers_context": {"enabled": False}}) == "off"
+    assert read_raw(t, {}) == "off"
+    assert write_raw(t, "on", {}) == [(("scalp_movers_context", "enabled"), True)]
 
 
 def test_slack_override_reaches_the_effective_routines() -> None:
@@ -549,12 +550,26 @@ def test_slack_override_reaches_the_effective_routines() -> None:
 def test_flag_overlay_turns_only_the_flag_on() -> None:
     # D86: the retired tape-movers draft is idea-seed lead S-2; the overlay shape it
     # used still has to turn on exactly this flag in an arm's routines config.
-    overlay = {"routines": {"personas": {"scalp_movers_context": "on"}}}
-    spec = fx.spec("XP-20", arms={"treatment": {"overlay": overlay}})
-    treat = RoutinesConfig.model_validate(arm_config_data(spec, "treatment", "routines"))
+    # E20.3: the old `routines: personas:` shape maps to strategy.yaml; the new
+    # `strategy:` shape does the same. Both go through the arm's runtime loader.
+    from arc.control.effective import overlay_overrides
+
     base = load_routines(DEFAULT_ROUTINES_PATH)
-    assert treat.scalp_movers_context.enabled is True
-    assert treat.model_copy(update={"scalp_movers_context": base.scalp_movers_context}) == base
+    for overlay in (
+        {"routines": {"personas": {"scalp_movers_context": "on"}}},
+        {"strategy": {"scalp_movers_context": {"enabled": True}}},
+    ):
+        spec = fx.spec("XP-20", arms={"treatment": {"overlay": overlay}})
+        target = next(iter(overlay))
+        arm_config_data(spec, "treatment", target)  # validates against the file's model
+        ov = overlay_overrides(overlay)
+        treat = load_routines(
+            DEFAULT_ROUTINES_PATH,
+            overrides=ov.get("routines"),
+            strategy_overrides=ov.get("strategy"),
+        )
+        assert treat.scalp_movers_context.enabled is True
+        assert treat.model_copy(update={"scalp_movers_context": base.scalp_movers_context}) == base
 
 
 def test_flag_off_prompt_is_byte_identical_to_main() -> None:

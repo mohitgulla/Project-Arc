@@ -1544,13 +1544,31 @@ def horizon_days_option(job: str, options: Mapping[str, Any]) -> int:
 
 
 def load_routines(
-    path: Path | str | None = None, *, overrides: Mapping[tuple[str, ...], Any] | None = None
+    path: Path | str | None = None,
+    *,
+    overrides: Mapping[tuple[str, ...], Any] | None = None,
+    strategy_overrides: Mapping[tuple[str, ...], Any] | None = None,
+    strategy_path: Path | str | None = None,
 ) -> RoutinesConfig:
-    """Load and validate a routines YAML file.
+    """Load and validate a routines YAML file plus its ``strategy.yaml`` (E20.3, D85).
 
-    *overrides* (D26 control panel: routine enable/cadence, ``path -> value``)
-    patch the YAML before validation, so they pass the same checks as the file.
+    The strategy knobs (persona switches + their settings, ``funnel``) live in
+    ``strategy.yaml`` next to the routines file (*strategy_path* overrides that; a
+    missing file = the model defaults). They are folded into the returned model, so
+    consumers read ``routines.anti_chase`` etc. as before. A routines file that still
+    carries a moved block is refused (no silent ignore).
+
+    *overrides* (D26 control panel, experiment overlays: ``path -> value``) patch the
+    routines YAML before validation; a pre-E20.3 routines path of a moved knob
+    (``personas.anti_chase``, ``funnel.…``) is mapped to its strategy.yaml path.
+    *strategy_overrides* patch strategy.yaml directly.
     """
+    from arc.routines.strategy import (
+        load_strategy_data,
+        moved_keys,
+        split_overrides,
+        strategy_path_for,
+    )
     from arc.utils.yamlpatch import apply_overrides
 
     p = Path(path) if path is not None else DEFAULT_ROUTINES_PATH
@@ -1558,4 +1576,27 @@ def load_routines(
     if not isinstance(data, dict):
         msg = f"{p}: top level must be a mapping"
         raise ValueError(msg)
-    return RoutinesConfig.model_validate(apply_overrides(data, overrides))
+    moved = moved_keys(data)
+    if moved:
+        msg = (
+            f"{p}: {', '.join(moved)} moved to config/strategy.yaml (E20.3, PLAN D85): "
+            "set each switch with its settings there, e.g. `anti_chase: {enabled: on, ...}`"
+        )
+        raise ValueError(msg)
+    r_ov, s_ov = split_overrides(overrides)
+    s_ov.update(strategy_overrides or {})
+    sp = Path(strategy_path) if strategy_path is not None else strategy_path_for(path)
+    return routines_with_strategy(apply_overrides(data, r_ov), load_strategy_data(sp), s_ov)
+
+
+def routines_with_strategy(
+    routines: Mapping[str, Any],
+    strategy: Mapping[str, Any],
+    strategy_overrides: Mapping[tuple[str, ...], Any] | None = None,
+) -> RoutinesConfig:
+    """Raw routines + raw strategy data (with *strategy_overrides*) as one validated model."""
+    from arc.routines.strategy import StrategyConfig
+    from arc.utils.yamlpatch import apply_overrides
+
+    s = StrategyConfig.model_validate(apply_overrides(strategy, strategy_overrides))
+    return RoutinesConfig.model_validate({**routines, **s.routines_fields()})

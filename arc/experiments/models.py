@@ -86,6 +86,7 @@ OVERLAY_TARGETS: tuple[str, ...] = (
     "account_profiles",
     "routines",
     "universe",
+    "strategy",  # E20.3 (D85): persona switches + knobs; old `routines: personas: …` paths map here
 )
 
 #: E13.12 (D56): the non-loop personas an experiment arm may run on its own store.

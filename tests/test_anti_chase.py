@@ -262,12 +262,13 @@ def test_bad_config_is_refused(data: dict[str, Any]) -> None:
 
 
 def test_registry_keys_read_and_write_the_yaml() -> None:
-    raw = yaml.safe_load(open("config/routines.yaml").read())  # noqa: SIM115, PTH123
+    # E20.3: the switch and its thresholds are one block in config/strategy.yaml.
+    raw = yaml.safe_load(open("config/strategy.yaml").read())  # noqa: SIM115, PTH123
     assert lookup("personas.anti_chase").key == "personas.anti_chase"
     assert lookup("anti_chase").key == "personas.anti_chase"  # alias
     assert read_raw(REGISTRY["personas.anti_chase"], raw) == "on"
     assert write_raw(REGISTRY["personas.anti_chase"], "off", raw) == [
-        (("personas", "anti_chase"), "off")
+        (("anti_chase", "enabled"), False)
     ]
     assert read_raw(REGISTRY["anti_chase.max_stretch_atr"], raw) == 2.5
     assert read_raw(REGISTRY["anti_chase.vwap"], raw) == "off"

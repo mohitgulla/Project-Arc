@@ -42,6 +42,7 @@ strategy_paths:
   - config/account_profiles.yaml
   - config/universe.yaml
   - config/costs.yaml
+  - config/strategy.yaml              # E20.3 (D85): persona switches + their knobs, funnel
   - config/strategy_lane.yaml
 
 exclude_paths:

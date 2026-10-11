@@ -389,10 +389,10 @@ class ControlService:
                 from arc.universe.config import load_universe_config
 
                 load_universe_config(self.base.universe_config_file, overrides=ov.get("universe"))
-            elif t.target is Target.ROUTINES:
+            elif t.target in (Target.ROUTINES, Target.STRATEGY):
                 from arc.routines.config import load_routines
 
-                load_routines(overrides=ov.get("routines"))
+                load_routines(overrides=ov.get("routines"), strategy_overrides=ov.get("strategy"))
             elif t.target is Target.PROFILES:
                 from arc.account_profiles import load_account_profiles
 

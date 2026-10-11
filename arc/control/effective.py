@@ -32,6 +32,7 @@ from arc.control.store import ConfigChange, ConfigChangeRepo
 from arc.exits.policy import DEFAULT_EXITS_PATH, load_exit_config
 from arc.experiments.config import DEFAULT_EXPERIMENTS_PATH, load_experiments_config
 from arc.routines.config import DEFAULT_ROUTINES_PATH, load_routines
+from arc.routines.strategy import DEFAULT_STRATEGY_PATH, strategy_path_for
 from arc.scanner.rank import DEFAULT_RANKING_PATH, load_ranking_config
 from arc.universe.config import DEFAULT_UNIVERSE_CONFIG
 
@@ -64,6 +65,7 @@ YAML_PATHS: dict[Target, Path] = {
     Target.COSTS: DEFAULT_COSTS_PATH,
     Target.PROFILES: DEFAULT_PROFILES_PATH,
     Target.ROUTINES: DEFAULT_ROUTINES_PATH,
+    Target.STRATEGY: DEFAULT_STRATEGY_PATH,  # E20.3 (D85)
     Target.RANKING: DEFAULT_RANKING_PATH,
     Target.EXPERIMENTS: DEFAULT_EXPERIMENTS_PATH,
     Target.UNIVERSE: DEFAULT_UNIVERSE_CONFIG,
@@ -118,6 +120,8 @@ _SAFE_LOADER: type[yaml.SafeLoader] = getattr(yaml, "CSafeLoader", yaml.SafeLoad
 
 def raw_yaml(target: Target, path: Path | str | None = None) -> dict[str, Any]:
     p = Path(path) if path is not None else YAML_PATHS[target]
+    if target is Target.STRATEGY and not p.is_file():
+        return {}  # E20.3: a routines file with no sibling strategy.yaml = model defaults
     data = yaml.load(p.read_text(), Loader=_SAFE_LOADER) or {}  # noqa: S506 - a SafeLoader
     return data if isinstance(data, dict) else {}
 
@@ -138,7 +142,11 @@ def yaml_overrides(
     """``target -> {path: value}`` for every applied YAML-targeted override."""
     out: dict[str, dict[tuple[str, ...], Any]] = {}
     raws: dict[Target, dict[str, Any]] = {}
-    paths = {Target.ROUTINES: routines_path, Target.PROFILES: profiles_path}
+    paths = {
+        Target.ROUTINES: routines_path,
+        Target.STRATEGY: strategy_path_for(routines_path) if routines_path else None,
+        Target.PROFILES: profiles_path,
+    }
     for key, change in sorted(changes.items(), key=lambda kv: kv[1].id):
         try:
             t = lookup(key)
@@ -288,8 +296,8 @@ def apply_changes(
         data = trial
     yaml_ov = yaml_overrides(changes, profiles_path=base.account_profiles_file)
     for target, pairs in overlay_overrides(overlay).items():
-        if target == Target.ROUTINES.value:
-            continue  # routines overlay: effective_routines()
+        if target in (Target.ROUTINES.value, Target.STRATEGY.value):
+            continue  # routines / strategy overlay: effective_routines()
         yaml_ov.setdefault(target, {}).update(pairs)
     if data.get("account_profile") != base.account_profile or yaml_ov.get("account_profiles"):
         data["account_profile_spec"] = None
@@ -346,16 +354,29 @@ def experiments_config(
 def effective_routines(
     conn: sqlite3.Connection | None, path: Path | str | None = None
 ) -> RoutinesConfig:
-    """``config/routines.yaml`` with routine enable/cadence overrides from *conn*.
+    """``config/routines.yaml`` + ``strategy.yaml`` with the D26 overrides from *conn*.
 
-    On an experiment arm store: control's overrides plus the arm's routines overlay.
+    On an experiment arm store: control's overrides plus the arm's routines / strategy
+    overlay (a pre-E20.3 ``routines: personas: …`` overlay path is mapped by
+    :func:`arc.routines.strategy.legacy_path`).
     """
     if conn is None:
         return load_routines(path)
     changes, _, overlay = _arm_source(conn)
-    ov = yaml_overrides(changes, routines_path=path).get(Target.ROUTINES.value) or {}
-    ov = {**ov, **overlay_overrides(overlay).get(Target.ROUTINES.value, {})}
-    return load_routines(path, overrides=ov or None)
+    return _load_with(changes, overlay, path)
+
+
+def _load_with(
+    changes: dict[str, ConfigChange],
+    overlay: dict[str, dict[str, Any]] | None,
+    path: Path | str | None,
+) -> RoutinesConfig:
+    """Routines + strategy with *changes* (D26) and an arm *overlay* on top (E20.3)."""
+    yov = yaml_overrides(changes, routines_path=path)
+    oov = overlay_overrides(overlay)
+    ov = {**(yov.get(Target.ROUTINES.value) or {}), **oov.get(Target.ROUTINES.value, {})}
+    sov = {**(yov.get(Target.STRATEGY.value) or {}), **oov.get(Target.STRATEGY.value, {})}
+    return load_routines(path, overrides=ov or None, strategy_overrides=sov or None)
 
 
 def routines_for_overlay(
@@ -369,6 +390,4 @@ def routines_for_overlay(
     computes each arm's plan from it): control's overrides plus the overlay's routines.
     """
     changes, _, _ = _arm_source(control)
-    ov = yaml_overrides(changes, routines_path=path).get(Target.ROUTINES.value) or {}
-    ov = {**ov, **overlay_overrides(overlay).get(Target.ROUTINES.value, {})}
-    return load_routines(path, overrides=ov or None)
+    return _load_with(changes, overlay, path)

@@ -47,6 +47,7 @@ from arc.personas.builders import build_research_prompt, research_input_from_con
 from arc.pipeline.steps import RESEARCH_READS
 from arc.routines.config import DEFAULT_ROUTINES_PATH, RoutinesConfig, load_routines
 from arc.routines.handlers import JobContext, JobSkippedError, market_health_source
+from arc.routines.strategy import DEFAULT_STRATEGY_PATH
 from arc.store.db import connect
 from arc.store.migrate import migrate
 from arc.utils.calendar import ET, sessions_between
@@ -695,12 +696,14 @@ def test_job_slot_after_options_daily() -> None:
 def test_registry_entries() -> None:
     t = lookup("personas.market_health_context")
     assert lookup("market_health_context") is t and t.choices == ("off", "on")
-    raw = yaml.safe_load(DEFAULT_ROUTINES_PATH.read_text())
+    # E20.3: the thresholds sit with the switch in config/strategy.yaml; keys unchanged.
+    raw = yaml.safe_load(DEFAULT_STRATEGY_PATH.read_text())
+    assert raw["market_health_context"]["enabled"] is True
     for name in HealthThresholds.model_fields:
         key = f"market_health.{name}"
         assert key in REGISTRY, key
-        assert REGISTRY[key].path == ("market_health", name)
-        assert name in raw["market_health"]
+        assert REGISTRY[key].path == ("market_health_context", "thresholds", name)
+        assert name in raw["market_health_context"]["thresholds"]
 
 
 def test_no_committed_spec_tests_market_health() -> None:
