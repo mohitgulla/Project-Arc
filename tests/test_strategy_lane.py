@@ -1,7 +1,9 @@
-"""E10.7 (D44 two lanes): the strategy-lane CI check, one test per rule.
+"""E21.1 (D86, revising E10.7 / D44): the strategy-lane CI check.
 
-Pure tests drive :func:`evaluate` with fixture diffs and PR bodies; the end-to-end
-tests build a throwaway git repo and run :func:`main` on it. No network.
+Dev changes ship to every arm; the one hard rule is that a PR may not change a config
+leaf an *open* experiment tests, except as that experiment's promotion. Everything else
+is advisory. Pure tests drive :func:`evaluate` with fixture diffs and PR bodies; the
+end-to-end tests build a throwaway git repo and run :func:`main` on it. No network.
 """
 
 from __future__ import annotations
@@ -30,20 +32,51 @@ def _load(name: str, path: Path) -> Any:
 lane = _load("strategy_lane_check", REPO / "scripts" / "strategy_lane_check.py")
 CFG = lane.load_lane_config(REPO / "config" / "strategy_lane.yaml")
 
-X2_OVERLAY = {"exits": {"kinds": {"long_call": {"take_profit_pct_of_debit": 0.75}}}}
-EXPERIMENTS = {
-    "XP-1": lane.Experiment(id="XP-1", overlay={}, verdict="futility"),
-    "XP-2": lane.Experiment(id="XP-2", overlay=X2_OVERLAY, verdict="win"),
-    "XP-3": lane.Experiment(id="XP-3", overlay=X2_OVERLAY, verdict=None),
+# XP-2: v1 spec (one treatment = t1) on exits; XP-14: v2 spec with three arms on exits.
+TP = ("exits", "kinds", "long_call", "take_profit_pct_of_debit")
+X2_ARMS = {"t1": {"exits": {"kinds": {"long_call": {"take_profit_pct_of_debit": 0.75}}}}}
+X14_ARMS = {
+    "t1": {"exits": {"pipeline": {"menu_measure": "rorc_day_full"}}},
+    "t2": {"exits": {"pipeline": {"menu_measure": "rorc_day_tilted", "direction_tilt": 0.25}}},
+    "t3": {"exits": {"pipeline": {"menu_measure": "managed_net_ev_full"}}},
 }
 
 
-def _eval(changed: list[str], body: str, deltas: dict[str, Any] | None = None) -> Any:
-    return lane.evaluate(changed, body, deltas or {}, EXPERIMENTS, CFG)
+def _exp(xid: str, arms: dict[str, Any], **kw: Any) -> Any:
+    return lane.Experiment(id=xid, arms=arms, **kw)
 
 
-def _exits_delta(old: Any, new: Any) -> dict[str, Any]:
+OPEN = {"XP-2": _exp("XP-2", X2_ARMS), "XP-14": _exp("XP-14", X14_ARMS)}
+
+
+def _eval(
+    changed: list[str],
+    body: str,
+    deltas: dict[str, Any] | None = None,
+    experiments: dict[str, Any] | None = None,
+    **kw: Any,
+) -> Any:
+    return lane.evaluate(
+        changed, body, deltas or {}, OPEN if experiments is None else experiments, CFG, **kw
+    )
+
+
+def _exits(old: Any, new: Any) -> dict[str, Any]:
     return {"exits": lane.yaml_delta("exits", old, new)}
+
+
+BASE = {
+    "pipeline": {"menu_measure": "control", "direction_tilt": 0.0},
+    "kinds": {"long_call": {"take_profit_pct_of_debit": 1.0, "close_at_dte": 7}},
+}
+
+
+def _with(**pipeline: Any) -> dict[str, Any]:
+    return {**BASE, "pipeline": {**BASE["pipeline"], **pipeline}}
+
+
+def _tp(v: Any) -> dict[str, Any]:
+    return {**BASE, "kinds": {"long_call": {"take_profit_pct_of_debit": v, "close_at_dte": 7}}}
 
 
 # -- strategy paths -----------------------------------------------------------
@@ -88,271 +121,271 @@ def test_gate_safety_and_other_paths_are_not(path: str) -> None:
     assert lane.strategy_files([path], CFG) == []
 
 
-def test_non_strategy_pr_passes_without_a_lane_line() -> None:
+def test_non_strategy_pr_passes_silently() -> None:
     r = _eval(["arc/gate/rules.py", "docs/OPS.md"], "")
-    assert r.ok and r.lane == "none" and "no strategy paths" in r.render()
+    assert r.ok and r.status == "none" and "no strategy paths" in r.render()
+    assert r.annotations() == [] and not r.warnings
 
 
-def test_strategy_pr_without_lane_line_fails() -> None:
-    r = _eval(["arc/scanner/rank.py"], "Refactor the ranker.")
-    assert not r.ok and "no lane line" in r.errors[0]
-    assert "Experiment: XP-<n>" in r.render() and "FAIL" in r.render()
+# -- rule 3: advisory, never fails ---------------------------------------------
 
 
-# -- Experiment: XP-<n> --------------------------------------------------------
-
-
-def test_registered_experiment_passes() -> None:
-    r = _eval(["arc/scanner/rank.py"], "Adds a ranker.\n\nExperiment: XP-1\n")
-    assert r.ok and r.lane == "experiment"
-
-
-def test_unknown_experiment_fails() -> None:
-    r = _eval(["arc/scanner/rank.py"], "Experiment: XP-99")
-    assert not r.ok and "XP-99 has no spec" in r.errors[0]
-
-
-def test_experiment_line_is_case_and_bullet_tolerant() -> None:
-    assert _eval(["arc/sizing.py"], "- **Experiment:** XP-1").ok
-    assert _eval(["arc/sizing.py"], "- experiment: xp-1").ok
-
-
-@pytest.mark.parametrize("xid", ["X-1", "XP-0", "XP-01", "XP1", "XP-"])
-def test_experiment_line_rejects_old_or_malformed_ids(xid: str) -> None:
-    assert not _eval(["arc/sizing.py"], f"Experiment: {xid}").ok
-
-
-# -- Lane: fast — <reason> ----------------------------------------------------
+def test_non_locked_strategy_change_passes_with_an_advisory() -> None:
+    deltas = _exits(BASE, {**_tp(1.0), "default": {"close_at_dte": 5}})
+    r = _eval(["arc/scanner/rank.py", "config/exits.yaml"], "Refactor.", deltas)
+    assert r.ok and r.status == "advisory"
+    assert r.strategy_files == ["arc/scanner/rank.py", "config/exits.yaml"]
+    assert r.leaves == ["exits.default.close_at_dte"]
+    assert any("XP-advisory" in w for w in r.warnings)
+    notes = r.annotations()
+    assert notes[0].startswith("::warning title=strategy-lane advisory::")
+    assert "arc/scanner/rank.py" in notes[0] and "XP-advisory: none" in notes[0]
+    md = r.summary_markdown()
+    assert "`config/exits.yaml`" in md and "No `XP-advisory:` line" in md
+    assert "PASS (advisory)" in r.render()
 
 
 @pytest.mark.parametrize(
-    "line",
+    ("line", "text"),
     [
-        "Lane: fast — fix NaN in the scanner IV filter",
-        "Lane: fast - fix NaN in the scanner IV filter",
-        "lane: fast: fix NaN in the scanner IV filter",
+        ("XP-advisory: none", "none"),
+        ("- **XP-advisory:** menu ranking change, worth an XP", "menu ranking change, worth an XP"),
+        ("xp-advisory: — none", "none"),
     ],
 )
-def test_fast_lane_with_reason_passes(line: str) -> None:
-    r = _eval(["arc/scanner/iv.py"], f"Body.\n{line}\n")
-    assert r.ok and r.lane == "fast" and "sentinel audits" in " ".join(r.notes)
+def test_advisory_line_is_read_and_shown(line: str, text: str) -> None:
+    r = _eval(["arc/scanner/rank.py"], f"Body.\n{line}\n")
+    assert r.ok and r.advisory == text and not r.warnings
+    assert r.annotations()[0].startswith("::notice title=strategy-lane advisory::")
+    assert f"XP-advisory: {text}" in r.render() and f"XP-advisory: {text}" in r.summary_markdown()
 
 
-@pytest.mark.parametrize("line", ["Lane: fast", "Lane: fast — bug"])
-def test_fast_lane_without_a_real_reason_fails(line: str) -> None:
-    r = _eval(["arc/scanner/iv.py"], line)
-    assert not r.ok and "reason of at least" in r.errors[0]
+def test_empty_advisory_line_is_a_warning_only() -> None:
+    r = _eval(["arc/scanner/rank.py"], "XP-advisory:")
+    assert r.ok and r.advisory == "" and r.warnings
 
 
-def test_a_broken_extra_line_fails_even_when_another_lane_passes() -> None:
-    r = _eval(["arc/scanner/iv.py"], "Lane: fast — fix NaN in IV filter\nExperiment: XP-42")
-    assert not r.ok and r.lane == "fast" and "XP-42" in r.errors[0]
-
-
-# -- Flag: <stem>.<key> -------------------------------------------------------
-
-BASE_EXITS = {"pipeline": {"rank_menu_by": "scanner"}, "kinds": {"long_call": {"x": 1}}}
-
-
-def _with(extra: dict[str, Any]) -> dict[str, Any]:
-    return {**BASE_EXITS, "pipeline": {**BASE_EXITS["pipeline"], **extra}}
-
-
-@pytest.mark.parametrize("off", [False, None, "off", "none", "control", "strict"])
-def test_new_flag_defaulting_off_passes(off: Any) -> None:
-    deltas = _exits_delta(BASE_EXITS, _with({"skip_iv_crush": off}))
-    r = _eval(
-        ["arc/pipeline/steps.py", "config/exits.yaml"],
+@pytest.mark.parametrize(
+    "body",
+    [
         "Flag: exits.pipeline.skip_iv_crush",
-        deltas,
-    )
-    assert r.ok and r.lane == "flag"
+        "Lane: fast — fix NaN in the scanner IV filter",
+        "Lane: fast",  # a reason used to be required; now ignored
+        "Experiment: XP-1",
+        "Experiment: XP-99",  # unknown ids are a note, not an error
+        "- **Flag:** `x.y`\nLane: fast — owner-directed (PLAN D78)",
+    ],
+)
+def test_old_style_bodies_pass(body: str) -> None:
+    r = _eval(["arc/scanner/rank.py"], body)
+    assert r.ok and r.status == "advisory", r.errors
 
 
-def test_new_flag_defaulting_on_fails() -> None:
-    deltas = _exits_delta(BASE_EXITS, _with({"skip_iv_crush": True}))
-    r = _eval(["config/exits.yaml"], "Flag: `exits.pipeline.skip_iv_crush`", deltas)
-    assert not r.ok and "must default to off" in r.errors[0]
+def test_old_flag_default_on_now_passes() -> None:
+    # E10.7 failed a `Flag:` key defaulting on; D86 ships dev changes on.
+    deltas = _exits(BASE, _with(skip_iv_crush=True))
+    r = _eval(["config/exits.yaml"], "Flag: exits.pipeline.skip_iv_crush", deltas)
+    assert r.ok and r.leaves == ["exits.pipeline.skip_iv_crush"]
 
 
-def test_flag_that_is_not_added_by_the_pr_fails() -> None:
-    r = _eval(["arc/pipeline/steps.py"], "Flag: exits.pipeline.skip_iv_crush")
-    assert not r.ok and "not a key this PR adds" in r.errors[0]
+def test_value_flip_of_a_non_locked_leaf_passes() -> None:
+    # E10.7 called this a promotion needing a win verdict; D86 lets it ship.
+    deltas = {"ranking": lane.yaml_delta("ranking", {"w": {"ev": 1.0}}, {"w": {"ev": 0.5}})}
+    r = _eval(["config/ranking.yaml"], "XP-advisory: none", deltas)
+    assert r.ok and r.leaves == ["ranking.w.ev"]
 
 
-def test_flag_in_a_non_strategy_yaml_counts() -> None:
-    deltas = {"routines": lane.yaml_delta("routines", {"loop": {}}, {"loop": {"new_x": False}})}
-    r = _eval(
-        ["arc/pipeline/steps.py", "config/routines.yaml"], "Flag: routines.loop.new_x", deltas
-    )
-    assert r.ok and r.lane == "flag"
+def test_unknown_experiment_is_a_note() -> None:
+    r = _eval(["arc/scanner/rank.py"], "Experiment: XP-99\nXP-advisory: none")
+    assert r.ok and any("XP-99 has no spec" in n for n in r.notes)
 
 
-def test_existing_key_cannot_be_cited_as_a_flag() -> None:
-    deltas = _exits_delta(BASE_EXITS, _with({"rank_menu_by": "managed_net_ev"}))
-    r = _eval(
-        ["config/exits.yaml"],
-        "Flag: exits.pipeline.rank_menu_by\nLane: fast — flip it",
-        deltas,
-    )
-    # Flipping an existing value is a promotion; neither Flag nor fast covers it.
-    assert not r.ok and r.lane == "promotion"
-    assert any("already exists" in e for e in r.errors)
+# -- rules 1 + 2: locked leaves ---------------------------------------------------
 
 
-# -- promotion (flip a default) -----------------------------------------------
+def test_locked_leaf_change_fails() -> None:
+    r = _eval(["config/exits.yaml"], "XP-advisory: none", _exits(BASE, _with(direction_tilt=0.1)))
+    assert not r.ok and r.status == "locked"
+    assert "XP-14 is open" in r.errors[0] and "exits.pipeline.direction_tilt" in r.errors[0]
+    assert any(a.startswith("::error title=strategy-lane::") for a in r.annotations())
+    assert "FAIL (locked)" in r.render()
 
-OLD = {"kinds": {"long_call": {"take_profit_pct_of_debit": 1.0, "close_at_dte": 7}}}
-NEW = {"kinds": {"long_call": {"take_profit_pct_of_debit": 0.75, "close_at_dte": 7}}}
+
+def test_locked_v1_leaf_change_fails_in_a_non_strategy_yaml_too() -> None:
+    exp = {"XP-3": _exp("XP-3", {"t1": {"routines": {"personas": {"x": "relaxed"}}}})}
+    deltas = {
+        "routines": lane.yaml_delta("routines", {"personas": {"x": "strict"}}, {"personas": {}})
+    }
+    r = _eval(["config/routines.yaml"], "", deltas, exp)
+    assert not r.ok and "routines.personas.x" in r.errors[0]
+    assert r.strategy_files == []  # routines.yaml is not strategy lane; the lock still holds
 
 
-def test_promotion_with_winning_experiment_passes() -> None:
-    r = _eval(["config/exits.yaml"], "Experiment: XP-2", _exits_delta(OLD, NEW))
-    assert r.ok and r.lane == "promotion" and "promotes XP-2" in r.notes
+def test_adding_a_locked_leaf_fails() -> None:
+    base = {**BASE, "pipeline": {"menu_measure": "control"}}
+    r = _eval(["config/exits.yaml"], "", _exits(base, _with()))
+    assert not r.ok and len(r.errors) == 1 and "exits.pipeline.direction_tilt" in r.errors[0]
+
+
+def test_replacing_a_locked_parent_fails() -> None:
+    # The whole `pipeline` mapping replaced by a scalar: the locked leaves go with it.
+    r = _eval(["config/exits.yaml"], "", _exits(BASE, {**BASE, "pipeline": "off"}))
+    assert not r.ok and "XP-14" in r.errors[0]
+
+
+def test_locked_leaf_untouched_when_a_sibling_changes() -> None:
+    r = _eval(["config/exits.yaml"], "", _exits(BASE, _with(menu_pool_max=40)))
+    assert r.ok
+
+
+def test_lock_lifts_with_a_verdict_on_the_base() -> None:
+    closed = {"XP-14": _exp("XP-14", X14_ARMS, verdict="futility", open_at_base=False)}
+    r = _eval(["config/exits.yaml"], "", _exits(BASE, _with(direction_tilt=0.1)), closed)
+    assert r.ok
+
+
+def test_empty_overlay_locks_nothing() -> None:
+    aa = {"XP-1": _exp("XP-1", {"t1": {}})}
+    assert _eval(["config/exits.yaml"], "", _exits(BASE, _tp(0.5)), aa).ok
+
+
+# -- promotion -------------------------------------------------------------------
+
+
+def _won(xid: str, arms: dict[str, Any], winner: str | None) -> dict[str, Any]:
+    return {xid: _exp(xid, arms, verdict="win", winner=winner)}
+
+
+def test_promotion_with_the_winner_arm_passes() -> None:
+    exp = _won("XP-14", X14_ARMS, "t2")
+    deltas = _exits(BASE, _with(menu_measure="rorc_day_tilted", direction_tilt=0.25))
+    r = _eval(["config/exits.yaml"], "Experiment: XP-14\nXP-advisory: none", deltas, exp)
+    assert r.ok and r.status == "promotion" and "promotes XP-14 (t2)" in r.notes
+
+
+def test_promotion_of_part_of_the_winner_arm_passes() -> None:
+    exp = _won("XP-14", X14_ARMS, "t2")
+    deltas = _exits(BASE, _with(direction_tilt=0.25))
+    assert _eval(["config/exits.yaml"], "Experiment: XP-14", deltas, exp).ok
+
+
+def test_promotion_with_a_wrong_arm_value_fails() -> None:
+    exp = _won("XP-14", X14_ARMS, "t2")
+    deltas = _exits(BASE, _with(menu_measure="rorc_day_full"))  # t1's value, t2 won
+    r = _eval(["config/exits.yaml"], "Experiment: XP-14", deltas, exp)
+    assert not r.ok and "not arm t2's overlay value ('rorc_day_tilted')" in r.errors[0]
+
+
+def test_promotion_of_a_leaf_the_winner_did_not_test_fails() -> None:
+    exp = _won("XP-14", X14_ARMS, "t1")
+    deltas = _exits(BASE, _with(menu_measure="rorc_day_full", direction_tilt=0.25))
+    r = _eval(["config/exits.yaml"], "Experiment: XP-14", deltas, exp)
+    assert not r.ok and "direction_tilt" in r.errors[0] and "untested" in r.errors[0]
+
+
+def test_v1_verdict_without_winner_maps_to_t1() -> None:
+    exp = _won("XP-2", X2_ARMS, None)
+    assert exp["XP-2"].winning_arm() == "t1"
+    r = _eval(["config/exits.yaml"], "Experiment: XP-2", _exits(BASE, _tp(0.75)), exp)
+    assert r.ok and "promotes XP-2 (t1)" in r.notes
+    r = _eval(["config/exits.yaml"], "Experiment: XP-2", _exits(BASE, _tp(0.5)), exp)
+    assert not r.ok
 
 
 @pytest.mark.parametrize(
-    ("body", "why"),
+    ("verdict", "body", "why"),
     [
-        ("Lane: fast — the old take profit was a typo", "promotion"),
-        ("Experiment: XP-1", "promotion"),  # verdict futility
-        ("Experiment: XP-3", "promotion"),  # no verdict committed
-        ("", "promotion"),
+        ("win", "XP-advisory: none", "XP-2 is open"),  # no Experiment: line
+        ("futility", "Experiment: XP-2", "verdict is futility"),
+        (None, "Experiment: XP-2", "not committed"),
     ],
 )
-def test_promotion_without_a_win_fails(body: str, why: str) -> None:
-    r = _eval(["config/exits.yaml"], body, _exits_delta(OLD, NEW))
-    assert not r.ok and r.lane == "promotion" and why in r.errors[-1]
+def test_promotion_needs_the_citation_and_a_win(verdict: Any, body: str, why: str) -> None:
+    exp = {"XP-2": _exp("XP-2", X2_ARMS, verdict=verdict)}
+    r = _eval(["config/exits.yaml"], body, _exits(BASE, _tp(0.75)), exp)
+    assert not r.ok and why in r.errors[0]
 
 
-def test_promotion_must_match_the_tested_overlay() -> None:
-    other = {"kinds": {"long_call": {"take_profit_pct_of_debit": 0.5, "close_at_dte": 7}}}
-    r = _eval(["config/exits.yaml"], "Experiment: XP-2", _exits_delta(OLD, other))
-    assert not r.ok and "not the treatment overlay value of XP-2" in r.errors[0]
+def test_promotion_never_removes_a_locked_value() -> None:
+    exp = _won("XP-2", X2_ARMS, None)
+    gone = {**BASE, "kinds": {"long_call": {"close_at_dte": 7}}}
+    r = _eval(["config/exits.yaml"], "Experiment: XP-2", _exits(BASE, gone), exp)
+    assert not r.ok and "never a promotion" in r.errors[0]
 
 
-def test_promotion_cannot_piggyback_an_untested_change() -> None:
-    both = {"kinds": {"long_call": {"take_profit_pct_of_debit": 0.75, "close_at_dte": 3}}}
-    r = _eval(["config/exits.yaml"], "Experiment: XP-2", _exits_delta(OLD, both))
-    assert not r.ok and "close_at_dte" in r.errors[0]
+def test_winner_that_is_not_an_arm_fails() -> None:
+    exp = _won("XP-2", X2_ARMS, "t3")
+    r = _eval(["config/exits.yaml"], "Experiment: XP-2", _exits(BASE, _tp(0.75)), exp)
+    assert not r.ok and "not an arm" in r.errors[0]
 
 
-def test_removing_an_existing_strategy_value_is_a_promotion() -> None:
-    gone = {"kinds": {"long_call": {"take_profit_pct_of_debit": 1.0}}}
-    r = _eval(["config/exits.yaml"], "Lane: fast — clean up unused key", _exits_delta(OLD, gone))
-    assert not r.ok and r.lane == "promotion"
+def test_deleted_open_spec_is_a_warning() -> None:
+    r = _eval(["config/experiments/live/xp2.yaml"], "", removed_specs=["config/x/xp2.yaml (XP-2)"])
+    assert r.ok and r.status == "advisory" and "XP-2" in r.warnings[0]
+    assert "warning: deletes open experiment spec" in r.render()  # shown without strategy files
+    assert r.annotations() == [f"::warning title=strategy-lane::{r.warnings[0]}"]
 
 
-def test_value_change_in_a_non_overlayable_yaml_is_not_a_promotion() -> None:
-    deltas = {"universe": lane.yaml_delta("universe", {"a": {"m": 10}}, {"a": {"m": 12}})}
-    r = _eval(["config/universe.yaml"], "Lane: fast — raise the min price after a halt", deltas)
-    assert r.ok and r.lane == "fast"
+# -- build_experiments (base vs head) --------------------------------------------
 
 
-def test_comment_only_yaml_edit_is_not_a_promotion() -> None:
-    r = _eval(
-        ["config/exits.yaml"], "Lane: fast — reword exits.yaml comments", _exits_delta(OLD, OLD)
-    )
-    assert r.ok and r.lane == "fast"
-
-
-# -- owner waivers (E18.1, D78) -----------------------------------------------
-
-WAIVE_BODY = "Lane: fast — owner-directed ship without experiment (PLAN D78)"
-PLAN_OK = {"D78": "| D78 | Quick exit fixes | ... | Owner: option A (**D44 waived for E18.1**) |"}
-TP_OLD = {
-    "kinds": {k: {"take_profit_pct_of_debit": 1.0} for k in ("vertical_debit", "long_call")},
-    "default": {"take_profit_pct_of_debit": 1.0, "close_at_dte": 7},
+V1 = {"id": "XP-2", "arms": {"control": {"overlay": {}}, "treatment": {"overlay": X2_ARMS["t1"]}}}
+V2 = {
+    "id": "XP-14",
+    "arms": {
+        "control": {"overlay": {}},
+        "treatments": {k: {"overlay": v} for k, v in X14_ARMS.items()},
+    },
 }
-TP_NEW = {
-    "kinds": {k: {"take_profit_pct_of_debit": 0.6} for k in ("vertical_debit", "long_call")},
-    "default": {"take_profit_pct_of_debit": 0.6, "close_at_dte": 7},
-}
+WIN = lane.Verdict(verdict="win", winner=None)
 
 
-def _waive(body: str, new: Any, plan: dict[str, str] | None = PLAN_OK) -> Any:
-    return lane.evaluate(
-        ["config/exits.yaml"], body, _exits_delta(TP_OLD, new), EXPERIMENTS, CFG, plan
+def test_build_experiments_reads_v1_and_v2_arms() -> None:
+    specs = {"a.yaml": V1, "b.yaml": V2, "c.yaml": {"not": "a spec"}}
+    xs, removed = lane.build_experiments(specs, specs, {}, {})
+    assert set(xs) == {"XP-2", "XP-14"} and removed == []
+    assert xs["XP-2"].arms == X2_ARMS and xs["XP-14"].arms == X14_ARMS
+    assert all(x.open_at_base for x in xs.values())
+
+
+def test_spec_added_by_the_pr_locks_nothing() -> None:
+    xs, _ = lane.build_experiments({}, {"a.yaml": V1}, {}, {})
+    assert not xs["XP-2"].open_at_base
+
+
+def test_spec_deleted_by_the_pr_is_reported() -> None:
+    xs, removed = lane.build_experiments({"a.yaml": V1}, {}, {}, {})
+    assert xs == {} and removed == ["a.yaml (XP-2)"]
+    xs, removed = lane.build_experiments({"a.yaml": V1}, {}, {"XP-2": WIN}, {"XP-2": WIN})
+    assert removed == [] and not xs["XP-2"].open_at_base
+
+
+def test_editing_an_open_spec_keeps_the_base_lock() -> None:
+    edited = {**V1, "arms": {"control": {"overlay": {}}, "treatment": {"overlay": {}}}}
+    xs, _ = lane.build_experiments({"a.yaml": V1}, {"a.yaml": edited}, {}, {})
+    assert lane.locked_leaves(xs["XP-2"]) == {TP}
+
+
+def test_verdict_comes_from_the_head() -> None:
+    v = lane.Verdict(verdict="win", winner="t2")
+    xs, _ = lane.build_experiments({"b.yaml": V2}, {"b.yaml": V2}, {}, {"XP-14": v})
+    assert xs["XP-14"].open_at_base and xs["XP-14"].winning_arm() == "t2"
+
+
+def test_parse_verdict_is_strict() -> None:
+    with pytest.raises(ValueError, match="needs experiment_id"):
+        lane.parse_verdict({"verdict": "win"}, "f")
+    with pytest.raises(ValueError, match="winner must be"):
+        lane.parse_verdict(
+            {"experiment_id": "XP-2", "verdict": "win", "report_hash": "a", "winner": "x"}, "f"
+        )
+    xid, v = lane.parse_verdict(
+        {"experiment_id": "xp-2", "verdict": "WIN", "report_hash": "a", "winner": "t4"}, "f"
     )
+    assert (xid, v) == ("XP-2", lane.Verdict(verdict="win", winner="t4"))
 
 
-def test_repo_lane_config_carries_only_the_d78_waiver() -> None:
-    assert [w.decision for w in CFG.owner_waivers] == ["D78"]
-    assert CFG.owner_waivers[0].leaves == {
-        ("exits", "kinds", k, "take_profit_pct_of_debit")
-        for k in ("vertical_debit", "long_call", "long_put")
-    } | {("exits", "default", "take_profit_pct_of_debit")}
-
-
-def test_waived_leaf_passes() -> None:
-    r = _waive(WAIVE_BODY, TP_NEW)
-    assert r.ok and r.lane == "waiver", r.errors
-    assert any("owner waiver D78" in n for n in r.notes)
-
-
-def test_waiver_with_new_profit_lock_keys_passes() -> None:
-    new = {**TP_NEW, "kinds": {**TP_NEW["kinds"], "long_put": {
-        "profit_lock": {"arm_pct": 0.5, "floor_pct": 0.2, "eod_only": False}}}}  # fmt: skip
-    assert _waive(WAIVE_BODY, new).ok
-
-
-def test_unlisted_leaf_fails() -> None:
-    new = {**TP_NEW, "default": {"take_profit_pct_of_debit": 0.6, "close_at_dte": 5}}
-    r = _waive(WAIVE_BODY, new)
-    assert not r.ok and r.lane == "promotion"
-    assert "close_at_dte" in " ".join(r.errors)
-
-
-def test_missing_decision_in_body_fails() -> None:
-    for body in ("Lane: fast — owner-directed ship without experiment", ""):
-        r = _waive(body, TP_NEW)
-        assert not r.ok and r.lane == "promotion"
-
-
-def test_other_decision_cited_fails() -> None:
-    r = _waive("Lane: fast — owner-directed ship without experiment (PLAN D77)", TP_NEW)
-    assert not r.ok and "PLAN D78" in r.errors[0]
-
-
-def test_decision_row_missing_from_plan_fails() -> None:
-    r = _waive(WAIVE_BODY, TP_NEW, plan={})
-    assert not r.ok and "no decisions-log row" in r.errors[0]
-
-
-def test_decision_row_without_waiver_phrase_fails() -> None:
-    r = _waive(WAIVE_BODY, TP_NEW, plan={"D78": "| D78 | something | no waiver here |"})
-    assert not r.ok and "D44 waived" in r.errors[0]
-
-
-def test_waiver_never_covers_a_removed_value() -> None:
-    gone = {**TP_NEW, "default": {"take_profit_pct_of_debit": 0.6}}
-    r = _waive(WAIVE_BODY, gone)
-    assert not r.ok and "never waived" in " ".join(r.errors)
-
-
-def test_plan_rows_parser() -> None:
-    text = "intro\n| D77 | a |\n| D78 | b D44 waived |\nnot | D9 |\n"
-    assert lane.plan_rows(text) == {"D77": "| D77 | a |", "D78": "| D78 | b D44 waived |"}
-
-
-def test_owner_waiver_config_is_strict() -> None:
-    bad_entries: list[dict[str, Any]] = [
-        {"decision": "D78"},
-        {"decision": "x", "paths": {"exits": ["a"]}},
-        {"decision": "D78", "paths": {}},
-        {"decision": "D78", "paths": {"exits": "a"}},
-    ]
-    for bad in bad_entries:
-        with pytest.raises(ValueError, match="owner waiver|owner_waivers"):
-            lane.OwnerWaiver.from_mapping(bad)
-
-
-def test_the_real_plan_row_carries_the_waiver() -> None:
-    rows = lane.plan_rows((REPO / "docs" / "PLAN.md").read_text())
-    assert "d44 waived" in rows["D78"].lower()
-
-
-# -- yaml_delta ---------------------------------------------------------------
+# -- yaml_delta / config ------------------------------------------------------
 
 
 def test_yaml_delta_leaves() -> None:
@@ -365,22 +398,19 @@ def test_yaml_delta_leaves() -> None:
     assert lane.yaml_delta("s", None, {"x": 1}).added == {("s", "x"): 1}
 
 
-# -- config -------------------------------------------------------------------
-
-
-def test_lane_config_rejects_unknown_keys_and_empty_paths() -> None:
+def test_lane_config_rejects_unknown_and_retired_keys() -> None:
     with pytest.raises(ValueError, match="unknown keys"):
         lane.LaneConfig.from_mapping({"strategy_paths": ["a"], "bogus": 1})
+    for gone in ("promotion_stems", "owner_waivers", "flag_off_values", "fast_reason_min_chars"):
+        with pytest.raises(ValueError, match="unknown keys"):
+            lane.LaneConfig.from_mapping({"strategy_paths": ["a"], gone: []})
     with pytest.raises(ValueError, match="strategy_paths is empty"):
         lane.LaneConfig.from_mapping({})
 
 
-def test_promotion_stems_are_overlay_targets() -> None:
-    from arc.experiments.models import OVERLAY_TARGETS
-
-    assert set(CFG.promotion_stems) <= set(OVERLAY_TARGETS)
-    for stem in CFG.promotion_stems:
-        assert f"config/{stem}.yaml" in CFG.strategy_paths
+def test_repo_lane_config_has_only_the_d86_keys() -> None:
+    raw = yaml.safe_load((REPO / "config" / "strategy_lane.yaml").read_text())
+    assert set(raw) == {"strategy_paths", "exclude_paths", "experiments_dir", "verdicts_dir"}
 
 
 def test_every_strategy_path_glob_matches_a_real_file() -> None:
@@ -393,7 +423,14 @@ def test_every_strategy_path_glob_matches_a_real_file() -> None:
 
 def test_repo_experiments_load() -> None:
     xs = lane.load_experiments(REPO, CFG)
-    assert "XP-1" in xs and xs["XP-1"].overlay == {}
+    assert "XP-1" in xs and lane.locked_leaves(xs["XP-1"]) == set()
+
+
+def test_repo_open_experiment_leaves_are_overlay_targets() -> None:
+    from arc.experiments.models import OVERLAY_TARGETS
+
+    for x in lane.load_experiments(REPO, CFG).values():
+        assert {leaf[0] for leaf in lane.locked_leaves(x)} <= set(OVERLAY_TARGETS), x.id
 
 
 # -- end to end on a scratch git repo -----------------------------------------
@@ -419,13 +456,10 @@ def repo(tmp_path: Path) -> Path:
     _git(root, "config", "user.email", "t@example.com")
     _git(root, "config", "user.name", "t")
     _write(root, "config/strategy_lane.yaml", (REPO / "config/strategy_lane.yaml").read_text())
-    _write(root, "config/exits.yaml", OLD)
+    _write(root, "config/exits.yaml", BASE)
     _write(root, "arc/scanner/rank.py", "x = 1\n")
-    _write(
-        root,
-        "config/experiments/live/x2.yaml",
-        {"id": "XP-2", "kind": "ab", "arms": {"treatment": {"overlay": X2_OVERLAY}}},
-    )
+    _write(root, "config/experiments/live/xp2.yaml", V1)
+    _write(root, "config/experiments/live/xp14.yaml", V2)
     _git(root, "add", "-A")
     _git(root, "commit", "-qm", "base")
     _git(root, "checkout", "-qb", "pr")
@@ -436,47 +470,74 @@ def _run(
     root: Path, body: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> tuple[int, str]:
     _git(root, "add", "-A")
-    _git(root, "commit", "-qm", "pr")
+    _git(root, "commit", "-qm", "pr", "--allow-empty")
     bf = tmp_path / "body.md"
     bf.write_text(body)
     rc = lane.main(["--base", "main", "--head", "pr", "--body-file", str(bf), "--repo", str(root)])
     return rc, capsys.readouterr().out
 
 
-def test_e2e_code_change_needs_a_lane(repo: Path, tmp_path: Path, capsys: Any) -> None:
+def _verdict(root: Path, xid: str, **extra: Any) -> None:
+    _write(
+        root,
+        f"config/experiments/live/verdicts/{xid}.yaml",
+        {"experiment_id": xid, "verdict": "win", "report_hash": "ab" * 32, **extra},
+    )
+
+
+def test_e2e_code_change_is_advisory(repo: Path, tmp_path: Path, capsys: Any) -> None:
     _write(repo, "arc/scanner/rank.py", "x = 2\n")
     rc, out = _run(repo, "no lane", tmp_path, capsys)
-    assert rc == 1 and "arc/scanner/rank.py" in out
+    assert rc == 0 and "PASS (advisory)" in out and "arc/scanner/rank.py" in out
+    assert "::" not in out  # annotations only under GitHub Actions
 
 
-def test_e2e_promotion_needs_committed_win(repo: Path, tmp_path: Path, capsys: Any) -> None:
-    _write(repo, "config/exits.yaml", NEW)
+def test_e2e_locked_leaf_then_promotion(repo: Path, tmp_path: Path, capsys: Any) -> None:
+    _write(repo, "config/exits.yaml", _with(menu_measure="managed_net_ev_full"))
+    rc, out = _run(repo, "XP-advisory: none", tmp_path, capsys)
+    assert rc == 1 and "XP-14 is open" in out
+    rc, out = _run(repo, "Experiment: XP-14", tmp_path, capsys)
+    assert rc == 1 and "not committed" in out
+    _verdict(repo, "XP-14", winner="t3")
+    rc, out = _run(repo, "Experiment: XP-14", tmp_path, capsys)
+    assert rc == 0 and "PASS (promotion)" in out and "promotes XP-14 (t3)" in out
+
+
+def test_e2e_v1_verdict_is_t1(repo: Path, tmp_path: Path, capsys: Any) -> None:
+    _write(repo, "config/exits.yaml", _tp(0.75))
+    _verdict(repo, "XP-2")
     rc, out = _run(repo, "Experiment: XP-2", tmp_path, capsys)
-    assert rc == 1 and "committed `win` verdict" in out
-    _write(
-        repo,
-        "config/experiments/live/verdicts/XP-2.yaml",
-        {"experiment_id": "XP-2", "verdict": "win", "report_hash": "ab" * 32},
-    )
-    rc, out = _run(repo, "Experiment: XP-2", tmp_path, capsys)
-    assert rc == 0 and "lane: promotion" in out
+    assert rc == 0 and "promotes XP-2 (t1)" in out
 
 
-def test_e2e_new_flag(repo: Path, tmp_path: Path, capsys: Any) -> None:
-    _write(repo, "config/exits.yaml", {**OLD, "pipeline": {"new_menu": False}})
-    _write(repo, "arc/scanner/rank.py", "x = 3\n")
-    rc, out = _run(repo, "Flag: exits.pipeline.new_menu", tmp_path, capsys)
-    assert rc == 0 and "lane: flag" in out
+def test_e2e_closed_experiment_frees_its_leaves(repo: Path, tmp_path: Path, capsys: Any) -> None:
+    _verdict(repo, "XP-2")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "verdict")
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "merge", "-q", "--ff-only", "pr")
+    _git(repo, "checkout", "-qb", "pr2")
+    _write(repo, "config/exits.yaml", _tp(0.6))
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "pr2")
+    bf = tmp_path / "b.md"
+    bf.write_text("XP-advisory: none")
+    rc = lane.main(["--base", "main", "--head", "pr2", "--body-file", str(bf), "--repo", str(repo)])
+    assert rc == 0, capsys.readouterr().out
 
 
-def test_e2e_owner_waiver_reads_plan(repo: Path, tmp_path: Path, capsys: Any) -> None:
-    new = {"kinds": {"long_call": {"take_profit_pct_of_debit": 0.6, "close_at_dte": 7}}}
-    _write(repo, "config/exits.yaml", new)
-    rc, out = _run(repo, WAIVE_BODY, tmp_path, capsys)
-    assert rc == 1 and "no decisions-log row" in out  # no docs/PLAN.md in the scratch repo
-    _write(repo, "docs/PLAN.md", "| D78 | exits | Owner: D44 waived for E18.1 |\n")
-    rc, out = _run(repo, WAIVE_BODY, tmp_path, capsys)
-    assert rc == 0 and "lane: waiver" in out
+def test_e2e_deleting_an_open_spec_warns(repo: Path, tmp_path: Path, capsys: Any) -> None:
+    (repo / "config/experiments/live/xp2.yaml").unlink()
+    _write(repo, "config/exits.yaml", _tp(0.6))
+    rc, out = _run(repo, "", tmp_path, capsys)
+    assert rc == 0 and "deletes open experiment spec" in out and "XP-2" in out
+
+
+def test_e2e_spec_added_by_the_pr_locks_nothing(repo: Path, tmp_path: Path, capsys: Any) -> None:
+    _write(repo, "config/experiments/live/xp9.yaml", {**V1, "id": "XP-9"})
+    _write(repo, "config/exits.yaml", {**_tp(1.0), "default": {"x": 1}})
+    rc, out = _run(repo, "", tmp_path, capsys)
+    assert rc == 0, out
 
 
 def test_e2e_non_strategy(repo: Path, tmp_path: Path, capsys: Any) -> None:
@@ -485,13 +546,25 @@ def test_e2e_non_strategy(repo: Path, tmp_path: Path, capsys: Any) -> None:
     assert rc == 0 and "no strategy paths" in out
 
 
+def test_e2e_github_summary_and_annotations(
+    repo: Path, tmp_path: Path, capsys: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    _write(repo, "arc/scanner/rank.py", "x = 3\n")
+    rc, out = _run(repo, "", tmp_path, capsys)
+    assert rc == 0 and "::warning title=strategy-lane advisory::" in out
+    assert "`arc/scanner/rank.py`" in summary.read_text()
+
+
 def test_e2e_bad_verdict_file_is_a_config_error(repo: Path, tmp_path: Path, capsys: Any) -> None:
     _write(repo, "config/experiments/live/verdicts/XP-2.yaml", {"verdict": "win"})
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "bad")
     bf = tmp_path / "b.md"
     bf.write_text("")
-    rc = lane.main(
-        ["--base", "main", "--head", "main", "--body-file", str(bf), "--repo", str(repo)]
-    )
+    rc = lane.main(["--base", "main", "--head", "pr", "--body-file", str(bf), "--repo", str(repo)])
     assert rc == 2 and "report_hash" in capsys.readouterr().err
 
 

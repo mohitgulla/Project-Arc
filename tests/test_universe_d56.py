@@ -256,9 +256,10 @@ class TestRegistry:
         for code in (ReasonCode.UNIVERSE_NOT_IN_TIER, ReasonCode.UNIVERSE_BELOW_TIER_FLOOR):
             assert REASON_LABELS[code]
 
-    def test_flag_off_values_drop_retired_controls(self) -> None:
+    def test_lane_config_has_no_flag_off_values(self) -> None:
+        # D86 (E21.1) retired the `Flag:` default-off rule and its control-value list.
         lane = yaml.safe_load((REPO / "config" / "strategy_lane.yaml").read_text())
-        assert not {"d51", "scalp", "full", "deterministic"} & set(lane["flag_off_values"])
+        assert "flag_off_values" not in lane
 
 
 # -- resolver ----------------------------------------------------------------------------

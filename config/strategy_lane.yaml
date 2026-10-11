@@ -1,25 +1,30 @@
-# Strategy-lane CI check (PLAN D44 "two lanes"; card E10.7).
+# Strategy-lane CI check (PLAN D86, revising D44 / E10.7; card E21.1).
 # Read by scripts/strategy_lane_check.py, which runs as the `strategy-lane` job in
 # .github/workflows/ci.yml on every pull request. Deterministic: no network, no LLM.
 #
-# A PR that touches a path below is a *strategy-lane* PR. It passes only if its body
-# carries one of (docs/OPS.md 5.20):
+# D86: dev changes ship on, to every experiment arm (control and treatments run the
+# same binary and config). The check has ONE hard rule and is advisory otherwise
+# (docs/OPS.md 5.20):
 #
-#   Experiment: XP-<n>          a spec with that id exists in config/experiments/live/
-#   Flag: <stem>.<path>        a NEW key in config/<stem>.yaml whose default is off
-#                              (false / off / none / null / control): control behaviour
-#   Lane: fast — <reason>      bug / safety / infra fix; arc-sentinel audits these
+#   Locked leaves (fails)  An open experiment = a spec in experiments_dir with no
+#                          verdict file in verdicts_dir on the base branch. Every leaf
+#                          its treatment overlays set (v1 `treatment`, v2 `treatments`)
+#                          is locked: a PR may not add, change or remove it in
+#                          config/<stem>.yaml, unless it is that experiment's promotion
+#                          (`Experiment: XP-<n>` in the body + a `verdict: win` file with
+#                          `winner: t<k>` (none = t1) + exactly arm t<k>'s values).
+#   Advisory (never fails) A PR touching a path below gets a job summary and a PR
+#                          annotation listing the strategy files and config leaves it
+#                          changes, and should carry `XP-advisory: none | <reason>` in
+#                          its body (missing = warning). Old `Flag:` / `Lane: fast` /
+#                          `Experiment:` lines are accepted and ignored.
 #
-# A *promotion* (changing or removing a value that already exists in one of the
-# promotion_stems YAMLs below, i.e. flipping a default) passes only with `Experiment: XP-<n>`
-# whose committed verdict (config/experiments/live/verdicts/XP-<n>.yaml) is `win`, and
-# every changed value must equal that experiment's treatment overlay. `Lane: fast`
-# and `Flag:` never cover a promotion.
+# Specs are added only by `arc experiment adopt` (E21.4) after the owner approves an
+# Analyst proposal; cards and PRs never draft them (D86).
 #
 # Globs use fnmatch (`*` also crosses `/`); paths are repo-relative POSIX paths.
 # Gate and safety code (arc/gate/, arc/budget/, arc/pipeline/market_guard.py,
 # halts, reconcile, execution) is deliberately NOT strategy lane.
-# This file is itself strategy lane, so narrowing it needs a cited reason.
 
 strategy_paths:
   - arc/exits/*                       # exit policy + managed-exit model
@@ -42,40 +47,6 @@ strategy_paths:
 exclude_paths:
   - "*/__pycache__/*"
 
-# Where registered experiment specs and their committed verdicts live.
+# Where experiment specs and their committed verdicts live.
 experiments_dir: config/experiments/live
 verdicts_dir: config/experiments/live/verdicts
-
-# Strategy YAMLs where changing or removing an existing value is a *promotion*. These
-# are files a forward experiment can overlay (arc.experiments.models OVERLAY_TARGETS),
-# so a winning experiment can have tested the new value. A value change in another
-# strategy YAML is an ordinary strategy-lane change: any one lane line covers it.
-# universe.yaml became an overlay target in E13.12 but stays out of this list on
-# purpose: the core list is owner-edited (the D56 cutover, E13.15, was by owner
-# go-ahead, PLAN D56).
-promotion_stems: [exits, ranking, costs, account_profiles]
-
-# Owner waivers (E18.1, PLAN D78): the ONLY promotions that pass without an XP verdict.
-# A promotion passes when every changed leaf is listed under one waiver below, the PR
-# body carries `Lane: fast — … (PLAN D<n>)` naming that decision, and the D<n> row of
-# docs/PLAN.md exists and says "D44 waived". Removing a value is never waived; any
-# other promotion stays blocked exactly as above. Paths are dotted leaves under the
-# stem (config/<stem>.yaml). Adding an entry here needs the owner's D# row first.
-owner_waivers:
-  - decision: D78
-    paths:
-      exits:
-        - kinds.vertical_debit.take_profit_pct_of_debit
-        - kinds.long_call.take_profit_pct_of_debit
-        - kinds.long_put.take_profit_pct_of_debit
-        - default.take_profit_pct_of_debit
-
-# Values that count as "off" (control behaviour) for a new `Flag:` key.
-# "strict" (E12.5): the control of a strict | relaxed choice switch
-# (personas.director_diversification); it names the unchanged behaviour.
-# E13.15 (D56 cutover): "scalp" / "full" / "deterministic" (the controls of the removed
-# research_idea_pool / research_compact_prompt / exit_path switches) left with them.
-flag_off_values: [false, null, "off", "none", "control", "strict"]
-
-# Minimum length of the `Lane: fast` reason, so "Lane: fast — x" does not pass.
-fast_reason_min_chars: 10
