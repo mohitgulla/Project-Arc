@@ -1213,6 +1213,8 @@ class RoutinesConfig(BaseModel):
                 from arc.ingest.ticker_news_config import TickerNewsConfig
 
                 TickerNewsConfig.from_options(spec.options)
+            if name in HORIZON_JOBS:  # E20.2 (D85): the job option is the only source
+                horizon_days_option(name, spec.options)
         for name, spec in self.personas.items():
             if name in spec.chain or len(set(spec.chain)) != len(spec.chain):
                 msg = f"persona {name!r}: chain repeats a step"
@@ -1517,6 +1519,19 @@ class RoutinesConfig(BaseModel):
             if spec.context is not None:
                 return spec.context
         return self.context_ttl.get(kind, ContextPolicy())
+
+
+#: E20.2 (D85): source jobs whose look-ahead is the required ``horizon_days:`` option.
+HORIZON_JOBS: frozenset[str] = frozenset({"macro_calendar", "ex_dividend"})
+
+
+def horizon_days_option(job: str, options: Mapping[str, Any]) -> int:
+    """The required ``horizon_days:`` option (an int, 1-180) of *job*."""
+    value = options.get("horizon_days")
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 180:
+        msg = f"source {job!r}: horizon_days must be an int 1-180 (got {value!r})"
+        raise ValueError(msg)
+    return value
 
 
 def load_routines(

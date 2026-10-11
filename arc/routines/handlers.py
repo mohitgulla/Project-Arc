@@ -844,8 +844,9 @@ def market_movers_source(
 def macro_calendar_source(ctx: JobContext) -> JobResult:
     """E4.5/E4.10: FOMC + BLS (CPI/PPI/NFP/JOLTS/ECI) + BEA (GDP/PCE) -> ``macro_calendar``."""
     from arc.ingest.options_data import fetch_macro_calendar
+    from arc.routines.config import horizon_days_option
 
-    horizon = int(ctx.options.get("horizon_days", ctx.settings.ingest_macro_horizon_days))
+    horizon = horizon_days_option(ctx.job, ctx.options)
     status: dict[str, str] = {}
     payload, counts = fetch_macro_calendar(
         ctx.now.astimezone(ET).date(),
@@ -1078,8 +1079,9 @@ def betas_source(
 def ex_dividend_source(ctx: JobContext) -> JobResult:
     """E4.5: next cash-dividend ex-date per ticker (Alpaca corporate actions)."""
     from arc.ingest.options_data import fetch_ex_dividends
+    from arc.routines.config import horizon_days_option
 
-    horizon = int(ctx.options.get("horizon_days", ctx.settings.ex_dividend_horizon_days))
+    horizon = horizon_days_option(ctx.job, ctx.options)
     tickers = _data_tickers(ctx)
     found = fetch_ex_dividends(tickers, ctx.now.astimezone(ET).date(), horizon)
     _data_result(

@@ -6,7 +6,6 @@ See PLAN.md §5 for risk defaults and §9.2 (D9) for the default universe.
 from __future__ import annotations
 
 import enum
-import json
 from decimal import Decimal
 from pathlib import Path
 from typing import Annotated, Literal
@@ -46,32 +45,6 @@ class ArcEnv(enum.StrEnum):
 
     PAPER = "paper"
     LIVE = "live"
-
-
-# ---------------------------------------------------------------------------
-# Structure whitelist
-# ---------------------------------------------------------------------------
-
-
-class StructureKind(enum.StrEnum):
-    """Allowed option structure types (D4; split by D25/E3.4).
-
-    ``vertical`` was split into ``vertical_debit`` and ``vertical_credit``. The old
-    value is still accepted in ``ARC_STRUCTURE_WHITELIST`` as a deprecated alias
-    that expands to both (see :data:`LEGACY_WHITELIST_ALIASES`).
-    """
-
-    VERTICAL_DEBIT = "vertical_debit"
-    VERTICAL_CREDIT = "vertical_credit"
-    IRON_CONDOR = "iron_condor"
-    LONG_CALL = "long_call"
-    LONG_PUT = "long_put"
-
-
-# Deprecated whitelist spellings -> the kinds they stand for.
-LEGACY_WHITELIST_ALIASES: dict[str, tuple[StructureKind, ...]] = {
-    "vertical": (StructureKind.VERTICAL_DEBIT, StructureKind.VERTICAL_CREDIT),
-}
 
 
 # ---------------------------------------------------------------------------
@@ -295,20 +268,6 @@ class ArcSettings(BaseSettings):
     portfolio_vega_cap_pct: Annotated[float, Field(ge=0.0, le=1.0)] = Field(
         default=0.010,
         description="|ν| cap: 1.0% of equity per vol-point (D57).",
-    )
-    # NoDecode: the env value may be comma-separated or JSON; see _parse_whitelist.
-    structure_whitelist: Annotated[list[StructureKind], NoDecode] = Field(
-        default=[
-            StructureKind.VERTICAL_DEBIT,
-            StructureKind.VERTICAL_CREDIT,
-            StructureKind.IRON_CONDOR,
-            StructureKind.LONG_CALL,
-            StructureKind.LONG_PUT,
-        ],
-        description=(
-            "Allowed structure types (D4). The account profile narrows this further (D25). "
-            "Deprecated alias 'vertical' = vertical_debit + vertical_credit."
-        ),
     )
     # -- Account profile (D25, E3.4) -------------------------------------------
     account_profile: str = Field(
@@ -1119,14 +1078,6 @@ class ArcSettings(BaseSettings):
         default=1.3,
         description="E13.10: session put/call volume at or above this reads bearish.",
     )
-    ingest_macro_horizon_days: Annotated[int, Field(ge=1, le=180)] = Field(
-        default=45,
-        description="E4.5: macro calendar (FOMC/BLS) looks this many days ahead.",
-    )
-    ex_dividend_horizon_days: Annotated[int, Field(ge=1, le=180)] = Field(
-        default=45,
-        description="E4.5: ex-dividend dates looked up this many days ahead.",
-    )
 
     # -- Pipeline runner (E5.2) -----------------------------------------------
     persona_timeout_seconds: Annotated[int, Field(ge=10)] = Field(
@@ -1272,26 +1223,6 @@ class ArcSettings(BaseSettings):
         if isinstance(v, str):
             return [s.strip() for s in v.split(",") if s.strip()]
         return v
-
-    @field_validator("structure_whitelist", mode="before")
-    @classmethod
-    def _parse_whitelist(cls, v: object) -> object:
-        """Comma-separated or JSON list; expand the deprecated ``vertical`` alias."""
-        if isinstance(v, str):
-            s = v.strip()
-            v = json.loads(s) if s.startswith("[") else [p.strip() for p in s.split(",")]
-        if not isinstance(v, list | tuple):
-            return v
-        out: list[object] = []
-        for item in v:
-            key = str(item).strip().lower() if isinstance(item, str) else item
-            alias = LEGACY_WHITELIST_ALIASES.get(key) if isinstance(key, str) else None
-            if alias is not None:
-                log.warning("config.deprecated_whitelist_alias", alias=key, expands_to=alias)
-                out.extend(k for k in alias if k not in out)
-            elif key and key not in out:
-                out.append(key)
-        return out
 
     @field_validator("dte_max")
     @classmethod

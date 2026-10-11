@@ -189,7 +189,6 @@ NEVER_TUNABLE: frozenset[str] = frozenset(
 # adds gets an explicit exposed / not-exposed decision.
 NOT_EXPOSED: dict[str, str] = {
     "wash_sale_days": "tax rule, not a strategy knob",
-    "structure_whitelist": "account_profile decides the allowed structures",
     "quote_max_age_seconds": "data freshness guard (gate); change by PR",
     "account_max_age_seconds": "data freshness guard (gate); change by PR",
     "gate_fee_per_leg_contract": "gate fee assumption; broker schedule",
@@ -243,8 +242,6 @@ NOT_EXPOSED: dict[str, str] = {
     "scalp_tape_max_chars": "E13.10 prompt size (the tape is capped at 1500 chars)",
     "scalp_tape_pc_bull": "E13.10 tape direction threshold; change by PR (strategy lane)",
     "scalp_tape_pc_bear": "E13.10 tape direction threshold; change by PR (strategy lane)",
-    "ingest_macro_horizon_days": "ingestion plumbing",
-    "ex_dividend_horizon_days": "ingestion plumbing",
     "finnhub_insider_window_days": "D46 insider detector internals (context data only)",
     "finnhub_cluster_buyers": "D46 insider detector internals (context data only)",
     "finnhub_cluster_days": "D46 insider detector internals (context data only)",
