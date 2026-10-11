@@ -506,6 +506,12 @@ def test_cli_show_ledger_and_refusal(
     assert main(["backtest", "study", "show", "BT-9", *base]) == 0
     out = capsys.readouterr().out
     assert study_hash(s) in out and "holdout refused" in out and "runs 1 (holdout 1)" in out
+    # E7.15: one JSON object the stdlib-only Analyst gate reads the current hash from
+    assert main(["backtest", "study", "show", "BT-9", *base, "--json"]) == 0
+    doc = json.loads(capsys.readouterr().out)
+    assert doc["spec_hash"] == study_hash(s) and doc["id"] == "BT-9"
+    assert doc["holdout_runs"] == 1 and doc["runs"] == 1 and doc["variants_tried"] >= 1
+    assert doc["universe_ladder"] == ["c125"] and "t1" in doc["arms"]["treatments"]
 
     assert main(["backtest", "study", "ledger", "BT-9", *base]) == 0
     assert "BT-9 holdout c125" in capsys.readouterr().out

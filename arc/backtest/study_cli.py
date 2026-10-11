@@ -92,6 +92,11 @@ def add_study_parser(bs: argparse._SubParsersAction[argparse.ArgumentParser]) ->
 
     show = ss.add_parser("show", help="Spec, its hash, variants tried and holdout state")
     common(show)
+    show.add_argument(
+        "--json",
+        action="store_true",
+        help="One JSON object (E7.15: the Analyst gate reads the current spec hash from it)",
+    )
 
     led = ss.add_parser("ledger", help="Ledger lines of a study (or 'all')")
     common(led)
@@ -129,6 +134,24 @@ def _show(args: argparse.Namespace, spec: object) -> int:
         state = "holdout open"
     except StudyRefusedError as exc:
         state = f"holdout refused: {exc}"
+    if getattr(args, "json", False):
+        doc = {
+            "id": spec.id,
+            "hypothesis": spec.hypothesis,
+            "spec_hash": h,
+            "arm_set_hash": a,
+            "arms": spec.arms.model_dump(mode="json"),
+            "profiles": list(spec.profiles),
+            "universe_ladder": list(spec.universe_ladder),
+            "primary_metric": spec.primary_metric,
+            "max_variants": spec.max_variants,
+            "variants_tried": variants(entries, spec.id),
+            "runs": len(mine),
+            "holdout_runs": len(hold),
+            "holdout_state": state,
+        }
+        sys.stdout.write(json.dumps(doc, sort_keys=True) + "\n")
+        return 0
     out = [
         f"{spec.id} · {spec.hypothesis}",
         f"spec hash {h}",
