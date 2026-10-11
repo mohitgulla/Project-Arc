@@ -5,6 +5,9 @@ import { CAT } from "./personas.fixture";
 import {
   OPS_CLOSED_BY_DEFAULT,
   OPS_WIDGETS,
+  contextGroups,
+  kindLabel,
+  shortList,
   bandHasProblem,
   bandRollup,
   bandRows,
@@ -269,11 +272,11 @@ describe("E8.8d widget order", () => {
       [
         "Session Timeline",
         "Sources",
-        "Health",
         "LLM Usage",
         "Context Store",
         "Auto-Approve",
         "Config",
+        "Health",
         "Alerts",
         "Halts",
         "Runs",
@@ -281,6 +284,49 @@ describe("E8.8d widget order", () => {
     `);
     expect(OPS_CLOSED_BY_DEFAULT).toEqual(["Alerts", "Halts", "Runs"]);
     expect(OPS_WIDGETS).not.toContain("Order Budget");
+  });
+});
+
+describe("D89 context store groups", () => {
+  const kind = (k: string, group: string, active: number, latest: string | null) => ({
+    kind: k,
+    active,
+    ttl: null,
+    next_expiry: null,
+    remaining_fraction: null,
+    latest_id: latest ? `ctx-${k}` : null,
+    latest_subject: latest ? "s" : null,
+    latest_at: latest,
+    latest_by: null,
+    expired_24h: 0,
+    group,
+    writers: [],
+    readers: [],
+  });
+  it("joins kinds to the API's group order, active kinds first, unknown groups under Other", () => {
+    const g = contextGroups({
+      groups: [
+        { key: "sources", label: "Sources", active: 3, kinds: 2 },
+        { key: "universe", label: "Universe", active: 1, kinds: 1 },
+      ],
+      kinds: [
+        kind("vol_term", "sources", 0, "2026-10-09T08:20:00Z"),
+        kind("raw_doc_ref", "sources", 3, "2026-10-09T20:00:00Z"),
+        kind("universe_tier", "universe", 1, "2026-10-09T10:00:00Z"),
+        kind("mystery", "nowhere", 2, null),
+      ],
+    });
+    expect(g.map((x) => [x.key, x.active, x.kinds.map((k) => k.kind)])).toEqual([
+      ["sources", 3, ["raw_doc_ref", "vol_term"]],
+      ["universe", 1, ["universe_tier"]],
+      ["other", 2, ["mystery"]],
+    ]);
+    expect(g[0]?.latestAt).toBe("2026-10-09T20:00:00Z");
+  });
+  it("labels kinds and shortens long writer lists", () => {
+    expect(kindLabel("raw_doc_ref")).toBe("Raw doc ref");
+    expect(shortList(["RSS news", "EDGAR", "Ticker news", "Earnings"], 2)).toBe("RSS news, EDGAR +2");
+    expect(shortList([], 2)).toBe("—");
   });
 });
 

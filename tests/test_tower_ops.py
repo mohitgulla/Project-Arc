@@ -205,6 +205,12 @@ def test_health_strip(conn, tmp_path) -> None:
     assert chips["health"].startswith("Health check failed ")
     assert chips["gateway"] == "Gateway ok" and chips["remote_access"] == "Remote ok"
     assert chips["log"] == "Log 0.002 / 0.001 MB"
+    # D89: equal-size tiles split each check into a name and a detail line
+    tiles = {i.key: (i.name, i.detail) for i in h.items}
+    assert tiles["tick"] == ("Tick", "OK · 1m")
+    assert tiles["health"][0] == "Health check" and tiles["health"][1].startswith("Failed · ")
+    assert tiles["gateway"] == ("Gateway", "OK") and tiles["remote_access"] == ("Remote", "OK")
+    assert tiles["log"] == ("Log", "0.002 / 0.001 MB")
     # a stale tick is failed whatever its recorded status
     late = load_health(conn, now=NOW + dt.timedelta(hours=1), tick_stale_s=900, health_every_s=1800)
     assert {i.key: i.status for i in late.items}["tick"] == "failed"
@@ -401,6 +407,20 @@ def test_context_counts_every_kind(conn, routines) -> None:
     shortlist = kinds["shortlist"]
     assert shortlist.remaining_fraction is not None and 0 <= shortlist.remaining_fraction <= 1
     assert shortlist.latest_id and shortlist.latest_at
+    # D89: each kind carries its writers / readers (routines.yaml) and its Timeline group
+    assert "Scalp" in kinds["candidate"].writers and "Research loop" in kinds["candidate"].readers
+    assert kinds["candidate"].group == "scalp"
+    assert kinds["structures"].writers == ["Quant open", "Quant revise"]
+    assert kinds["structures"].group == "trading_loop"
+    assert kinds["universe_tier"].group == "universe"
+    assert kinds["raw_doc_ref"].group == "sources" and kinds["raw_doc_ref"].readers == []
+    from arc.routines.config import TIMELINE_GROUPS
+
+    order = [g for g, _ in TIMELINE_GROUPS]
+    keys = [g.key for g in c.groups]
+    assert keys == sorted(keys, key=order.index)  # Timeline order
+    assert sum(g.kinds for g in c.groups) == len(c.kinds)
+    assert sum(g.active for g in c.groups) == c.total_active
 
 
 def test_context_entry_endpoint(client, conn) -> None:

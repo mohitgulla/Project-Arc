@@ -49,7 +49,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from arc.config import ArcSettings
-    from arc.routines.config import JobSpec, RoutinesConfig
+    from arc.routines.config import JobSpec, RoutinesConfig, StepSpec
 
 __all__ = [
     "ALERT_LOOKBACK",
@@ -453,6 +453,8 @@ class HealthItem(BaseModel):
     value: str
     threshold: str = Field(description="What the status is judged against")
     chip: str = Field(default="", description="E8.8d: compact chip text, e.g. `Tick ok 3m`")
+    name: str = Field(default="", description="D89: short tile name, e.g. `Tick`")
+    detail: str = Field(default="", description="D89: tile value line, e.g. `OK · 3m`")
 
 
 class HealthStripResponse(BaseModel):
@@ -623,19 +625,27 @@ _CHIP_LABEL = {
 }
 
 
+#: D89: tile status words (Title Case, like the Overview status row).
+_TILE_STATE = {"ok": "OK", "degraded": "Degraded", "failed": "Failed", "unknown": "Not Checked"}
+
+
 def _with_chip(it: HealthItem) -> HealthItem:
-    """``Tick ok 3m`` / ``Gateway ok`` / ``Log 1.2 / 5 MB``: one short line per check."""
-    if it.chip:
-        return it
+    """``Tick ok 3m`` / ``Gateway ok`` / ``Log 1.2 / 5 MB``: one short line per check, plus
+    the D89 tile split (``name`` = ``Tick``, ``detail`` = ``OK · 3m``)."""
     name = _CHIP_LABEL.get(it.key, it.label)
-    state = "not checked" if it.status == "unknown" else it.status
+    age = None
     if it.age_s is not None and it.key in ("tick", "health"):
         from arc.context.categories import age_text
 
-        chip = f"{name} {state} {age_text(_dt.timedelta(seconds=it.age_s))}"
-    else:
-        chip = f"{name} {state}"
-    return it.model_copy(update={"chip": chip})
+        age = age_text(_dt.timedelta(seconds=it.age_s))
+    if it.chip:  # the log chip carries its own text (size / cap)
+        rest = it.chip.removeprefix(name).strip()
+        detail = "No log" if rest == "none" else rest or _TILE_STATE[it.status]
+        return it.model_copy(update={"name": name, "detail": detail})
+    state = "not checked" if it.status == "unknown" else it.status
+    chip = f"{name} {state} {age}" if age else f"{name} {state}"
+    detail = f"{_TILE_STATE[it.status]} · {age}" if age else _TILE_STATE[it.status]
+    return it.model_copy(update={"chip": chip, "name": name, "detail": detail})
 
 
 # ---------------------------------------------------------------------------
@@ -1247,6 +1257,24 @@ class ContextKindRow(BaseModel):
     latest_at: _dt.datetime | None
     latest_by: str | None
     expired_24h: int
+    group: str = Field(
+        default="other", description="D89: Session Timeline group of the kind's main writer"
+    )
+    writers: list[str] = Field(
+        default_factory=list, description="D89: jobs / chain steps declaring it in `writes:`"
+    )
+    readers: list[str] = Field(
+        default_factory=list, description="D89: jobs / chain steps declaring it in `reads:`"
+    )
+
+
+class ContextGroup(BaseModel):
+    model_config = _STRICT
+
+    key: str
+    label: str
+    active: int
+    kinds: int
 
 
 class ContextResponse(BaseModel):
@@ -1256,6 +1284,9 @@ class ContextResponse(BaseModel):
     total_active: int
     expired_24h: int
     kinds: list[ContextKindRow]
+    groups: list[ContextGroup] = Field(
+        default_factory=list, description="D89: Timeline-group order; only groups with kinds"
+    )
 
 
 def load_context(
@@ -1283,6 +1314,7 @@ def load_context(
         )
     }
     kinds = list(KINDS) + sorted(k for k in set(active) | set(expired) if k not in KINDS)
+    io_w, io_r, group_of = _context_io(routines)
     out: list[ContextKindRow] = []
     for kind in kinds:
         latest = conn.execute(
@@ -1315,14 +1347,64 @@ def load_context(
                     else None
                 ),
                 expired_24h=expired.get(kind, 0),
+                group=group_of.get(kind, "other"),
+                writers=io_w.get(kind, []),
+                readers=io_r.get(kind, []),
             )
         )
+    from arc.routines.config import TIMELINE_GROUPS
+
+    groups = [
+        ContextGroup(
+            key=g,
+            label=label,
+            active=sum(k.active for k in out if k.group == g),
+            kinds=sum(1 for k in out if k.group == g),
+        )
+        for g, label in TIMELINE_GROUPS
+        if any(k.group == g for k in out)
+    ]
     return ContextResponse(
         as_of=now,
         total_active=sum(k.active for k in out),
         expired_24h=sum(k.expired_24h for k in out),
         kinds=out,
+        groups=groups,
     )
+
+
+def _context_io(
+    routines: RoutinesConfig,
+) -> tuple[dict[str, list[str]], dict[str, list[str]], dict[str, str]]:
+    """D89: per kind, the writer and reader labels (``writes:`` / ``reads:`` of jobs and
+    chain steps, config order) and the kind's Timeline group: the group most of its
+    writers sit in, ties going to the earlier group (chain steps count as the loop's)."""
+    from arc.routines.config import TIMELINE_GROUPS
+
+    rank = {g: i for i, (g, _) in enumerate(TIMELINE_GROUPS)}
+    loop = routines.personas.get(routines.loop.job)
+    loop_group = str(loop.options.get("group") or "other") if loop else "other"
+    units: list[tuple[str, str, StepSpec]] = []
+    for name, (kind, spec) in routines.jobs().items():
+        # the loop's label is its whole chain ("Research → Quant → …"); name it by its persona
+        label = "Research loop" if name == routines.loop.job else _label(name, spec)
+        units.append((label, _display(name, kind.value, spec, routines)["group"], spec))
+    for name, spec in routines.steps.items():
+        head, _, tail = name.partition(".")  # quant.open -> "Quant open"
+        units.append((f"{head.capitalize()} {tail}".strip(), loop_group, spec))
+    writers: dict[str, list[str]] = {}
+    readers: dict[str, list[str]] = {}
+    votes: dict[str, Counter[str]] = {}
+    for label, group, spec in units:
+        for k in spec.writes or []:
+            if label not in writers.setdefault(k, []):
+                writers[k].append(label)
+            votes.setdefault(k, Counter())[group] += 1
+        for k in spec.reads or []:
+            if label not in readers.setdefault(k, []):
+                readers[k].append(label)
+    group_of = {k: min(c, key=lambda g: (-c[g], rank.get(g, len(rank)))) for k, c in votes.items()}
+    return writers, readers, group_of
 
 
 class ContextEntryResponse(BaseModel):
