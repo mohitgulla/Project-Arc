@@ -368,7 +368,7 @@ def add_ops(conn: sqlite3.Connection, now: dt.datetime) -> None:  # noqa: C901, 
             status, summary = "skipped", "halted: trading halt active (persona jobs skip)"
             scalp_skipped = True
             dur = dt.timedelta(0)
-        elif o.job in ("scalp", "scalp.overnight"):
+        elif o.job == "scalp":
             call_n += 1
             calls.append(ops.call(rid_guess, "scalp", started + dt.timedelta(seconds=25), call_n))
             cand = ops.entry(f"ctx-{rid_guess[8:]}-candidate", "candidate", "SPY",

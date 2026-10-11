@@ -11,7 +11,7 @@
 #   05:30 / 05:35  active universe (D56 tiers; Mon symbol master) / betas vs SPY (D62)
 #   06:00          earnings calendar; rss / edgar every 15 min until 20:00
 #   08:15 / 08:20  options_slow / market_health catch-ups (only if the evening slot missed)
-#   09:00-16:00    Scalp every 30 min
+#   06:30-20:00    Scalp every 30 min (D91; no overnight run)
 #   09:30-16:00    monitor every 10 min; broker.reattach 09:30-16:10 (D72)
 #   09:40-15:50    trading loop every 10 min (D52, D56): research -> exits.mandatory ->
 #                  quant.exit -> risk.exit -> quant.open -> risk.open -> quant.revise ->
@@ -20,7 +20,6 @@
 #   16:30          broker.reconcile; (event) reconcile.intraday after an unconfirmed ladder
 #   16:40          experiments.evaluate; 16:45 Fri weekly scorecard ([Ops])
 #   18:00 / 18:30  earnings calendar / vol_term
-#   22:00          overnight Scalp (YouTube never reaches the Scalp, D45)
 #   23:00 / 23:15  options_daily + vix_futures (read by the 06:00 Scout) / market_health
 #
 # lane (D39): `background` = run detached so a slow job (p90 > 30 s) never delays the
@@ -620,33 +619,20 @@ personas:
     writes: [scout_read, candidate, note, universe_tier, active_universe]   # universe_tier: discovery only; active_universe: re-resolve after
     context_kinds:              # D64 (E14.7): discovery lives 48 h and merges the previous run (universe.yaml carryover)
       universe_tier: {ttl: 48h, supersede: latest}
-  scalp:                        # D31: every 30 min in session (15 runs), after the fast sources
+  scalp:                        # D31/D91: every 30 min 06:30-20:00 (28 runs), after the fast sources; one job (scalp.overnight dropped, D91)
     label: Scalp
-    about: "Reads fresh news and filings; writes candidate ideas and story digests"
+    about: "Reads fresh news and filings while the news sources run (06:30-20:00); writes candidate ideas and story digests"
     group: scalp
     persona: scalp
     every: 30m
-    window: "09:00-16:00"
+    window: "06:30-20:00"       # D91: inside the rss/edgar/ticker_news window (06:00-20:00); was 09:00-16:00 + a 22:00 overnight run
     days: trading
     after_sources: true
     ttl: 20m                    # a slot missed by 20 min is skipped (the next one is closer)
     notify: card
-    reads: [index_vols, chain_snapshot, exchange_volume, market_movers]   # E13.10: the options tape (always read since E13.15); E14.3: market_movers only with personas.scalp_movers_context on
+    reads: [index_vols, chain_snapshot, exchange_volume, market_movers]   # E13.10: the options tape (always read since E13.15; outside 09:00-16:00 it is stale -> "no fresh info" line); E14.3: market_movers only with personas.scalp_movers_context on
     writes: [candidate, note, story, active_universe]   # note: scan summary (D27); story: D30 stage-1 digests; active_universe: D51 resolve at start
     lane: background            # D39: p90 441 s; the tick never waits on the Scalp
-  scalp.overnight:              # D15/D31: 22:00 after-close fast sources (no YouTube, D45)
-    label: Overnight Scalp
-    about: "After-close Scalp run over the evening news; feeds the next session"
-    group: scalp
-    persona: scalp
-    schedule: ["22:00"]
-    days: daily
-    after_sources: true
-    ttl: 3h
-    notify: card
-    reads: [index_vols, chain_snapshot, exchange_volume, market_movers]   # E13.10: at 22:00 the tape is stale -> "no fresh info" line (E14.3: movers too, flag on)
-    writes: [candidate, note, story, active_universe]
-    lane: background            # D39: same Scalp handler as above
   research:                     # D31/D52: the 10-min trading loop (see `loop:` above)
     label: "Research → Quant → Risk → Propose → Execute"
     about: "10-min trading loop: pick ideas, price structures, risk review, propose, auto-approve, execute"

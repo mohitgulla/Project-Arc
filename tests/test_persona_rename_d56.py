@@ -247,7 +247,7 @@ def test_stored_payloads_with_old_names_still_validate() -> None:
 
 
 def test_shipped_routines_use_new_names(shipped: RoutinesConfig) -> None:
-    assert {"scalp", "scalp.overnight", "research"} <= set(shipped.personas)
+    assert {"scalp", "research"} <= set(shipped.personas)  # D91: scalp.overnight dropped
     assert not {"sweep", "sweep.overnight", "director"} & set(shipped.personas)
 
 

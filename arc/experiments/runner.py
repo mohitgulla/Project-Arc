@@ -167,10 +167,10 @@ PERSONA_OVERLAY_PREFIXES: dict[str, tuple[str, ...]] = {
         "universe.sizes.trending",
     ),
 }
-# The routine jobs each arm persona runs (the 30-min Scalp and its 22:00 run).
+# The routine jobs each arm persona runs (D91: the 30-min Scalp is one job, 06:30-20:00).
 PERSONA_JOBS: dict[str, tuple[str, ...]] = {
     "scout": ("scout",),
-    "scalp": ("scalp", "scalp.overnight"),
+    "scalp": ("scalp",),
     "trending": ("universe.trending",),
 }
 # E14.5: an arm-owned tier job brings the persona that re-resolves the active list

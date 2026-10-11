@@ -85,10 +85,9 @@ class TestShippedDefaults:
 
     def test_personas(self, shipped: RoutinesConfig) -> None:
         p = shipped.personas
-        # D31: 30-min Scalp in session + the 22:00 overnight run; D52: 10-min trading loop.
-        assert p["scalp"].cadence == "every 30m 09:00-16:00 ET (trading)"
-        assert p["scalp"].after_sources and p["scalp.overnight"].after_sources
-        assert p["scalp.overnight"].cadence == "at 22:00 ET (daily)"
+        # D31/D91: one 30-min Scalp over the news window (no overnight run); D52: 10-min loop.
+        assert p["scalp"].cadence == "every 30m 06:30-20:00 ET (trading)"
+        assert p["scalp"].after_sources and "scalp.overnight" not in p
         assert p["research"].cadence == "every 10m 09:40-15:50 ET (trading)"
         assert p["research"].chain == [
             "exits.mandatory", "quant.exit", "risk.exit", "quant.open", "risk.open",
@@ -114,10 +113,10 @@ class TestShippedDefaults:
     def test_full_trading_day(self, shipped: RoutinesConfig) -> None:
         plan = _day_plan(shipped, et(2026, 9, 28, 0, 0), et(2026, 9, 29, 0, 0))  # Monday
         assert plan["youtube.briefs"] == ["Mon 02:00"]  # D45: 23:00 PT, trading days only
-        # D31: Scalp 09:00..16:00 every 30 min = 15 runs, plus the 22:00 overnight run.
-        assert len(plan["scalp"]) == 15
-        assert (plan["scalp"][0], plan["scalp"][-1]) == ("Mon 09:00", "Mon 16:00")
-        assert plan["scalp.overnight"] == ["Mon 22:00"]
+        # D91: Scalp 06:30..20:00 every 30 min = 28 runs, no overnight run.
+        assert len(plan["scalp"]) == 28
+        assert (plan["scalp"][0], plan["scalp"][-1]) == ("Mon 06:30", "Mon 20:00")
+        assert "scalp.overnight" not in plan
         assert plan["earnings"] == ["Mon 06:00", "Mon 18:00"]
         assert len(plan["rss"]) == 57 and plan["rss"][0] == "Mon 06:00"  # 06:00..20:00 / 15m
         assert len(plan["edgar"]) == 57 and plan["edgar"][-1] == "Mon 20:00"
@@ -136,9 +135,9 @@ class TestShippedDefaults:
         fri = _day_plan(shipped, et(2026, 10, 2, 0, 0), et(2026, 10, 3, 0, 0))
         assert fri["scorecard"] == ["Fri 16:45"]
         weekend = _day_plan(shipped, et(2026, 10, 3, 0, 0), et(2026, 10, 5, 0, 0))
-        # Only the daily overnight Scalp; YouTube runs on trading days only (D45).
-        assert set(weekend) == {"scalp.overnight"}
-        assert weekend["scalp.overnight"] == ["Sat 22:00", "Sun 22:00"]
+        # D91: nothing runs on a weekend (the daily overnight Scalp is gone; YouTube runs
+        # on trading days only, D45).
+        assert weekend == {}
 
     def test_youtube_briefs_trading_days_only(self, shipped: RoutinesConfig) -> None:
         """E4.6: 02:00 ET on a trading day; none on a Saturday or a market holiday."""
@@ -154,8 +153,8 @@ class TestShippedDefaults:
 
     def test_sources_run_before_scalp_in_the_same_tick(self, shipped: RoutinesConfig) -> None:
         d = Dispatcher(connect(":memory:"), shipped, is_halted=lambda: False)
-        order = [x.job for x in d.plan(et(2026, 9, 27, 22, 0), since=et(2026, 9, 27, 21, 55))]
-        assert order == ["scalp.overnight"]
+        order = [x.job for x in d.plan(et(2026, 9, 28, 7, 0), since=et(2026, 9, 28, 6, 55))]
+        assert order[-1] == "scalp" and {"rss", "edgar", "ticker_news"} <= set(order)  # D91
         # In session: the 15-min sources land before the personas of the same slot.
         # The loop runs before the Scalp (name order), so a 30-min Scalp holding the
         # LLM lock never makes the same tick's loop slot skip; the next slot reads it.
@@ -758,7 +757,8 @@ class TestSimulateCli:
         )  # fmt: skip
         out = capsys.readouterr().out
         assert rc == 0
-        assert "tick Sun 2026-09-27 22:00 EDT" in out
+        assert "tick Sun 2026-09-27 22:00 EDT" not in out  # D91: no overnight Scalp
+        assert "tick Mon 2026-09-28 06:30 EDT" in out
         assert "tick Mon 2026-09-28 09:40 EDT" in out
         assert "↳ Mon 09:40 quant.propose" in out  # D31: first loop slot
         assert "Mon 09:30 research" not in out
@@ -772,8 +772,8 @@ class TestSimulateCli:
         data = json.loads(capsys.readouterr().out)
         assert rc == 0
         jobs = [o["job"] for t in data["ticks"] for o in t["outcomes"]]
-        # Saturday: only the overnight Scalp + StockedUp; no in-session jobs.
-        assert jobs.count("scalp.overnight") == 1 and "scalp" not in jobs
+        # Saturday: nothing (D91 dropped the daily overnight Scalp); no in-session jobs.
+        assert "scalp.overnight" not in jobs and "scalp" not in jobs
         assert "rss" not in jobs and "research" not in jobs
 
     @pytest.mark.parametrize("extra", [[], ["--dry-run", "--step", "0m"]])
@@ -950,7 +950,7 @@ def test_yaml_comment_overview_matches_config() -> None:
         "scalp_options_tape",
         "research_idea_pool", "research_compact_prompt", "exit_path",
     } == {
-        "scout", "scalp", "scalp.overnight", "research", "monitor", "broker.reconcile", "scorecard",
+        "scout", "scalp", "research", "monitor", "broker.reconcile", "scorecard",
         "broker",
         "positions.evaluate", "experiments.evaluate",
         "reconcile.intraday",  # E11.1 (D71): event-driven
