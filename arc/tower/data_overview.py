@@ -616,37 +616,60 @@ def _equity(
 BENCHMARKS = ("SPY", "QQQ")
 
 
-def _daily_closes(conn: sqlite3.Connection, symbol: str) -> dict[_dt.date, Decimal]:
-    """*symbol*'s daily closes: ``iv_daily`` ``last_close`` spots, filled from the last
-    monitor mark of each day at or after 15:50 ET (D87)."""
-    out: dict[_dt.date, Decimal] = {}
-    if _has_table(conn, "heartbeats"):
+def _daily_closes(
+    conn: sqlite3.Connection, symbols: tuple[str, ...]
+) -> dict[str, dict[_dt.date, Decimal]]:
+    """Each symbol's daily closes (D87): ``iv_daily`` ``last_close`` spots, then the days
+    after the last stored close from the monitor marks (the last mark at or after 15:50 ET,
+    or a later mark's ``prev_close``). Only heartbeats after the last stored close are read,
+    so the card stays fast on a long history."""
+    out: dict[str, dict[_dt.date, Decimal]] = {s: {} for s in symbols}
+    last_day: _dt.date | None = None
+    if _has_table(conn, "iv_daily") and symbols:
+        qmarks = ",".join("?" * len(symbols))
         for r in conn.execute(
-            """SELECT at, json_extract(detail, '$.benchmarks') AS b FROM heartbeats
-               WHERE component = 'monitor' AND json_extract(detail, '$.benchmarks') IS NOT NULL
-               ORDER BY at, rowid"""
-        ).fetchall():
-            at = parse_ts(r["at"])
-            row = _json(r["b"], {}).get(symbol)
-            if at is None or not isinstance(row, dict):
-                continue
-            et = at.astimezone(ET)
-            price = _dec(row.get("price"))
-            if price is not None and price > 0 and et.time() >= _dt.time(15, 50):
-                out[et.date()] = price
-            prior = _dec(row.get("prev_close"))
-            if prior is not None and prior > 0:
-                # the prior session's close: keyed on the latest day before *et* we know
-                out.setdefault(_prev_session(et.date()), prior)
-    if _has_table(conn, "iv_daily"):
-        for r in conn.execute(
-            """SELECT day, spot FROM iv_daily
-               WHERE ticker = ? AND spot_basis = 'last_close' AND spot > 0""",
-            (symbol,),
+            f"""SELECT ticker, day, spot FROM iv_daily
+                WHERE ticker IN ({qmarks}) AND spot_basis = 'last_close' AND spot > 0""",  # noqa: S608
+            symbols,
         ).fetchall():
             v = _dec(r["spot"])
-            if v is not None:
-                out[_dt.date.fromisoformat(str(r["day"])[:10])] = v
+            if v is None:
+                continue
+            day = _dt.date.fromisoformat(str(r["day"])[:10])
+            out[str(r["ticker"])][day] = v
+            last_day = day if last_day is None or day > last_day else last_day
+    if not _has_table(conn, "heartbeats"):
+        return out
+    # UTC midnight after the last stored close is still that ET evening: any later session's
+    # marks are at or after it
+    since = "" if last_day is None else (last_day + _dt.timedelta(days=1)).isoformat()
+    prev: dict[_dt.date, _dt.date] = {}
+    for r in conn.execute(
+        """SELECT at, json_extract(detail, '$.benchmarks') AS b FROM heartbeats
+           WHERE component = 'monitor' AND at >= ?
+             AND json_extract(detail, '$.benchmarks') IS NOT NULL
+           ORDER BY at, rowid""",
+        (since,),
+    ).fetchall():
+        at = parse_ts(r["at"])
+        by_sym = _json(r["b"], {})
+        if at is None or not isinstance(by_sym, dict):
+            continue
+        et = at.astimezone(ET)
+        for sym in symbols:
+            row = by_sym.get(sym)
+            if not isinstance(row, dict):
+                continue
+            closes = out[sym]
+            price = _dec(row.get("price"))
+            fresh = last_day is None or et.date() > last_day  # a stored close wins
+            if fresh and price is not None and price > 0 and et.time() >= _dt.time(15, 50):
+                closes[et.date()] = price
+            prior = _dec(row.get("prev_close"))
+            if prior is not None and prior > 0:
+                if et.date() not in prev:
+                    prev[et.date()] = _prev_session(et.date())
+                closes.setdefault(prev[et.date()], prior)
     return out
 
 
@@ -674,6 +697,7 @@ def _benchmarks(
     price is left out, never guessed.
     """
     out: list[BenchmarkSeries] = []
+    all_closes = _daily_closes(conn, BENCHMARKS) if series_source == "daily" else {}
     for sym in BENCHMARKS:
         pts: list[EquityPoint] = []
         start: Decimal | None = None
@@ -684,7 +708,7 @@ def _benchmarks(
             elif pts:
                 start = pts[0].v
         else:
-            closes = _daily_closes(conn, sym)
+            closes = all_closes.get(sym, {})
             for p in series:
                 day = p.t.astimezone(ET).date()
                 if live is not None and p.t == live.at:
