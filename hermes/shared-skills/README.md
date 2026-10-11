@@ -8,10 +8,10 @@ always wins: its fetch caps, primary-source rule and read-only limits apply to e
 | Skill | Upstream (pinned) | Installed into |
 |---|---|---|
 | `defuddle` | kepano/obsidian-skills@3ccff53 skills/defuddle (MIT) | sentinel, analyst |
-| `agent-reach` | Panniantong/agent-reach@a19a171 agent_reach/skill/SKILL_en.md (MIT); description narrowed | sentinel, analyst |
-| `code-review-and-quality` | addyosmani/agent-skills@a06bc63 (MIT); ../../references links vendored into references/ | sentinel |
-| `security-and-hardening` | addyosmani/agent-skills@a06bc63 (MIT); ../../references links vendored into references/ | sentinel |
-| `performance-optimization` | addyosmani/agent-skills@a06bc63 (MIT); ../../references links vendored into references/ | sentinel |
+| `agent-reach` | Panniantong/agent-reach@94f06c1 agent_reach/skill/SKILL_en.md (MIT); description narrowed | sentinel, analyst |
+| `code-review-and-quality` | addyosmani/agent-skills@1be8e34 (MIT); ../../references links vendored into references/ | sentinel |
+| `security-and-hardening` | addyosmani/agent-skills@1be8e34 (MIT); ../../references links vendored into references/ | sentinel |
+| `performance-optimization` | addyosmani/agent-skills@1be8e34 (MIT); ../../references links vendored into references/ | sentinel |
 
 Host tools they call (installed once per machine, outside the repo): `defuddle` (npm -g),
 `agent-reach` + `yt-dlp` (uv tool), `mcporter` with the `exa` server (npm -g, `~/.mcporter`).
