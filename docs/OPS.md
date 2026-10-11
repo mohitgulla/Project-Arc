@@ -1473,24 +1473,39 @@ token; they are stripped from every command it runs). It:
    builds a realised-vs-model table (realised P&L vs EV, slippage bps vs the
    Quant's cost bps) by structure kind × regime, lists halts, the newest
    `docs/RESEARCH/*.md` and the A-id ledger, and prints it (≤ 30k chars).
+   E21.3 (D86) adds the XP backlog (`xp_backlog.json`, P-ids, statuses synced
+   from the registry by `proposal_ref`), arm capacity per area, the K=4
+   sessions-needed grid (`arc experiment plan --k 4 --effects …`), the open
+   idea-seed leads, quick changes shipped since the last run, and strategy PRs
+   merged since the last run with their `XP-advisory` lines (`gh pr list`).
 
 ```
 python3 hermes/analyst/arc_analyst.py                         # the gate (ARC_ANALYST_DB / ARC_REPO to override)
-python3 …/arc_analyst.py record RUN_DIR                       # validate findings.json → ledger (A-ids)
+python3 …/arc_analyst.py record RUN_DIR                       # validate findings.json → ledger (A-ids) + backlog (P-ids)
 python3 …/arc_analyst.py check-report RUN_DIR/report.md       # ≤ 3,500 chars, all sections
 python3 …/arc_analyst.py mark RUN_DIR                         # advance the watermark
 python3 …/arc_analyst.py triage A-3 wontfix "why"             # owner: accepted|wontfix|fixed
+python3 …/arc_analyst.py ship A-4 "note"                      # owner: quick change shipped → next run reviews it
+python3 …/arc_analyst.py approve P-2 "note"                   # owner: proposal → proposals/P-2.yaml + manual steps (E21.4: adopt)
+python3 …/arc_analyst.py drop P-3 "why"                       # owner
+python3 …/arc_analyst.py reprioritise P-3 "why" [--score X]   # owner: pin to the top / override value
+python3 …/arc_analyst.py backlog                              # ranked backlog with each value formula
 python3 …/arc_analyst.py reset                                # next run reviews unconditionally
 ```
 
-`record` rejects findings that break the strategy gates: a recommendation from a
-bucket with fewer than 30 closed trades (MIN-SAMPLE), a recommendation that is
-not one experiment with variable / values / metric / effect size / status
-(ONE-VARIABLE), more than 3 recommendations, or a missing status line for any of
-the six standing themes (cost model, regime menu, ranker, exit policy, sizing,
-auto-approve). Obvious config flaws are allowed at any N. Owner commands in the
-report thread: `create A-<n>`, `comment A-<n>`, `wontfix A-<n> <why>`,
-`accept A-<n>`, `rerun`.
+`record` rejects findings that break the strategy gates (D86): a live-evidence
+quick change or XP proposal from a bucket with fewer than 20 closed trades
+(MIN-SAMPLE; a `BT-<n>` holdout study may back a proposal, never a quick
+change), a proposal that is not control + exactly 4 treatments on one leaf set,
+carries an `id`, or whose `value_score` ≠ effect × share × p ÷ sessions, more
+than 3 quick changes or 2 new proposals, a shipped quick change left
+unreviewed, a backlog over 12 open entries, a `next_experiment` that is not a
+ranked P-id (or `none: <why>`) or whose `next_slot` misses a blocking
+experiment, a running experiment without `stop_advice`, or a missing status
+line for any of the six standing themes. Obvious config flaws are allowed at
+any N. Owner commands in the report thread: `create A-<n>`, `ship A-<n>`,
+`comment A-<n>`, `wontfix A-<n> <why>`, `accept A-<n>`, `approve P-<n>`,
+`drop P-<n> <why>`, `reprioritise P-<n> <why>`, `rerun`.
 
 ### 5.17 Forward A/B experiment registry (E10.1, D44)
 

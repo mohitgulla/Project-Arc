@@ -216,11 +216,11 @@ def test_context_contains_scorecard_and_ledger(
     # realised-vs-model table by kind x regime
     assert "## Realised vs model, this week (kind x regime)" in out
     assert re.search(r"\| iron_condor \| risk_on \| 1 \| 98\.00 \| 40\.00 \| \+58\.00 \|", out)
-    assert "LOW (n<30)" in out
+    assert "LOW (n<20)" in out
     assert "slippage_frac = 0.25" in out
     # scorecard (attribution + weekly), gaps, counterfactual, config
     assert "attribution by kind, regime since" in out
-    assert "closed trades: 1 · low_sample below n=30" in out
+    assert "closed trades: 1 · low_sample below n=20" in out
     assert "# Paper scorecard: week of" in out
     assert "decision journal gaps since" in out
     assert "counterfactual since" in out
@@ -237,6 +237,18 @@ def test_context_contains_scorecard_and_ledger(
     assert "## Experiment idea seed (D86: leads from retired dev drafts" in out
     assert "- S-1 [entries] Velocity-weighted trending tier" in out
     assert "- S-5 [entries] Unified managed-EV menu measure" in out
+    # E21.3 (D86): capacity, the K=4 plan grid, the (empty) backlog, reviews, merged PRs
+    assert "## Experiment capacity (D69/D86" in out
+    assert "- max_parallel_arms 10: 0 arm(s) registered/running (none)" in out
+    assert "## Sessions needed at K=4" in out
+    # no A/A sigma in the fixture store: the grid uses the documented XP-1 A/A sigma
+    assert "- sigma +0.036%/day (docs/RESEARCH/experiments/XP-1-aa.md (no A/A sigma" in out
+    assert "- effect +0.020%/day -> 63 sessions (> max_sessions: too small to detect)" in out
+    assert "- effect +0.050%/day -> 11 sessions (runs at least min_sessions: use 20)" in out
+    assert "## XP backlog (yours;" in out and "- empty (no P-<n> yet" in out
+    assert "## Quick changes shipped since the last review" in out
+    assert "- none shipped since the last review" in out
+    assert "## Strategy PRs merged since the last run" in out
     # artefacts
     assert (run_dir / "arc-copy.db").is_file()
     assert (run_dir / "config" / "costs.yaml").is_file()
@@ -366,7 +378,8 @@ def _themes(**over: str) -> list[dict[str, str]]:
 def _write_valid_findings(run_dir: Path, findings: list[dict[str, Any]] | None = None) -> None:
     doc = {"verdict": "findings" if findings else "quiet", "themes": _themes(),
            "findings": findings or [], "resolved": [], "experiments": [],
-           "next_experiment": "none: no bucket has n >= 30"}  # fmt: skip
+           "quick_changes_none": "no bucket has n >= 20",
+           "next_experiment": "none: no bucket has n >= 20"}  # fmt: skip
     (run_dir / "findings.json").write_text(json.dumps(doc))
 
 
@@ -447,35 +460,83 @@ def test_mark_requires_record_and_advances_watermark(
 
 
 # ---------------------------------------------------------------------------
-# strategy gates enforced by the validator
+# strategy gates enforced by the validator (D86: two tracks, MIN-SAMPLE 20)
 # ---------------------------------------------------------------------------
 
 
-def _rec(n: int, **exp: Any) -> dict[str, Any]:
-    experiment = {
-        "variable": "rank_by", "values": ["scanner", "managed_net_ev"],
-        "metric": "net P&L after costs, max DD, 90% bootstrap CI vs incumbent",
-        "effect_size": "+$40/trade", "status": "hypothesis, untested", **exp,
+def _qc(n: int = 24, **over: Any) -> dict[str, Any]:
+    q = {
+        "change": "exits.default.take_profit_pct 0.5 -> 0.4", "kind": "config",
+        "evidence_kind": "live", "expected_effect": "+0.02%/day net (n=24 iron condors)",
+        "risk": "fewer winners run to full credit",
+        "rollback": "!arc config revert exits.default.take_profit_pct",
+        "apply": "!arc config set exits.default.take_profit_pct 0.4 -- Analyst",
+        "watch": {"metric": "iron_condor realised net/trade", "n": 20}, **over,
     }  # fmt: skip
     return {
-        "key": "ranker:managed-net-ev", "title": "trial managed_net_ev", "severity": "info",
-        "category": "recommendation", "bucket": "kind=debit_vertical", "n": n,
-        "theme": "ranker", "evidence": "attribution-all.log", "recommendation": "run E7.5",
-        "action": "new-card", "experiment": experiment,
-        "draft_card": {"title": "E7.5b · ranker trial", "body": "Goal / Acceptance"},
+        "key": "quick-change:tp-0.4", "title": "take profit at 40%", "severity": "medium",
+        "category": "quick-change", "bucket": "kind=iron_condor", "n": n,
+        "theme": "exit-policy", "evidence": "attribution-all.log: n=24 iron condors",
+        "recommendation": "take profit at 40%", "action": "owner-decision",
+        "quick_change": {k: v for k, v in q.items() if v is not None},
+    }  # fmt: skip
+
+
+def _overlay(v: Any) -> dict[str, Any]:
+    return {"overlay": {"exits": {"default": {"take_profit_pct": v}}}}
+
+
+def _spec(**over: Any) -> dict[str, Any]:
+    spec = {
+        "title": "Take-profit level", "area": "exits",
+        "hypothesis": "an earlier take-profit adds ~0.05%/day net",
+        "arms": {"control": {}, "treatments": {
+            f"t{i}": _overlay(v) for i, v in enumerate((0.3, 0.4, 0.6, 0.75), 1)}},
+        "non_inferiority_margin": 0.5, "backtest_ref": "BT-3",
+    }  # fmt: skip
+    spec.update(over)
+    return {k: v for k, v in spec.items() if v is not None}
+
+
+def _prop(key: str = "xp-proposal:tp-level", n: int = 6, **over: Any) -> dict[str, Any]:
+    p = {
+        "spec": _spec(), "evidence_kind": "backtest", "evidence_ref": "BT-3",
+        "evidence": "BT-3 holdout: +0.05%/day", "affected_share": 0.6, "p_success": 0.3,
+        "expected_effect": {"pct_per_day": 0.05, "source": "BT-3 holdout mean diff"},
+        "sessions_needed": 40, **over,
+    }  # fmt: skip
+    p.setdefault("value_score", aa.proposal_value(p))
+    return {
+        "key": key, "title": "take-profit level x4", "severity": "info",
+        "category": "xp-proposal", "bucket": "kind=iron_condor", "n": n,
+        "theme": "exit-policy", "evidence": "BT-3", "recommendation": "run it",
+        "action": "owner-decision", "proposal": {k: v for k, v in p.items() if v is not None},
     }  # fmt: skip
 
 
 def _errs(findings: list[dict[str, Any]], **kw: Any) -> list[str]:
     doc = {"verdict": "findings", "themes": kw.pop("themes", _themes()), "findings": findings,
            "experiments": kw.pop("lines", []),
-           "next_experiment": kw.pop("next_experiment", "none: n < 30")}  # fmt: skip
-    return aa.validate_findings(doc, {"items": {}}, kw.pop("prev", None), kw.pop("registry", []))
+           "quick_changes_none": kw.pop("qc_none", "no bucket has n >= 20"),
+           "next_experiment": kw.pop("next_experiment", "none: n < 20"),
+           "next_slot": kw.pop("next_slot", "free now"), **kw.pop("extra", {})}  # fmt: skip
+    return aa.validate_findings(
+        doc, kw.pop("ledger", {"items": {}}), kw.pop("prev", None), kw.pop("registry", []),
+        backlog=kw.pop("backlog", None), seed_ids=kw.pop("seed_ids", frozenset()),
+        max_arms=kw.pop("max_arms", 10),
+    )  # fmt: skip
 
 
-def test_min_sample_blocks_recommendations_below_30() -> None:
-    assert any("MIN-SAMPLE" in e and "n=29" in e for e in _errs([_rec(29)]))
-    assert _errs([_rec(30)]) == []
+def test_min_sample_is_20_for_live_evidence() -> None:
+    assert aa.MIN_SAMPLE == 20
+    assert any("MIN-SAMPLE" in e and "n=19" in e for e in _errs([_qc(19)]))
+    assert _errs([_qc(20)]) == []
+    live = _prop(n=19, evidence_kind="live", evidence_ref=None)
+    assert any("MIN-SAMPLE" in e and "n=19" in e for e in _errs([live]))
+    assert _errs([_prop(n=20, evidence_kind="live", evidence_ref=None)]) == []
+    # option A: a BT-<n> holdout study backs a proposal at any live n, never a quick change
+    assert _errs([_prop(n=2)]) == []
+    assert any("backtest alone" in e for e in _errs([_qc(40, evidence_kind="backtest")]))
     # flaws are allowed at any N
     assert _errs([_flaw(n=1)]) == []
     missing_n = _flaw()
@@ -483,113 +544,212 @@ def test_min_sample_blocks_recommendations_below_30() -> None:
     assert any("n (closed trades" in e for e in _errs([missing_n]))
 
 
-def test_one_variable_experiment_spec_required() -> None:
-    no_effect = _errs([_rec(40, effect_size="")])
-    assert any("ONE-VARIABLE" in e and "effect_size" in e for e in no_effect)
-    assert any("one name" in e for e in _errs([_rec(40, variable=["rank_by", "dte_min"])]))
-    assert any("incumbent" in e for e in _errs([_rec(40, values=["scanner"])]))
-    assert any("status must be" in e for e in _errs([_rec(40, status="proven")]))
-    assert any("harness_ref" in e for e in _errs([_rec(40, status="harness-run")]))
-    recs = [{**_rec(40), "key": f"ranker:{i}"} for i in range(4)]
-    assert any("at most 3" in e for e in _errs(recs))
+@pytest.mark.parametrize(
+    ("finding", "needle"),
+    [
+        (_qc(apply="set it"), "Slack command"),
+        (_qc(watch=None), "watch needs metric and n"),
+        (_qc(rollback=""), "missing ['rollback']"),
+        (_qc(kind="yaml"), "kind must be one of"),
+        (_qc(evidence_kind="xp-winner"), "winning XP-<n>"),
+        (_qc(kind="code", apply="edit arc/pipeline/steps.py"), "action new-card"),
+        ({**_qc(kind="code", apply="edit steps.py"), "action": "new-card",
+          "draft_card": {"title": "E1.1a · x", "body": "Goal"}}, "XP-advisory: none"),
+        ({**_flaw(), "quick_change": _qc()["quick_change"]}, "only allowed on a quick-change"),
+        ({**_qc(), "forward_spec": {}}, "retired (D86)"),
+    ],
+)  # fmt: skip
+def test_quick_change_rules(finding: dict[str, Any], needle: str) -> None:
+    errs = _errs([finding])
+    assert any(needle in e for e in errs), errs
 
 
-# ---------------------------------------------------------------------------
-# forward experiments (D44, E10.6)
-# ---------------------------------------------------------------------------
-
-REGISTRY = [
-    {"id": "XP-1", "status": "stopped", "area": "other"},
-    {"id": "XP-2", "status": "running", "area": "exits"},
-    {"id": "XP-3", "status": "queued", "area": "exits"},
-]
-LINES = [
-    {"experiment_id": e["id"], "status": e["status"], "note": "n=0 closed per arm"}
-    for e in REGISTRY
-]
-
-
-def _fwd(**over: Any) -> dict[str, Any]:
-    spec = {
-        "id": "XP-4", "title": "managed_net_ev ranker",
-        "hypothesis": "ranking by managed net EV adds ~0.05%/day net",
-        "area": "ranking", "kind": "ab",
-        "arms": {"treatment": {"overlay": {
-            "exits": {"pipeline": {"rank_menu_by": "managed_net_ev"}}}}},
-        "non_inferiority_margin": 0.5, "backtest_ref": "docs/RESEARCH/backtests/r1",
-    }  # fmt: skip
-    spec.update(over)
-    return {k: v for k, v in spec.items() if v is not None}
-
-
-def _rec_fwd(spec: dict[str, Any] | None = None, **exp: Any) -> dict[str, Any]:
-    exp = {"status": "harness-run", "harness_ref": "docs/RESEARCH/backtests/r1",
-           "variable": "rank_menu_by", **exp}  # fmt: skip
-    return {**_rec(40, **exp), "forward_spec": spec if spec is not None else _fwd()}
-
-
-def _ferrs(findings: list[dict[str, Any]], **kw: Any) -> list[str]:
-    kw.setdefault("lines", LINES)
-    kw.setdefault("registry", REGISTRY)
-    kw.setdefault("next_experiment", "ranker:managed-net-ev")
-    return _errs(findings, **kw)
-
-
-def test_forward_spec_valid_after_the_harness_run() -> None:
-    assert _ferrs([_rec_fwd()]) == []
-    # validated against the real ExperimentSpec model, so the format really is the live one
-    from arc.experiments.models import ExperimentSpec
-
-    ExperimentSpec.model_validate({**_fwd(), "proposed_by": "A-1"})
+def test_quick_change_track_needs_items_or_a_reason() -> None:
+    assert any("quick_changes_none" in e for e in _errs([], qc_none=""))
+    assert _errs([_qc()], qc_none="") == []
+    many = [{**_qc(), "key": f"quick-change:{i}"} for i in range(4)]
+    assert any("at most 3" in e for e in _errs(many))
 
 
 @pytest.mark.parametrize(
     ("finding", "needle"),
     [
-        (_rec_fwd(status="hypothesis, untested", harness_ref=None), "harness-run"),
-        (_rec_fwd(_fwd(backtest_ref="docs/other")), "backtest_ref must equal"),
-        (_rec_fwd(_fwd(kind="aa")), "kind must be 'ab'"),
-        (_rec_fwd(_fwd(id="XP-2")), "already used"),
-        (_rec_fwd(_fwd(id="exp-4")), "must look like XP-<n>"),
-        (_rec_fwd(_fwd(area="vibes")), "area must be one of"),
-        (_rec_fwd(_fwd(proposed_by="owner")), "proposed_by"),
-        (_rec_fwd(_fwd(alpha_level=0.1)), "unknown keys"),
-        (_rec_fwd(_fwd(hypothesis="")), "missing"),
-        (_rec_fwd(_fwd(non_inferiority_margin=0)), "non_inferiority_margin"),
-        (_rec_fwd(_fwd(arms={"treatment": {"overlay": {"exits": {"pipeline": {
-            "rank_menu_by": "managed_net_ev", "top_n": 3}}}}})), "changes 2 values"),
-        (_rec_fwd(_fwd(arms={"treatment": {"overlay": {"exits": {"take_profit_pct": 0.4}}}})),
-         "experiment.variable is 'rank_menu_by'"),
-        (_rec_fwd(_fwd(arms={"treatment": {"overlay": {"gate": {"x": 1}}}})), "overlay targets"),
-        (_rec_fwd(_fwd(arms={"control": {"overlay": {"ranking": {"rank_by": "x"}}},
-                             "treatment": {"overlay": {"ranking": {"rank_by": "y"}}}})),
+        (_prop(spec=_spec(id="XP-9")), "assigned when the owner approves"),
+        (_prop(spec=_spec(alpha=0.1)), "filled from config/experiments.yaml"),
+        (_prop(spec=_spec(kind="aa")), "kind must be 'ab'"),
+        (_prop(spec=_spec(area="vibes")), "area must be one of"),
+        (_prop(spec=_spec(alpha_level=0.1)), "unknown keys"),
+        (_prop(spec=_spec(hypothesis="")), "missing"),
+        (_prop(spec=_spec(non_inferiority_margin=0)), "non_inferiority_margin"),
+        (_prop(spec=_spec(arms={"treatment": _overlay(0.4)})), "control and treatments only"),
+        (_prop(spec=_spec(arms={"control": {}, "treatments": {
+            "t1": _overlay(0.3), "t2": _overlay(0.4)}})), "FOUR-TREATMENTS"),
+        (_prop(spec=_spec(arms={"control": {}, "treatments": {
+            "t1": _overlay(0.3), "t2": _overlay(0.4), "t3": _overlay(0.6),
+            "t4": {"overlay": {"ranking": {"rank_by": "x"}}}}})), "SAME-LEAVES"),
+        (_prop(spec=_spec(arms={"control": {}, "treatments": {
+            "t1": _overlay(0.3), "t2": _overlay(0.3), "t3": _overlay(0.6),
+            "t4": _overlay(0.7)}})), "identical to t1"),
+        (_prop(spec=_spec(arms={"control": _overlay(0.5), "treatments": {
+            f"t{i}": _overlay(v) for i, v in enumerate((0.3, 0.4, 0.6, 0.7), 1)}})),
          "control arm is the production config"),
-        ({**_flaw(), "forward_spec": _fwd()}, "only allowed on a recommendation"),
+        (_prop(spec=_spec(arms={"control": {}, "treatments": {
+            f"t{i}": {"overlay": {"gate": {"x": v}}} for i, v in enumerate((1, 2, 3, 4), 1)}})),
+         "not in"),
+        (_prop(spec=_spec(backtest_ref="BT-4")), "backtest_ref must equal"),
+        (_prop(evidence_ref="docs/x"), "BT-<n> study id"),
+        (_prop(value_score=1.0), "value_score 1.0 !="),
+        (_prop(sessions_needed=0), "sessions_needed must be an int"),
+        (_prop(p_success=1.5), "p_success must be a number in (0, 1]"),
+        (_prop(score_override={"value": 1}), "score_override needs value and reason"),
+        (_prop(seed_ref="S-99"), "not a lead in the idea seed"),
+        ({**_flaw(), "proposal": {}}, "only allowed on an xp-proposal"),
     ],
 )  # fmt: skip
-def test_forward_spec_rules(finding: dict[str, Any], needle: str) -> None:
-    errs = _ferrs([finding], next_experiment="none: test")
+def test_proposal_rules(finding: dict[str, Any], needle: str) -> None:
+    errs = _errs([finding])
     assert any(needle in e for e in errs), errs
 
 
+def test_proposal_spec_is_the_live_format_once_approved() -> None:
+    """The proposal spec plus what approval fills is a real v2 ``ExperimentSpec``."""
+    from arc.experiments.models import ExperimentSpec
+
+    assert _errs([_prop()]) == []
+    spec = ExperimentSpec.model_validate(
+        {**_spec(), "id": "XP-9", "kind": "ab", "spec_version": 2, "proposed_by": "A-1"}
+    )
+    assert len(spec.arms.treatments) == 4
+    # the gate's mirror tracks the model's fields
+    assert set(aa.SPEC_KEYS) == set(ExperimentSpec.model_fields)
+
+
+def test_new_proposals_capped_per_run_and_backlog_capped() -> None:
+    props = [_prop(key=f"xp-proposal:{i}") for i in range(3)]
+    assert any("at most 2 per run" in e for e in _errs(props))
+    full = aa.empty_backlog()
+    for i in range(aa.BACKLOG_CAP):
+        aa.apply_backlog(full, {"findings": [_prop(key=f"xp-proposal:old{i}")]}, "r0", "t0")
+    assert any("cap is 12" in e for e in _errs([_prop()], backlog=full))
+    drop = {"backlog_drops": [{"id": "P-1", "reason": "weakest value"}]}
+    assert _errs([_prop()], backlog=full, extra=drop) == []
+    assert any("needs a reason" in e for e in _errs(
+        [_prop()], backlog=full, extra={"backlog_drops": [{"id": "P-1"}]}))  # fmt: skip
+
+
+def test_apply_backlog_assigns_p_ids_idempotently() -> None:
+    b = aa.empty_backlog()
+    doc = {"findings": [_prop(seed_ref="S-2")]}
+    assert aa.apply_backlog(b, doc, "r1", "t1")["new"] == ["P-1"]
+    entry = b["items"]["xp-proposal:tp-level"]
+    assert entry["status"] == "proposed" and entry["spec"]["area"] == "exits"
+    assert b["seed"]["S-2"] == {"status": "proposed", "proposal": "P-1"}
+    again = aa.apply_backlog(b, doc, "r2", "t2")
+    assert again == {"new": [], "updated": [], "dropped": [], "seed_dropped": []}
+    assert len(entry["history"]) == 1
+    edited = {"findings": [_prop(seed_ref="S-2", p_success=0.5)]}
+    assert aa.apply_backlog(b, edited, "r3", "t3")["updated"] == ["P-1"]
+    assert entry["history"][-1]["fields"] == ["p_success", "value_score"]
+    # an approved spec is frozen
+    entry["status"] = "approved"
+    frozen = _prop(seed_ref="S-2", spec=_spec(title="new design"))
+    assert any("spec is frozen" in e for e in _errs([frozen], backlog=b, seed_ids={"S-2"}))
+
+
+def test_ranking_owner_pin_then_value() -> None:
+    b = aa.empty_backlog()
+    aa.apply_backlog(b, {"findings": [_prop(key="xp-proposal:a", p_success=0.2),
+                                      _prop(key="xp-proposal:b", p_success=0.4)]},
+                     "r", "t")  # fmt: skip
+    assert [e["id"] for e in aa.ranked_backlog(b)] == ["P-2", "P-1"]
+    aa.backlog_by_id(b, "P-1")["pinned"] = {"at": "2026-10-10T10:00:00-04:00", "reason": "x"}
+    assert [e["id"] for e in aa.ranked_backlog(b)] == ["P-1", "P-2"]
+    line = aa.value_formula(aa.backlog_by_id(b, "P-1"))
+    assert line.startswith("value 0.000150 = +0.050%/day x share 0.60 x p 0.20 / 40 sessions")
+    assert "PINNED by owner" in line
+
+
+# ---------------------------------------------------------------------------
+# forward experiments: the Experiments section, Next XP and slots (D44, D69, D86)
+# ---------------------------------------------------------------------------
+
+REGISTRY = [
+    {"id": "XP-1", "status": "stopped", "area": "other", "arms": 1},
+    {"id": "XP-2", "status": "running", "area": "exits", "arms": 1},
+    {"id": "XP-3", "status": "queued", "area": "exits", "arms": 1},
+]
+ADVICE = {"advice": "continue", "why": ""}
+LINES = [
+    {"experiment_id": e["id"], "status": e["status"], "note": "n=0 closed per arm",
+     **({"stop_advice": ADVICE} if e["status"] == "running" else {})}
+    for e in REGISTRY
+]  # fmt: skip
+
+
+def _ferrs(findings: list[dict[str, Any]], **kw: Any) -> list[str]:
+    kw.setdefault("lines", LINES)
+    kw.setdefault("registry", REGISTRY)
+    return _errs(findings, **kw)
+
+
 def test_experiments_section_covers_the_registry() -> None:
-    errs = _ferrs([], lines=LINES[:2], next_experiment="none: x")
+    errs = _ferrs([], lines=LINES[:2])
     assert any("XP-3 (queued) has no line" in e for e in errs)
     wrong = [{**LINES[1], "status": "stopped"}, LINES[0], LINES[2]]
-    assert any("status 'stopped' != registry 'running'" in e
-               for e in _ferrs([], lines=wrong, next_experiment="none: x"))  # fmt: skip
+    assert any("status 'stopped' != registry 'running'" in e for e in _ferrs([], lines=wrong))
     ghost = [*LINES, {"experiment_id": "XP-9", "status": "running", "note": "?"}]
-    assert any("XP-9 is not in the experiment registry" in e
-               for e in _ferrs([], lines=ghost, next_experiment="none: x"))  # fmt: skip
-    assert any("needs a note" in e for e in _ferrs(
-        [], lines=[{**LINES[0], "note": ""}, *LINES[1:]], next_experiment="none: x"))  # fmt: skip
+    assert any("XP-9 is not in the experiment registry" in e for e in _ferrs([], lines=ghost))
+    assert any(
+        "needs a note" in e for e in _ferrs([], lines=[{**LINES[0], "note": ""}, *LINES[1:]])
+    )
+    no_advice = [LINES[0], {k: v for k, v in LINES[1].items() if k != "stop_advice"}, LINES[2]]
+    assert any("XP-2 is running: stop_advice" in e for e in _ferrs([], lines=no_advice))
+    bare = [LINES[0], {**LINES[1], "stop_advice": {"advice": "futility"}}, LINES[2]]
+    assert any("futility needs a why" in e for e in _ferrs([], lines=bare))
     assert any("next_experiment is required" in e for e in _ferrs([], next_experiment=""))
-    assert any("must be the key of a finding with a forward_spec" in e
-               for e in _ferrs([_rec(40)], next_experiment="ranker:managed-net-ev"))  # fmt: skip
-    assert _ferrs([], next_experiment="none: no bucket has n >= 30") == []
+    assert any("needs a reason" in e for e in _ferrs([], next_experiment="none"))
+    assert _ferrs([]) == []
     # promoted / rejected experiments need no line
     done = [{"id": "XP-5", "status": "promoted", "area": "sizing"}]
-    assert _ferrs([], registry=[*REGISTRY, *done], next_experiment="none: x") == []
+    assert _ferrs([], registry=[*REGISTRY, *done]) == []
+
+
+def test_next_experiment_names_a_ranked_proposal_and_its_slot() -> None:
+    assert any("must be a proposed/approved P-<n>" in e
+               for e in _ferrs([], next_experiment="P-7"))  # fmt: skip
+    # this run's new proposal is P-1 (exits); XP-2 running + XP-3 queued hold the area
+    errs = _ferrs([_prop()], next_experiment="P-1", next_slot="soon")
+    assert any("XP-2, XP-3" in e and "next_slot must name" in e for e in errs), errs
+    assert _ferrs([_prop()], next_experiment="P-1", next_slot="after XP-2 + XP-3 ~Nov 12") == []
+    # another area is free now, but capacity counts arms: 7 used + 4 > 10
+    ranking = _prop(spec=_spec(area="ranking"))
+    assert _ferrs([ranking], next_experiment="P-1", next_slot="free now") == []
+    heavy = [{**REGISTRY[1], "arms": 7}, REGISTRY[0], REGISTRY[2]]
+    errs = _ferrs([ranking], registry=heavy, next_experiment="P-1", next_slot="free now")
+    assert any("XP-2" in e for e in errs), errs
+    # not the top-ranked one: say why
+    two = [_prop(key="xp-proposal:a", p_success=0.2, spec=_spec(area="ranking")),
+           _prop(key="xp-proposal:b", p_success=0.4, spec=_spec(area="sizing"))]  # fmt: skip
+    errs = _ferrs(two, next_experiment="P-1")
+    assert any("not the top-ranked proposal (P-2)" in e for e in errs)
+    assert _ferrs(two, next_experiment="P-1", extra={"next_reason": "owner asked"}) == []
+
+
+def test_sync_backlog_follows_the_registry_by_proposal_ref() -> None:
+    b = aa.empty_backlog()
+    aa.apply_backlog(b, {"findings": [_prop()]}, "r", "t")
+    aa.backlog_by_id(b, "P-1")["status"] = "approved"
+    ov = [{"experiment_id": "XP-7", "status": "running", "area": "exits", "proposal_ref": "P-1"}]
+    assert aa.sync_backlog(b, ov, "t2") == ["P-1: approved -> running (XP-7 running)"]
+    assert aa.sync_backlog(b, ov, "t3") == []
+    # a stopped earlier run citing the same P-<n> does not pull it back to concluded
+    old = {"experiment_id": "XP-6", "status": "stopped", "area": "exits", "proposal_ref": "P-1"}
+    assert aa.sync_backlog(b, [old, *ov], "t3") == []
+    ov[0]["status"] = "promoted"
+    aa.sync_backlog(b, ov, "t4")
+    assert aa.backlog_by_id(b, "P-1")["status"] == "concluded"
+    assert aa._proposal_ref({"owner_approval": "P-3"}) == "P-3"
+    assert aa._proposal_ref({"owner_approval": "thread ts 1"}) is None
 
 
 @pytest.fixture(scope="module")
@@ -602,7 +762,7 @@ def _experiment_db(_pipeline_db: bytes) -> bytes:
 
 
 @pytest.mark.usefixtures("_stub_views")
-def test_context_has_forward_experiments_and_record_writes_draft_specs(
+def test_context_has_backlog_and_record_writes_p_ids(
     _experiment_db: bytes, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     conn = _conn(_experiment_db)
@@ -615,34 +775,206 @@ def test_context_has_forward_experiments_and_record_writes_draft_specs(
     assert "### XP-1 [stopped (futility)] aa/other" in out
     assert "- stop: sessions 10 sigma" in out
     assert "verdict FUTILITY" in out and "always-valid CI [" in out
-    assert "- calibration: sigma" in out and "MDE 10:" in out
     assert "- arm control: P&L" in out and "- arm treatment: P&L" in out
-    assert "- breakdowns: no closed trade in either arm yet" in out
     assert "### XP-2 [running] ab/exits" in out and "- latest report: none stored yet" in out
     assert '- treatment overlay: {"exits": {"default": {"take_profit_pct": 0.4}}}' in out
     assert "- exits: holder XP-2 | queued XP-3" in out
+    assert "- max_parallel_arms 10: 1 arm(s) registered/running (XP-2=1)" in out
+    assert "- exits: area exits held by XP-2, XP-3" in out
     run_dir = _run_dir(p)
     metrics = aa.load_json(run_dir / "metrics.json", {})
     assert [e["id"] for e in metrics["experiments"]] == ["XP-1", "XP-2", "XP-3"]
-    # record: the registry snapshot is enforced and the draft spec is written for the owner
-    doc = {"verdict": "findings", "themes": _themes(), "findings": [_rec_fwd()], "resolved": [],
-           "experiments": LINES, "next_experiment": "ranker:managed-net-ev"}  # fmt: skip
+    assert metrics["max_parallel_arms"] == 10
+    # record: the registry snapshot is enforced, the proposal lands in the backlog as P-1
+    doc = {"verdict": "findings", "themes": _themes(), "findings": [_prop()], "resolved": [],
+           "experiments": LINES, "quick_changes_none": "n < 20 in every bucket",
+           "next_experiment": "P-1", "next_slot": "after XP-2, then XP-3 (queued)"}  # fmt: skip
     (run_dir / "findings.json").write_text(json.dumps({**doc, "experiments": LINES[:1]}))
     assert aa.main(["record", str(run_dir)], p, NOW) == 2
     assert "XP-2 (running) has no line" in capsys.readouterr().out
+    assert not p.backlog.exists()  # rejection writes nothing
     (run_dir / "findings.json").write_text(json.dumps(doc))
     assert aa.main(["record", str(run_dir)], p, NOW) == 0
     printed = json.loads(capsys.readouterr().out)
-    draft = run_dir / "forward-specs" / "XP-4.yaml"
-    assert printed["forward_specs"] == [str(draft)]
-    text = draft.read_text()
-    assert "DRAFT forward experiment from Arc Analyst A-1" in text
-    spec = yaml.safe_load(text)
-    assert spec["proposed_by"] == "A-1" and spec["kind"] == "ab"
-    # the owner's `arc experiment create --spec` loader accepts the draft as written
-    from arc.experiments.overlay import load_spec
+    assert printed["new"] == ["A-1"] and printed["backlog"]["new"] == ["P-1"]
+    backlog = aa.load_backlog(p.backlog)
+    entry = aa.backlog_by_id(backlog, "P-1")
+    assert entry["finding_id"] == "A-1" and entry["status"] == "proposed"
+    assert backlog["next_experiment"]["value"] == "P-1"
+    # the next run's context ranks it with its formula and slot
+    aa.main(["reset"], p, NOW)
+    capsys.readouterr()
+    assert aa.main([], p, NOW) == 0
+    capsys.readouterr()
+    out = (_run_dir(p) / "context.md").read_text()  # stdout is capped at 30k
+    # the fixture registered XP-2 with --owner-approval P-1: the registry moves P-1 on
+    assert "- registry sync: P-1: proposed -> running (XP-2 running)" in out
+    assert "- P-1 [running] -> XP-2 (in the registry)" in out
+    entry = aa.backlog_by_id(aa.load_backlog(p.backlog), "P-1")
+    assert entry["status"] == "running" and entry["experiment_id"] == "XP-2"
+    # a proposed entry is ranked with its formula, slot and four arms
+    b = aa.load_backlog(p.backlog)
+    aa.apply_backlog(b, {"findings": [_prop(key="xp-proposal:other")]}, "r", "t")
+    aa.save_json(p.backlog, b)
+    aa.main(["reset"], p, NOW)
+    capsys.readouterr()
+    assert aa.main([], p, NOW) == 0
+    capsys.readouterr()
+    out = (_run_dir(p) / "context.md").read_text()
+    assert "- #1 P-2 [proposed] exits: Take-profit level" in out
+    assert "waits: area exits held by XP-2, XP-3" in out
+    assert "value 0.000225 = +0.050%/day x share 0.60 x p 0.30 / 40 sessions" in out
+    assert '  t4: {"exits": {"default": {"take_profit_pct": 0.75}}}' in out
 
-    assert load_spec(draft).id == "XP-4"
+
+def test_owner_approve_drop_reprioritise_backlog(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    p = _paths(tmp_path, tmp_path / "unused.db")
+    b = aa.empty_backlog()
+    aa.apply_backlog(b, {"findings": [_prop(key="xp-proposal:a"),
+                                      _prop(key="xp-proposal:b", p_success=0.6)]},
+                     "r", "t")  # fmt: skip
+    aa.save_json(p.backlog, b)
+    assert aa.main(["approve", "P-9"], p, NOW) == 2
+    assert aa.main(["approve", "P-1", "go"], p, NOW) == 0
+    out = capsys.readouterr().out
+    spec_path = p.home / "proposals" / "P-1.yaml"
+    assert f"P-1 approved. Spec: {spec_path}" in out
+    assert "--owner-approval P-1" in out
+    spec = yaml.safe_load(spec_path.read_text())
+    assert spec["id"] == "XP-<next>" and spec["kind"] == "ab" and spec["spec_version"] == 2
+    from arc.experiments.models import ExperimentSpec
+
+    assert len(ExperimentSpec.model_validate({**spec, "id": "XP-9"}).arms.treatments) == 4
+    b = aa.load_backlog(p.backlog)
+    assert aa.backlog_by_id(b, "P-1")["status"] == "approved"
+    assert aa.main(["reprioritise", "P-1", "owner wants exits first"], p, NOW) == 0
+    assert "P-1 -> rank #1" in capsys.readouterr().out
+    assert aa.main(["reprioritise", "P-2", "why", "--score", "x"], p, NOW) == 2
+    assert aa.main(["drop", "P-2", ""], p, NOW) == 2
+    assert aa.main(["drop", "P-2", "superseded"], p, NOW) == 0
+    assert aa.backlog_by_id(aa.load_backlog(p.backlog), "P-2")["status"] == "dropped"
+    capsys.readouterr()
+    assert aa.main(["backlog"], p, NOW) == 0
+    out = capsys.readouterr().out
+    assert "#1 P-1 [approved] exits: Take-profit level" in out and "P-2 [dropped]" in out
+
+
+def test_ship_then_the_next_run_must_review(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    p = _paths(tmp_path, tmp_path / "unused.db")
+    run_dir = p.runs / "r1"
+    run_dir.mkdir(parents=True)
+    aa.save_json(run_dir / "metrics.json", {"now": aa.iso(NOW), "closed_max_rowid": 7})
+    _write_valid_findings(run_dir, [_qc()])
+    assert aa.main(["record", str(run_dir)], p, NOW) == 0
+    capsys.readouterr()
+    assert aa.main(["ship", "A-9"], p, NOW) == 2
+    assert aa.main(["ship", "A-1", "sent in Slack"], p, NOW) == 0
+    out = capsys.readouterr().out
+    assert "apply (owner, in Slack): !arc config set exits.default.take_profit_pct 0.4" in out
+    item = aa.load_json(p.ledger, {})["items"]["quick-change:tp-0.4"]
+    assert item["status"] == "shipped" and item["shipped_at"] == aa.iso(NOW)
+    assert aa.review_lines(aa.load_json(p.ledger, {}))[0].startswith(
+        f"- A-1 shipped {aa.iso(NOW)}: exits.default.take_profit_pct 0.5 -> 0.4"
+    )
+    # `triage ... shipped` is not the way in: only `ship` stamps shipped_at
+    assert aa.main(["triage", "A-1", "shipped"], p, NOW) == 2
+    run2 = p.runs / "r2"
+    run2.mkdir()
+    _write_valid_findings(run2, [_qc()])
+    assert aa.main(["record", str(run2)], p, NOW) == 2
+    assert "quick change A-1 shipped since it was proposed" in capsys.readouterr().out
+    doc = json.loads((run2 / "findings.json").read_text())
+    doc["quick_change_reviews"] = [{"id": "A-1", "verdict": "keep", "n": 22, "note": "x"}]
+    (run2 / "findings.json").write_text(json.dumps(doc))
+    assert aa.main(["record", str(run2)], p, NOW) == 2
+    assert "needs before and after" in capsys.readouterr().out
+    doc["quick_change_reviews"][0].update(before="$4.10 (n=24)", after="$6.30 (n=22)")
+    (run2 / "findings.json").write_text(json.dumps(doc))
+    assert aa.main(["record", str(run2)], p, NOW) == 0
+    assert json.loads(capsys.readouterr().out)["reviews"] == ["A-1 keep"]
+    item = aa.load_json(p.ledger, {})["items"]["quick-change:tp-0.4"]
+    assert item["status"] == "kept"
+    assert aa.review_lines(aa.load_json(p.ledger, {})) == ["- none shipped since the last review"]
+
+
+def test_seed_leads_disposed_by_proposal_or_drop() -> None:
+    ideas, errs = aa.load_seed(ANALYST / aa.IDEA_SEED_FILE)
+    assert not errs and ideas
+    sids = frozenset(x["id"] for x in ideas)
+    b = aa.empty_backlog()
+    aa.apply_backlog(b, {"findings": [_prop(seed_ref="S-1")],
+                         "seed_drops": [{"seed_id": "S-2", "reason": "no evidence"}]},
+                     "r", "t")  # fmt: skip
+    lines = aa.seed_lines(ideas, [], b["seed"])
+    assert not any(x.startswith(("- S-1 ", "- S-2 ")) for x in lines)
+    assert "- (disposed: S-1 proposed, S-2 dropped)" in lines
+    both = {"seed_drops": [{"seed_id": "S-1", "reason": "x"}]}
+    assert any("both proposed and dropped" in e for e in _errs(
+        [_prop(seed_ref="S-1")], seed_ids=sids, extra=both))  # fmt: skip
+    assert any("already dropped" in e for e in _errs(
+        [], backlog=b, seed_ids=sids, extra={"seed_drops": [{"seed_id": "S-2", "reason": "x"}]}
+    ))  # fmt: skip
+
+
+def test_merged_pr_lines_and_max_arms(tmp_path: Path, _pipeline_db: bytes) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    prs = [{"number": 221, "title": "E21.2: retire", "mergedAt": "2026-10-09T20:00:00Z",
+            "body": "Summary\n\nXP-advisory: might deserve an XP on trending velocity\n"},
+           {"number": 222, "title": "D88: Movers", "mergedAt": "2026-10-09T21:00:00Z",
+            "body": "no lane line"}]  # fmt: skip
+    fake = tmp_path / "gh.py"
+    fake.write_text(f"import sys\nprint({json.dumps(json.dumps(prs))})\n")
+    p = aa.Paths(**{**_paths(tmp_path, tmp_path / "x.db").__dict__,
+                    "gh": (sys.executable, str(fake))})  # fmt: skip
+    lines = aa.merged_pr_lines(p, "2026-10-04T15:00:00-04:00", run_dir)
+    assert lines == [
+        "- #221 E21.2: retire (merged 2026-10-09): "
+        "XP-advisory: might deserve an XP on trending velocity"
+    ]
+    assert aa.merged_pr_lines(p, None, run_dir) == ["- skipped (no gh, or first run)"]
+    conn = _conn(_pipeline_db)
+    assert aa.max_parallel_arms(conn, REPO) == 10
+    conn.execute(
+        "INSERT INTO config_changes (key, old, new, actor, source, status, direction, at) "
+        "VALUES (?, '10', '12', 'U1', 'slack', 'applied', 'riskier', '2026-10-01T00:00:00Z')",
+        (aa.MAX_ARMS_KEY,),
+    )
+    assert aa.max_parallel_arms(conn, REPO) == 12
+
+
+def test_experiment_plan_effect_grid_matches_stats() -> None:
+    """The `arc experiment plan --k 4 --effects` grid the gate reads (D86)."""
+    from arc.experiments import cli as xcli
+    from arc.experiments import stats
+
+    grid = xcli.effect_grid(
+        sigma=0.004, effects=[0.0005, 0.002], k=4, alpha=0.05, power=0.8,
+        min_sessions=20, max_sessions=60, mde=0.001,
+    )  # fmt: skip
+    tau = stats.mixing_tau(0.004, mde=0.001, min_sessions=20)
+    want = stats.sessions_needed(0.004, 0.002, tau=tau, alpha=0.05, power=0.8, k=4)
+    assert grid[1] == {"effect": 0.002, "sessions_needed": want, "fits_window": want <= 60}
+    k1 = stats.sessions_needed(0.004, 0.002, tau=tau, alpha=0.05, power=0.8, k=1)
+    assert want >= k1  # Holm over 4 treatments costs sessions
+    with pytest.raises(ValueError, match="positive"):
+        xcli._parse_effects("0.001,-1")
+
+
+def test_every_standing_theme_needs_a_status() -> None:
+    themes = [t for t in _themes() if t["theme"] != "sizing"]
+    assert "standing theme 'sizing' has no status line" in _errs([], themes=themes)
+    prev = {"ranker": {"status": "settled"}}
+    reopened = _themes(ranker="watching")
+    assert any(
+        "re-open it only with new_evidence" in e for e in _errs([], themes=reopened, prev=prev)
+    )
+    reopened[[t["theme"] for t in reopened].index("ranker")]["new_evidence"] = "n=35 now"
+    assert _errs([], themes=reopened, prev=prev) == []
 
 
 @pytest.mark.usefixtures("_stub_views")
@@ -680,32 +1012,36 @@ def test_pre_e10_store_has_no_experiments(_pipeline_db: bytes) -> None:
     assert aa.next_experiment_id([]) == "XP-1"
 
 
-def test_skill_documents_forward_experiments() -> None:
+def test_skill_documents_the_two_tracks_and_the_backlog() -> None:
     text = _skill()
     for rule in (
-        "FORWARD EXPERIMENTS (D44)",
-        "you never register,\n   start, stop or promote",
-        "`forward_spec`",
+        "MIN-SAMPLE = 20 (D86)",
+        "QUICK CHANGES (D86",
+        "XP PROPOSALS (D86",
+        "PRIORITISATION",
+        "you never register, start, stop or promote",
+        "**exactly 4** treatments",
+        "value_score = pct_per_day × affected_share × p_success ÷ sessions_needed",
+        "xp_backlog.json",
+        "`quick_change_reviews`",
         "`next_experiment`",
-        "RUN_DIR/forward-specs/<XP-n>.yaml",
+        "`next_slot`",
+        "approve P-<n>",
+        "ship A-<n>",
+        "drop P-<n>",
+        "reprioritise P-<n>",
+        "*Quick changes*",
+        "*Quick-change review*",
         "*Experiments*",
+        "*Next XP:*",
         "register XP-<n>",
         "No guardrails",
     ):
         assert rule in text, rule
-    assert "Experiments" in aa.REPORT_SECTIONS
-
-
-def test_every_standing_theme_needs_a_status() -> None:
-    themes = [t for t in _themes() if t["theme"] != "sizing"]
-    assert "standing theme 'sizing' has no status line" in _errs([], themes=themes)
-    prev = {"ranker": {"status": "settled"}}
-    reopened = _themes(ranker="watching")
-    assert any(
-        "re-open it only with new_evidence" in e for e in _errs([], themes=reopened, prev=prev)
-    )
-    reopened[[t["theme"] for t in reopened].index("ranker")]["new_evidence"] = "n=35 now"
-    assert _errs([], themes=reopened, prev=prev) == []
+    for gone in ("FORWARD EXPERIMENTS (D44)", "forward-specs", "ONE-VARIABLE"):
+        assert gone not in text, gone
+    for section in ("Quick changes", "Quick-change review", "Experiments", "Next XP"):
+        assert section in aa.REPORT_SECTIONS
 
 
 # ---------------------------------------------------------------------------
@@ -745,10 +1081,9 @@ def test_skill_frontmatter_and_rules() -> None:
     assert len(text) <= 100_000
     for rule in (
         "MIN-SAMPLE",
-        "ONE-VARIABLE",
+        "Two tracks",
         "STANDING THEMES",
         "OBVIOUS FLAWS",
-        "hypothesis, untested",
         "at most 8 fetches",
         "create A-<n>",
         "comment A-<n>",

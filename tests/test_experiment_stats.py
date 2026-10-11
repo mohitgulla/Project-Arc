@@ -831,6 +831,42 @@ def test_cli_report_and_evaluate(tmp_path, capsys: pytest.CaptureFixture[str]) -
     assert "no running experiments" in capsys.readouterr().out
 
 
+def test_cli_plan_k4_effects_grid_without_a_spec(
+    tmp_path, capsys: pytest.CaptureFixture[str]
+) -> None:  # type: ignore[no-untyped-def]
+    """E21.3 (D86): the Analyst sizes a P-<n> (no id yet) at K=4 over a grid of effects."""
+    db = tmp_path / "x.db"
+    c = connect(db)
+    migrate(c)
+    c.close()
+    base = ("plan", "--k", "4", "--effects", "0.0002,0.0005,0.002", "--db", str(db))
+    assert run_experiment(_cli(*base)) == 2  # no A/A sigma stored, none passed
+    assert "no A/A sigma recorded yet" in capsys.readouterr().err
+    assert run_experiment(_cli(*base, "--sigma", "0.00036", "--json")) == 0
+    out = capsys.readouterr().out
+    d = json.loads(out[out.index("{\n") :])  # structlog prints to stdout under pytest
+    assert d["experiment_id"] == "(defaults)" and d["k"] == 4 and d["sigma_source"] == "flag"
+    assert (d["alpha"], d["power"], d["min_sessions"], d["max_sessions"]) == (0.05, 0.8, 20, 60)
+    tau = stats.mixing_tau(0.00036, mde=None, min_sessions=20)
+    for g, e in zip(d["effects"], (0.0002, 0.0005, 0.002), strict=True):
+        want = stats.sessions_needed(0.00036, e, tau=tau, alpha=0.05, power=0.8, k=4)
+        assert want is not None
+        assert g == {"effect": e, "sessions_needed": want, "fits_window": want <= 60}
+    assert [g["fits_window"] for g in d["effects"]] == [False, True, True]
+    assert run_experiment(_cli(*base, "--sigma", "0.00036")) == 0
+    out = capsys.readouterr().out
+    assert "effect -> sessions needed at K=4:" in out and "(> max)" in out
+    assert run_experiment(_cli(*base[:3], "--effects", "0.001,-1", "--sigma", "0.0004",
+                               "--db", str(db))) == 2  # fmt: skip
+    assert "--effects must be positive" in capsys.readouterr().err
+    assert run_experiment(_cli("plan", "--k", "0", "--sigma", "0.0004", "--db", str(db))) == 2
+    capsys.readouterr()
+    # without --k a spec-less plan is K=4 (D86); --k overrides a spec's own arm count
+    assert run_experiment(_cli("plan", "--sigma", "0.0004", "--json", "--db", str(db))) == 0
+    out = capsys.readouterr().out
+    assert json.loads(out[out.index("{\n") :])["k"] == 4
+
+
 def test_cli_evaluate_refuses_stopped(tmp_path, capsys: pytest.CaptureFixture[str]) -> None:  # type: ignore[no-untyped-def]
     db = tmp_path / "x.db"
     c = connect(db)
