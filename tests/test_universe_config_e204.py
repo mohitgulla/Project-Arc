@@ -7,6 +7,7 @@ Registry keys are unchanged; old override / overlay paths still reach the settin
 
 from __future__ import annotations
 
+import datetime as dt
 import sqlite3
 from typing import TYPE_CHECKING, Any
 
@@ -36,6 +37,9 @@ from arc.universe.config import (
     universe_config,
 )
 from arc.universe.tiers import Tier, active_max, tier_floor, tier_floors, tier_size, tier_sizes
+from arc.utils.calendar import ET
+
+NOW = dt.datetime(2026, 10, 9, 10, 0, tzinfo=ET)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -330,3 +334,45 @@ def test_lookup_aliases_unchanged() -> None:
     assert lookup("carryover.w_today").key == "universe.carryover.w_today"
     assert lookup("universe_momentum_size_d56").key == "universe_momentum_size"
     assert lookup("scalp_min_confidence").key == "universe_floor_core"
+
+
+#: key -> (value set through Slack, check on the effective universe config)
+SET_CASES: dict[str, tuple[str, Any]] = {
+    "universe_active_max": ("40", lambda u: u.active_max == 40),
+    "universe_momentum_size": ("15", lambda u: u.sizes.momentum == 15),
+    "universe_discovery_size": ("20", lambda u: u.sizes.discovery == 20),
+    "universe_trending_size": ("20", lambda u: u.sizes.trending == 20),
+    "universe_floor_core": ("0.5", lambda u: u.floors.core == 0.5),
+    "universe_floor_momentum": ("0.6", lambda u: u.floors.momentum == 0.6),
+    "universe_floor_discovery": ("0.7", lambda u: u.floors.discovery == 0.7),
+    "universe_floor_trending": ("0.7", lambda u: u.floors.trending == 0.7),
+    "universe.carryover.enabled": ("off", lambda u: u.carryover.enabled is False),
+    "universe.carryover.window_h": ("72", lambda u: u.carryover.window_h == 72),
+    "universe.carryover.w_today": ("0.8", lambda u: u.carryover.w_today == 0.8),
+    "universe.trending.scoring": ("velocity", lambda u: u.trending.scoring == "velocity"),
+}
+
+
+def test_set_cases_cover_every_moved_key() -> None:
+    assert set(SET_CASES) == set(MOVED)
+
+
+@pytest.mark.parametrize("key", sorted(SET_CASES))
+def test_slack_set_on_a_moved_key_reaches_universe_yaml(conn: sqlite3.Connection, key: str) -> None:
+    """Per key: a `!arc config set` stored in config_changes applies at the new path."""
+    from arc.control.effective import effective_settings
+    from arc.control.service import ControlService
+
+    owner = "U0OWNER"
+    base = _settings(approver_slack_user_ids=[owner])
+    svc = ControlService(conn, base=base, now=lambda: NOW, is_halted=lambda: False)
+    value, check = SET_CASES[key]
+    before = svc.view(key).value
+    r = svc.set(key, value, actor=owner, source="slack")
+    if r.pending is not None:
+        r = svc.confirm(r.pending.code, actor=owner, source="slack")
+    assert r.outcome == "applied", (key, r)
+    assert svc.view(key).value != before
+    eff = effective_settings(conn, base=base)
+    assert check(universe_config(eff)), key
+    assert eff.yaml_overrides("routines") == {}
