@@ -222,17 +222,20 @@ they are never dropped.
 
 ### 10.1 Overview (E8.8b)
 
-- **Status row** (order and wording D50, E8.8g): fixed slots `● Trading Enabled` ·
-  `● Paper Trade` · `Health Failed 25m` · `Orders 8/200` (+ tier when not normal; never "Orders
-  today") · `Tick 4m` · `Alerts n` (button; expands the open alerts inline, capped).
-  Values are Title Case (`Enabled`, `OK`, `Failed`, `No data`; ages unchanged). The env slot is
-  `<Env> Trade` (`Paper Trade`); the account profile (`cash_debit`) is in its tooltip only. It is
-  styled exactly like the other values (caption, semibold, `text-primary`, neutral dot),
-  never a pill. Each slot is `label value` with a status dot, no nested pills. A stale or non-ok
-  heartbeat turns the value `--warn` (stale = 3× the cadence from `/api/meta`
-  `cadences.tick|health`). A halt replaces slot 1 with the red `HALTED` pill + reason + actor ·
-  age. ≤ 768 px: a 3×2 grid of equal cells (≥ 44 px), row 1 `Trading | env | Health`, row 2
-  `Orders | Tick | Alerts`; wider: one row in the same order. Model: `statusRow()` in
+- **Status row** (order and wording D92; was D50 `Trading · env · Health · Orders · Tick ·
+  Alerts`): fixed slots `● Paper Trade · Arc Investor` · `● Trading Enabled (7)` · `Orders 8/200`
+  (+ tier when not normal; never "Orders today") · `Tick 4m 07s` · `Health OK 1m` · `Alerts n`
+  (button; expands the open alerts inline, capped). The account slot names the account under view:
+  **Arc Investor** for production (never "Control"), an arm's treatment name (`XP-12 · T1`) in
+  E15.7's arm view, which also has no "from Control" tag. The account profile (`cash_debit`) is
+  in its tooltip only; neutral dot, never a pill. `(n)` = trading sessions since the account
+  started (`status.sessions`; tooltip `n trading sessions since <day>`). Tick shows minutes and
+  seconds. Values are Title Case (`Enabled`, `OK`, `Failed`, `No data`). Each slot is `label
+  value` with a status dot, no nested pills. A stale or non-ok heartbeat turns the value `--warn`
+  (stale = 3× the cadence from `/api/meta` `cadences.tick|health`). A halt replaces the Trading
+  slot with the red `HALTED` pill + reason + actor · age. ≤ 768 px: a 4-column grid, row 1
+  `Account | Trading` (2 + 2), row 2 `Orders | Tick | Health | Alerts`; wider: one row in the same
+  order, with a divider before Trading and before Orders. Model: `statusRow()` in
   `lib/overview.ts`.
 - **Equity** (D50): the `1D 1W 1M 3M YTD ALL` control sits **below the hero block** (value,
   pill, $ change, `vs … at prev close`), followed by the range's dates in the Performance

@@ -699,3 +699,59 @@ def test_movers_carry_the_stocks_own_day_change(conn: sqlite3.Connection) -> Non
     # not in the heartbeat's delta_by_underlying -> no spot -> no value, never a guess
     assert movers["NVDA"].underlying_change is None
     assert movers["QQQ"].underlying_change is None
+
+
+def test_status_session_count_from_store_epoch(tmp_path: Path) -> None:
+    """D92: Trading Enabled (n) counts sessions since the D80 fresh start (epoch wins over
+    older snapshots); today counts only from the 09:30 ET open; weekends never count."""
+    path = tmp_path / "sess.db"
+    c = connect(path)
+    migrate(c)
+    PnlSnapshotRepo(c).insert(
+        realized="0", unrealized="0", total="0",
+        details_json=json.dumps({"day": "2026-09-01", "equity": "1"}),
+        snapshot_at="2026-09-01T20:35:00.000000Z",
+    )  # fmt: skip
+    c.execute(
+        "INSERT INTO routine_state (key, value, updated_at) VALUES ('store:epoch', ?, ?)",
+        (json.dumps({"started_at": "2026-09-18T13:15:34-04:00"}), "2026-09-18T17:15:34Z"),
+    )
+    c.commit()
+    c.close()
+    ro = connect_ro(path)
+    try:
+        # Fri 09-18 .. Mon 09-28 15:40 = 18, 21, 22, 23, 24, 25, 28 -> 7
+        s = _overview(ro).status
+        assert (s.sessions, s.sessions_since) == (7, dt.date(2026, 9, 18))
+        pre_open = dt.datetime(2026, 9, 28, 9, 0, tzinfo=ET)
+        assert _overview(ro, now=pre_open).status.sessions == 6
+        sunday = dt.datetime(2026, 9, 27, 14, 0, tzinfo=ET)
+        assert _overview(ro, now=sunday).status.sessions == 6
+    finally:
+        ro.close()
+
+
+def test_status_session_count_falls_back_to_first_snapshot(tmp_path: Path) -> None:
+    path = tmp_path / "nosess.db"
+    c = connect(path)
+    migrate(c)
+    c.close()
+    ro = connect_ro(path)
+    try:
+        s = _overview(ro).status
+        assert s.sessions is None and s.sessions_since is None
+    finally:
+        ro.close()
+    c = connect(path)
+    PnlSnapshotRepo(c).insert(
+        realized="0", unrealized="0", total="0",
+        details_json=json.dumps({"day": "2026-09-25", "equity": "1"}),
+        snapshot_at="2026-09-25T20:35:00.000000Z",
+    )  # fmt: skip
+    c.close()
+    ro = connect_ro(path)
+    try:
+        s = _overview(ro).status
+        assert (s.sessions, s.sessions_since) == (2, dt.date(2026, 9, 25))
+    finally:
+        ro.close()

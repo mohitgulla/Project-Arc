@@ -12931,6 +12931,31 @@
             ],
             "description": "Absent until the monitor heartbeat carries it (E6.5)"
           },
+          "sessions": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D92: trading sessions the account has traded since its start (``store:epoch`` fresh start, else the first reconciled day); today counts from the 09:30 ET open",
+            "title": "Sessions"
+          },
+          "sessions_since": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D92: the ET day the session count starts from",
+            "title": "Sessions Since"
+          },
           "tick_at": {
             "anyOf": [
               {

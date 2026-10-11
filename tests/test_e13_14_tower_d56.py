@@ -457,7 +457,8 @@ class TestUniverse:
 
 
 def test_no_hardcoded_old_persona_names_in_web_src() -> None:
-    pat = re.compile(r"\b(Director|Investor|Auditor|Sweep)\b")
+    # D92: "Arc Investor" is the production account's name, not the removed persona.
+    pat = re.compile(r"\b(Director|(?<!Arc )Investor|Auditor|Sweep)\b")
     hits = []
     for p in sorted((REPO / "web" / "src").rglob("*")):
         if not p.is_file() or p.name == "api.gen.ts" or p.suffix not in {".ts", ".tsx"}:

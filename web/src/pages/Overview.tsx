@@ -108,20 +108,30 @@ function SlotCell({ slot }: { slot: StatusSlot }) {
 }
 
 const CELL = "flex min-h-[44px] min-w-0 items-center gap-2 rounded-control px-2 text-caption tablet:min-h-[32px]";
+/** D92 groups: Account ‖ Trading ‖ Orders · Tick · Health · Alerts (a divider before each group on desktop). */
+const GROUP_START = "tablet:border-l tablet:border-line tablet:pl-4";
+/** Phone (≤ 768 px) grid: row 1 Account | Trading (2 + 2 cols), row 2 Orders | Tick | Health | Alerts
+ * (columns sized to their usual text so `Health OK 14m` fits at 520 px). Below 480 px: 2 columns,
+ * rows Account | Trading, Orders | Tick, Health | Alerts. */
+const PHONE_SPAN: Partial<Record<StatusSlot["key"], string>> = { account: "min-[480px]:col-span-2", trading: "min-[480px]:col-span-2" };
 
 /**
- * Status row (D48, D50 order): fixed slots Trading · env · Health · Orders · Tick · Alerts, each
- * `label value` with a status dot; the env slot (`Paper Trade`) is plain text styled like
- * the others, with a neutral dot. A 3x2 grid of equal cells up to 768 px; one row above, same
- * order. A halt replaces slot 1 with HALTED + reason + age.
+ * Status row (D92; was D48/D50): fixed slots Account · Trading · Orders · Tick · Health · Alerts,
+ * each `label value` with a status dot. The account slot (`Paper Trade · Arc Investor`) has a
+ * neutral dot; Trading carries the session count (`Enabled (7)`); Tick is `4m 07s`. A 4-column
+ * grid up to 768 px (row 1 Account | Trading, row 2 the four checks); one row above, with a
+ * divider before Trading and before Orders. A halt replaces the Trading slot with HALTED +
+ * reason + age (full width on a phone).
  */
-function StatusStrip({ o, cad, now }: { o: Overview; cad: ReturnType<typeof useCadences>; now: number }) {
+function StatusStrip({ o, cad }: { o: Overview; cad: ReturnType<typeof useCadences> }) {
   const [open, setOpen] = useState(false);
+  const now = useNow(1_000); // Tick shows seconds
   const s = o.status;
   const tone = stripTone(o);
   const alerts = s.alerts ?? [];
   const slots = statusRow(o, { now, tickS: cad.tick, healthS: cad.health, env: cad.env, accountProfile: cad.accountProfile });
   const border = tone === "neg" ? "border-neg" : tone === "warn" ? "border-warn" : "border-line";
+  const groupStart = (key: StatusSlot["key"]) => (key === "trading" || key === "orders" ? GROUP_START : "");
   return (
     <section
       data-testid="status-strip"
@@ -129,11 +139,12 @@ function StatusStrip({ o, cad, now }: { o: Overview; cad: ReturnType<typeof useC
       className={`arc-card flex flex-col gap-2 border ${border} !py-2`}
       aria-label="Trading status"
     >
-      <ul className="grid grid-cols-3 gap-1 tablet:flex tablet:flex-wrap tablet:items-center tablet:gap-x-4" data-testid="status-slots">
+      <ul className="grid grid-cols-2 gap-x-0.5 gap-y-1 min-[480px]:grid-cols-[minmax(0,0.9fr)_minmax(0,1.15fr)_minmax(0,1.2fr)_minmax(0,0.75fr)] tablet:flex tablet:flex-wrap tablet:items-center tablet:gap-x-4" data-testid="status-slots">
         {slots.map((slot) => {
+          const span = PHONE_SPAN[slot.key] ?? "";
           if (slot.key === "trading" && slot.tone === "neg")
             return (
-              <li key={slot.key} className={`${CELL} col-span-3 flex-wrap py-1`} data-testid="halt-banner" title={slot.title}>
+              <li key={slot.key} className={`${CELL} col-span-2 flex-wrap py-1 min-[480px]:col-span-4 ${GROUP_START}`} data-testid="halt-banner" title={slot.title}>
                 <span className="rounded-pill bg-neg-bg px-2 py-0.5 font-bold text-neg-text">HALTED</span>
                 <span className="min-w-0 text-primary [overflow-wrap:anywhere]">{slot.detail}</span>
                 <span className="text-muted tabular-nums">
@@ -165,14 +176,9 @@ function StatusStrip({ o, cad, now }: { o: Overview; cad: ReturnType<typeof useC
                 </button>
               </li>
             );
-          if (slot.key === "env")
-            return (
-              <li key={slot.key} className={CELL} data-testid="env-slot" title={slot.title}>
-                <SlotCell slot={slot} />
-              </li>
-            );
+          const testid = slot.key === "account" ? "account-slot" : slot.key === "orders" ? "order-budget" : `slot-${slot.key}`;
           return (
-            <li key={slot.key} className={CELL} title={slot.title} data-testid={slot.key === "orders" ? "order-budget" : `slot-${slot.key}`}>
+            <li key={slot.key} className={`${CELL} ${span} ${groupStart(slot.key)}`} title={slot.title} data-testid={testid}>
               <SlotCell slot={slot} />
             </li>
           );
@@ -929,7 +935,7 @@ export function OverviewPage() {
   const col = "contents desktop:grid desktop:min-w-0 desktop:content-start desktop:gap-10";
   return (
     <div className="grid gap-6 desktop:gap-10" data-testid="overview" data-marks-stale={o.marks_stale}>
-      <StatusStrip o={o} cad={cad} now={now} />
+      <StatusStrip o={o} cad={cad} />
       <div className="grid gap-6 desktop:grid-cols-2 desktop:gap-10" data-testid="overview-grid">
         <div className={col}>
           <div className="order-1 min-w-0 desktop:order-none">
