@@ -53,7 +53,7 @@ for (const vp of VIEWPORTS) {
         await expect(page.getByTestId("benchmark-SPY")).toContainText("SPY");
         await expect(page.getByTestId("benchmark-QQQ")).toContainText("QQQ");
         await expect(page.getByTestId("account-split")).toContainText("Cash (available)");
-        await expect(page.getByTestId("account-split")).toContainText("In positions");
+        await expect(page.getByTestId("account-split")).toContainText("Invested");
         await expect(page.getByTestId("greeks-theta-risk")).toHaveText(/^Risk (Low|Med|High)$/);
         await expect(page.getByTestId("greeks-gamma-risk")).toHaveText(/^Risk (Low|Med|High)$/);
         await expect(page.getByTestId("tile-name").first()).toHaveText(/^(Bullish|Bearish|Neutral|—)$/);

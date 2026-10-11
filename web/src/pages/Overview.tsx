@@ -263,11 +263,6 @@ function EquityCard({ o, range, cad, now }: { o: Overview; range: OverviewRange;
       )}
       {v.series.length > 1 && bench.lines.length > 0 && (
         <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-caption tabular-nums" data-testid="equity-benchmarks">
-          <li className="flex items-center gap-1.5">
-            <span className="h-0.5 w-3 rounded-full" style={{ background: "var(--text-primary)" }} aria-hidden="true" />
-            <span className="text-secondary">Portfolio</span>
-            <span className="font-semibold text-primary">{v.changePct == null ? "—" : formatPercent(v.changePct, { explicitSign: true })}</span>
-          </li>
           {bench.lines.map((l) => {
             const gap = v.changePct == null ? null : (v.changePct - l.changePct) * 100;
             return (
@@ -302,18 +297,18 @@ function AccountSplitRow({ o, cad }: { o: Overview; cad: ReturnType<typeof useCa
   return (
     <div className="mt-4 border-t border-line pt-3" data-testid="account-split">
       <div className="mb-2 flex items-center gap-2 text-caption text-secondary">
-        Cash vs In Positions
+        Cash vs Invested
         <Freshness at={a.at} cadenceS={cad.monitor} label="monitor mark" />
-        <InfoTip label="About the cash split" testid="account-split-info" formula="In positions = equity − cash">
-          Cash is what the account can spend on new debit trades (cash account: options buying power = cash). In
-          positions is the marked value of the open structures, locked up until they close.
+        <InfoTip label="About the cash split" testid="account-split-info" formula="Invested = equity − cash">
+          Cash is what the account can spend on new debit trades (cash account: options buying power = cash).
+          Invested is the marked value of the open structures, locked up until they close.
         </InfoTip>
       </div>
       <dl className="grid grid-cols-2 gap-3">
         {(
           [
             ["Cash (available)", cash, "var(--accent-bar)"],
-            ["In positions", held, "var(--series-1)"],
+            ["Invested", held, "var(--series-1)"],
           ] as const
         ).map(([label, value, color]) => (
           <div key={label} className="min-w-0">
@@ -332,7 +327,7 @@ function AccountSplitRow({ o, cad }: { o: Overview; cad: ReturnType<typeof useCa
           legend={false}
           segments={[
             { label: "Cash (available)", value: cash, color: "var(--accent-bar)" },
-            { label: "In positions", value: held, color: "var(--series-1)" },
+            { label: "Invested", value: held, color: "var(--series-1)" },
           ]}
         />
       </div>

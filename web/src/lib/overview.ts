@@ -194,7 +194,8 @@ export interface BenchmarkLine {
   color: string;
 }
 
-export const BENCHMARK_COLORS: Record<string, string> = { SPY: "var(--series-2)", QQQ: "var(--series-4)" };
+/** D87: benchmarks in neutral shades (theme-aware): SPY near-black, QQQ gray. */
+export const BENCHMARK_COLORS: Record<string, string> = { SPY: "var(--text-primary)", QQQ: "var(--text-muted)" };
 
 /**
  * D87: the equity series with each benchmark rebased onto it (benchmark ÷ its range-start
@@ -221,7 +222,7 @@ export function withBenchmarks(
       if (v !== null) pts.set(Date.parse(p.t), (v / start) * base);
     }
     byKey.set(key, pts);
-    lines.push({ symbol: b.symbol, key, changePct: b.change_pct, color: BENCHMARK_COLORS[b.symbol] ?? "var(--series-5)" });
+    lines.push({ symbol: b.symbol, key, changePct: b.change_pct, color: BENCHMARK_COLORS[b.symbol] ?? "var(--text-secondary)" });
   }
   const data = series.map((p) => {
     const row: TrendPoint = { ...p };

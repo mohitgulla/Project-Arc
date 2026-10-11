@@ -262,7 +262,7 @@ they are never dropped.
   Movers tiles scroll-snap, ranked by today's change best → worst, name line = direction
   (Bullish / Bearish / Neutral), pill = today's change.
 - **Equity (D87):** dashed SPY / QQQ lines rebased to the range-start equity, legend with each
-  benchmark's % and the gap in points; a Cash vs In Positions split (stat pair + bar) below.
+  benchmark's % and the gap in points; a Cash vs Invested split (stat pair + bar) below.
 - **Order** at ≤ 1279 px (one column, D87): status → Equity → P&L Today → Movers → Positions →
   Greeks vs Caps → Today's Proposals → Today's Pick → Recent Activity. Desktop keeps two
   columns (Movers under P&L Today on the right).
