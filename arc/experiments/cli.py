@@ -445,6 +445,11 @@ def _run_eval(args: argparse.Namespace, store: Any, conn: sqlite3.Connection) ->
     else:
         for r in reports:
             _out("\n".join(report_lines(r)))
+            if args.experiment_command == "report":
+                # D86 (E21.1): read-only context, outside the stored (hashed) report
+                from arc.experiments.shipped import shipped_lines
+
+                _out("\n".join(shipped_lines(r.t0)))
         if not reports:
             _out("no running experiments")
     return 0

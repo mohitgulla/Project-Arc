@@ -16,10 +16,11 @@ Four checks:
    (``experiment_areas.json``). For each: the touched paths and, for ``config/*.yaml``, the
    existing values it removed/changed (a changed existing value is a default flip, which is
    never "behind a flag defaulting to control") and the new keys it added.
-3. **Strategy-lane citations (E10.7).** Commits since the last review that touch a
+3. **Strategy-lane citations (E10.7; D86 / E21.1).** Commits since the last review that touch a
    strategy-lane path (``config/strategy_lane.yaml`` ``strategy_paths``, else the area map):
-   the lane lines (``Experiment: XP-<n>`` / ``Flag: <key>`` / ``Lane: fast — <reason>``) from the
-   commit message or, for a squash merge ``(#N)``, the PR *body*. Only those lane lines are
+   the ``XP-advisory: none | <reason>`` line (D86) plus any ``Experiment: XP-<n>`` and pre-D86
+   ``Flag:`` / ``Lane: fast`` lines, from the commit message or, for a squash merge ``(#N)``,
+   the PR *body*. Only those lines are
    extracted; no PR review thread or comment is read (D23 isolation). Committed promotion
    verdicts (``config/experiments/live/verdicts/XP-<n>.yaml``) are matched to the stored report.
 4. **A/A before any A/B.** Every ab experiment that started has an aa experiment that stopped
@@ -44,6 +45,8 @@ MAX_COMMITS = 25  # per experiment window / per lane listing; the rest is counte
 LANE_EXPERIMENT_RE = re.compile(r"^\s*(?:[-*>]\s*)?experiment\s*:\s*(XP-[1-9]\d*)\b", re.I | re.M)
 LANE_FLAG_RE = re.compile(r"^\s*(?:[-*>]\s*)?flag\s*:\s*`?([A-Za-z0-9_.\-]+)`?", re.I | re.M)
 LANE_FAST_RE = re.compile(r"^\s*(?:[-*>]\s*)?lane\s*:\s*fast\b(.*)$", re.I | re.M)
+#: D86 (E21.1): the advisory line every strategy PR carries (`none` or a reason).
+LANE_ADVISORY_RE = re.compile(r"^\s*(?:[-*>]\s*)?xp-advisory\s*:(.*)$", re.I | re.M)
 PR_RE = re.compile(r"\(#(\d+)\)\s*$")
 OFF_VALUES = ("false", "off", "none", "null", "control", "~", "''", '""')
 
@@ -109,10 +112,12 @@ def strategy_globs(repo: Path, areas: dict) -> tuple[list[str], str]:
 def parse_lanes(text: str) -> dict:
     text = text.replace("**", "").replace("__", "")
     fast = LANE_FAST_RE.search(text)
+    adv = LANE_ADVISORY_RE.search(text)
     return {
         "experiments": sorted({m.upper() for m in LANE_EXPERIMENT_RE.findall(text)}),
         "flags": sorted(set(LANE_FLAG_RE.findall(text))),
         "fast": fast.group(1).strip().strip(" \t—–-:`*").strip() if fast else None,
+        "advisory": adv.group(1).strip().strip(" \t—–-:`*").strip() if adv else None,
     }
 
 
@@ -346,7 +351,7 @@ def lane_citations(
             source = f"commit message (PR #{pr} body unavailable)"
         lanes = parse_lanes(text)
         unknown = [x for x in lanes["experiments"] if x not in registry]
-        cited = bool(lanes["experiments"] or lanes["flags"] or lanes["fast"])
+        cited = bool(lanes["experiments"] or lanes["flags"] or lanes["fast"] or lanes["advisory"])
         out.append(
             {
                 "sha": c["sha"],
@@ -414,7 +419,7 @@ def render(
             elif c["new_keys"]:
                 flags.append("new keys (default not off) " + _short(c["new_keys"]))
             if not flags:
-                flags.append("code only: check it ships behind a flag defaulting to control")
+                flags.append("code only: shipped to every arm (D86); a finding only if it swamps")
             out.append(
                 f"  - {c['sha'][:7]} {c['subject']} :: {_short(c['touched'])} :: "
                 + "; ".join(flags)
@@ -425,16 +430,21 @@ def render(
     if not lanes:
         out.append("- none")
     for c in lanes[:MAX_COMMITS]:
+        adv = c.get("advisory")
         if not c["cited"]:
-            cite = "NO LANE CITED"
+            cite = "NO XP-ADVISORY"
         else:
             parts = []
+            if adv is not None:
+                parts.append(f"XP-advisory: {adv or 'EMPTY'}")
+            else:
+                parts.append("NO XP-ADVISORY")
             if c["experiments"]:
                 parts.append("Experiment " + ", ".join(c["experiments"]))
             if c["flags"]:
-                parts.append("Flag " + ", ".join(c["flags"]))
+                parts.append("Flag " + ", ".join(c["flags"]) + " (pre-D86 line)")
             if c["fast"] is not None:
-                parts.append(f"Lane fast ({c['fast'] or 'NO REASON'})")
+                parts.append(f"Lane fast ({c['fast'] or 'NO REASON'}; pre-D86 line)")
             cite = "; ".join(parts)
             if c["unknown_experiments"]:
                 cite += " | NOT IN REGISTRY: " + ", ".join(c["unknown_experiments"])
@@ -547,6 +557,7 @@ def _gh_pr_body(repo: Path) -> PrBody:
             if LANE_EXPERIMENT_RE.match(ln.replace("**", ""))
             or LANE_FLAG_RE.match(ln.replace("**", ""))
             or LANE_FAST_RE.match(ln.replace("**", ""))
+            or LANE_ADVISORY_RE.match(ln.replace("**", ""))
         ]
         return "\n".join(keep)
 

@@ -34,12 +34,14 @@ jobs:
       - name: make check
         run: make check
 
-  # D44 two lanes (E10.7): a PR touching a strategy path (config/strategy_lane.yaml)
-  # must carry `Experiment: XP-<n>`, `Flag: <stem>.<key>` or `Lane: fast — <reason>` in
-  # its body; flipping an existing strategy default needs an experiment with a `win`
-  # verdict (docs/OPS.md 5.19). Deterministic: git diff + YAML, no LLM. The body is read
-  # at run time (not from the event payload), so after editing the PR body you re-run
-  # this job and it sees the new text.
+  # D86 (E21.1, revising D44 / E10.7): fails only when a PR changes a config leaf an
+  # open experiment (spec in config/experiments/live/ without a verdict) tests, unless it
+  # is that experiment's promotion (`Experiment: XP-<n>` + `win` verdict + winner arm's
+  # values). A PR touching a strategy path (config/strategy_lane.yaml) gets a job summary
+  # and an annotation asking for `XP-advisory: none | <reason>` (docs/OPS.md 5.20).
+  # Deterministic: git diff + YAML, no LLM. The body is read at run time (not from the
+  # event payload), so after editing the PR body you re-run this job and it sees the
+  # new text.
   strategy-lane:
     name: strategy-lane
     if: github.event_name == 'pull_request'

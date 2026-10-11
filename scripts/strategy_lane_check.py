@@ -1,31 +1,31 @@
-"""Strategy-lane CI check (PLAN D44 "two lanes"; card E10.7).
+"""Strategy-lane CI check (PLAN D86, revising D44 / E10.7; card E21.1).
 
     .venv/bin/python scripts/strategy_lane_check.py --base <sha> --head <sha> --body-file <f>
 
-A pull request that touches a *strategy path* (``config/strategy_lane.yaml``) must say
-which lane it is in, with one line in its body:
+Dev changes ship on, to every experiment arm (D86). The check has one hard rule and
+is advisory for everything else:
 
-``Experiment: XP-<n>``
-    The change is what experiment XP-<n> tests. The id must have a spec in
-    ``config/experiments/live/``.
-``Flag: <stem>.<path>``
-    The change ships behind a NEW key in ``config/<stem>.yaml`` whose default is off
-    (control behaviour). The check confirms the key is new and its value is off.
-``Lane: fast — <reason>``
-    A bug, safety or infra fix. arc-sentinel audits these.
+**Hard rule: locked leaves.** An *open* experiment is a spec in
+``config/experiments/live/`` with no committed verdict file (``verdicts/``) on the base
+branch. Its *locked leaves* are the union of every treatment overlay's leaves (v1
+``arms.treatment``, v2 ``arms.treatments.t<k>``). A PR fails when it adds, changes or
+removes a locked leaf's value in the corresponding ``config/<stem>.yaml`` unless it is
+that experiment's promotion: the body cites ``Experiment: XP-<n>``, the verdict file at
+the PR head says ``verdict: win`` with ``winner: t<k>`` (a single-treatment verdict
+without ``winner`` maps to ``t1``), and every changed value equals arm ``t<k>``'s
+overlay value. Removing a locked value never passes.
 
-A *promotion* (a PR that changes or removes a value that already exists in one of the
-strategy YAMLs, i.e. flips a default) passes only with ``Experiment: XP-<n>`` whose
-committed verdict file (``config/experiments/live/verdicts/XP-<n>.yaml``) says ``win``,
-and every changed value must equal that experiment's treatment overlay. ``Flag:`` and
-``Lane: fast`` never cover a promotion.
+**Advisory, never fails.** A PR touching a ``strategy_paths`` file gets a note (and, in
+GitHub Actions, a job summary and a PR annotation) listing the strategy files and the
+strategy-YAML leaves it changes, and asks for ``XP-advisory: none | <reason>`` in the
+body; a missing line is a warning only. Old lane lines (``Flag:``, ``Lane: fast``,
+``Experiment:``) are accepted and ignored, except ``Experiment:`` for a promotion.
 
-The one exception is a narrow, audited **owner waiver** (``owner_waivers`` in
-``config/strategy_lane.yaml``, E18.1 / D78): a promotion passes when every changed
-leaf is listed under a waiver, the PR body's ``Lane: fast — … (PLAN D<n>)`` names
-that waiver's decision, and the ``D<n>`` row of ``docs/PLAN.md`` exists and says
-"D44 waived". A removed value, an unlisted leaf, a body that does not cite the
-decision or a PLAN row without the waiver all stay blocked exactly as before.
+Open-ness is decided on the merge base: a spec the PR itself adds locks nothing yet, and
+an open spec the PR edits keeps its base leaves locked. A PR that deletes an open spec
+(retiring a never-registered draft, E20.1 / E21.2) unlocks its leaves with a warning that
+arc-sentinel audits. The verdict and winning arm are read at the PR head, so a
+promotion PR commits its verdict file.
 
 Deterministic: no network and no LLM. The only I/O is ``git`` on the local checkout
 and reading files; :func:`evaluate` itself is pure, which is what the tests drive.
@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import os
 import re
 import subprocess
 import sys
@@ -50,51 +51,19 @@ REPO = Path(__file__).resolve().parent.parent
 LANE_CONFIG = REPO / "config" / "strategy_lane.yaml"
 
 _EXPERIMENT_RE = re.compile(r"^\s*(?:[-*>]\s*)?experiment\s*:\s*(XP-[1-9]\d*)\b", re.I | re.M)
-_FLAG_RE = re.compile(r"^\s*(?:[-*>]\s*)?flag\s*:\s*`?([A-Za-z0-9_.\-]+)`?", re.I | re.M)
-_FAST_RE = re.compile(r"^\s*(?:[-*>]\s*)?lane\s*:\s*fast\b(.*)$", re.I | re.M)
-_FAST_SEP = " \t—–-:`*"
+_ADVISORY_RE = re.compile(r"^\s*(?:[-*>]\s*)?xp-advisory\s*:(.*)$", re.I | re.M)
+_ADVISORY_SEP = " \t—–-:`*"
 _CONFIG_YAML_RE = re.compile(r"^config/([A-Za-z0-9_\-]+)\.yaml$")
-_PLAN_CITE_RE = re.compile(r"\bPLAN\s+(D[1-9]\d*)\b")
-_PLAN_ROW_RE = re.compile(r"^\|\s*(D[1-9]\d*)\s*\|", re.M)
-#: The phrase a PLAN decision row must carry for its owner waiver to count.
-WAIVER_PHRASE = "D44 waived"
-PLAN_PATH = "docs/PLAN.md"
+_WINNER_RE = re.compile(r"^t([1-9]|1[0-6])$")
 
 # A committed verdict (config/experiments/live/verdicts/XP-<n>.yaml) is copied from the
 # stored E10.3 report (`arc experiment show XP-<n> --json`); report_hash lets arc-sentinel
-# match it to the `experiment_reports` row, which CI cannot read.
+# match it to the `experiment_reports` row, which CI cannot read. ``winner: t<k>`` names
+# the winning arm of a multi-treatment (D69 v2) experiment.
 VERDICT_KEYS = frozenset({"experiment_id", "verdict", "report_hash"})
+FIRST_TREATMENT = "t1"
 
 Leaf = tuple[str, ...]  # (stem, key, key, ...): one leaf value in config/<stem>.yaml
-
-
-@dataclass(frozen=True)
-class OwnerWaiver:
-    """Promotion leaves an owner decision ships without an experiment (D44 waived)."""
-
-    decision: str  # "D78"
-    leaves: frozenset[Leaf]  # (stem, key, ...)
-
-    @classmethod
-    def from_mapping(cls, data: Any) -> OwnerWaiver:
-        if not isinstance(data, Mapping) or set(data) != {"decision", "paths"}:
-            msg = "strategy_lane.yaml: an owner_waivers entry needs exactly decision and paths"
-            raise ValueError(msg)
-        decision = str(data["decision"]).strip().upper()
-        if not re.fullmatch(r"D[1-9]\d*", decision):
-            msg = f"strategy_lane.yaml: owner waiver decision {decision!r} is not D<n>"
-            raise ValueError(msg)
-        paths = data["paths"]
-        if not isinstance(paths, Mapping) or not paths:
-            msg = f"strategy_lane.yaml: owner waiver {decision} lists no paths"
-            raise ValueError(msg)
-        leaves: set[Leaf] = set()
-        for stem, keys in paths.items():
-            if not isinstance(keys, list) or not keys:
-                msg = f"strategy_lane.yaml: owner waiver {decision}: {stem} needs a list of keys"
-                raise ValueError(msg)
-            leaves |= {(str(stem), *str(k).split(".")) for k in keys}
-        return cls(decision=decision, leaves=frozenset(leaves))
 
 
 @dataclass(frozen=True)
@@ -103,23 +72,10 @@ class LaneConfig:
     exclude_paths: tuple[str, ...]
     experiments_dir: str
     verdicts_dir: str
-    flag_off_values: tuple[Any, ...]
-    fast_reason_min_chars: int
-    promotion_stems: tuple[str, ...]
-    owner_waivers: tuple[OwnerWaiver, ...] = ()
 
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any]) -> LaneConfig:
-        known = {
-            "strategy_paths",
-            "exclude_paths",
-            "experiments_dir",
-            "verdicts_dir",
-            "flag_off_values",
-            "fast_reason_min_chars",
-            "promotion_stems",
-            "owner_waivers",
-        }
+        known = {"strategy_paths", "exclude_paths", "experiments_dir", "verdicts_dir"}
         extra = set(data) - known
         if extra:
             msg = f"strategy_lane.yaml: unknown keys {sorted(extra)}"
@@ -133,12 +89,6 @@ class LaneConfig:
             exclude_paths=tuple(str(p) for p in data.get("exclude_paths") or ()),
             experiments_dir=str(data.get("experiments_dir", "config/experiments/live")),
             verdicts_dir=str(data.get("verdicts_dir", "config/experiments/live/verdicts")),
-            flag_off_values=tuple(data.get("flag_off_values", (False, None))),
-            fast_reason_min_chars=int(data.get("fast_reason_min_chars", 10)),
-            promotion_stems=tuple(str(s) for s in data.get("promotion_stems") or ()),
-            owner_waivers=tuple(
-                OwnerWaiver.from_mapping(w) for w in data.get("owner_waivers") or ()
-            ),
         )
 
 
@@ -147,40 +97,99 @@ class Experiment:
     """What the check needs from a spec and its committed verdict (if any)."""
 
     id: str
-    overlay: Mapping[str, Any]  # arms.treatment.overlay: stem -> partial file
-    verdict: str | None = None
+    arms: Mapping[str, Mapping[str, Any]]  # treatment arm (t1..) -> overlay (stem -> partial)
+    verdict: str | None = None  # at the PR head
+    winner: str | None = None  # t<k>; None on a single-treatment verdict (= t1)
+    open_at_base: bool = True  # no verdict on the base branch (the PR may add one)
+    path: str = ""  # repo-relative spec path
+
+    def winning_arm(self) -> str:
+        return self.winner or FIRST_TREATMENT
 
 
 @dataclass(frozen=True)
-class Lanes:
+class Body:
     experiments: tuple[str, ...]
-    flags: tuple[str, ...]
-    fast_reason: str | None
+    advisory: str | None  # the text after `XP-advisory:`, "" when empty, None when absent
 
 
 @dataclass
 class Result:
     strategy_files: list[str]
     ok: bool
-    lane: str  # none | experiment | flag | fast | promotion | waiver
+    status: str  # none | advisory | promotion | locked
     errors: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    leaves: list[str] = field(default_factory=list)  # strategy-YAML leaves changed
+    advisory: str | None = None
 
     def render(self) -> str:
         head = "PASS" if self.ok else "FAIL"
-        if not self.strategy_files:
+        if not self.strategy_files and self.ok and not (self.notes or self.warnings):
             return "strategy-lane: PASS (no strategy paths touched)"
-        lines = [f"strategy-lane: {head} (lane: {self.lane})", "strategy paths touched:"]
-        lines += [f"  {p}" for p in self.strategy_files]
+        lines = [f"strategy-lane: {head} ({self.status})"]
+        if self.strategy_files:
+            lines.append("strategy paths touched:")
+            lines += [f"  {p}" for p in self.strategy_files]
+        if self.leaves:
+            lines.append("strategy config leaves changed:")
+            lines += [f"  {x}" for x in self.leaves]
+        if self.advisory is not None:
+            lines.append(f"XP-advisory: {self.advisory or '(empty)'}")
         lines += [f"note: {n}" for n in self.notes]
+        lines += [f"warning: {w}" for w in self.warnings]
         lines += [f"error: {e}" for e in self.errors]
         if not self.ok:
             lines.append(
-                "fix: add one of `Experiment: XP-<n>`, `Flag: <stem>.<key>` or "
-                "`Lane: fast — <reason>` to the PR body (docs/OPS.md 5.20), then re-run "
-                "the strategy-lane job"
+                "fix: leave the locked values alone until the experiment has a verdict, or "
+                "make this PR the promotion (`Experiment: XP-<n>` + a `win` verdict file + "
+                "the winning arm's values); docs/OPS.md 5.20"
             )
         return "\n".join(lines)
+
+    def summary_markdown(self) -> str:
+        """The GitHub job summary (``$GITHUB_STEP_SUMMARY``)."""
+        lines = [f"### strategy-lane: {'PASS' if self.ok else 'FAIL'} ({self.status})", ""]
+        if self.strategy_files:
+            lines.append("Strategy files changed (this ships to every experiment arm, D86):")
+            lines += [f"- `{p}`" for p in self.strategy_files]
+        if self.leaves:
+            lines += ["", "Strategy config leaves changed:"]
+            lines += [f"- `{x}`" for x in self.leaves]
+        if self.strategy_files:
+            lines += [
+                "",
+                f"XP-advisory: {self.advisory}"
+                if self.advisory
+                else "**No `XP-advisory:` line.** Add `XP-advisory: none` or "
+                "`XP-advisory: <why this might deserve an experiment>` to the PR body.",
+            ]
+        lines += ["", *(f"- note: {n}" for n in self.notes)] if self.notes else []
+        lines += [f"- warning: {w}" for w in self.warnings]
+        lines += [f"- **error:** {e}" for e in self.errors]
+        return "\n".join(lines) + "\n"
+
+    def annotations(self) -> list[str]:
+        """GitHub workflow commands: one notice/warning per PR, an error per failure."""
+        out: list[str] = []
+        if self.strategy_files:
+            what = ", ".join(self.strategy_files[:6]) + (
+                f" (+{len(self.strategy_files) - 6} more)" if len(self.strategy_files) > 6 else ""
+            )
+            if self.advisory:
+                out.append(
+                    f"::notice title=strategy-lane advisory::Strategy change ships to all "
+                    f"arms: {what}. XP-advisory: {self.advisory}"
+                )
+            else:
+                out.append(
+                    f"::warning title=strategy-lane advisory::Strategy change ships to all "
+                    f"arms: {what}. Add `XP-advisory: none | <reason>` to the PR body."
+                )
+        out += [f"::warning title=strategy-lane::{w}" for w in self.warnings]
+        out += [f"::error title=strategy-lane::{e}" for e in self.errors]
+        return out
 
 
 # ---------------------------------------------------------------------------
@@ -199,13 +208,12 @@ def strategy_files(changed: Iterable[str], cfg: LaneConfig) -> list[str]:
     return sorted(out)
 
 
-def parse_body(body: str) -> Lanes:
+def parse_body(body: str) -> Body:
     body = body.replace("**", "").replace("__", "")  # markdown bold around the label
-    fast = _FAST_RE.search(body)
-    return Lanes(
+    adv = _ADVISORY_RE.search(body)
+    return Body(
         experiments=tuple(dict.fromkeys(m.upper() for m in _EXPERIMENT_RE.findall(body))),
-        flags=tuple(dict.fromkeys(_FLAG_RE.findall(body))),
-        fast_reason=fast.group(1).strip().strip(_FAST_SEP).strip() if fast else None,
+        advisory=adv.group(1).strip().strip(_ADVISORY_SEP).strip() if adv else None,
     )
 
 
@@ -232,6 +240,9 @@ class YamlDelta:
     changed: dict[Leaf, tuple[Any, Any]]  # leaf -> (old, new)
     removed: dict[Leaf, Any]
 
+    def leaves(self) -> set[Leaf]:
+        return {*self.added, *self.changed, *self.removed}
+
 
 def yaml_delta(stem: str, old: Any, new: Any) -> YamlDelta:
     a, b = flatten(stem, old), flatten(stem, new)
@@ -255,76 +266,19 @@ def _overlay_value(overlay: Mapping[str, Any], leaf: Leaf) -> tuple[bool, Any]:
     return True, node
 
 
-def _is_off(value: Any, cfg: LaneConfig) -> bool:
-    for off in cfg.flag_off_values:
-        if isinstance(off, str) and isinstance(value, str):
-            if value.strip().lower() == off.lower():
-                return True
-        elif type(value) is type(off) and value == off:
-            return True
-    return False
-
-
-def plan_rows(plan_text: str) -> dict[str, str]:
-    """``D<n>`` → its decisions-log row in ``docs/PLAN.md`` (the whole table line)."""
-    out: dict[str, str] = {}
-    for line in plan_text.splitlines():
-        m = _PLAN_ROW_RE.match(line)
-        if m is not None:
-            out.setdefault(m.group(1), line)
+def locked_leaves(exp: Experiment) -> set[Leaf]:
+    """The union of every treatment overlay's leaves (stem first)."""
+    out: set[Leaf] = set()
+    for overlay in exp.arms.values():
+        for stem, partial in (overlay or {}).items():
+            out |= {k for k, v in flatten(str(stem), partial).items() if v != {}}
     return out
 
 
-def _waived(
-    changed_leaves: Mapping[Leaf, Any],
-    removed_leaves: Mapping[Leaf, Any],
-    fast_reason: str | None,
-    fast_ok: bool,
-    rows: Mapping[str, str],
-    cfg: LaneConfig,
-) -> tuple[bool, list[str], list[str]]:
-    """Does an owner waiver cover this promotion? ``(covered, errors, notes)``.
-
-    Covered only when: no value is removed, the body's `Lane: fast` line is valid and
-    cites ``PLAN D<n>``, every changed leaf is listed under a waiver of a cited
-    decision, and each such decision's PLAN row exists and says "D44 waived".
-    """
-    if not cfg.owner_waivers or not changed_leaves:
-        return False, [], []
-    cited = set(_PLAN_CITE_RE.findall(fast_reason or "")) if fast_ok else set()
-    if not cited:
-        return False, [], []  # no `(PLAN D<n>)` citation: an ordinary promotion
-    by_decision = {w.decision: w for w in cfg.owner_waivers}
-    errors: list[str] = []
-    used: set[str] = set()
-    for leaf in sorted(changed_leaves):
-        owners = [d for d, w in by_decision.items() if leaf in w.leaves]
-        if not owners:
-            return False, [], []  # an unlisted leaf: not a waiver case at all
-        hit = [d for d in owners if d in cited]
-        if not hit:
-            errors.append(
-                f"owner waiver: {_dotted(leaf)} is waived by {', '.join(owners)} only with "
-                f"`Lane: fast — … (PLAN {owners[0]})` in the PR body"
-            )
-            continue
-        used.update(hit)
-    if removed_leaves:
-        listed = ", ".join(_dotted(k) for k in sorted(removed_leaves))
-        errors.append(f"owner waiver: removing existing values ({listed}) is never waived")
-    for d in sorted(used):
-        row = rows.get(d)
-        if row is None:
-            errors.append(f"owner waiver: {d} has no decisions-log row in {PLAN_PATH}")
-        elif WAIVER_PHRASE.lower() not in row.lower():
-            errors.append(
-                f"owner waiver: the {d} row in {PLAN_PATH} does not say {WAIVER_PHRASE!r}"
-            )
-    notes = [
-        f"owner waiver {d} ({PLAN_PATH}: {WAIVER_PHRASE}); arc-sentinel audits it"
-        for d in sorted(used)
-    ]
-    return not errors, errors, notes
+def _overlaps(a: Leaf, b: Leaf) -> bool:
+    """Same leaf, or one is inside the other (a list/scalar replaced by a mapping)."""
+    n = min(len(a), len(b))
+    return a[:n] == b[:n]
 
 
 def evaluate(
@@ -333,115 +287,111 @@ def evaluate(
     deltas: Mapping[str, YamlDelta],
     experiments: Mapping[str, Experiment],
     cfg: LaneConfig,
-    plan: Mapping[str, str] | None = None,
+    removed_specs: Iterable[str] = (),
 ) -> Result:
     """Decide one PR.
 
-    *changed* are the repo-relative paths the PR touches, *deltas* the leaf-level
-    YAML changes per strategy ``config/<stem>.yaml`` (keyed by stem), *experiments*
-    every spec in the experiments dir (keyed by id, with its verdict if committed),
-    *plan* the ``docs/PLAN.md`` decision rows (:func:`plan_rows`) owner waivers need.
+    *changed* are the repo-relative paths the PR touches, *deltas* the leaf-level YAML
+    changes per changed ``config/<stem>.yaml`` (keyed by stem), *experiments* every
+    known spec (keyed by id; ``open_at_base`` and the head verdict, see
+    :func:`build_experiments`), *removed_specs* the open specs the PR deletes.
     """
+    changed = list(changed)
     files = strategy_files(changed, cfg)
-    if not files:
-        return Result(strategy_files=[], ok=True, lane="none")
-
-    lanes = parse_body(body)
+    parsed = parse_body(body)
     errors: list[str] = []
     notes: list[str] = []
+    warnings: list[str] = []
 
-    unknown = [x for x in lanes.experiments if x not in experiments]
-    errors += [f"Experiment: {x} has no spec in {cfg.experiments_dir}/" for x in unknown]
-    cited = [experiments[x] for x in lanes.experiments if x in experiments]
-
-    fast_ok = False
-    if lanes.fast_reason is not None:
-        if len(lanes.fast_reason) >= cfg.fast_reason_min_chars:
-            fast_ok = True
-        else:
+    # -- hard rule: leaves an open experiment tests ---------------------------------
+    delta_leaves: dict[Leaf, tuple[str, Any]] = {}  # leaf -> (kind, new value)
+    for d in deltas.values():
+        delta_leaves |= {k: ("added", v) for k, v in d.added.items()}
+        delta_leaves |= {k: ("changed", new) for k, (_old, new) in d.changed.items()}
+        delta_leaves |= {k: ("removed", None) for k in d.removed}
+    promoted: list[str] = []
+    touched_locked = False
+    for xid in sorted(experiments, key=lambda x: int(x.split("-")[1])):
+        exp = experiments[xid]
+        if not exp.open_at_base:
+            continue
+        locks = locked_leaves(exp)
+        hits = sorted(leaf for leaf in delta_leaves if any(_overlaps(leaf, k) for k in locks))
+        if not hits:
+            continue
+        touched_locked = True
+        listed = ", ".join(_dotted(x) for x in hits)
+        if xid not in parsed.experiments:
             errors.append(
-                f"`Lane: fast` needs a reason of at least {cfg.fast_reason_min_chars} characters"
+                f"{xid} is open (no verdict) and tests {listed}; this PR changes it. "
+                f"Leave it until {xid} concludes, or cite `Experiment: {xid}` with its "
+                "`win` verdict to promote the winning arm"
             )
-
-    flag_ok: list[str] = []
-    all_added = {_dotted(k): v for d in deltas.values() for k, v in d.added.items()}
-    all_old = {_dotted(k) for d in deltas.values() for k in (*d.changed.keys(), *d.removed.keys())}
-    for flag in lanes.flags:
-        stem = flag.split(".", 1)[0]
-        if flag in all_old:
-            errors.append(f"Flag: {flag} already exists on the base branch; a flag must be new")
-        elif flag not in all_added:
+            continue
+        if exp.verdict != "win":
             errors.append(
-                f"Flag: {flag} is not a key this PR adds to config/{stem}.yaml "
-                "(the key must be new and set to its control default)"
+                f"Experiment: {xid} cited, but its verdict is "
+                f"{exp.verdict or 'not committed'}, not win; {listed} stay locked"
             )
-        elif not _is_off(all_added[flag], cfg):
-            errors.append(
-                f"Flag: {flag} defaults to {all_added[flag]!r}; a new flag must default to off "
-                f"(one of {list(cfg.flag_off_values)}) so control behaviour is unchanged"
-            )
-        else:
-            flag_ok.append(flag)
-
-    # -- promotion: an existing value in a strategy YAML changed or went away -----
-    promo = {s: d for s, d in deltas.items() if s in cfg.promotion_stems}
-    changed_leaves = {k: v for d in promo.values() for k, v in d.changed.items()}
-    removed_leaves = {k: v for d in promo.values() for k, v in d.removed.items()}
-    if changed_leaves or removed_leaves:
-        covered, w_errors, w_notes = _waived(
-            changed_leaves, removed_leaves, lanes.fast_reason, fast_ok, plan or {}, cfg
-        )
-        if covered:
-            notes += w_notes
-            notes.append(f"fast lane: {lanes.fast_reason} (arc-sentinel audits fast-lane PRs)")
-            return Result(files, ok=not errors, lane="waiver", errors=errors, notes=notes)
-        winners = [e for e in cited if e.verdict == "win"]
-        if w_errors and not winners:
-            return Result(files, ok=False, lane="waiver", errors=errors + w_errors, notes=notes)
-        for e in cited:
-            if e.verdict != "win":
-                notes.append(f"{e.id} verdict is {e.verdict or 'not committed'}, not win")
-        if not winners:
-            listed = ", ".join(_dotted(k) for k in sorted({*changed_leaves, *removed_leaves}))
-            errors.append(
-                f"promotion: this PR changes existing strategy values ({listed}); it needs "
-                "`Experiment: XP-<n>` with a committed `win` verdict "
-                f"({cfg.verdicts_dir}/XP-<n>.yaml). Flag: and Lane: fast do not cover a promotion"
-            )
-            return Result(files, ok=False, lane="promotion", errors=errors, notes=notes)
-        for leaf, (old, new) in sorted(changed_leaves.items()):
-            matched = False
-            for e in winners:
-                present, val = _overlay_value(e.overlay, leaf)
-                if present and val == new:
-                    matched = True
-                    break
-            if not matched:
-                ids = ", ".join(e.id for e in winners)
+            continue
+        arm = exp.winning_arm()
+        overlay = exp.arms.get(arm)
+        if overlay is None:
+            errors.append(f"{xid} verdict names winner {arm}, which is not an arm of its spec")
+            continue
+        bad = False
+        for leaf in hits:
+            kind, new = delta_leaves[leaf]
+            if kind == "removed":
+                errors.append(f"promotion {xid}: removing {_dotted(leaf)} is never a promotion")
+                bad = True
+                continue
+            present, val = _overlay_value(overlay, leaf)
+            if not present or val != new:
+                tested = repr(val) if present else "untested by that arm"
                 errors.append(
-                    f"promotion: {_dotted(leaf)} {old!r} -> {new!r} is not the treatment "
-                    f"overlay value of {ids}; only what the winning experiment tested may change"
+                    f"promotion {xid}: {_dotted(leaf)} -> {new!r} is not arm {arm}'s "
+                    f"overlay value ({tested}); only what the winning arm tested may ship"
                 )
-        for leaf in sorted(removed_leaves):
-            notes.append(f"removed {_dotted(leaf)} under winning experiment(s)")
-        notes.append("promotes " + ", ".join(e.id for e in winners))
-        return Result(files, ok=not errors, lane="promotion", errors=errors, notes=notes)
+                bad = True
+        if not bad:
+            promoted.append(f"{xid} ({arm})")
+    if promoted:
+        notes.append("promotes " + ", ".join(promoted))
+    for path in sorted(removed_specs):
+        warnings.append(
+            f"deletes open experiment spec {path} (no verdict), so its leaves unlock; "
+            "arc-sentinel checks it was never registered"
+        )
 
-    # -- non-promotion: any one valid lane passes -------------------------------
-    if cited and not unknown:
-        lane = "experiment"
-    elif flag_ok and len(flag_ok) == len(lanes.flags):
-        lane = "flag"
-        notes.append("arc-sentinel checks the code path is reachable only when the flag is on")
-    elif fast_ok:
-        lane = "fast"
-        notes.append(f"fast lane: {lanes.fast_reason} (arc-sentinel audits fast-lane PRs)")
+    # -- advisory -------------------------------------------------------------------
+    stems = {m.group(1) for p in files if (m := _CONFIG_YAML_RE.match(p))}
+    leaves = sorted(_dotted(k) for s, d in deltas.items() if s in stems for k in d.leaves())
+    unknown = [x for x in parsed.experiments if x not in experiments]
+    notes += [f"Experiment: {x} has no spec in {cfg.experiments_dir}/ (ignored)" for x in unknown]
+    if files and not parsed.advisory:
+        warnings.append(
+            "no `XP-advisory: none | <reason>` line in the PR body (advisory only; "
+            "docs/OPS.md 5.20)"
+        )
+    if errors:
+        status = "locked"
+    elif promoted:
+        status = "promotion"
+    elif files or touched_locked or warnings:
+        status = "advisory"
     else:
-        if not (lanes.experiments or lanes.flags or lanes.fast_reason is not None):
-            errors.append("no lane line in the PR body")
-        return Result(files, ok=False, lane="none", errors=errors, notes=notes)
-    # A lane passed; a broken extra line is still an error (it would mislead the audit).
-    return Result(files, ok=not errors, lane=lane, errors=errors, notes=notes)
+        status = "none"
+    return Result(
+        strategy_files=files,
+        ok=not errors,
+        status=status,
+        errors=errors,
+        notes=notes,
+        warnings=warnings,
+        leaves=leaves,
+        advisory=parsed.advisory if files else None,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -453,35 +403,113 @@ def load_lane_config(path: Path = LANE_CONFIG) -> LaneConfig:
     return LaneConfig.from_mapping(yaml.safe_load(path.read_text()) or {})
 
 
-def load_experiments(root: Path, cfg: LaneConfig) -> dict[str, Experiment]:
-    """Every spec in the experiments dir, with its committed verdict when present."""
-    verdicts: dict[str, str] = {}
-    vdir = root / cfg.verdicts_dir
-    if vdir.is_dir():
-        for p in sorted(vdir.glob("*.yaml")):
-            data = yaml.safe_load(p.read_text()) or {}
-            if not isinstance(data, dict) or not data.keys() >= VERDICT_KEYS:
-                msg = f"{p}: a verdict file needs {', '.join(sorted(VERDICT_KEYS))}"
-                raise ValueError(msg)
-            verdicts[str(data["experiment_id"]).upper()] = str(data["verdict"]).lower()
-    out: dict[str, Experiment] = {}
-    edir = root / cfg.experiments_dir
-    for p in sorted(edir.glob("*.yaml")) if edir.is_dir() else ():
-        data = yaml.safe_load(p.read_text()) or {}
-        if not isinstance(data, dict) or "id" not in data:
-            continue
-        xid = str(data["id"]).upper()
-        arms = data.get("arms") or {}
-        arms = arms if isinstance(arms, dict) else {}
-        treatment = arms.get("treatment")
-        if treatment is None:  # D69 spec v2: `treatments: {t1: ...}`
-            ts = arms.get("treatments") or {}
-            # a K>1 spec has no single tested overlay until its verdict names the winning
-            # arm (E15.5): nothing is promotable from it yet
-            treatment = next(iter(ts.values())) if isinstance(ts, dict) and len(ts) == 1 else {}
-        overlay = treatment.get("overlay") or {} if isinstance(treatment, dict) else {}
-        out[xid] = Experiment(id=xid, overlay=overlay, verdict=verdicts.get(xid))
+def _merge(a: Mapping[str, Any], b: Mapping[str, Any]) -> dict[str, Any]:
+    """Deep merge, *b* wins on a conflicting scalar (same rule as arc.utils.yamlpatch)."""
+    out = dict(a)
+    for k, v in b.items():
+        out[k] = _merge(out[k], v) if isinstance(out.get(k), dict) and isinstance(v, dict) else v
     return out
+
+
+def _arms(data: Any) -> dict[str, Mapping[str, Any]]:
+    """Treatment arm -> overlay. A v1 ``arms.treatment`` is ``t1`` (the D69 alias)."""
+    arms = data.get("arms") if isinstance(data, dict) else None
+    arms = arms if isinstance(arms, dict) else {}
+    out: dict[str, Mapping[str, Any]] = {}
+    if isinstance(arms.get("treatment"), dict):  # v1 spec: the one treatment is t1
+        out[FIRST_TREATMENT] = arms["treatment"].get("overlay") or {}
+    ts = arms.get("treatments")
+    if isinstance(ts, dict):  # D69 spec v2
+        for name, arm in ts.items():
+            if isinstance(arm, dict):
+                out[str(name)] = arm.get("overlay") or {}
+    return out
+
+
+@dataclass(frozen=True)
+class Verdict:
+    verdict: str
+    winner: str | None
+
+
+def parse_verdict(data: Any, where: str) -> tuple[str, Verdict]:
+    """``(experiment id, verdict)`` from a committed verdict file's YAML."""
+    if not isinstance(data, dict) or not data.keys() >= VERDICT_KEYS:
+        msg = f"{where}: a verdict file needs {', '.join(sorted(VERDICT_KEYS))}"
+        raise ValueError(msg)
+    winner = data.get("winner")
+    if winner is not None and not _WINNER_RE.match(str(winner)):
+        msg = f"{where}: winner must be t1..t16, not {winner!r}"
+        raise ValueError(msg)
+    return str(data["experiment_id"]).upper(), Verdict(
+        verdict=str(data["verdict"]).lower(), winner=None if winner is None else str(winner)
+    )
+
+
+def build_experiments(
+    base_specs: Mapping[str, Any],
+    head_specs: Mapping[str, Any],
+    base_verdicts: Mapping[str, Verdict],
+    head_verdicts: Mapping[str, Verdict],
+) -> tuple[dict[str, Experiment], list[str]]:
+    """The experiments the check knows, and the open specs this PR deletes.
+
+    Specs are keyed by repo path (parsed YAML). An experiment is *open* when its spec is
+    on the base, still on the head, and the base has no verdict for it. Its locked
+    leaves come from the base and head specs together, so editing an open spec in the
+    same PR unlocks nothing. A spec the PR adds locks nothing yet. A PR that deletes an
+    open spec (retiring a never-registered draft, e.g. E20.1 / E21.2) unlocks its
+    leaves: it is listed as a warning and arc-sentinel checks the id was never
+    registered. The verdict (and winning arm) come from the PR head, so a promotion PR
+    commits its verdict file.
+    """
+    out: dict[str, Experiment] = {}
+    removed: list[str] = []
+    for path in sorted({*base_specs, *head_specs}):
+        base, head = base_specs.get(path), head_specs.get(path)
+        base = base if isinstance(base, dict) and "id" in base else None
+        head = head if isinstance(head, dict) and "id" in head else None
+        spec = head or base
+        if spec is None:
+            continue
+        xid = str(spec["id"]).upper()
+        on_base = base is not None and str(base["id"]).upper() == xid
+        if on_base and head is None and xid not in base_verdicts:
+            removed.append(f"{path} ({xid})")
+            continue
+        is_open = on_base and xid not in base_verdicts
+        arms: dict[str, Mapping[str, Any]] = {}
+        for src in (base if is_open else None, head):
+            for arm, overlay in _arms(src).items():
+                arms[arm] = _merge(arms.get(arm, {}), overlay)
+        v = head_verdicts.get(xid)
+        out[xid] = Experiment(
+            id=xid,
+            arms=arms,
+            verdict=v.verdict if v else None,
+            winner=v.winner if v else None,
+            open_at_base=is_open,
+            path=path,
+        )
+    return out, removed
+
+
+def load_experiments(root: Path, cfg: LaneConfig) -> dict[str, Experiment]:
+    """Every spec in the working tree's experiments dir with its verdict (no git).
+
+    Base = head = the working tree. CI reads base and head through :func:`collect`.
+    """
+    verdicts: dict[str, Verdict] = {}
+    vdir = root / cfg.verdicts_dir
+    for p in sorted(vdir.glob("*.yaml")) if vdir.is_dir() else ():
+        xid, v = parse_verdict(yaml.safe_load(p.read_text()), str(p))
+        verdicts[xid] = v
+    edir = root / cfg.experiments_dir
+    specs = {
+        p.relative_to(root).as_posix(): yaml.safe_load(p.read_text())
+        for p in (sorted(edir.glob("*.yaml")) if edir.is_dir() else ())
+    }
+    return build_experiments(specs, specs, verdicts, verdicts)[0]
 
 
 GitRunner = Callable[[list[str]], str]
@@ -504,12 +532,31 @@ def _show(git: GitRunner, rev: str, path: str) -> Any:
     return yaml.safe_load(text)
 
 
-def collect(
-    git: GitRunner, base: str, head: str, cfg: LaneConfig
-) -> tuple[list[str], dict[str, YamlDelta]]:
-    """Changed paths between the merge base and *head*, plus leaf deltas per changed
-    top-level ``config/<stem>.yaml`` (strategy files for promotions, any file for a
-    ``Flag:`` key such as one in ``routines.yaml``)."""
+def _yaml_files(git: GitRunner, rev: str, directory: str) -> dict[str, Any]:
+    """``*.yaml`` directly in *directory* at *rev* (path -> parsed YAML)."""
+    names = git(["ls-tree", "--name-only", rev, directory.rstrip("/") + "/"]).splitlines()
+    return {n: _show(git, rev, n) for n in sorted(names) if n.endswith(".yaml")}
+
+
+def _verdicts(git: GitRunner, rev: str, cfg: LaneConfig) -> dict[str, Verdict]:
+    out: dict[str, Verdict] = {}
+    for path, data in _yaml_files(git, rev, cfg.verdicts_dir).items():
+        xid, v = parse_verdict(data, f"{rev[:12]}:{path}")
+        out[xid] = v
+    return out
+
+
+@dataclass(frozen=True)
+class Diff:
+    changed: list[str]
+    deltas: dict[str, YamlDelta]
+    experiments: dict[str, Experiment]
+    removed_specs: list[str]
+
+
+def collect(git: GitRunner, base: str, head: str, cfg: LaneConfig) -> Diff:
+    """Changed paths between the merge base and *head*, leaf deltas per changed
+    top-level ``config/<stem>.yaml``, and the experiments (open = on the merge base)."""
     mb = git(["merge-base", base, head]).strip()
     changed = [p for p in git(["diff", "--name-only", mb, head]).splitlines() if p]
     deltas: dict[str, YamlDelta] = {}
@@ -519,11 +566,17 @@ def collect(
             continue
         stem = m.group(1)
         deltas[stem] = yaml_delta(stem, _show(git, mb, p), _show(git, head, p))
-    return changed, deltas
+    experiments, removed = build_experiments(
+        _yaml_files(git, mb, cfg.experiments_dir),
+        _yaml_files(git, head, cfg.experiments_dir),
+        _verdicts(git, mb, cfg),
+        _verdicts(git, head, cfg),
+    )
+    return Diff(changed=changed, deltas=deltas, experiments=experiments, removed_specs=removed)
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="Strategy-lane CI check (PLAN D44, card E10.7).")
+    ap = argparse.ArgumentParser(description="Strategy-lane CI check (PLAN D86, card E21.1).")
     ap.add_argument("--base", required=True, help="base commit (PR base sha)")
     ap.add_argument("--head", required=True, help="head commit (PR head sha)")
     ap.add_argument("--body-file", type=Path, required=True, help="PR body text")
@@ -531,15 +584,26 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     try:
         cfg = load_lane_config(args.repo / "config" / "strategy_lane.yaml")
-        experiments = load_experiments(args.repo, cfg)
-        changed, deltas = collect(_git(args.repo), args.base, args.head, cfg)
+        diff = collect(_git(args.repo), args.base, args.head, cfg)
     except (OSError, ValueError, subprocess.CalledProcessError) as exc:
         sys.stderr.write(f"strategy-lane: config error: {exc}\n")
         return 2
-    plan_file = args.repo / PLAN_PATH
-    plan = plan_rows(plan_file.read_text()) if plan_file.is_file() else {}
-    result = evaluate(changed, args.body_file.read_text(), deltas, experiments, cfg, plan)
+    result = evaluate(
+        diff.changed,
+        args.body_file.read_text(),
+        diff.deltas,
+        diff.experiments,
+        cfg,
+        removed_specs=diff.removed_specs,
+    )
     sys.stdout.write(result.render() + "\n")
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        for line in result.annotations():
+            sys.stdout.write(line + "\n")
+        summary = os.environ.get("GITHUB_STEP_SUMMARY")
+        if summary:
+            with Path(summary).open("a") as fh:
+                fh.write(result.summary_markdown())
     return 0 if result.ok else 1
 
 
