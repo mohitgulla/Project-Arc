@@ -176,6 +176,7 @@ class TickerHistory:
         self.points = points
         self.iv = iv
         self.events = events
+        self._raw_by_day: dict[dt.date, pd.DataFrame] | None = None
 
     @property
     def sessions(self) -> list[dt.date]:
@@ -184,7 +185,10 @@ class TickerHistory:
     def raw_day(self, day: dt.date) -> pd.DataFrame:
         if self.raw.empty:
             return self.raw
-        return self.raw[self.raw["date"] == day]
+        if self._raw_by_day is None:  # E7.11: one groupby, not a full-frame scan per day
+            self._raw_by_day = {d: g for d, g in self.raw.groupby("date", sort=False)}
+        got = self._raw_by_day.get(day)
+        return self.raw.iloc[0:0] if got is None else got
 
 
 class HistoryView:
@@ -399,6 +403,10 @@ class HistoryView:
     def sessions(self, ticker: str) -> list[dt.date]:
         """Decision sessions in [start, end] with a marked chain."""
         return [d for d in self.load(ticker).sessions if self.start <= d <= self.end]
+
+    def evict(self, ticker: str) -> None:
+        """E7.11: drop *ticker*'s loaded history (a worker walks many names; keep RSS flat)."""
+        self._cache.pop(ticker.upper(), None)
 
     def eligible(self, day: dt.date, tickers: Sequence[str] | None = None) -> list[str]:
         """Checkpoint names eligible on *day* (priority order)."""

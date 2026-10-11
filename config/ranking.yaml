@@ -124,6 +124,24 @@ backtest:
       atm_strikes: 3
       max_atm_spread_pct: 0.10
     screen_dte_window: [30, 45]
+  sim:                        # E7.11 (D84) `arc backtest sim`: live-shaped daily funnel
+    selection: cross_name     # cross_name = pool all active names; per_ticker = the E7.5 walk
+    equity: 25000             # D80 account ($25K); --equity overrides
+    apply_screen: true        # live D9 screen on non-seed names
+    active_cap: 50            # live universe_active_max
+    active_fill: round_robin  # universe.active_fill (D67)
+    momentum_size: 20         # live momentum tier size
+    momentum_lookback: 252    # 12-1 risk-adjusted momentum, closes <= d
+    momentum_skip: 21
+    regime_model: v2          # stance proxy labels (D77)
+    earnings_blackout: true   # pure gate rule on E7.10 projected dates
+    slippage_x: 0.25          # fill at mid +/- x * spread (slippage_by_kind / scorecard override per kind)
+    spread_rule: live         # no fill when a leg's spread > max(spread_max_pct * mid, spread_max_abs)
+    capacity: clip            # clip | skip | off
+    max_pct_oi: 0.05          # contracts <= 5 % of each leg's OI
+    max_pct_volume: 0.25      # contracts <= 25 % of each leg's session volume
+    per_name_depth: 3         # candidates per name in the cross-name pool
+    daily_loss_rule: true     # check_daily_loss blocks the day's opens
   decision:                   # D25 switch rule, fixed before the run
     min_subperiod_wins: 2
     subperiods: [bear, sideways, bull]
