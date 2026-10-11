@@ -25,7 +25,7 @@ from arc.models import RawDoc
 from arc.universe.ingest import IngestUniverse
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
 
     from arc.config import ArcSettings
     from arc.context.ttl import Ttl
@@ -111,17 +111,24 @@ def fetch_rss(
     conn: sqlite3.Connection,
     settings: ArcSettings,
     *,
+    feeds: Sequence[str],
     source_keys: Mapping[str, str] | None = None,
     max_ages: Mapping[str, Ttl] | None = None,
     feed_specs: Mapping[str, FeedSpec] | None = None,
     now: datetime | None = None,
 ) -> list[RawDoc]:
-    """Fetch all configured RSS feeds; returns the new Scalp-readable docs.
+    """Fetch *feeds*; returns the new Scalp-readable docs.
 
     See :func:`fetch_rss_feeds` for the arguments and per-feed accounting.
     """
     return fetch_rss_feeds(
-        conn, settings, source_keys=source_keys, max_ages=max_ages, feed_specs=feed_specs, now=now
+        conn,
+        settings,
+        feeds=feeds,
+        source_keys=source_keys,
+        max_ages=max_ages,
+        feed_specs=feed_specs,
+        now=now,
     ).docs
 
 
@@ -129,12 +136,13 @@ def fetch_rss_feeds(  # noqa: PLR0912, PLR0915 - one pass per feed and entry
     conn: sqlite3.Connection,
     settings: ArcSettings,
     *,
+    feeds: Sequence[str],
     source_keys: Mapping[str, str] | None = None,
     max_ages: Mapping[str, Ttl] | None = None,
     feed_specs: Mapping[str, FeedSpec] | None = None,
     now: datetime | None = None,
 ) -> RssFetch:
-    """Fetch all configured RSS feeds and store new entries.
+    """Fetch the RSS *feeds* (URLs, from the ``rss`` job's ``feeds:``) and store new entries.
 
     *source_keys* maps a feed URL to its E4.5 registry name (``wsj_markets``); the
     name is stored on each doc so the Scalp's per-source budget can group by feed.
@@ -151,7 +159,6 @@ def fetch_rss_feeds(  # noqa: PLR0912, PLR0915 - one pass per feed and entry
     run_now = now or datetime.now(UTC)
     cursor_repo = IngestCursorRepo(conn)
     doc_repo = RawDocRepo(conn)
-    feeds = settings.ingest_rss_feeds
     out = RssFetch()
 
     if not feeds:

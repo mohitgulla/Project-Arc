@@ -311,18 +311,17 @@ def rss_source(ctx: JobContext) -> JobResult:
     from arc.ingest.rss import fetch_rss_feeds
     from arc.ingest.sources import FeedSpec, SourceRegistry
 
-    settings = ctx.settings
     feeds = [FeedSpec.parse(f) for f in ctx.options.get("feeds") or []]
     keys: dict[str, str] = {}
     ages: dict[str, Ttl] = {}
     if feeds:
-        settings = settings.model_copy(update={"ingest_rss_feeds": [f.url for f in feeds]})
         keys = {f.url: f.key for f in feeds}
         reg = SourceRegistry.from_routines(ctx.routines)
         ages = {f.url: reg.max_age_for(f.key) for f in feeds if f.key in reg.sources}
     fetched = fetch_rss_feeds(
         ctx.conn,
-        settings,
+        ctx.settings,
+        feeds=[f.url for f in feeds],
         source_keys=keys,
         max_ages=ages,
         feed_specs={f.url: f for f in feeds},
@@ -1926,14 +1925,15 @@ def youtube_source(ctx: JobContext) -> JobResult:
     the current ``youtube:captions_backoff`` cooldown, so every scheduled run
     shows how the E4.1c backoff behaved.
     """
+    from arc.config import DEFAULT_YOUTUBE_CHANNELS
     from arc.ingest.youtube import YoutubeRunStats, fetch_youtube
 
-    settings = ctx.settings
     channel = ctx.options.get("channel")
-    if channel:
-        settings = settings.model_copy(update={"ingest_youtube_channels": [youtube_url(channel)]})
+    channels = [youtube_url(channel)] if channel else list(DEFAULT_YOUTUBE_CHANNELS)
     stats = YoutubeRunStats()
-    result = _source_result(ctx, fetch_youtube(ctx.conn, settings, stats=stats))
+    result = _source_result(
+        ctx, fetch_youtube(ctx.conn, ctx.settings, channels=channels, stats=stats)
+    )
     result.summary = f"{result.summary} · {stats.summary()}"
     result.metrics.update(
         {

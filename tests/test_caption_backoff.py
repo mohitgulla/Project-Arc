@@ -62,10 +62,12 @@ def db() -> sqlite3.Connection:
     return conn
 
 
+CHANNELS = ["https://www.youtube.com/@T"]
+
+
 def _settings(**kw: object) -> ArcSettings:
     base: dict[str, object] = {
         "env": "paper",
-        "ingest_youtube_channels": ["https://www.youtube.com/@T"],
         "universe": ["SPY"],
         "ffmpeg_bin": FFMPEG,
         "yt_caption_sleep_seconds": 7.5,
@@ -129,7 +131,13 @@ def _fetch(db, settings, infos, results, *, now=NOW, rng=None, sleep=None, tx=No
         capture_logs() as logs,
     ):
         docs = fetch_youtube(
-            db, settings, transcriber=tx, now=now, rng=rng or random.Random(0), sleep=sleep
+            db,
+            settings,
+            channels=CHANNELS,
+            transcriber=tx,
+            now=now,
+            rng=rng or random.Random(0),
+            sleep=sleep,
         )
     return docs, dl, sleep, tx, logs
 
@@ -319,6 +327,7 @@ class TestRunBehaviour:
             fetch_youtube(
                 db,
                 settings,
+                channels=CHANNELS,
                 transcriber=FixtureTranscriber(text="spy audio words"),
                 now=NOW,
                 rng=random.Random(0),
@@ -349,6 +358,7 @@ class TestRunBehaviour:
             fetch_youtube(
                 db,
                 settings,
+                channels=CHANNELS,
                 transcriber=FixtureTranscriber(text="spy"),
                 now=NOW + timedelta(minutes=5),
                 stats=stats,
@@ -420,7 +430,12 @@ class TestCooldown:
             mock.patch("arc.ingest.youtube.resolve_ffmpeg", return_value=FFMPEG),
         ):
             fetch_youtube(
-                db, settings, force_audio=True, transcriber=FixtureTranscriber(text="x"), now=NOW
+                db,
+                settings,
+                channels=CHANNELS,
+                force_audio=True,
+                transcriber=FixtureTranscriber(text="x"),
+                now=NOW,
             )
         dl.assert_not_called()
         assert IngestCursorRepo(db).get(BACKOFF_KEY) is None

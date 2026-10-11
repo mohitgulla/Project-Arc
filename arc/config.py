@@ -940,10 +940,6 @@ class ArcSettings(BaseSettings):
     )
 
     # -- Ingestion (E4.1) ----------------------------------------------------
-    ingest_rss_feeds: list[str] = Field(
-        default_factory=list,
-        description="RSS feed URLs for the Scalp connector.",
-    )
     ingest_rss_timeout_seconds: float = Field(
         default=20.0,
         gt=0,
@@ -985,13 +981,6 @@ class ArcSettings(BaseSettings):
     finnhub_cluster_days: Annotated[int, Field(ge=1, le=180)] = Field(
         default=30,
         description="D46: ... within this many days.",
-    )
-    ingest_youtube_channels: list[str] = Field(
-        default_factory=lambda: list(DEFAULT_YOUTUBE_CHANNELS),
-        description=(
-            "YouTube channel/playlist URLs for transcript ingestion (`arc ingest`). "
-            "Default: the youtube.briefs channels (D45/D49/D60), IBD's /streams included."
-        ),
     )
 
     # -- YouTube audio-transcription fallback (E4.1b, D15) -------------------
@@ -1274,8 +1263,6 @@ class ArcSettings(BaseSettings):
 
     @field_validator(
         "universe",
-        "ingest_rss_feeds",
-        "ingest_youtube_channels",
         "approver_slack_user_ids",
         mode="before",
     )

@@ -550,10 +550,11 @@ class TestFreshness:
         parsed.entries = entries
         monkeypatch.setattr(rss, "_download", lambda *_a, **_k: b"<rss/>")
         monkeypatch.setattr(rss.feedparser, "parse", lambda *_a, **_k: parsed)
-        s = ArcSettings(env="paper", ingest_rss_feeds=[url])  # type: ignore[call-arg]
+        s = ArcSettings(env="paper")  # type: ignore[call-arg]
         docs = rss.fetch_rss(
             conn,
             s,
+            feeds=[url],
             source_keys={url: "cnbc"},
             max_ages={url: Ttl(duration=dt.timedelta(hours=6))},
             now=NOW,
