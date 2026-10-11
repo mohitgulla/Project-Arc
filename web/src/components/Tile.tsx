@@ -14,18 +14,20 @@ export interface TileData {
   to?: string;
   /** Tone for the name line (D87: Movers colour Bullish / Bearish). Default muted. */
   nameClassName?: string;
+  /** D88: rich name line (Movers: `Play Bearish`); `name` stays the plain-text title. */
+  nameNode?: ReactNode;
   /** D88: an extra line under the name (Movers: the stock's own day change). */
   sub?: ReactNode;
 }
 
 /** ~116x152 mover tile: ticker, name, Sparkline, ChangePill (§4). */
-export function Tile({ ticker, name, values, change, metric = "pnl", to, nameClassName = "text-muted", sub }: TileData) {
+export function Tile({ ticker, name, values, change, metric = "pnl", to, nameClassName = "text-muted", nameNode, sub }: TileData) {
   const body = (
     <div className="flex h-[152px] w-[116px] shrink-0 flex-col justify-between rounded-control border border-line bg-card p-3 hover:bg-hover">
       <div className="min-w-0">
         <div className="font-semibold text-title">{ticker}</div>
-        <div className={`truncate text-micro ${nameClassName}`} title={name} data-testid="tile-name">
-          {name}
+        <div className={`truncate text-micro ${nameNode === undefined ? nameClassName : ""}`} title={name} data-testid="tile-name">
+          {nameNode ?? name}
         </div>
         {sub !== undefined && (
           <div className="truncate text-micro tabular-nums" data-testid="tile-sub">
