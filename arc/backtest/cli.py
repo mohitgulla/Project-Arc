@@ -131,6 +131,14 @@ def add_backtest_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]
         "A filter needs split-adjusted daily OHLC (cached in <data-dir>/underlying_ohlc/, "
         "fetched from Alpaca unless --offline)",
     )
+    rk.add_argument(
+        "--max-be-atr",
+        type=float,
+        default=None,
+        help="E16.5: override backtest.max_be_atr (default: config/ranking.yaml, off): drop "
+        "debit candidates whose directional breakeven is > this many ATR14 x sqrt(DTE) "
+        "from the close. Needs the same split-adjusted daily OHLC as --entry-filter",
+    )
     rk.add_argument("--workers", type=int, default=1, help="Parallel ticker processes")
     rk.add_argument(
         "--regime-model",
@@ -235,6 +243,13 @@ def run_rank_cli(args: argparse.Namespace) -> int:
         cfg = cfg.model_copy(
             update={"backtest": bt.model_copy(update={"entry_filter": args.entry_filter})}
         )
+    if args.max_be_atr is not None:
+        bt = cfg.backtest
+        cfg = cfg.model_copy(
+            update={
+                "backtest": bt.model_validate({**bt.model_dump(), "max_be_atr": args.max_be_atr})
+            }
+        )
     if getattr(args, "regime_model", None) is not None:
         bt = cfg.backtest
         cfg = cfg.model_copy(
@@ -252,7 +267,7 @@ def run_rank_cli(args: argparse.Namespace) -> int:
         offline=args.offline,
     )
     ohlc = None
-    if cfg.backtest.entry_filter != "none":
+    if cfg.backtest.entry_filter != "none" or cfg.backtest.max_be_atr is not None:
         ohlc = ohlc_for(tickers, args.start, args.end, args.data_dir, offline=args.offline)
     run_rank_report(
         store=ParquetHistoryStore(args.data_dir),

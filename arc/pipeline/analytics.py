@@ -16,6 +16,7 @@ from arc.journal.analytics import (
     LegAnalytics,
     ProposalAnalytics,
     VolStats,
+    be_atr_multiple,
     expected_move,
     moneyness_pct,
     otm,
@@ -28,7 +29,7 @@ if TYPE_CHECKING:
     from arc.exits.model import ExitModelResult
     from arc.pipeline.market import PricedStructure
 
-__all__ = ["build_analytics"]
+__all__ = ["build_analytics", "regime_atr14"]
 
 
 def _f(v: object) -> float | None:
@@ -48,6 +49,13 @@ def _vol(regime: dict[str, Any] | None, atm_iv: float | None) -> VolStats:
         iv_hv20=(iv / hv20) if iv is not None and hv20 else None,
         features_as_of=vol.get("as_of") or (regime or {}).get("as_of"),
     )
+
+
+def regime_atr14(regime: dict[str, Any] | None) -> float | None:
+    """E16.5: ATR14 ($) from the ``regime`` entry's E16.2 ``technicals`` (None if absent)."""
+    tech = (regime or {}).get("technicals")
+    atr = _f(tech.get("atr14")) if isinstance(tech, dict) else None
+    return atr if atr is not None and atr > 0 else None
 
 
 def build_analytics(
@@ -117,6 +125,7 @@ def build_analytics(
             )
         )
     prev = _f((regime or {}).get("last_close"))
+    atr14 = regime_atr14(regime)  # E16.5 (D76): breakevens in ATR terms
     return ProposalAnalytics(
         spot=spot,
         spot_as_of=priced.spot_as_of,
@@ -131,6 +140,7 @@ def build_analytics(
                 price=float(b),
                 pct=moneyness_pct(float(b), spot),
                 sigma=sigma_distance(float(b), spot, iv, dte),
+                atr_multiple=be_atr_multiple(float(b), spot, atr14, dte),
             )
             for b in st.breakevens
         ],

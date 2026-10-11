@@ -20,6 +20,13 @@
 # PoP and cost-ratio filters stay backtest-only. Reason: NFLX was proposed at
 # -$0.94/unit on 2026-10-01 and Research prose did not bind (Analyst A-1).
 #
+# `scanner` (E16.5, D76) is a live Quant-menu filter, strategy lane, shipped OFF:
+#   max_be_atr  drop debit structures whose breakeven in the trade's direction is more
+#               than this many ATR14 x sqrt(DTE) from spot, before the menu is ranked
+#               and cut (journaled `be_unrealistic`). Credit structures are never
+#               dropped; a ticker without ATR14 keeps every structure. null = off.
+#               Bounds 0.5-5. Turn on only through an experiment verdict (D44).
+#
 # `backtest` configures `arc backtest rank` (arc/backtest/ranking.py).
 
 ranking:
@@ -30,6 +37,9 @@ ranking:
     min_managed_net_ev: 0.0   # $ per unit, strict >
     min_managed_pop: 0.0      # no PoP floor by default (owner has not set one)
     live: true                # E6.4a: min_managed_net_ev also gates the live propose step
+
+scanner:
+  max_be_atr: null            # E16.5 (D76): off; e.g. 1.5 = drop debits needing > 1.5 ATR x sqrt(DTE)
 
 backtest:
   starting_equity: 100000
@@ -52,6 +62,9 @@ backtest:
   # anti_chase_vwap = also the close vs the day's bar VWAP. Thresholds default to the
   # live D78 rule (routines.yaml anti_chase:); override under backtest.anti_chase.
   entry_filter: none
+  # E16.5 (D76): the same breakeven-realism filter as scanner.max_be_atr, ATR14 from
+  # split-adjusted daily OHLC <= the decision day. null = off (E7.5 run unchanged).
+  max_be_atr: null
   decision:                   # D25 switch rule, fixed before the run
     min_subperiod_wins: 2
     subperiods: [bear, sideways, bull]

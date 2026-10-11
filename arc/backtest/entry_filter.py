@@ -51,10 +51,13 @@ if TYPE_CHECKING:
 log = structlog.get_logger()
 
 __all__ = [
+    "BeAtrDays",
     "EntryFilter",
     "EntryFilterRule",
     "OhlcStore",
+    "apply_be_filter",
     "apply_entry_filter",
+    "atr14_days",
     "entry_filter_challenge",
     "load_ohlc",
     "stretched_days",
@@ -248,6 +251,79 @@ def apply_entry_filter(
         hit += len(kept) < len(menu)
         out[d] = kept
     return out, hit
+
+
+# ---------------------------------------------------------------------------
+# E16.5 (D76): breakeven realism (backtest.max_be_atr)
+# ---------------------------------------------------------------------------
+
+#: Decision day -> ATR14 in the option chain's (raw, unadjusted) price units.
+BeAtrDays = dict[dt.date, float]
+
+
+def atr14_days(ohlc: pd.DataFrame, closes: pd.Series, days: Sequence[dt.date]) -> BeAtrDays:
+    """ATR14 per decision day from split-adjusted *ohlc* (bars <= the day only).
+
+    The OHLC is split-adjusted while strikes and *closes* are raw, so the ATR is put
+    back into raw units with ``raw close / adjusted close`` of the same day (1.0 away
+    from a split). A day without enough bars or a close is left out (nothing dropped).
+    """
+    out: BeAtrDays = {}
+    if ohlc.empty:
+        return out
+    for d in days:
+        tech = compute_technicals(ohlc, d)
+        if tech is None or tech.atr14 is None or tech.atr14 <= 0 or d not in closes.index:
+            continue
+        raw, adj = float(closes[d]), float(tech.close)
+        if not (math.isfinite(raw) and math.isfinite(adj)) or adj <= 0:
+            continue
+        out[d] = tech.atr14 * raw / adj
+    return out
+
+
+def candidate_be_atr(c: Candidate, spot: float, atr14: float) -> float | None:
+    """``be_atr`` of a backtest candidate (the live :func:`structure_be_atr` on its legs)."""
+    from arc.backtest.ranking import _legs
+    from arc.scanner.be_atr import structure_be_atr
+    from arc.structures import analyze
+
+    try:
+        st = analyze(_legs(c.picks, c.underlying), as_of=c.day)
+    except ValueError:
+        return None
+    return structure_be_atr(st, spot, atr14)
+
+
+def apply_be_filter(
+    menus: Mapping[dt.date, list[Candidate]],
+    closes: pd.Series,
+    atr: Mapping[dt.date, float],
+    max_be_atr: float,
+) -> tuple[dict[dt.date, list[Candidate]], int]:
+    """Drop debit candidates whose directional breakeven is > *max_be_atr* ATR√t.
+
+    Returns the filtered menus and the number of candidates dropped. Credit kinds and
+    days without ATR14 pass untouched (the live rule keeps them too).
+    """
+    out: dict[dt.date, list[Candidate]] = {}
+    dropped = 0
+    for d, menu in menus.items():
+        a = atr.get(d)
+        if a is None or d not in closes.index or not menu:
+            out[d] = menu
+            continue
+        spot = float(closes[d])
+        kept = []
+        for c in menu:
+            if c.kind not in CREDIT_KINDS:
+                v = candidate_be_atr(c, spot, a)
+                if v is not None and v > max_be_atr:
+                    dropped += 1
+                    continue
+            kept.append(c)
+        out[d] = kept
+    return out, dropped
 
 
 # ---------------------------------------------------------------------------
