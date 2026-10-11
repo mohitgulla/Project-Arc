@@ -16,9 +16,9 @@ const VIEWPORTS = [
 ] as const;
 const THEMES = ["dark", "light"] as const;
 // E8.8d: the owner's widget order (Alerts / Halts / Runs are collapsible sections).
-const CARDS = ["Session Timeline", "Sources", "Health", "LLM Usage", "Context Store", "Auto-Approve", "Config"];
+const CARDS = ["Session Timeline", "Sources", "LLM Usage", "Context Store", "Auto-Approve", "Config", "Health"];
 // E8.8e: Config sits right below Auto-Approve.
-const ORDER = ["Session Timeline", "Sources", "Health", "LLM Usage", "Context Store", "Auto-Approve", "Config", "Alerts", "Halts", "Runs"];
+const ORDER = ["Session Timeline", "Sources", "LLM Usage", "Context Store", "Auto-Approve", "Config", "Health", "Alerts", "Halts", "Runs"];
 
 test.use({ baseURL: OPS_URL });
 
@@ -60,7 +60,11 @@ for (const vp of VIEWPORTS) {
         await expect(page.getByTestId("loop-row").locator('[data-status="no_change"]').first()).toBeAttached();
         await expect(tl.locator('[data-status="failed"]').first()).toBeAttached();
         await expect(page.getByTestId("health-strip").getByTestId("health-chip")).toHaveCount(5);
-        await expect(page.getByTestId("health-strip")).toContainText("Tick ok");
+        await expect(page.getByTestId("health-strip").getByTestId("health-name").first()).toHaveText("Tick");
+        // D89: equal-size tiles (one width and one height for every check)
+        const boxes = await page.getByTestId("health-chip").evaluateAll((els) => els.map((el) => [el.getBoundingClientRect().width, el.getBoundingClientRect().height]));
+        expect(new Set(boxes.map((b) => Math.round(b[0]))).size).toBe(1);
+        expect(new Set(boxes.map((b) => Math.round(b[1]))).size).toBe(1);
         // Alerts, Halts, Runs: closed on a first visit; the header pills still signal trouble
         for (const name of ["Alerts", "Halts", "Runs"])
           await expect(page.getByRole("button", { name: new RegExp(`^${name}`) })).toHaveAttribute("aria-expanded", "false");
@@ -216,11 +220,24 @@ test.describe("ops behaviour", () => {
     await expect(page.getByRole("dialog").or(page.locator("[role=tooltip]")).first()).toContainText("LLM yes");
   });
 
+  test("context store groups kinds by Timeline band with writers and readers (D89)", async ({ page }) => {
+    await open(page, "/ops");
+    const groups = page.getByTestId("context-group");
+    await expect(groups.first()).toHaveAttribute("data-group", "sources");
+    await page.locator('[data-testid=context-group][data-group="scalp"] > button').click();
+    const cand = page.locator('[data-testid=context-kind][data-kind="candidate"]');
+    await expect(cand).toContainText("Candidate");
+    await expect(cand.getByTestId("context-writers")).toContainText("Scalp");
+    await expect(cand.getByTestId("context-readers")).toContainText("Research loop");
+  });
+
   test("health chips, auto-approve key/values and grouped alerts", async ({ page }) => {
     await open(page, "/ops");
     const failed = page.locator('[data-testid=health-chip][data-status="failed"]');
     await expect(failed).toHaveCount(1);
-    await expect(failed.getByTestId("health-message")).toBeVisible(); // non-ok chips expand inline
+    // D89: a non-ok check's message sits under the tile grid
+    const key = await failed.getAttribute("data-key");
+    await expect(page.locator(`[data-testid=health-message][data-key="${key}"]`)).toBeVisible();
     await expect(page.getByTestId("auto-approve")).toContainText("Paper");
     await expect(page.getByTestId("auto-approve")).toContainText("Last flip");
     await page.getByRole("button", { name: /^Alerts/ }).click();
