@@ -4,14 +4,14 @@ Status: run 2026-10-10 on main 034073c + this card (commit 6ac56ce). Code:
 `arc/scanner/menu.py` (live ranker), `arc/scanner/rank.py` (`*_tilted` rankers,
 `tilted_drift`), `arc/exits/model.py` (`drift=`), `arc/backtest/ranking.py`
 (`expiry_mode: all`, `direction_tilt`, trend-proxy hit rate). Overlay:
-`config/experiments/e75b_unified_measure.yaml`. Plan ref: D79 (D25, D41, D44, D76).
+`config/experiments/backtest/e75b_unified_measure.yaml`. Plan ref: D79 (D25, D41, D44, D76).
 
 Reproduce (~53 min on 6 workers, 12 CPUs; mean menu 8.5 / 8.9 candidates vs E7.5's 3.7 / 2.9):
 
     uv run arc backtest rank --profile margin --profile cash_debit \
         --from 2024-03-01 --to 2026-07-31 --tickers SPY,QQQ,IWM,AAPL,NVDA,TSLA \
         --workers 6 --data-dir ~/GitHub/Project-Arc/data --offline \
-        --experiment config/experiments/e75b_unified_measure.yaml \
+        --experiment config/experiments/backtest/e75b_unified_measure.yaml \
         --out data/backtest/e75b/tilt025
 
 The descriptive tilt-0.10 point adds a second overlay with `backtest.direction_tilt:

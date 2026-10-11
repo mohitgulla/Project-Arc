@@ -46,16 +46,16 @@ them has a code path of its own:
 
 | Experiment | File | The one variable |
 |---|---|---|
-| (a) regime-conditional menu | `config/experiments/e75a_a_regime_menu.yaml` | margin: iron condors in `sideways` only, no trade in bull/bear; cash_debit: `bear_put` dropped (bear → `long_put`) |
-| (b) shorter DTE + D19 exits | `config/experiments/e75a_b_short_dte.yaml` | entry window margin 30–45 → **21–30**, cash_debit 30–60 → **21–35**; exits unchanged (50% TP, 75% EOD stop, close at 7 DTE) |
-| (c) Net EV ÷ cost filter | `config/experiments/e75a_c_ev_cost.yaml` | keep a candidate only if managed Net EV ≥ **1.0 ×** its E2.4 expected round-trip cost (entry + exit spread/slippage + fees); set before the run |
+| (a) regime-conditional menu | `config/experiments/backtest/e75a_a_regime_menu.yaml` | margin: iron condors in `sideways` only, no trade in bull/bear; cash_debit: `bear_put` dropped (bear → `long_put`) |
+| (b) shorter DTE + D19 exits | `config/experiments/backtest/e75a_b_short_dte.yaml` | entry window margin 30–45 → **21–30**, cash_debit 30–60 → **21–35**; exits unchanged (50% TP, 75% EOD stop, close at 7 DTE) |
+| (c) Net EV ÷ cost filter | `config/experiments/backtest/e75a_c_ev_cost.yaml` | keep a candidate only if managed Net EV ≥ **1.0 ×** its E2.4 expected round-trip cost (entry + exit spread/slippage + fees); set before the run |
 
 Reproduce (about 45 min for all four at 3 workers each):
 
     arc backtest rank --profile margin --profile cash_debit --from 2024-03-01 --to 2026-07-31 \
         --tickers SPY,QQQ,IWM,AAPL,NVDA,TSLA --workers 3 --offline --no-charts \
         --data-dir ~/GitHub/Project-Arc/data --out <out>/baseline
-    # same command + --experiment config/experiments/e75a_a_regime_menu.yaml --out <out>/a …
+    # same command + --experiment config/experiments/backtest/e75a_a_regime_menu.yaml --out <out>/a …
     arc backtest rank-compare --baseline <out>/baseline \
         --experiment <out>/a --experiment <out>/b --experiment <out>/c --out <out>/compare
 

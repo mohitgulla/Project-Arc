@@ -3,7 +3,7 @@ experiment: >
   of the v2 regime-menu run: margin opens an iron condor only when the v2 trend is
   sideways (the (a) stance menu) AND the v2 vol state is low or mid. The E7.2 baseline
   showed condor PF 1.76 in low vol vs 0.36 in high vol. Use with
-  config/experiments/e75a_a_regime_menu.yaml and config/experiments/e173_regime_v2.yaml.
+  config/experiments/backtest/e75a_a_regime_menu.yaml and config/experiments/backtest/e173_regime_v2.yaml.
 backtest:
   vol_gate:
     margin:

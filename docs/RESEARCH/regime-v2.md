@@ -55,14 +55,14 @@ not part of the keep/rollback decision).
 ## Method
 
 - **Harness:** E7.5 `arc backtest rank` with the E7.5a (a) regime-conditional menu
-  (`config/experiments/e75a_a_regime_menu.yaml`: margin opens iron condors only in
+  (`config/experiments/backtest/e75a_a_regime_menu.yaml`: margin opens iron condors only in
   `sideways`; cash_debit opens bull → `bull_call`/`long_call`, bear → `long_put`, sideways
   → nothing). The tickers, dates, costs (x = 0.25), 5,000 MC paths, D18 sizing, exits and
   bootstrap (2,000 resamples, 20-day blocks, seed 7) are the same as
   [ranking-backtest-run.md](ranking-backtest-run.md) and
   [ranking-backtest-experiments.md](ranking-backtest-experiments.md).
 - **The one variable:** `backtest.regime_model: v1 | v2`
-  (`config/experiments/e173_regime_v2.yaml`). It decides the trend label behind the stance
+  (`config/experiments/backtest/e173_regime_v2.yaml`). It decides the trend label behind the stance
   menu, the sub-period split and the `trend`/`vol` columns on each trade.
   - v1 = the E4.3 rule (20-session return ±5 %) plus fixed 12 %/20 % rv20 buckets.
   - v2 = `arc.features.regime`'s live labeller: the vol-scaled 20-day z (r20 / (σ60·√20),
@@ -77,7 +77,7 @@ not part of the keep/rollback decision).
     closes say `bull`.
   - Strikes, marks and settlement still use the raw closes. Apart from those 20 NVDA days,
     the v1 labels are identical to the E7.5 run's.
-- **Vol gate:** `config/experiments/e173_vol_gate.yaml` (`backtest.vol_gate`). On top of
+- **Vol gate:** `config/experiments/backtest/e173_vol_gate.yaml` (`backtest.vol_gate`). On top of
   the v2 run, margin's `iron_condor` stays on the menu only when the v2 vol state is `low`
   or `mid`.
 - **Guard:** E17.2's `transitional_reason` (`arc.pipeline.market_guard`) runs per decision
@@ -96,11 +96,11 @@ not part of the keep/rollback decision).
     A="backtest rank --profile margin --profile cash_debit --from 2024-03-01 --to 2026-07-31 \
        --tickers SPY,QQQ,IWM,AAPL,NVDA,TSLA --workers 4 --no-charts --data-dir $D \
        --label-history-days 490 --label-adjusted \
-       --experiment config/experiments/e75a_a_regime_menu.yaml"
+       --experiment config/experiments/backtest/e75a_a_regime_menu.yaml"
     uv run arc $A --regime-model v1 --out <out>/run_v1
-    uv run arc $A --experiment config/experiments/e173_regime_v2.yaml --out <out>/run_v2
-    uv run arc $A --experiment config/experiments/e173_regime_v2.yaml \
-        --experiment config/experiments/e173_vol_gate.yaml --out <out>/run_v2_gate
+    uv run arc $A --experiment config/experiments/backtest/e173_regime_v2.yaml --out <out>/run_v2
+    uv run arc $A --experiment config/experiments/backtest/e173_regime_v2.yaml \
+        --experiment config/experiments/backtest/e173_vol_gate.yaml --out <out>/run_v2_gate
     uv run python scripts/e173_regime_report.py --v1 <out>/run_v1 --v2 <out>/run_v2 \
         --gate <out>/run_v2_gate --data-dir $D --out <out>/compare
     # baseline conditioning table
