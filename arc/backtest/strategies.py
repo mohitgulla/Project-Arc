@@ -162,8 +162,12 @@ def _wing(
 def _vertical(
     side_chain: pd.DataFrame, spec: StrategySpec, spot: float, *, wing_above: bool
 ) -> list[LegPick] | None:
-    """Short the anchor, buy the wing. Wing direction alone fixes debit vs credit."""
-    a = _anchor(side_chain, spec)
+    """Short the anchor, buy the wing. Wing direction alone fixes debit vs credit.
+
+    E7.10: a quoted chain (``sellable`` column) never sells a zero-bid contract.
+    """
+    shortable = side_chain[side_chain["sellable"]] if "sellable" in side_chain else side_chain
+    a = _anchor(shortable, spec)
     if a is None:
         return None
     width = spec.width_pct * spot

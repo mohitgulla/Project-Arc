@@ -31,6 +31,7 @@ from arc.backtest.entry_filter import (
     atr14_days,
     stretched_days,
 )
+from arc.backtest.menucache import MenuCache, MenuCacheContext, config_hash
 from arc.backtest.ranking import (
     Candidate,
     Outcome,
@@ -118,6 +119,8 @@ def ticker_job(
     stances: Mapping[str, Mapping[str, frozenset[str]]] | None = None,
     ohlc: pd.DataFrame | None = None,
     label_closes: pd.Series | None = None,
+    cache_dir: Path | None = None,
+    provider: str = "alpaca",
 ) -> TickerResult:
     """Everything that depends on one ticker only (safe to run in a worker process).
 
@@ -155,6 +158,15 @@ def ticker_job(
     be_dropped: dict[_Key, int] = {}
     # E7.5b: the tilted rankers' stance per session (the same trend proxy as the menu)
     day_stance = trend_stances(trend) if bt.direction_tilt > 0 else None
+    # E7.10: the menu cache (None = off); the key covers everything a menu reads.
+    cache = MenuCache(cache_dir) if cache_dir is not None else None
+    cache_ctx = MenuCacheContext(
+        marks=f"{bt.marks}:{bt.max_leg_iv_dev}:{bt.smile_window}",
+        exit_hash=config_hash(exits),
+        n_paths=mc.n_paths,
+        seed=mc.seed,
+        provider=provider,
+    )
     menus: dict[_Key, dict[dt.date, list[Candidate]]] = {}
     outcomes: dict[_Key, dict[tuple[str, dt.date, str], Outcome | None]] = {}
     for profile, (lo, hi) in sorted(windows.items()):
@@ -181,6 +193,8 @@ def ticker_job(
                     r=bt.risk_free_rate,
                     stances=day_stance,
                     tilt=bt.direction_tilt,
+                    cache=cache,
+                    cache_ctx=cache_ctx,
                 )
             else:
                 m = build_menus(
@@ -195,6 +209,8 @@ def ticker_job(
                     r=bt.risk_free_rate,
                     stances=day_stance,
                     tilt=bt.direction_tilt,
+                    cache=cache,
+                    cache_ctx=cache_ctx,
                 )
             if stances is not None:
                 gate = {str(k): frozenset(v) for k, v in bt.vol_gate.get(profile, {}).items()}
@@ -289,6 +305,7 @@ def run_rank_report(
     charts: bool = True,
     ohlc_by_ticker: Mapping[str, pd.DataFrame] | None = None,
     label_closes_by_ticker: Mapping[str, pd.Series] | None = None,
+    cache_dir: Path | None = None,
 ) -> dict[str, pd.DataFrame]:
     """Run the ranking backtest and write ``report.md`` + CSVs (+ PNG charts) to *out_dir*.
 
@@ -327,6 +344,8 @@ def run_rank_report(
         "windows": windows,
         "rankers": rk,
         "slippages": slippages,
+        "cache_dir": cache_dir,
+        "provider": provider,
         "stances": {p: _stances(p, cfg, settings) for p in profiles}
         if bt.stance == "trend"
         else None,

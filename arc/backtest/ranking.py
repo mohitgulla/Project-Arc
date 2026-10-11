@@ -55,9 +55,9 @@ import pandas as pd
 import structlog
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
-from scipy.stats import norm
 
 from arc.account_profiles import BuyingPower, load_account_profiles
+from arc.backtest.data import DataSettings
 from arc.backtest.engine import (
     MULT,
     STRUCTURE_KIND,
@@ -67,6 +67,13 @@ from arc.backtest.engine import (
     settle,
 )
 from arc.backtest.entry_filter import EntryFilterRule
+from arc.backtest.marks import (  # E7.10: moved to arc.backtest.marks, re-exported here
+    clean_chains,
+    remark_chains,
+    smile_deviation,
+    smile_marks,
+)
+from arc.backtest.menucache import MenuCache, MenuCacheContext, config_hash, frame_hash
 from arc.backtest.regime import BacktestRegimeModel, regime_labels
 from arc.backtest.strategies import (
     ExpiryMode,
@@ -124,10 +131,14 @@ __all__ = [
     "build_menus",
     "build_menus_by_kind",
     "challenge",
+    "clean_chains",
     "decide",
     "kind_costs",
     "load_ranking_file",
+    "remark_chains",
     "slippage_from_scorecard",
+    "smile_deviation",
+    "smile_marks",
     "run_portfolio",
     "simulate_outcome",
     "summarize",
@@ -307,6 +318,11 @@ class BacktestSettings(BaseModel):
         default_factory=lambda: UniverseConfig(),
         description="Point-in-time pull list: exactly target_size names, checkpoints nested",
     )
+    # -- E7.10 (D84): the point-in-time data layer (arc.backtest.data.HistoryView) --
+    data: DataSettings = Field(
+        default_factory=lambda: DataSettings(),
+        description="Quoted marks, eligibility, IV rank and detected earnings per ticker-day",
+    )
 
     def window_for(self, profile: str, default: tuple[int, int]) -> tuple[int, int]:
         lo, hi = self.dte_windows.get(profile, default)
@@ -445,123 +461,6 @@ def _ev_proxy(
         entry_cost += abs(fill - p.mid) * MULT + cost.trade_fees(1, p.side, fill)
     entry_mid = sum(p.side * p.mid for p in picks)
     return (value - entry_mid) * MULT - entry_cost
-
-
-def smile_deviation(chain: pd.DataFrame, window: int = 5) -> pd.Series:
-    """Per row: ``iv / median(iv of the *window* nearest strikes, same expiry and right) − 1``.
-
-    Alpaca history has trade closes only; a contract that last traded hours before
-    the close has a stale price and an IV off its neighbours. NaN IV → NaN.
-    """
-    out = pd.Series(np.nan, index=chain.index, dtype=float)
-    ok = chain[np.isfinite(chain["iv"])]
-    for _, g in ok.groupby(["expiration", "right"], sort=False):
-        g = g.sort_values("strike")
-        med = g["iv"].rolling(window, center=True, min_periods=3).median()
-        out.loc[g.index] = g["iv"] / med - 1.0
-    return out
-
-
-def smile_marks(
-    ch: pd.DataFrame,
-    spot: float,
-    *,
-    r: float,
-    cost: CostModel,
-    min_points: int = 5,
-    iterations: int = 2,
-) -> pd.DataFrame:
-    """Re-mark one session's chain from a same-session fitted IV smile.
-
-    Alpaca EOD closes are last trades printed at different times, so neighbouring
-    strikes routinely violate monotonicity and put-call parity. Per expiration, a
-    volume-weighted quadratic in log-moneyness ``log(K/F)`` is fitted to the OTM
-    options' IVs (puts below the forward, calls above), with points more than
-    3 MADs off the fit dropped and the fit repeated *iterations* times. Every row
-    in the fitted strike range is then priced by BSM at the fitted IV: ``mid``,
-    ``iv``, ``delta`` and the estimated ``spread`` are replaced. Rows outside the
-    range (no extrapolation) and expiries with < *min_points* OTM points are dropped.
-    Uses the session's own rows only, so it cannot look ahead.
-    """
-    keep: list[pd.DataFrame] = []
-    base = ch[np.isfinite(ch["iv"]) & (ch["iv"] > 0)]
-    for exp, g in ch.groupby("expiration", sort=True):
-        t = float(g["dte"].iloc[0]) / 365.0
-        fwd = spot * math.exp(r * t)
-        gb = base[base["expiration"] == exp]
-        otm = gb[
-            ((gb["right"] == "put") & (gb["strike"] < fwd))
-            | ((gb["right"] == "call") & (gb["strike"] >= fwd))
-        ]
-        if len(otm) < min_points:
-            continue
-        x = np.log(otm["strike"].to_numpy(dtype=float) / fwd)
-        y = otm["iv"].to_numpy(dtype=float)
-        w = np.sqrt(np.nan_to_num(otm["volume"].to_numpy(dtype=float)) + 1.0)
-        mask = np.ones(len(x), dtype=bool)
-        coef = np.polyfit(x, y, 2, w=w)
-        for _ in range(iterations):
-            res = y - np.polyval(coef, x)
-            mad = float(np.median(np.abs(res - np.median(res)))) or 1e-9
-            mask = np.abs(res) <= 3.0 * 1.4826 * mad
-            if mask.sum() < min_points:
-                break
-            coef = np.polyfit(x[mask], y[mask], 2, w=w[mask])
-        lo, hi = float(x[mask].min()), float(x[mask].max())
-        gx = np.log(g["strike"].to_numpy(dtype=float) / fwd)
-        inside = (gx >= lo) & (gx <= hi)
-        if not inside.any():
-            continue
-        g = g[inside].copy()
-        sig = np.clip(np.polyval(coef, gx[inside]), 0.03, 3.0)
-        k = g["strike"].to_numpy(dtype=float)
-        is_call = (g["right"].astype(str) == "call").to_numpy()
-        flag = np.where(is_call, "c", "p")
-        n = len(g)
-        mid = price_vectorized(flag, np.full(n, spot), k, np.full(n, t), np.full(n, r), sig)
-        g["mid"] = np.round(np.maximum(mid, 0.0), 4)
-        g["iv"] = sig
-        with np.errstate(invalid="ignore", divide="ignore"):
-            d1 = (np.log(spot / k) + (r + 0.5 * sig**2) * t) / (sig * math.sqrt(t))
-        g["delta"] = np.where(is_call, norm.cdf(d1), norm.cdf(d1) - 1.0)
-        g["spread"] = [cost.spread(float(m)) for m in g["mid"]]
-        keep.append(g[g["mid"] > 0])
-    if not keep:
-        return ch.iloc[0:0]
-    return pd.concat(keep, ignore_index=True)
-
-
-def remark_chains(
-    chains: Mapping[dt.date, pd.DataFrame],
-    closes: pd.Series,
-    *,
-    r: float,
-    cost: CostModel,
-) -> dict[dt.date, pd.DataFrame]:
-    """:func:`smile_marks` for every session (session spot from *closes* at that date)."""
-    out: dict[dt.date, pd.DataFrame] = {}
-    for d, ch in chains.items():
-        if d in closes.index and len(ch):
-            out[d] = smile_marks(ch, float(closes[d]), r=r, cost=cost)
-    return out
-
-
-def clean_chains(
-    chains: Mapping[dt.date, pd.DataFrame], *, max_dev: float | None, window: int = 5
-) -> dict[dt.date, pd.DataFrame]:
-    """Drop rows whose IV is more than *max_dev* off their strike neighbours' median.
-
-    Each session is filtered on its own rows only (no look-ahead). The cleaned chains
-    are used for the menus *and* the exit marks, so a stale close can neither make a
-    structure look cheap at entry nor fire a spurious stop / take profit later.
-    """
-    if max_dev is None:
-        return dict(chains)
-    out: dict[dt.date, pd.DataFrame] = {}
-    for d, ch in chains.items():
-        dev = smile_deviation(ch, window)
-        out[d] = ch[dev.abs() <= max_dev].reset_index(drop=True)
-    return out
 
 
 def build_menu(
@@ -714,6 +613,8 @@ def build_menus_by_kind(
     r: float,
     stances: Mapping[dt.date, str] | None = None,
     tilt: float = 0.0,
+    cache: MenuCache | None = None,
+    cache_ctx: MenuCacheContext | None = None,
 ) -> dict[dt.date, list[Candidate]]:
     """:func:`build_menus` with each structure priced at its own cost model.
 
@@ -735,6 +636,8 @@ def build_menus_by_kind(
             r=r,
             stances=stances,
             tilt=tilt,
+            cache=cache,
+            cache_ctx=cache_ctx,
         )
         for g, ss in groups.items()
     }
@@ -759,11 +662,35 @@ def build_menus(
     r: float,
     stances: Mapping[dt.date, str] | None = None,
     tilt: float = 0.0,
+    cache: MenuCache | None = None,
+    cache_ctx: MenuCacheContext | None = None,
 ) -> dict[dt.date, list[Candidate]]:
-    """:func:`build_menu` per session; *stances* (day → stance) feed the tilted keys."""
+    """:func:`build_menu` per session; *stances* (day → stance) feed the tilted keys.
+
+    E7.10: with *cache* + *cache_ctx* each day's menu is read from / written to the
+    menu cache under a key of everything the menu depends on (specs, costs, rate,
+    the day's stance, tilt, marks, exits, MC paths/seed, provider) plus a hash of the
+    day's marked chain and the trailing closes its HV forecast reads, so refreshed
+    history or a different ``--from`` can never be served a stale menu.
+    """
     closes = closes.sort_index()
-    return {
-        d: build_menu(
+    out: dict[dt.date, list[Candidate]] = {}
+    for d in days:
+        if d not in chains:
+            continue
+        stance = (stances or {}).get(d)
+        key = None
+        if cache is not None and cache_ctx is not None:
+            past = closes[pd.Index(closes.index) <= d].iloc[-(_HV_LONG + 1) :]
+            data = frame_hash(chains[d]) + frame_hash(past.to_frame())
+            key = cache_ctx.key(
+                underlying, d, menu_hash=config_hash(list(specs), cost, r, stance, tilt, data)
+            )
+            hit = cache.get(key)
+            if hit is not None:
+                out[d] = hit
+                continue
+        menu = build_menu(
             chains[d],
             closes,
             day=d,
@@ -773,12 +700,13 @@ def build_menus(
             exits=exits,
             mc=mc,
             r=r,
-            stance=(stances or {}).get(d),
+            stance=stance,
             tilt=tilt,
         )
-        for d in days
-        if d in chains
-    }
+        if key is not None and cache is not None:
+            cache.put(key, menu)
+        out[d] = menu
+    return out
 
 
 # ---------------------------------------------------------------------------

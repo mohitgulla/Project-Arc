@@ -95,6 +95,35 @@ backtest:
     include_index_roots: false # SPX/NDX/RUT/VIX... need a separate index subscription
     add_inactive_listed: true  # + Alpaca inactive listed assets (delisted names; partial fix)
     fetch_batch: 100           # symbols per Alpaca bars request
+  # E7.10 (D84): the point-in-time data layer (arc/backtest/data.py HistoryView), read by
+  # `arc backtest data check` (and E7.11+). Data/backtest infra only: nothing live reads it.
+  data:
+    provider: thetadata        # primary partition: closing OPRA NBBO + OI
+    fallback_provider: alpaca  # names with no thetadata sessions (trade closes, no bid/ask)
+    marks: quoted              # quoted = NBBO mid/spread; smile | close = the E7.5 modes
+    alpaca_marks: smile        # mode on the fallback partition
+    max_quoted_spread_pct: 0.35  # per leg: drop when (ask - bid) / mid > this
+    quoted_fallback: drop      # drop | smile (re-price dropped contracts off the session smile)
+    rate_source: flat          # flat = risk_free_rate; treasury = data/rates/treasury_3m.parquet
+    chain_dte_min: 1
+    chain_dte_max: 75          # the live iv.record chain window (7-75 used for IV30)
+    pit: true                  # also require E7.7 membership for the session's quarter
+    universe_version: null     # E7.7 build; null = latest
+    iv_lookback: 252           # IV rank window; min obs = ArcSettings.iv_min_obs_rank (120)
+    earnings:                  # detected from the chain, no paid source (approximation)
+      earn_iv_jump: 0.10       # front/next expiry IV - 1 on the session before
+      earn_crush: 0.15         # 1 - front IV after / before
+      earn_min_gap_sessions: 30
+      earn_projection_days: 91 # next_earnings(d) = last detected by d + 91d (stepped)
+      earn_market_ref: SPY     # count only the jump/crush in excess of SPY's (market-wide vol)
+    screen:                    # live D9 liquidity screen: flag + reasons only, never applied
+      min_price: 10.0
+      min_adv_shares: 1000000
+      adv_days: 20
+      min_atm_open_interest: 500
+      atm_strikes: 3
+      max_atm_spread_pct: 0.10
+    screen_dte_window: [30, 45]
   decision:                   # D25 switch rule, fixed before the run
     min_subperiod_wins: 2
     subperiods: [bear, sideways, bull]
