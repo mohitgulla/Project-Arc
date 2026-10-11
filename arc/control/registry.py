@@ -285,6 +285,7 @@ NOT_EXPOSED_PATHS: dict[str, str] = {
 NOT_EXPOSED_RANKING_SECTIONS: dict[str, str] = {
     "backtest.universe": "E7.7 point-in-time pull list (offline backtest infra); change by PR",
     "backtest.data": "E7.10 backtest data layer (offline, read by backtests only); change by PR",
+    "backtest.sim": "E7.11 live-shaped portfolio simulator (offline backtest only); change by PR",
 }
 
 # routines.yaml paths that are never runtime-tunable (path/limit guards; change by PR).

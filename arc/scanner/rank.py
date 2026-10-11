@@ -65,6 +65,7 @@ __all__ = [
     "live_net_ev_check",
     "passes_filters",
     "rank",
+    "sort_key",
     "stance_sign",
     "tilted_drift",
 ]
@@ -278,6 +279,13 @@ def _key_fn(ranker: Ranker, vrp_threshold: float) -> Callable[[RankInputs], _Key
         return _field_key(c.rorc_day, c.managed_net_ev, c.key)
 
     return vrp_gated
+
+
+def sort_key(ranker: Ranker, vrp_threshold: float = 0.0) -> Callable[[RankInputs], _Key | None]:
+    """The sort key :func:`rank` orders by (smaller = better; ``None`` = the ranker's own
+    gate drops it). E7.11: the backtest pools candidates across names and breaks ties
+    on liquidity before the candidate key, so it needs the key itself."""
+    return _key_fn(ranker, vrp_threshold)
 
 
 def rank(

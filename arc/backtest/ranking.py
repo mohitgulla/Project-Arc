@@ -75,6 +75,7 @@ from arc.backtest.marks import (  # E7.10: moved to arc.backtest.marks, re-expor
 )
 from arc.backtest.menucache import MenuCache, MenuCacheContext, config_hash, frame_hash
 from arc.backtest.regime import BacktestRegimeModel, regime_labels
+from arc.backtest.sim_config import SimSettings
 from arc.backtest.strategies import (
     ExpiryMode,
     LegPick,
@@ -322,6 +323,11 @@ class BacktestSettings(BaseModel):
     data: DataSettings = Field(
         default_factory=lambda: DataSettings(),
         description="Quoted marks, eligibility, IV rank and detected earnings per ticker-day",
+    )
+    # -- E7.11 (D84): the live-shaped portfolio simulator (`arc backtest sim`) --
+    sim: SimSettings = Field(
+        default_factory=lambda: SimSettings(),
+        description="Daily cross-name funnel on the D80 account, fill model, capacity",
     )
 
     def window_for(self, profile: str, default: tuple[int, int]) -> tuple[int, int]:

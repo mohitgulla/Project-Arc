@@ -174,6 +174,60 @@ def add_backtest_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]
 
     add_data_parser(bs)
     add_cache_parser(bs)
+    sm = bs.add_parser(
+        "sim",
+        help="E7.11: live-shaped portfolio simulator (daily cross-name funnel, D80 account)",
+    )
+    sm.add_argument("--universe", default="c125", choices=["c125", "c250", "c500"])
+    sm.add_argument("--from", dest="start", type=_date, required=True, help="First decision")
+    sm.add_argument("--to", dest="end", type=_date, required=True, help="Last decision session")
+    sm.add_argument(
+        "--data-end",
+        type=_date,
+        default=None,
+        help="Last session read, so exits after --to can settle (default: --to)",
+    )
+    sm.add_argument(
+        "--profile",
+        action="append",
+        choices=["margin", "cash_debit", "cash_long_only"],
+        help="Account profile (repeatable; default: margin and cash_debit)",
+    )
+    sm.add_argument(
+        "--rankers",
+        default="",
+        help="Comma-separated extra rankers (the profile's incumbent always runs)",
+    )
+    sm.add_argument("--tickers", default=None, help="Comma list (default: the checkpoint)")
+    sm.add_argument("--equity", type=float, default=None, help="Override backtest.sim.equity")
+    sm.add_argument(
+        "--selection",
+        choices=["cross_name", "per_ticker"],
+        default=None,
+        help="Override backtest.sim.selection (per_ticker = the E7.5 walk)",
+    )
+    sm.add_argument("--active-cap", type=int, default=None, help="Override backtest.sim.active_cap")
+    sm.add_argument(
+        "--slippage-from-scorecard",
+        type=Path,
+        default=None,
+        metavar="DB",
+        help="Fill x per structure kind from the E7.3 scorecard in this DB (read-only)",
+    )
+    sm.add_argument("--scorecard-days", type=int, default=90)
+    sm.add_argument("--scorecard-min-fills", type=int, default=5)
+    sm.add_argument("--data-dir", type=Path, default=Path("data"))
+    sm.add_argument("--out", type=Path, default=Path("data/backtest/sim"))
+    sm.add_argument("--config", type=Path, default=None, help="Ranking config file")
+    sm.add_argument(
+        "--experiment", type=Path, action="append", default=[], help="Partial ranking overlay"
+    )
+    sm.add_argument("--provider", default=None, help="Override backtest.data.provider")
+    sm.add_argument("--workers", type=int, default=1, help="Parallel ticker processes")
+    sm.add_argument("--no-cache", action="store_true", help="Bypass the menu cache")
+    sm.add_argument(
+        "--cache-dir", type=Path, default=None, help="Menu cache root (default: --data-dir)"
+    )
     cmp_ = bs.add_parser(
         "rank-compare",
         help="E7.5a: experiment vs baseline `backtest rank` output, same ranker, D25 rule",
@@ -340,7 +394,69 @@ def run_rank_compare_cli(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_sim_cli(args: argparse.Namespace) -> int:
+    from arc.backtest.ranking import load_ranking_file
+    from arc.backtest.sim_report import run_sim_report
+    from arc.config import ArcSettings
+    from arc.exits.policy import load_exit_config
+    from arc.scanner.rank import Ranker
+
+    cfg = load_ranking_file(args.config, args.experiment)
+    bt = cfg.backtest
+    upd: dict[str, object] = {}
+    if args.equity is not None:
+        upd["equity"] = args.equity
+    if args.selection is not None:
+        upd["selection"] = args.selection
+    if args.active_cap is not None:
+        upd["active_cap"] = args.active_cap
+    sim = bt.sim.model_validate({**bt.sim.model_dump(), **upd})
+    bt_upd: dict[str, object] = {"sim": sim}
+    if args.provider:
+        bt_upd["data"] = bt.data.model_copy(update={"provider": args.provider})
+    if args.slippage_from_scorecard is not None:
+        measured = measured_slippage(
+            args.slippage_from_scorecard,
+            days=args.scorecard_days,
+            min_fills=args.scorecard_min_fills,
+        )
+        sys.stdout.write(
+            "measured slippage x: "
+            + (", ".join(f"{k} {v:g}" for k, v in measured.items()) or "none (too few fills)")
+            + "\n"
+        )
+        bt_upd["slippage_by_kind"] = {**bt.slippage_by_kind, **measured}
+    cfg = cfg.model_copy(update={"backtest": bt.model_copy(update=bt_upd)})
+    tickers = (
+        [t.strip().upper() for t in args.tickers.split(",") if t.strip()] if args.tickers else None
+    )
+    rankers = [Ranker(r.strip()) for r in args.rankers.split(",") if r.strip()]
+    m = run_sim_report(
+        data_dir=args.data_dir,
+        universe=args.universe,
+        start=args.start,
+        end=args.end,
+        data_end=args.data_end,
+        profiles=args.profile or ["margin", "cash_debit"],
+        rankers=rankers,
+        out_dir=args.out,
+        cfg=cfg,
+        cost=load_cost_model(),
+        exits=load_exit_config(),
+        settings=ArcSettings(),
+        tickers=tickers,
+        workers=args.workers,
+        cache=not args.no_cache,
+        cache_dir=args.cache_dir,
+    )
+    sys.stdout.write((args.out / "report.md").read_text())
+    sys.stdout.write(f"\nreport: {args.out / 'report.md'} (runtime {m.runtime_s} s)\n")
+    return 0
+
+
 def run_backtest_cli(args: argparse.Namespace) -> int:
+    if getattr(args, "backtest_command", None) == "sim":
+        return run_sim_cli(args)
     if getattr(args, "backtest_command", None) == "rank":
         return run_rank_cli(args)
     if getattr(args, "backtest_command", None) == "rank-compare":
