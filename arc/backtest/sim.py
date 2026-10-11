@@ -737,6 +737,8 @@ def _trade_row(
     vol: Mapping[str, pd.Series],
     clipped: bool,
     liquidity: float,
+    tier: str = "rest",
+    etf: bool = False,
 ) -> dict[str, object]:
     best = sc.candidate
     assert sc.result is not None
@@ -779,6 +781,8 @@ def _trade_row(
         "credit_width": best.inputs.credit_width,
         "debit_width": best.inputs.debit_width,
         "liquidity": liquidity,
+        "tier": tier,
+        "etf": etf,
         "spot_entry": tr.spot_entry,
         "spot_exit": tr.spot_exit,
         "trend": str(trend[t].get(day, "unknown")) if t in trend else "unknown",
@@ -955,9 +959,11 @@ def _decide(
     infos = {t: i for t in names if (i := tickers[t].days.get(day)) is not None}
     eligible = [t for t in names if t in infos and infos[t].eligible]
     funnel["eligible"] = len(eligible)
+    tier_of: dict[str, str] = {}  # E7.12: the study report's by-tier breakdown
     if legacy:
         active = [t for t in names if tickers[t].menus.get(profile, {}).get(day) is not None]
         funnel["screened"] = funnel["active"] = len(active)
+        tier_of = {t: "core" for t in active if t in infos and infos[t].seed}
     else:
         screened: list[str] = []
         for t in eligible:
@@ -972,6 +978,7 @@ def _decide(
         rest = [(t, infos[t].liquidity) for t in screened if t not in set(core) | set(mom)]
         active = active_list(day, core=core, momentum=mom, rest=rest, sim=sim)
         funnel["active"] = len(active)
+        tier_of = dict.fromkeys(core, "core") | dict.fromkeys(mom, "momentum")
     new: list[_Pos] = []
     account_eq = Decimal(str(round(equity, 2)))
     account = AccountSnapshot(
@@ -1103,6 +1110,8 @@ def _decide(
                 vol=vol,
                 clipped=clipped,
                 liquidity=liq,
+                tier=tier_of.get(t, "rest"),
+                etf=bool(infos[t].etf) if t in infos else False,
             )
         )
     funnel["opened"] = len(new)

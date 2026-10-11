@@ -58,7 +58,9 @@ __all__ = [
     "StopDetail",
     "StopReason",
     "arm_id",
+    "canonical_dumps",
     "canonical_json",
+    "document_hash",
     "is_spec_arm",
     "spec_arm_name",
     "spec_hash",
@@ -377,16 +379,24 @@ def _canonical_doc(spec: ExperimentSpec) -> dict[str, Any]:
     return doc
 
 
+def canonical_dumps(doc: Any) -> str:
+    """*doc* as canonical JSON: sorted keys, no whitespace, non-ASCII kept."""
+    return json.dumps(doc, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def document_hash(doc: Any) -> str:
+    """SHA-256 hex of :func:`canonical_dumps` (also locks E7.12 backtest study specs)."""
+    return hashlib.sha256(canonical_dumps(doc).encode()).hexdigest()
+
+
 def canonical_json(spec: ExperimentSpec) -> str:
     """The spec as canonical JSON: sorted keys, no whitespace, every field present."""
-    return json.dumps(
-        _canonical_doc(spec), sort_keys=True, separators=(",", ":"), ensure_ascii=False
-    )
+    return canonical_dumps(_canonical_doc(spec))
 
 
 def spec_hash(spec: ExperimentSpec) -> str:
     """SHA-256 hex of :func:`canonical_json` (the pre-registration lock)."""
-    return hashlib.sha256(canonical_json(spec).encode()).hexdigest()
+    return document_hash(_canonical_doc(spec))
 
 
 class ArmPlan(BaseModel):

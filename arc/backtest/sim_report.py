@@ -42,6 +42,8 @@ from arc.backtest.sim import (
     run_sim,
     sim_ticker_job,
 )
+from arc.config import ArcSettings  # noqa: TC001 - pydantic field
+from arc.scanner.rank import Ranker  # noqa: TC001 - pydantic field
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -49,13 +51,11 @@ if TYPE_CHECKING:
 
     from arc.backtest.costs import CostModel
     from arc.backtest.ranking import RankingFile
-    from arc.config import ArcSettings
     from arc.exits.policy import ExitConfig
-    from arc.scanner.rank import Ranker
 
 log = structlog.get_logger()
 
-__all__ = ["SimManifest", "run_sim_report"]
+__all__ = ["SimBuild", "SimManifest", "build_sim", "run_sim_report", "walk"]
 
 
 class SimManifest(BaseModel):
@@ -204,16 +204,30 @@ def render_report(
     )
 
 
-def run_sim_report(
+class SimBuild(BaseModel):
+    """Everything one config's walks share: the built tickers and the run frame."""
+
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
+
+    built: dict[str, SimTicker]
+    sessions: list[dt.date]
+    names: list[str]
+    partitions: dict[str, int]
+    universe_version: str
+    per_profile: dict[str, ArcSettings]
+    rankers: dict[str, list[Ranker]]
+    build_s: float
+
+
+def build_sim(
     *,
     data_dir: Path,
     universe: str,
     start: dt.date,
     end: dt.date,
-    data_end: dt.date | None,
+    data_end: dt.date,
     profiles: Sequence[str],
     rankers: Sequence[Ranker],
-    out_dir: Path,
     cfg: RankingFile,
     cost: CostModel,
     exits: ExitConfig,
@@ -222,14 +236,15 @@ def run_sim_report(
     workers: int = 1,
     cache: bool = True,
     cache_dir: Path | None = None,
-) -> SimManifest:
-    """Build every ticker (parallel), walk each profile × ranker, write the outputs."""
+) -> SimBuild:
+    """Build every ticker of *universe* (parallel) for *profiles* × their rankers.
+
+    The profile's incumbent ranker always runs; *rankers* adds applicable ones
+    (:func:`arc.backtest.ranking.rankers_for`). Shared by ``arc backtest sim`` and the
+    E7.12 study runner (:mod:`arc.backtest.study`).
+    """
     t0 = time.monotonic()
-    out_dir.mkdir(parents=True, exist_ok=True)
     bt = cfg.backtest
-    sim = bt.sim
-    ds = bt.data
-    data_end = data_end or end
     spec = ViewSpec(
         data_dir=str(data_dir),
         universe=universe,
@@ -260,34 +275,95 @@ def run_sim_report(
         "stances": {p: _stances(p, cfg, settings) for p in profiles}
         if bt.stance == "trend"
         else None,
-        "sim": sim,
+        "sim": bt.sim,
         "cache_dir": str(cache_dir or data_dir) if cache else None,
     }
     built = build_tickers(names, spec=spec, workers=workers, job_kw=job_kw)
-    t_build = time.monotonic() - t0
     sessions = sorted({d for r in built.values() for d in r.closes.index if d >= start})
+    return SimBuild(
+        built=built,
+        sessions=sessions,
+        names=names,
+        partitions=partitions,
+        universe_version=view.version,
+        per_profile=per_profile,
+        rankers=rk,
+        build_s=time.monotonic() - t0,
+    )
+
+
+def walk(b: SimBuild, *, profile: str, ranker: Ranker, cfg: RankingFile, end: dt.date) -> SimRun:
+    """One profile × ranker walk over a :class:`SimBuild`."""
     from arc.universe.config import MomentumConfig
 
-    aliases = MomentumConfig().share_class_aliases
+    return run_sim(
+        b.built,
+        ranker=ranker,
+        profile=profile,
+        settings=b.per_profile[profile],
+        sim=cfg.backtest.sim,
+        filters=cfg.ranking.filters,
+        vrp_threshold=cfg.ranking.vrp_threshold,
+        sessions=b.sessions,
+        end=end,
+        aliases=MomentumConfig().share_class_aliases,
+    )
+
+
+def run_sim_report(
+    *,
+    data_dir: Path,
+    universe: str,
+    start: dt.date,
+    end: dt.date,
+    data_end: dt.date | None,
+    profiles: Sequence[str],
+    rankers: Sequence[Ranker],
+    out_dir: Path,
+    cfg: RankingFile,
+    cost: CostModel,
+    exits: ExitConfig,
+    settings: ArcSettings,
+    tickers: Sequence[str] | None = None,
+    workers: int = 1,
+    cache: bool = True,
+    cache_dir: Path | None = None,
+) -> SimManifest:
+    """Build every ticker (parallel), walk each profile × ranker, write the outputs."""
+    t0 = time.monotonic()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    bt = cfg.backtest
+    sim = bt.sim
+    ds = bt.data
+    data_end = data_end or end
+    b = build_sim(
+        data_dir=data_dir,
+        universe=universe,
+        start=start,
+        end=end,
+        data_end=data_end,
+        profiles=profiles,
+        rankers=rankers,
+        cfg=cfg,
+        cost=cost,
+        exits=exits,
+        settings=settings,
+        tickers=tickers,
+        workers=workers,
+        cache=cache,
+        cache_dir=cache_dir,
+    )
+    t_build = b.build_s
+    rk = b.rankers
     runs: list[SimRun] = []
     t1 = time.monotonic()
     for p in profiles:
         for r in rk[p]:
-            run = run_sim(
-                built,
-                ranker=r,
-                profile=p,
-                settings=per_profile[p],
-                sim=sim,
-                filters=cfg.ranking.filters,
-                vrp_threshold=cfg.ranking.vrp_threshold,
-                sessions=sessions,
-                end=end,
-                aliases=aliases,
-            )
+            run = walk(b, profile=p, ranker=r, cfg=cfg, end=end)
             _write_run(run, out_dir / p / r.value)
             runs.append(run)
     t_walk = time.monotonic() - t1
+    built = b.built
     hits = sum(r.cache_hits for r in built.values())
     misses = sum(r.cache_misses for r in built.values())
     manifest = SimManifest(
@@ -299,17 +375,17 @@ def run_sim_report(
             "sim": _sha(sim.model_dump(mode="json")),
         },
         universe=universe,
-        universe_version=view.version,
+        universe_version=b.universe_version,
         provider=ds.provider,
         fallback_provider=ds.fallback_provider,
-        partitions=partitions,
+        partitions=b.partitions,
         start=start,
         end=end,
         data_end=data_end,
         profiles=list(profiles),
         rankers={p: [r.value for r in v] for p, v in rk.items()},
         equity=sim.equity,
-        tickers=len(names),
+        tickers=len(b.names),
         workers=workers,
         cache_hits=hits,
         cache_misses=misses,
