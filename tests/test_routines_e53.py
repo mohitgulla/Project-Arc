@@ -615,7 +615,43 @@ class TestMonitor:
         assert (leg["current_price"], leg["lastday_price"], leg["change_today"]) == (
             "5.25", "5.00", "0.05",
         )  # fmt: skip
-        assert d["broker_requests"] == 6  # account + positions + 4 for the one SPY root
+        # account + positions + 4 for the one SPY root + 2 each for the SPY/QQQ benchmarks (D87)
+        assert d["broker_requests"] == 10
+
+    def test_heartbeat_carries_benchmark_marks(self, conn: sqlite3.Connection) -> None:
+        """D87: SPY/QQQ spot + prior close ride on the heartbeat; a failing symbol is left
+        out (never a monitor failure); `benchmarks: []` turns it off."""
+        import datetime as dt
+
+        from arc.data.base import HistoryBar, UnderlyingQuote
+        from arc.monitoring.store import HeartbeatRepo
+
+        env = _env([])
+
+        class _M:
+            def underlying_quote(self, s: str) -> UnderlyingQuote:
+                if s == "QQQ":
+                    raise RuntimeError("no data")
+                return UnderlyingQuote(symbol=s, bid=599.9, ask=600.1, mid=600.0,
+                                       timestamp=FIXTURE_NOW)  # fmt: skip
+
+            def history_bars(self, s: str, start: dt.date, end: dt.date) -> list[HistoryBar]:
+                day = FIXTURE_NOW.date() - dt.timedelta(days=1)
+                ts = dt.datetime.combine(day, dt.time(16), tzinfo=dt.UTC)
+                return [HistoryBar(timestamp=ts, open=1, high=1, low=1, close=594.0, volume=1)]
+
+        env.market = _M()  # type: ignore[assignment]
+        monitor(_ctx(conn, "monitor", {"every": "5m"}, FIXTURE_NOW, _settings()), env)
+        hb = HeartbeatRepo(conn).latest("monitor")
+        assert hb is not None
+        assert hb.detail["benchmarks"] == {
+            "SPY": {"price": 600.0, "basis": "mid", "prev_close": 594.0}
+        }
+        monitor(_ctx(conn, "monitor", {"every": "5m", "benchmarks": []}, FIXTURE_NOW,
+                     _settings()), env)  # fmt: skip
+        hb = HeartbeatRepo(conn).latest("monitor")
+        assert hb is not None and "benchmarks" not in hb.detail
+        assert hb.detail["broker_requests"] == 2
 
     def test_missing_optional_account_fields_are_null(self, conn: sqlite3.Connection) -> None:
         from arc.monitoring.store import HeartbeatRepo

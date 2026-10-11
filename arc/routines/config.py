@@ -586,6 +586,37 @@ class LoopSettings(BaseModel):
         return self
 
 
+class AdvisoryBand(BaseModel):
+    """D87: |Greek $| / equity at or above ``med_pct`` reads Med, above ``high_pct`` High."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    med_pct: Annotated[float, Field(gt=0, le=1)]
+    high_pct: Annotated[float, Field(gt=0, le=1)]
+
+    @model_validator(mode="after")
+    def _ordered(self) -> AdvisoryBand:
+        if self.high_pct <= self.med_pct:
+            msg = "greek_advisory: high_pct must be above med_pct"
+            raise ValueError(msg)
+        return self
+
+
+class GreekAdvisorySettings(BaseModel):
+    """D87: info-only Low / Med / High bands for the uncapped Greeks on the Tower.
+
+    Display only: no gate, no halt reads them. Θ = $ per day; Γ = dollar gamma ($Δ change
+    for a 1% move in every underlying). Both as a share of equity.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    theta: AdvisoryBand = Field(
+        default_factory=lambda: AdvisoryBand(med_pct=0.001, high_pct=0.0025)
+    )
+    gamma: AdvisoryBand = Field(default_factory=lambda: AdvisoryBand(med_pct=0.005, high_pct=0.015))
+
+
 class TowerOverviewSettings(BaseModel):
     """Arc Tower Overview knobs (E8.8b, D48). Display only: never read by trading code."""
 
@@ -594,6 +625,8 @@ class TowerOverviewSettings(BaseModel):
     # Recent Activity is a rolling window of this many hours (the API's `activity_hours`
     # query parameter overrides it per request, same bounds).
     activity_hours: Annotated[int, Field(ge=1, le=168)] = 24
+    # D87: Low / Med / High advisory bands for the uncapped Greeks (Θ, $Γ).
+    greek_advisory: GreekAdvisorySettings = Field(default_factory=GreekAdvisorySettings)
 
 
 class TowerSettings(BaseModel):

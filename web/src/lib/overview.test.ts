@@ -19,10 +19,12 @@ import {
   parseOverviewRange,
   pnlSplit,
   proposalStage,
+  greekRiskLabel,
   sortMovers,
   stripTone,
   structureLabel,
   violationCode,
+  withBenchmarks,
   type EquitySection,
   type Overview,
 } from "./overview";
@@ -182,9 +184,35 @@ describe("strip, movers, split", () => {
     expect(stripTone({ status: base })).toBe("ok");
   });
 
-  it("movers sort by absolute day change, unknown last", () => {
-    const out = sortMovers([{ change_today: 0.01 }, { change_today: null }, { change_today: -0.08 }]);
-    expect(out.map((m) => m.change_today)).toEqual([-0.08, 0.01, null]);
+  it("movers rank by day change, best to worst, unknown last (D87)", () => {
+    const out = sortMovers([{ change_today: 0.01 }, { change_today: null }, { change_today: -0.08 }, { change_today: 0.04 }]);
+    expect(out.map((m) => m.change_today)).toEqual([0.04, 0.01, -0.08, null]);
+  });
+
+  it("greek advisory labels (D87)", () => {
+    expect(greekRiskLabel("low")).toEqual({ text: "Risk Low", tone: "pos" });
+    expect(greekRiskLabel("med")).toEqual({ text: "Risk Med", tone: "warn" });
+    expect(greekRiskLabel("high")).toEqual({ text: "Risk High", tone: "neg" });
+    expect(greekRiskLabel(null).text).toBe("Risk —");
+  });
+
+  it("benchmarks rebase onto the portfolio's start equity (D87)", () => {
+    const t0 = "2026-09-28T13:30:00Z";
+    const t1 = "2026-09-28T14:30:00Z";
+    const series = [
+      { t: t0, v: 100_000 },
+      { t: t1, v: 101_000 },
+    ];
+    const e = {
+      benchmarks: [
+        { symbol: "SPY", start_value: "500", value: "505", value_at: t1, change_pct: 0.01,
+          series: [{ t: t1, v: "505" }] },
+      ],
+    } as unknown as EquitySection;
+    const out = withBenchmarks(e, series, 100_000);
+    expect(out.lines.map((l) => [l.symbol, l.key, l.changePct])).toEqual([["SPY", "b_SPY", 0.01]]);
+    expect(out.data.map((d) => d.b_SPY)).toEqual([undefined, 101_000]);
+    expect(withBenchmarks(undefined, series, 100_000)).toEqual({ data: series, lines: [] });
   });
 
   it("realized/unrealized split uses magnitudes", () => {

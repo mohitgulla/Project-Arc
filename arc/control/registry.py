@@ -2104,6 +2104,60 @@ _TOWER_TUNABLES: tuple[Tunable, ...] = (
         min=1,
         max=168,
     ),
+    Tunable(
+        key="tower.overview.greek_advisory.theta.med_pct",
+        group=Group.ROUTINES,
+        type=_F,
+        description=(
+            "D87: Tower-only Med band for Θ $/day, share of equity (info label, no gate)."
+        ),
+        target=Target.ROUTINES,
+        risk=Risk.NONE,
+        path=("tower", "overview", "greek_advisory", "theta", "med_pct"),
+        min=0.0001,
+        max=1.0,
+    ),
+    Tunable(
+        key="tower.overview.greek_advisory.theta.high_pct",
+        group=Group.ROUTINES,
+        type=_F,
+        description=(
+            "D87: Tower-only High band for Θ $/day, share of equity (info label, no gate)."
+        ),
+        target=Target.ROUTINES,
+        risk=Risk.NONE,
+        path=("tower", "overview", "greek_advisory", "theta", "high_pct"),
+        min=0.0001,
+        max=1.0,
+    ),
+    Tunable(
+        key="tower.overview.greek_advisory.gamma.med_pct",
+        group=Group.ROUTINES,
+        type=_F,
+        description=(
+            "D87: Tower-only Med band for dollar Γ per 1% move, "
+            "share of equity (info label, no gate)."
+        ),
+        target=Target.ROUTINES,
+        risk=Risk.NONE,
+        path=("tower", "overview", "greek_advisory", "gamma", "med_pct"),
+        min=0.0001,
+        max=1.0,
+    ),
+    Tunable(
+        key="tower.overview.greek_advisory.gamma.high_pct",
+        group=Group.ROUTINES,
+        type=_F,
+        description=(
+            "D87: Tower-only High band for dollar Γ per 1% move, "
+            "share of equity (info label, no gate)."
+        ),
+        target=Target.ROUTINES,
+        risk=Risk.NONE,
+        path=("tower", "overview", "greek_advisory", "gamma", "high_pct"),
+        min=0.0001,
+        max=1.0,
+    ),
 )
 
 

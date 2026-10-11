@@ -277,7 +277,8 @@ def build_portfolio(
     spot its Greeks were priced at). D62: ``beta_dollar_delta`` sums the same terms ×
     the root's β used (:func:`arc.betas.store.betas_used`: stored 1y β vs SPY floored at
     1.0; missing or stale -> 1.0). *delta_breakdown* (when given) is filled per root with
-    ``{dollar_delta, beta, beta_dollar_delta, beta_source}`` for the monitor heartbeat.
+    ``{dollar_delta, beta, beta_dollar_delta, beta_source, gamma, spot}`` for the monitor
+    heartbeat (D87: Γ share-eq and the spot it was priced at, for the Tower's $Γ).
 
     Raises :class:`PortfolioError` when any open position cannot be valued
     (e.g. undefined risk, missing quotes): no new trade is proposed then.
@@ -342,8 +343,12 @@ def build_portfolio(
                             "beta": b.beta,
                             "beta_dollar_delta": 0.0,
                             "beta_source": b.source,
+                            "gamma": 0.0,
+                            "spot": round(float(spot), 4),
                         },
                     )
+                    # D87: the Tower's gamma advisory needs Γ per root at its own spot
+                    row["gamma"] = float(row["gamma"]) + float(g.gamma)
                     row["dollar_delta"] = round(
                         float(row["dollar_delta"]) + float(leg_dollar_delta), 2
                     )
