@@ -33,12 +33,19 @@ draft XP specs here; a strategy PR's only XP touchpoint is its `XP-advisory:` li
 `create` and `register` refuse without `--owner-approval <P-<n> | slack:<ts> | owner:<note>>`.
 
 Retired drafts (E21.2, D86): the five dev-drafted specs XP-10 (trending velocity;
-registered once, then cleared from the registry with the 2026-10-10 reset) and the four
+registered once, then cleared from the registry by the owner on 2026-10-10 ahead of the
+D80 reset) and the four
 after it (Scalp tape movers, Stocktwits sentiment, technicals / anti-chase variants,
 unified menu measure) are gone. Their ideas are leads in the Analyst idea seed
 (`hermes/analyst/idea_seed.yaml`, each with a `git show` ref to the old spec); the flags
 they flipped keep their shipped values. XP-1 stays as history (the A/A on the new
 accounts is E15.9).
+
+Stopped-experiment history (E19.3, D80): XP-3 and XP-10 were owner-stopped and never
+promoted. Their hash-locked registered specs are in `history/` (JSON, outside the
+`*.yaml` glob, so no tool treats them as live specs) and each has a `verdict: stopped`
+file in `verdicts/` with its last stored `report_hash`. Their registry rows are in the
+gitignored D80 archive (`data/archive/20261011-1315-pre-d80/`), not in the live store.
 
 Fork at any persona (E13.12, D56): `arc experiment start` computes each arm's plan
 (`arc.experiments.runner.arm_plan`) and stores it on the arm's identity and in the
