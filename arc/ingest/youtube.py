@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import sqlite3
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
 import structlog
 
@@ -650,6 +650,7 @@ def fetch_youtube(
     conn: sqlite3.Connection,
     settings: ArcSettings,
     *,
+    channels: Sequence[str],
     force_audio: bool = False,
     transcriber: Transcriber | None = None,
     max_videos: int = 5,
@@ -658,7 +659,7 @@ def fetch_youtube(
     sleep: Callable[[float], None] | None = None,
     stats: YoutubeRunStats | None = None,
 ) -> list[RawDoc]:
-    """Fetch transcripts from configured YouTube channels.
+    """Fetch transcripts from the YouTube *channels* (channel/playlist URLs).
 
     Transcript order: manual subs → auto-captions → local audio transcription.
     Audio is used only for videos older than ``yt_caption_grace_minutes`` (so we
@@ -678,8 +679,6 @@ def fetch_youtube(
     """
     cursor_repo = IngestCursorRepo(conn)
     doc_repo = RawDocRepo(conn)
-    channels = settings.ingest_youtube_channels
-
     if not channels:
         log.warning("youtube.no_channels_configured")
         return []

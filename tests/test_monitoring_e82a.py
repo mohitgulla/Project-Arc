@@ -534,7 +534,7 @@ EARNINGS_YAML = """
       earnings:
         schedule: ["06:00", "18:00"]
         days: trading
-        category: company
+        category: company_data
         writes: [raw_doc_ref]
     monitoring:
       gateway: {enabled: false}

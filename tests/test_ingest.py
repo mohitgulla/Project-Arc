@@ -41,15 +41,17 @@ def db() -> sqlite3.Connection:
     return conn
 
 
+RSS_FEED = "https://example.com/feed.xml"
+YT_CHANNEL = "https://www.youtube.com/@TestChannel"
+
+
 @pytest.fixture()
 def settings() -> ArcSettings:
     """Test settings with ingest config."""
     return ArcSettings(
         env="paper",
-        ingest_rss_feeds=["https://example.com/feed.xml"],
         edgar_user_agent="TestArc/0.1 (test@example.com)",
         finnhub_api_key="test_key_123",
-        ingest_youtube_channels=["https://www.youtube.com/@TestChannel"],
         universe=["AAPL", "MSFT", "NVDA"],
         yt_caption_sleep_seconds=0,
     )
@@ -190,7 +192,7 @@ class TestRSSConnector:
             mock.patch("arc.ingest.rss._download", return_value=b""),
         ):
             mock_fp.parse.return_value = parsed
-            docs = fetch_rss(db, settings)
+            docs = fetch_rss(db, settings, feeds=[RSS_FEED])
 
         assert len(docs) == 2
         assert docs[0].source == "rss"
@@ -215,8 +217,8 @@ class TestRSSConnector:
             mock.patch("arc.ingest.rss._download", return_value=b""),
         ):
             mock_fp.parse.return_value = parsed
-            docs1 = fetch_rss(db, settings)
-            docs2 = fetch_rss(db, settings)
+            docs1 = fetch_rss(db, settings, feeds=[RSS_FEED])
+            docs2 = fetch_rss(db, settings, feeds=[RSS_FEED])
 
         assert len(docs1) == 1
         assert len(docs2) == 0  # incremental: cursor advanced past this entry
@@ -231,9 +233,8 @@ class TestRSSConnector:
         good = _make_rss_response(
             [{"link": "https://example.com/ok", "pubDate": "Wed, 01 Jan 2026 12:00:00 GMT"}]
         ).encode()
-        two = settings.model_copy(
-            update={"ingest_rss_feeds": ["https://dead.example/feed", "https://ok.example/feed"]}
-        )
+        two = settings
+        feeds = ["https://dead.example/feed", "https://ok.example/feed"]
 
         def fake_get(url: str, timeout: float, headers: dict[str, str]) -> mock.Mock:
             assert timeout == two.ingest_rss_timeout_seconds
@@ -243,15 +244,14 @@ class TestRSSConnector:
             return mock.Mock(content=good, raise_for_status=lambda: None)
 
         with mock.patch("arc.ingest.rss.requests.get", side_effect=fake_get):
-            docs = fetch_rss(db, two)
+            docs = fetch_rss(db, two, feeds=feeds)
 
         assert [d.url for d in docs] == ["https://example.com/ok"]
 
     def test_no_feeds_configured(self, db: sqlite3.Connection) -> None:
         from arc.ingest.rss import fetch_rss
 
-        empty_settings = ArcSettings(env="paper", ingest_rss_feeds=[])
-        docs = fetch_rss(db, empty_settings)
+        docs = fetch_rss(db, ArcSettings(env="paper"), feeds=[])
         assert docs == []
 
 
@@ -726,7 +726,7 @@ class TestYouTubeConnector:
                 return_value=CaptionResult.ok("AAPL is testing support at 180"),
             ) as dl,
         ):
-            docs = fetch_youtube(db, settings)
+            docs = fetch_youtube(db, settings, channels=[YT_CHANNEL])
 
         dl.assert_called_once_with("https://captions.test/abc123.vtt")
         assert len(docs) == 1
@@ -778,7 +778,7 @@ class TestYouTubeConnector:
                 "arc.ingest.youtube._download_subtitle", return_value=CaptionResult.ok("words")
             ),
         ):
-            (doc,) = fetch_youtube(db, settings)
+            (doc,) = fetch_youtube(db, settings, channels=[YT_CHANNEL])
         assert doc.channel_id == "UC-m6zNItyoDk5lSykDlhE4Q"
         row = db.execute("SELECT channel_id, title FROM raw_docs").fetchone()
         assert tuple(row) == ("UC-m6zNItyoDk5lSykDlhE4Q", "Outlook")
@@ -797,8 +797,7 @@ class TestYouTubeConnector:
     def test_no_channels_configured(self, db: sqlite3.Connection) -> None:
         from arc.ingest.youtube import fetch_youtube
 
-        empty_settings = ArcSettings(env="paper", ingest_youtube_channels=[])
-        docs = fetch_youtube(db, empty_settings)
+        docs = fetch_youtube(db, ArcSettings(env="paper"), channels=[])
         assert docs == []
 
     def test_dedupes_and_advances_cursor(
@@ -816,8 +815,8 @@ class TestYouTubeConnector:
                 "arc.ingest.youtube._download_subtitle", return_value=CaptionResult.ok("words")
             ),
         ):
-            docs1 = fetch_youtube(db, settings)
-            docs2 = fetch_youtube(db, settings)
+            docs1 = fetch_youtube(db, settings, channels=[YT_CHANNEL])
+            docs2 = fetch_youtube(db, settings, channels=[YT_CHANNEL])
 
         assert len(docs1) == 1
         assert len(docs2) == 0
@@ -835,7 +834,7 @@ class TestYouTubeConnector:
         ready = _yt_runner(listing, {"new1": _info("new1", "Fresh", "20260116")})
 
         with mock.patch("subprocess.run", side_effect=pending):
-            assert fetch_youtube(db, settings) == []
+            assert fetch_youtube(db, settings, channels=[YT_CHANNEL]) == []
         with (
             mock.patch("subprocess.run", side_effect=ready),
             mock.patch(
@@ -843,7 +842,7 @@ class TestYouTubeConnector:
                 return_value=CaptionResult.ok("now captioned"),
             ),
         ):
-            docs = fetch_youtube(db, settings)
+            docs = fetch_youtube(db, settings, channels=[YT_CHANNEL])
         assert [d.url for d in docs] == ["https://www.youtube.com/watch?v=new1"]
 
 
@@ -888,22 +887,19 @@ class TestRawDocModel:
 class TestIngestConfig:
     def test_default_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # Hermetic: a shell that sourced ~/.hermes/.env exports the real key.
-        for var in ("ARC_FINNHUB_API_KEY", "ARC_INGEST_RSS_FEEDS", "ARC_INGEST_YOUTUBE_CHANNELS"):
-            monkeypatch.delenv(var, raising=False)
+        monkeypatch.delenv("ARC_FINNHUB_API_KEY", raising=False)
         s = ArcSettings(env="paper", _env_file=None)  # type: ignore[call-arg]
-        assert s.ingest_rss_feeds == []
-        assert s.ingest_youtube_channels == DEFAULT_YOUTUBE_CHANNELS
+        # E20.2 (D85): feed/channel lists live in routines.yaml only, never in settings
+        assert not hasattr(s, "ingest_rss_feeds") and not hasattr(s, "ingest_youtube_channels")
         assert s.finnhub_api_key == ""
         assert "ProjectArc" in s.edgar_user_agent
 
-    def test_csv_parsing(self) -> None:
-        s = ArcSettings(
-            env="paper",
-            ingest_rss_feeds="https://a.com/feed,https://b.com/feed",
-            ingest_youtube_channels="https://youtube.com/@A,https://youtube.com/@B",
-        )
-        assert len(s.ingest_rss_feeds) == 2
-        assert len(s.ingest_youtube_channels) == 2
+    def test_default_channels_are_the_routines_briefs_channels(self) -> None:
+        from arc.routines.config import load_routines
+
+        jobs = load_routines().sources
+        ids = {c["channel"] for c in jobs["youtube.briefs"].options["channels"]}
+        assert {u.split("/channel/")[1].split("/")[0] for u in DEFAULT_YOUTUBE_CHANNELS} == ids
 
     def test_custom_values(self) -> None:
         s = ArcSettings(

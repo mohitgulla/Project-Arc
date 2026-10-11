@@ -311,18 +311,17 @@ def rss_source(ctx: JobContext) -> JobResult:
     from arc.ingest.rss import fetch_rss_feeds
     from arc.ingest.sources import FeedSpec, SourceRegistry
 
-    settings = ctx.settings
     feeds = [FeedSpec.parse(f) for f in ctx.options.get("feeds") or []]
     keys: dict[str, str] = {}
     ages: dict[str, Ttl] = {}
     if feeds:
-        settings = settings.model_copy(update={"ingest_rss_feeds": [f.url for f in feeds]})
         keys = {f.url: f.key for f in feeds}
         reg = SourceRegistry.from_routines(ctx.routines)
         ages = {f.url: reg.max_age_for(f.key) for f in feeds if f.key in reg.sources}
     fetched = fetch_rss_feeds(
         ctx.conn,
-        settings,
+        ctx.settings,
+        feeds=[f.url for f in feeds],
         source_keys=keys,
         max_ages=ages,
         feed_specs={f.url: f for f in feeds},
@@ -845,8 +844,9 @@ def market_movers_source(
 def macro_calendar_source(ctx: JobContext) -> JobResult:
     """E4.5/E4.10: FOMC + BLS (CPI/PPI/NFP/JOLTS/ECI) + BEA (GDP/PCE) -> ``macro_calendar``."""
     from arc.ingest.options_data import fetch_macro_calendar
+    from arc.routines.config import horizon_days_option
 
-    horizon = int(ctx.options.get("horizon_days", ctx.settings.ingest_macro_horizon_days))
+    horizon = horizon_days_option(ctx.job, ctx.options)
     status: dict[str, str] = {}
     payload, counts = fetch_macro_calendar(
         ctx.now.astimezone(ET).date(),
@@ -1079,8 +1079,9 @@ def betas_source(
 def ex_dividend_source(ctx: JobContext) -> JobResult:
     """E4.5: next cash-dividend ex-date per ticker (Alpaca corporate actions)."""
     from arc.ingest.options_data import fetch_ex_dividends
+    from arc.routines.config import horizon_days_option
 
-    horizon = int(ctx.options.get("horizon_days", ctx.settings.ex_dividend_horizon_days))
+    horizon = horizon_days_option(ctx.job, ctx.options)
     tickers = _data_tickers(ctx)
     found = fetch_ex_dividends(tickers, ctx.now.astimezone(ET).date(), horizon)
     _data_result(
@@ -1536,7 +1537,7 @@ def symbols_source(ctx: JobContext) -> JobResult:
 
 
 MOMENTUM_SOURCES_DEFAULT = ("stockanalysis", "schwab")
-#: E12.2: rows the momentum feed keeps (the tier takes its top universe_momentum_size_d56).
+#: E12.2: rows the momentum feed keeps (the tier takes its top universe_momentum_size).
 MOMENTUM_FEED_SIZE = 25
 
 
@@ -1926,14 +1927,15 @@ def youtube_source(ctx: JobContext) -> JobResult:
     the current ``youtube:captions_backoff`` cooldown, so every scheduled run
     shows how the E4.1c backoff behaved.
     """
+    from arc.config import DEFAULT_YOUTUBE_CHANNELS
     from arc.ingest.youtube import YoutubeRunStats, fetch_youtube
 
-    settings = ctx.settings
     channel = ctx.options.get("channel")
-    if channel:
-        settings = settings.model_copy(update={"ingest_youtube_channels": [youtube_url(channel)]})
+    channels = [youtube_url(channel)] if channel else list(DEFAULT_YOUTUBE_CHANNELS)
     stats = YoutubeRunStats()
-    result = _source_result(ctx, fetch_youtube(ctx.conn, settings, stats=stats))
+    result = _source_result(
+        ctx, fetch_youtube(ctx.conn, ctx.settings, channels=channels, stats=stats)
+    )
     result.summary = f"{result.summary} · {stats.summary()}"
     result.metrics.update(
         {

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from arc.context.kinds import NotePayload
-from arc.control.registry import is_alias, is_orphaned, lookup
+from arc.control.registry import REGISTRY, is_alias, lookup
 from arc.ingest.sources import _feed
 from arc.journal import legacy
 from arc.journal.reasons import JournalPersona, ReasonCode
@@ -227,7 +227,7 @@ def test_old_setting_names_resolve(old: str) -> None:
     assert lookup(f"{old}_doc_budget").key == "scalp_doc_budget"
     # E13.15: the Scalp floor became the core-tier floor; the new-ticker cap is gone
     assert lookup(f"{old}_min_confidence").key == "universe_floor_core"
-    assert is_orphaned(f"{old}_max_new_tickers")
+    assert f"{old}_max_new_tickers" not in REGISTRY
 
 
 def test_old_shortlist_key_resolves() -> None:

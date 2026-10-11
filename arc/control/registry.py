@@ -189,7 +189,6 @@ NEVER_TUNABLE: frozenset[str] = frozenset(
 # adds gets an explicit exposed / not-exposed decision.
 NOT_EXPOSED: dict[str, str] = {
     "wash_sale_days": "tax rule, not a strategy knob",
-    "structure_whitelist": "account_profile decides the allowed structures",
     "quote_max_age_seconds": "data freshness guard (gate); change by PR",
     "account_max_age_seconds": "data freshness guard (gate); change by PR",
     "gate_fee_per_leg_contract": "gate fee assumption; broker schedule",
@@ -220,9 +219,7 @@ NOT_EXPOSED: dict[str, str] = {
     "iv_dividend_yields": "pricing input for the IV backfill",
     "spot_max_spread_pct": "data-quality guard on spot; change by PR",
     "alpaca_data_calls_per_minute": "data API plumbing",
-    "ingest_rss_feeds": "sources live in routines.yaml",
     "ingest_rss_timeout_seconds": "network plumbing",
-    "ingest_youtube_channels": "sources live in routines.yaml",
     "yt_caption_grace_minutes": "ingestion plumbing",
     "yt_max_audio_minutes": "ingestion plumbing",
     "yt_max_audio_per_run": "ingestion plumbing",
@@ -245,8 +242,6 @@ NOT_EXPOSED: dict[str, str] = {
     "scalp_tape_max_chars": "E13.10 prompt size (the tape is capped at 1500 chars)",
     "scalp_tape_pc_bull": "E13.10 tape direction threshold; change by PR (strategy lane)",
     "scalp_tape_pc_bear": "E13.10 tape direction threshold; change by PR (strategy lane)",
-    "ingest_macro_horizon_days": "ingestion plumbing",
-    "ex_dividend_horizon_days": "ingestion plumbing",
     "finnhub_insider_window_days": "D46 insider detector internals (context data only)",
     "finnhub_cluster_buyers": "D46 insider detector internals (context data only)",
     "finnhub_cluster_days": "D46 insider detector internals (context data only)",
@@ -475,7 +470,7 @@ _STATIC: tuple[Tunable, ...] = (
         hard_ceiling=60,
     ),
     _s(
-        "universe_momentum_size_d56",
+        "universe_momentum_size",
         Group.UNIVERSE,
         _I,
         "D56: momentum tier size (top N of the 25-row momentum feed).",
@@ -483,6 +478,7 @@ _STATIC: tuple[Tunable, ...] = (
         min=0,
         max=50,
         hard_ceiling=50,
+        aliases=("universe_momentum_size_d56",),  # E20.2 (D85): the pre-rename key
     ),
     _s(
         "universe_discovery_size",
@@ -2164,18 +2160,12 @@ _TOWER_TUNABLES: tuple[Tunable, ...] = (
 def _category_tunables() -> tuple[Tunable, ...]:
     """D47/D49/D56 (E4.7, E4.9, E13.3): each source category's weight and freshness window.
 
-    All six categories have a duration window (D56: options_fast 30m, options_slow
-    24h). The D47 key of the renamed ``company`` category is an alias of the new key,
-    so a stored override on it applies to ``company_data``
-    (:data:`CATEGORY_KEY_RENAMES`). Keys of removed categories are orphaned
-    (:data:`ORPHANED_KEY_PREFIXES`).
+    Every category has a duration window (D56: options_fast 30m, options_slow 24h).
     """
     from arc.context.categories import SourceCategory
 
-    renamed = {new: old for old, new in CATEGORY_KEY_RENAMES.items()}
     out: list[Tunable] = []
     for c in SourceCategory:
-        old = renamed.get(c.value)
         out.append(
             Tunable(
                 key=f"categories.{c.value}.weight",
@@ -2189,7 +2179,6 @@ def _category_tunables() -> tuple[Tunable, ...]:
                 min=0,
                 max=5,
                 hard_ceiling=5,
-                aliases=(f"categories.{old}.weight",) if old else (),
             )
         )
         out.append(
@@ -2206,7 +2195,6 @@ def _category_tunables() -> tuple[Tunable, ...]:
                 min=30,
                 max=10_080,
                 hard_ceiling=10_080,
-                aliases=(f"categories.{old}.max_age",) if old else (),
             )
         )
     return tuple(out)
@@ -2558,53 +2546,6 @@ _CARRYOVER_TUNABLES: tuple[Tunable, ...] = (
 )
 
 
-# D49: D47 category names renamed in place (old -> new). Their tunable keys stay as
-# aliases, so a change-log override on ``categories.company.weight`` applies to
-# ``categories.company_data.weight``. ``video`` was split, so its keys have no single
-# successor: an override on them is reported and dropped (control.override_unknown_key).
-CATEGORY_KEY_RENAMES: dict[str, str] = {"company": "company_data"}
-
-# D56 (E13.3): keys of removed categories and the removed UOA detector. A stored
-# override on one has no successor: it is logged as ``config.override_orphaned`` and
-# ignored (``macro_data`` / ``macro`` split into market_news + reference data;
-# ``options_data`` became options_fast + options_slow; ``uoa_*`` left with the kind).
-ORPHANED_KEY_PREFIXES: tuple[str, ...] = (
-    "categories.macro_data.",
-    "categories.macro.",
-    "categories.options_data.",
-    "uoa_",
-    "settings.uoa_",
-    "universe_screen_relaxed_",  # E13.15: D51 relaxed screen
-)
-# E13.15: exact keys of removed D51 / flag tunables (a prefix would also match
-# ``universe_momentum_size_d56``).
-ORPHANED_KEYS: frozenset[str] = frozenset(
-    {
-        "universe.tiers.model",
-        "universe_momentum_size",
-        "scalp_max_new_tickers",
-        "sweep_max_new_tickers",
-        "scout_max_new_tickers",
-        # the D56 cutover switches, always on now (arc.routines.config.REMOVED_PERSONA_SWITCHES)
-        "personas.quant_risk_loop",
-        "personas.scalp_options_tape",
-        "personas.scout_feed",
-        "personas.research_idea_pool",
-        "personas.research_compact_prompt",
-        "personas.exit_path",
-        # D57 (E3.5): the share-count delta cap, replaced by portfolio_dollar_delta_cap_pct
-        # (no alias: a multiple of equity/100 does not convert to a share of equity)
-        "portfolio_delta_cap",
-    }
-)
-
-
-def is_orphaned(key: str) -> bool:
-    """D56: *key* belongs to a removed category, the removed UOA detector or a removed
-    D51 / flag tunable (E13.15), or the D57 share-count delta cap (E3.5)."""
-    return key in ORPHANED_KEYS or key.startswith(ORPHANED_KEY_PREFIXES)
-
-
 def _exp(key: str, desc: str, risk: Risk, path: tuple[str, ...], **kw: Any) -> Tunable:
     """A ``config/experiments.yaml`` default (E10.1, D44): copied into new specs only."""
     return Tunable(
@@ -2852,7 +2793,7 @@ def lookup(key: str) -> Tunable:
 
 
 def is_alias(key: str) -> bool:
-    """True for an alias of a registry key (e.g. a D49-renamed ``categories.company.*``)."""
+    """True for an alias of a registry key (e.g. a renamed ``universe_momentum_size_d56``)."""
     lowered = key.strip().lower()
     return lowered in _ALIASES
 

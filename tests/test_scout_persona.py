@@ -509,9 +509,9 @@ class TestValidation:
 class TestHandler:
     def test_no_switch_left(self) -> None:
         """E13.15: ``personas.scout_feed`` is gone; the job's own ``enabled`` remains."""
-        from arc.control.registry import is_orphaned
+        from arc.control.registry import REGISTRY
 
-        assert is_orphaned("personas.scout_feed") and "scout_feed" not in PERSONA_FLAGS
+        assert "personas.scout_feed" not in REGISTRY and "scout_feed" not in PERSONA_FLAGS
 
     def test_full_run(self, db: sqlite3.Connection) -> None:
         _seed(db)

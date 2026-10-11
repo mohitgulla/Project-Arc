@@ -195,34 +195,13 @@ class TestRegistry:
         with pytest.raises(ValueError, match="unknown source category"):
             _routines({"edgar": {"every": "15m", "writes": ["raw_doc_ref"], "category": "x"}})
 
-    def test_legacy_category_names_alias_to_d49(self) -> None:
-        """Pre-D47 names and the renamed D47/D49 names load as logged aliases."""
-        with structlog.testing.capture_logs() as logs:
-            reg = SourceRegistry.from_routines(
-                _routines(
-                    {
-                        "edgar": {"every": "15m", "writes": ["raw_doc_ref"], "category": "filings"},
-                        "earnings": {
-                            "every": "1h",
-                            "writes": ["raw_doc_ref"],
-                            "category": "calendar",
-                        },
-                        "sec": {"every": "1h", "writes": ["raw_doc_ref"], "category": "company"},
-                        "cboe": {
-                            "every": "1h",
-                            "writes": ["raw_doc_ref"],
-                            "category": "options_data",
-                        },
-                    }
-                )
-            )
-        assert reg.sources["edgar"].category is SourceCategory.COMPANY_DATA
-        assert reg.sources["earnings"].category is SourceCategory.COMPANY_DATA
-        assert reg.sources["sec"].category is SourceCategory.COMPANY_DATA
-        assert reg.sources["cboe"].category is SourceCategory.OPTIONS_SLOW
-        aliased = {(e["old"], e["new"]) for e in logs if e["event"] == "sources.category_alias"}
-        assert ("company", "company_data") in aliased
-        assert ("options_data", "options_slow") in aliased
+    @pytest.mark.parametrize("old", ["filings", "calendar", "company", "options_data"])
+    def test_expired_category_names_fail_config_load(self, old: str) -> None:
+        """E20.2 (D85): the pre-D47 / D47 / D49 names no longer load as aliases."""
+        with pytest.raises(ValueError, match="unknown source category"):
+            _routines({"edgar": {"every": "15m", "writes": ["raw_doc_ref"], "category": old}})
+
+    def test_removed_macro_category_is_refused(self) -> None:
         # D56: `macro` / `macro_data` have no successor and are refused
         with pytest.raises(ValueError, match="was removed"):
             _routines({"fedwire": {"every": "1h", "writes": ["raw_doc_ref"], "category": "macro"}})
@@ -237,8 +216,8 @@ class TestRegistry:
             {"categories": {"company_data": {"weight": 2, "max_age": "3d"}}}
         )
         assert r.categories[SourceCategory.COMPANY_DATA].weight == 2
-        old = RoutinesConfig.model_validate({"categories": {"company": {"weight": 3}}})
-        assert old.categories[SourceCategory.COMPANY_DATA].weight == 3  # D49 alias
+        with pytest.raises(ValueError, match="unknown"):  # E20.2: the D49 alias expired
+            RoutinesConfig.model_validate({"categories": {"company": {"weight": 3}}})
         with pytest.raises(ValueError, match="split in two"):
             RoutinesConfig.model_validate({"categories": {"video": {"weight": 1}}})
         assert r.categories[SourceCategory.MARKET_NEWS].weight == 1  # unset: default kept
@@ -303,7 +282,7 @@ class TestRegistry:
         reg = SourceRegistry.from_routines(
             _routines(
                 {"rss": {"every": "30m", "writes": ["raw_doc_ref"], "feeds": FEEDS}},
-                {"category_weights": {"market_news": 1, "company": 0}},
+                {"category_weights": {"market_news": 1, "company_data": 0}},
             )
         )
         w = reg.effective_weights()
@@ -550,10 +529,11 @@ class TestFreshness:
         parsed.entries = entries
         monkeypatch.setattr(rss, "_download", lambda *_a, **_k: b"<rss/>")
         monkeypatch.setattr(rss.feedparser, "parse", lambda *_a, **_k: parsed)
-        s = ArcSettings(env="paper", ingest_rss_feeds=[url])  # type: ignore[call-arg]
+        s = ArcSettings(env="paper")  # type: ignore[call-arg]
         docs = rss.fetch_rss(
             conn,
             s,
+            feeds=[url],
             source_keys={url: "cnbc"},
             max_ages={url: Ttl(duration=dt.timedelta(hours=6))},
             now=NOW,
@@ -1107,9 +1087,9 @@ def test_category_tunables_reach_the_registry(conn, tmp_path) -> None:
     assert reg.is_stale("wsj", published=NOW - dt.timedelta(hours=2), ingested=NOW, now=NOW)
 
 
-def test_stored_override_on_a_renamed_category_key_migrates(conn, tmp_path) -> None:
-    """D49: a change-log row on `categories.company.*` applies to company_data; one on
-    the split `categories.video.*` is reported and dropped (it has no single successor)."""
+def test_stored_override_on_a_removed_category_key_is_dropped(conn, tmp_path) -> None:
+    """E20.2 (D85): change-log rows on old category keys (`categories.company.*`, the
+    removed `macro`, the split `video`) are reported and dropped; none exists live."""
     from arc.control.effective import effective_routines
     from arc.control.service import ControlService
     from arc.control.store import ConfigChangeRepo
@@ -1128,14 +1108,16 @@ def test_stored_override_on_a_renamed_category_key_migrates(conn, tmp_path) -> N
         )  # fmt: skip
     with structlog.testing.capture_logs() as logs:
         r = effective_routines(conn, p)
-    assert r.categories[SourceCategory.COMPANY_DATA].weight == 3
+    assert r.categories[SourceCategory.COMPANY_DATA].weight == 1
     assert r.categories[SourceCategory.YOUTUBE_MACRO].weight == 1  # video: dropped
     assert r.categories[SourceCategory.YOUTUBE_MICRO].weight == 1
     dropped = [e["key"] for e in logs if e["event"] == "control.override_unknown_key"]
-    assert dropped == ["categories.video.weight"]
-    orphaned = [e["key"] for e in logs if e["event"] == "config.override_orphaned"]
-    assert orphaned == ["categories.macro.max_age"]
-    # `!arc config` shows the migrated value under the new key, never the old one
+    assert dropped == [
+        "categories.company.weight",
+        "categories.macro.max_age",
+        "categories.video.weight",
+    ]
+    # the new key is not overridden by the old row
     svc = ControlService(
         conn,
         base=ArcSettings(_env_file=None),  # type: ignore[call-arg]
@@ -1143,7 +1125,4 @@ def test_stored_override_on_a_renamed_category_key_migrates(conn, tmp_path) -> N
         optionable=lambda s: True,
         is_halted=lambda: False,
     )
-    shown = list(svc.keys())
-    assert "categories.company.weight" not in shown
-    v = svc.view("categories.company_data.weight")
-    assert v.overridden and v.last is not None and v.last.key == "categories.company.weight"
+    assert not svc.view("categories.company_data.weight").overridden

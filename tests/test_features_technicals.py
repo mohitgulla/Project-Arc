@@ -535,13 +535,26 @@ def test_shipped_switch_is_on_and_off_is_the_rollback() -> None:
 
     r = load_routines()
     assert r.research_technicals.enabled is True  # D78 ships on
-    assert r.technicals.sector_etf["technology"] == "XLK"
     off = load_routines(overrides={("personas", "research_technicals"): "off"})
     assert off.research_technicals.enabled is False
     t = lookup("personas.research_technicals")
     assert lookup("research_technicals") is t and t.choices == ("off", "on")
+
+
+def test_sector_etf_map_lives_in_sectors_yaml(tmp_path: Path) -> None:
+    """E20.2 (D85): config/sectors.yaml `sector_etf:` is the one source."""
+    from arc.pipeline.portfolio_context import load_sector_etfs
+
+    etfs = load_sector_etfs()
+    assert etfs["technology"] == "XLK" and len(etfs) == 10
+    assert "technicals" not in RoutinesConfig.model_fields
+    bad = tmp_path / "s.yaml"
+    bad.write_text("sectors: {technology: [AAPL]}\nsector_etf: {tech: XLK}\n")
     with pytest.raises(ValueError, match="sector_etf"):
-        RoutinesConfig.model_validate({"technicals": {"sector_etf": {"tech": "not a ticker"}}})
+        load_sector_etfs(bad)
+    bad.write_text("sectors: {technology: [AAPL]}\nsector_etf: {technology: not a ticker}\n")
+    with pytest.raises(ValueError, match="sector_etf"):
+        load_sector_etfs(bad)
 
 
 # ---------------------------------------------------------------------------
@@ -584,11 +597,10 @@ def _step(conn: Any, market: _Market, tickers: list[str]) -> tuple[list[str], An
                 "iv.record": {
                     "schedule": ["15:50"],
                     "writes": ["regime"],
-                    "category": "options_data",
+                    "category": "options_slow",
                     "tickers": ["AAPL"],
                 }
             },
-            "technicals": {"sector_etf": {"technology": "XLK"}},
         }
     )
     kind, spec = routines.step("iv.record")

@@ -938,29 +938,6 @@ class AntiChaseSettings(BaseModel):
         )
 
 
-class TechnicalsSettings(BaseModel):
-    """E16.2 (D76): ``technicals:`` inputs for the sector relative-strength field.
-
-    ``sector_etf`` maps a sector name from ``config/sectors.yaml`` to the ETF
-    ``rs_sector_20d`` is measured against; an unmapped sector (or a ticker without
-    one) gets ``None``. ``rs_spy_*`` always use SPY. Each reference's bars are
-    fetched once per regime step and reused for every ticker.
-    """
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    sector_etf: dict[str, str] = Field(default_factory=dict)
-
-    @field_validator("sector_etf")
-    @classmethod
-    def _etfs(cls, v: dict[str, str]) -> dict[str, str]:
-        for sector, etf in v.items():
-            if not str(sector).strip() or not _TICKER.match(str(etf)):
-                msg = f"technicals.sector_etf: bad entry {sector!r}: {etf!r}"
-                raise ValueError(msg)
-        return v
-
-
 class ScalpMoversContextSettings(BaseModel):
     """E14.3 (D60, D44): the "Tape movers" block in the Scalp prompt (default off).
 
@@ -1113,7 +1090,6 @@ class RoutinesConfig(BaseModel):
     research_technicals: ResearchTechnicalsSettings = Field(
         default_factory=ResearchTechnicalsSettings
     )
-    technicals: TechnicalsSettings = Field(default_factory=TechnicalsSettings)  # E16.2
     # E16.3 (D76/D78): knobs + the ``personas.anti_chase`` flag (as ``enabled``).
     anti_chase: AntiChaseSettings = Field(default_factory=AntiChaseSettings)
     # E16.4 (D76): the ``personas.market_health_context`` flag (as ``enabled``) and the
@@ -1246,6 +1222,8 @@ class RoutinesConfig(BaseModel):
                 from arc.ingest.ticker_news_config import TickerNewsConfig
 
                 TickerNewsConfig.from_options(spec.options)
+            if name in HORIZON_JOBS:  # E20.2 (D85): the job option is the only source
+                horizon_days_option(name, spec.options)
         for name, spec in self.personas.items():
             if name in spec.chain or len(set(spec.chain)) != len(spec.chain):
                 msg = f"persona {name!r}: chain repeats a step"
@@ -1550,6 +1528,19 @@ class RoutinesConfig(BaseModel):
             if spec.context is not None:
                 return spec.context
         return self.context_ttl.get(kind, ContextPolicy())
+
+
+#: E20.2 (D85): source jobs whose look-ahead is the required ``horizon_days:`` option.
+HORIZON_JOBS: frozenset[str] = frozenset({"macro_calendar", "ex_dividend"})
+
+
+def horizon_days_option(job: str, options: Mapping[str, Any]) -> int:
+    """The required ``horizon_days:`` option (an int, 1-180) of *job*."""
+    value = options.get("horizon_days")
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 180:
+        msg = f"source {job!r}: horizon_days must be an int 1-180 (got {value!r})"
+        raise ValueError(msg)
+    return value
 
 
 def load_routines(

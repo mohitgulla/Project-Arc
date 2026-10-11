@@ -101,7 +101,7 @@ def add_backtest_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]
         action="append",
         default=[],
         help="E7.5a: partial ranking file deep-merged over --config (repeatable), "
-        "e.g. config/experiments/e75a_regime_menu.yaml",
+        "e.g. config/experiments/backtest/e75a_regime_menu.yaml",
     )
     rk.add_argument(
         "--slippage-from-scorecard",

@@ -16,6 +16,7 @@ here is a gate input.
 from __future__ import annotations
 
 import datetime as _dt
+import re
 from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -90,6 +91,27 @@ def load_sectors(path: Path | str | None = None) -> dict[str, str]:
     for sector, tickers in (data.get("sectors") or {}).items():
         for t in tickers or []:
             out[str(t).upper()] = str(sector)
+    return out
+
+
+_ETF_TICKER = re.compile(r"^[A-Z][A-Z0-9.]{0,9}$")
+
+
+def load_sector_etfs(path: Path | str | None = None) -> dict[str, str]:
+    """``sector -> ETF`` from ``config/sectors.yaml`` ``sector_etf:`` (E16.2, D76).
+
+    The ETF ``rs_sector_20d`` is measured against; every key must be a sector of
+    ``sectors:`` and every value a ticker (raises ``ValueError`` otherwise).
+    """
+    p = Path(path) if path is not None else DEFAULT_SECTORS_PATH
+    data = yaml.safe_load(p.read_text()) or {}
+    sectors = set((data.get("sectors") or {}).keys())
+    out: dict[str, str] = {}
+    for sector, etf in (data.get("sector_etf") or {}).items():
+        if str(sector) not in sectors or not _ETF_TICKER.match(str(etf)):
+            msg = f"sectors.yaml sector_etf: bad entry {sector!r}: {etf!r}"
+            raise ValueError(msg)
+        out[str(sector)] = str(etf)
     return out
 
 

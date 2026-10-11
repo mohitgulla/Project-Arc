@@ -95,11 +95,11 @@ def _stored_doc(conn: sqlite3.Connection, source: str, url: str) -> RawDoc:
     ("job", "fn", "target", "options", "setting", "expected"),
     [
         ("rss", rss_source, "arc.ingest.rss.fetch_rss_feeds", {"feeds": ["https://f/x"]},
-         "ingest_rss_feeds", ["https://f/x"]),
+         "feeds", ["https://f/x"]),
         ("edgar", edgar_source, "arc.ingest.edgar.fetch_edgar", {"tickers": ["aapl"]},
          None, None),
         ("youtube.stockedup", youtube_source, "arc.ingest.youtube.fetch_youtube",
-         {"channel": "UCabc"}, "ingest_youtube_channels",
+         {"channel": "UCabc"}, "channels",
          ["https://www.youtube.com/channel/UCabc/videos"]),
         ("earnings", earnings_source, "arc.ingest.earnings.fetch_earnings", {}, None, None),
     ],
@@ -124,7 +124,7 @@ def test_source_handlers_write_doc_refs(
     assert result.metrics["new_docs"] == 2
     assert result.summary.startswith("2 new docs")
     if setting is not None:
-        assert getattr(fetch.call_args.args[1], setting) == expected
+        assert fetch.call_args.kwargs[setting] == expected  # E20.2: passed explicitly
     refs = ContextStore(conn).query(as_of=NOW, kinds=["raw_doc_ref"])
     assert len(refs) == 2  # one subject per doc, so refs never supersede each other
     assert {r.payload["url"] for r in refs} == {"https://x/0", "https://x/1"}
@@ -171,7 +171,7 @@ def test_data_tickers_include_open_underlyings(conn: sqlite3.Connection) -> None
     from arc.routines.handlers import _data_tickers
 
     _open_structure(conn, "ZZOP")
-    got = _data_tickers(_ctx(conn, "ex_dividend", {"tickers": ["nvda"]}))
+    got = _data_tickers(_ctx(conn, "ex_dividend", {"tickers": ["nvda"], "horizon_days": 45}))
     assert got == ["NVDA", "ZZOP"]
 
 

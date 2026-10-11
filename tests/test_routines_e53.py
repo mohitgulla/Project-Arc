@@ -444,7 +444,9 @@ def _ctx(
 
 
 def test_youtube_source_summary_includes_caption_outcome(conn: sqlite3.Connection) -> None:
-    def fake_fetch(_conn: object, _settings: object, *, stats: YoutubeRunStats) -> list[object]:
+    def fake_fetch(
+        _conn: object, _settings: object, *, channels: object, stats: YoutubeRunStats
+    ) -> list[object]:
         stats.captions = {"rate_limited": 1}
         stats.captions_skipped, stats.skip_reason = 2, "breaker"
         stats.audio, stats.audio_wall_s = 2, 158.4

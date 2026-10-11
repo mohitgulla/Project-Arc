@@ -194,7 +194,7 @@ def test_overlay_reuses_the_backtest_deep_merge() -> None:
 
 def test_backtest_overlay_file_drives_a_forward_arm_identically() -> None:
     """A backtest overlay file, used as a forward treatment overlay, merges the same way."""
-    path = REPO / "config/experiments/e75a_b_short_dte.yaml"
+    path = REPO / "config/experiments/backtest/e75a_b_short_dte.yaml"
     body = yamlpatch.overlay_body(yaml.safe_load(path.read_text()))
     spec = ExperimentSpec.model_validate(
         {

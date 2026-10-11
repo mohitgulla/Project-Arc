@@ -75,11 +75,16 @@ def test_seven_members_in_display_order() -> None:
     }  # Ttl prints 24h as 1d
 
 
-def test_options_data_loads_as_options_slow_alias() -> None:
-    with structlog.testing.capture_logs() as logs:
-        assert parse_category("options_data") is SourceCategory.OPTIONS_SLOW
-    assert any(e["event"] == "sources.category_alias" for e in logs)
-    assert normalize_category("options_data") is SourceCategory.OPTIONS_SLOW
+@pytest.mark.parametrize("name", ["company", "company_news", "filings", "calendar", "options_data"])
+def test_expired_aliases_are_refused_in_config_but_read_on_stored_rows(name: str) -> None:
+    """E20.2 (D85): the D56 "one release" aliases no longer load from config; a stored
+    row that still carries the old name keeps reading as its successor."""
+    with pytest.raises(ValueError, match="unknown source category"):
+        parse_category(name, where="sources.x")
+    expected = (
+        SourceCategory.OPTIONS_SLOW if name == "options_data" else SourceCategory.COMPANY_DATA
+    )
+    assert normalize_category(name) is expected
 
 
 @pytest.mark.parametrize("name", ["macro_data", "macro"])
@@ -396,13 +401,12 @@ def test_orphaned_overrides_are_logged_and_ignored(conn, tmp_path) -> None:
         r = effective_routines(conn, p)
         effective_settings(conn)
     assert r.categories[SourceCategory.OPTIONS_SLOW].max_age.duration == dt.timedelta(hours=24)
-    orphaned = {e["key"] for e in logs if e["event"] == "config.override_orphaned"}
-    assert orphaned == {
+    unknown = {e["key"] for e in logs if e["event"] == "control.override_unknown_key"}
+    assert unknown == {
         "categories.macro_data.weight",
         "categories.options_data.max_age",
         "uoa_min_volume",
     }
-    assert not [e for e in logs if e["event"] == "control.override_unknown_key"]
 
 
 def test_new_keys_are_classified() -> None:

@@ -45,7 +45,8 @@ from arc.scanner.rank import (
 from tests.test_ranking import synth  # noqa: F401  (module-scoped synthetic dataset)
 
 REPO = Path(__file__).resolve().parent.parent
-EXPERIMENTS = sorted((REPO / "config" / "experiments").glob("*.yaml"))
+BT = REPO / "config" / "experiments" / "backtest"
+EXPERIMENTS = sorted(BT.glob("*.yaml"))
 
 
 def _c(key: str, **kw: object) -> RankInputs:
@@ -141,7 +142,7 @@ def test_e75b_overlay_is_live_shaped_and_tilted() -> None:
     from arc.scanner.rank import Ranker
 
     base = load_ranking_file()
-    cfg = load_ranking_file(None, [REPO / "config/experiments/e75b_unified_measure.yaml"])
+    cfg = load_ranking_file(None, [BT / "e75b_unified_measure.yaml"])
     assert cfg.backtest.direction_tilt == 0.25 and base.backtest.direction_tilt == 0.0
     for prof, specs in cfg.backtest.menus.items():
         assert all(m.expiry_mode is ExpiryMode.ALL for m in specs), prof
@@ -153,7 +154,7 @@ def test_e75b_overlay_is_live_shaped_and_tilted() -> None:
 
 
 def test_experiment_a_content() -> None:
-    cfg = load_ranking_file(None, [REPO / "config/experiments/e75a_a_regime_menu.yaml"])
+    cfg = load_ranking_file(None, [BT / "e75a_a_regime_menu.yaml"])
     m = cfg.backtest.stance_menus
     assert m["margin"] == {"bull": [], "bear": [], "sideways": [StrategyKind.IRON_CONDOR]}
     assert StrategyKind.BEAR_PUT not in m["cash_debit"]["bear"]
@@ -174,7 +175,7 @@ def test_overlay_deep_merges_and_rejects_unknown_keys(tmp_path: Path) -> None:
 
 
 def test_window_for_override() -> None:
-    bt = load_ranking_file(None, [REPO / "config/experiments/e75a_b_short_dte.yaml"]).backtest
+    bt = load_ranking_file(None, [BT / "e75a_b_short_dte.yaml"]).backtest
     assert bt.window_for("margin", (30, 45)) == (21, 30)
     assert bt.window_for("cash_long_only", (30, 60)) == (30, 60)
 
@@ -280,7 +281,7 @@ def test_cost_filter_only_removes_trades(
     tmp_path: Path,
 ) -> None:
     """With the filter at a huge ratio nothing passes; the report still renders."""
-    cfg = _small(load_ranking_file(None, [REPO / "config/experiments/e75a_c_ev_cost.yaml"]))
+    cfg = _small(load_ranking_file(None, [BT / "e75a_c_ev_cost.yaml"]))
     f = cfg.ranking.filters.model_copy(update={"min_net_ev_to_cost": 1e9})  # type: ignore[attr-defined]
     cfg = cfg.model_copy(update={"ranking": cfg.ranking.model_copy(update={"filters": f})})  # type: ignore[attr-defined]
     frames = run_rank_report(out_dir=tmp_path, **_kw(synth, cfg))  # type: ignore[arg-type]

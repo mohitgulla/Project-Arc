@@ -14,7 +14,7 @@ import json
 from typing import TYPE_CHECKING, Any
 
 from arc.config import ArcSettings
-from arc.control.registry import is_orphaned
+from arc.control.registry import REGISTRY
 from arc.ingest.llm import FixtureScalpLLM
 from arc.ingest.scalp import load_fixture_docs
 from arc.pipeline import FIXTURE_NOW, PipelineEnv
@@ -159,7 +159,7 @@ class TestConfig:
         assert "exits" in STEP_TARGETS["quant.exit"]
 
     def test_registry(self) -> None:
-        assert is_orphaned("personas.exit_path")
+        assert "personas.exit_path" not in REGISTRY
         s = ArcSettings(_env_file=None)  # type: ignore[call-arg]
         assert s.exit_block_max_chars_per_position == 600
         assert (s.quant_exit_max_cases, s.quant_exit_case_max_chars) == (8, 900)

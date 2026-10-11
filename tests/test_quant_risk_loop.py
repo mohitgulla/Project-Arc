@@ -187,9 +187,9 @@ class TestConfig:
         assert "propose" in c.steps and "quant.propose" not in c.steps
 
     def test_switch_orphaned(self) -> None:
-        from arc.control.registry import is_orphaned
+        from arc.control.registry import REGISTRY
 
-        assert is_orphaned("personas.quant_risk_loop")
+        assert "personas.quant_risk_loop" not in REGISTRY
 
     def test_reason_codes_labelled(self) -> None:
         for code in (ReasonCode.RISK_REVISE, ReasonCode.RISK_REJECT, ReasonCode.QUANT_REVISED,
