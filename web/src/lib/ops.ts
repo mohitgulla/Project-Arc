@@ -347,6 +347,53 @@ export function timeLeft(iso: string | null | undefined, now: number): string {
   return `${formatSeconds(s)} left`;
 }
 
+// -- D89: Context Store by Timeline group ---------------------------------------------
+
+export type ContextKind = ContextStore["kinds"][number];
+
+export interface ContextGroupView {
+  key: string;
+  label: string;
+  active: number;
+  kinds: ContextKind[];
+  /** Newest entry written in the group (ISO), any kind. */
+  latestAt: string | null;
+}
+
+/** `raw_doc_ref` -> `Raw doc ref` (titleCase at render time). */
+export function kindLabel(kind: string): string {
+  const s = kind.replace(/_/g, " ");
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+/**
+ * Kinds joined to the API's groups (Timeline order), active kinds first inside a group, then
+ * by newest entry. A kind whose group the API did not list falls under a trailing "Other".
+ */
+export function contextGroups(c: Pick<ContextStore, "kinds" | "groups">): ContextGroupView[] {
+  const order = [...(c.groups ?? [])];
+  if (!order.some((g) => g.key === "other") && c.kinds.some((k) => !order.some((g) => g.key === (k.group ?? "other"))))
+    order.push({ key: "other", label: "Other", active: 0, kinds: 0 });
+  const known = new Set(order.map((g) => g.key));
+  return order
+    .map((g) => {
+      const kinds = c.kinds
+        .filter((k) => (known.has(k.group ?? "other") ? (k.group ?? "other") : "other") === g.key)
+        .sort((a, b) => Number(b.active > 0) - Number(a.active > 0) || Date.parse(b.latest_at ?? "") - Date.parse(a.latest_at ?? "") || 0);
+      const latest = kinds.map((k) => k.latest_at).filter((x): x is string => Boolean(x));
+      latest.sort((a, b) => Date.parse(b) - Date.parse(a));
+      return { key: g.key, label: g.label, active: kinds.reduce((n, k) => n + k.active, 0), kinds, latestAt: latest[0] ?? null };
+    })
+    .filter((g) => g.kinds.length > 0);
+}
+
+/** `RSS news, EDGAR +3`: the first *n* names, then a count. */
+export function shortList(names: readonly string[] | undefined, n = 2): string {
+  const xs = names ?? [];
+  if (!xs.length) return "—";
+  return xs.length > n ? `${xs.slice(0, n).join(", ")} +${xs.length - n}` : xs.join(", ");
+}
+
 // -- LLM -----------------------------------------------------------------------------
 
 /** StackedBars rows (cost by persona per day) and the series list. */
@@ -383,15 +430,15 @@ export function configGroups(keys: OpsConfig["keys"]): Array<{ group: string; ke
 
 // -- E8.8d: widget order -------------------------------------------------------------
 
-/** Owner's widget order on /ops (D48), the same on mobile and desktop. */
+/** Owner's widget order on /ops (D48, D89), the same on mobile and desktop. */
 export const OPS_WIDGETS = [
   "Session Timeline",
   "Sources",
-  "Health",
   "LLM Usage",
   "Context Store",
   "Auto-Approve",
   "Config",
+  "Health", // D89: moved from under Sources to under Config
   "Alerts",
   "Halts",
   "Runs",
