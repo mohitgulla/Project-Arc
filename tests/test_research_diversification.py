@@ -42,6 +42,7 @@ from arc.routines.config import (
     RoutinesConfig,
     load_routines,
 )
+from arc.routines.strategy import DEFAULT_STRATEGY_PATH
 from arc.store.db import connect
 from arc.store.migrate import migrate
 from arc.utils.calendar import ET
@@ -103,8 +104,9 @@ def _tickers(items: list[Any]) -> list[tuple[str, int]]:
 
 def test_flag_defaults_relaxed_in_the_shipped_config() -> None:
     # D85: relaxed is the shipped default without an experiment (strict = rollback).
-    raw = yaml.safe_load(DEFAULT_ROUTINES_PATH.read_text())
-    assert raw["personas"]["director_diversification"] == "relaxed"
+    # E20.3: the switch and its knobs are one block in config/strategy.yaml.
+    raw = yaml.safe_load(DEFAULT_STRATEGY_PATH.read_text())
+    assert raw["director_diversification"]["mode"] == "relaxed"
     cfg = load_routines(DEFAULT_ROUTINES_PATH)
     dd = cfg.director_diversification
     assert dd.mode == "relaxed" and dd.is_relaxed
@@ -155,9 +157,10 @@ def test_registry_choice_key_reads_and_writes_the_switch() -> None:
     assert t is REGISTRY["personas.director_diversification"]
     assert lookup("routines.personas.director_diversification") is t
     assert t.choices == ("strict", "relaxed")
-    assert read_raw(t, {"personas": {"director_diversification": "relaxed"}}) == "relaxed"
-    assert read_raw(t, {"personas": {}}) == "strict"
-    assert write_raw(t, "relaxed", {}) == [(("personas", "director_diversification"), "relaxed")]
+    # E20.3: the key is unchanged; it reads / writes `mode` in strategy.yaml.
+    assert read_raw(t, {"director_diversification": {"mode": "relaxed"}}) == "relaxed"
+    assert read_raw(t, {"director_diversification": {}}) == "strict"
+    assert write_raw(t, "relaxed", {}) == [(("director_diversification", "mode"), "relaxed")]
 
 
 def test_slack_override_needs_a_confirm_and_reaches_the_effective_routines() -> None:

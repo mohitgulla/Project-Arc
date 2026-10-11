@@ -1,0 +1,94 @@
+# Project Arc strategy knobs (E20.3, PLAN D85). Strategy lane (config/strategy_lane.yaml):
+# a PR changing a value here gets the advisory lane summary, and fails only when it
+# changes a leaf an open experiment tests (D86).
+#
+# routines.yaml says when and what runs; this file says how the personas and pipeline
+# steps behave. Each feature's switch and its settings are one block. `enabled: off`
+# (or the `strict` mode) is each feature's rollback: the prompt / pipeline is then
+# byte-identical to before the feature. Loaded with routines.yaml (the sibling file),
+# validated by arc.routines.strategy.StrategyConfig (unknown keys fail).
+#
+# Runtime keys are unchanged (`!arc config set personas.anti_chase off`,
+# `anti_chase.max_stretch_atr 3`, `market_health.breadth_weak 0.35`,
+# `funnel.scout.max_discovery 20`); the registry writes them here.
+
+# E4.8a (D46): Finnhub facts (earnings, insider, analyst recs, fundamentals) in the
+# Scalp/Research prompts. D85: on by default; off = rollback.
+finnhub_context:
+  enabled: on                   # key personas.finnhub_context
+  max_chars_per_ticker: 300     # rendered facts line per ticker (hard budget)
+  scalp_max_tickers: 8          # Scalp: tickers its story digests name, first N
+  research_max_tickers: 10      # Research: the candidates it ranks, first N
+  max_age_days:                 # a part fetched longer ago than this is omitted
+    earnings_history: 8
+    insider_activity: 2
+    analyst_recs: 8
+    fundamentals: 8
+  cap_buckets_musd: {mega: 200000, large: 10000, mid: 2000, small: 300}   # below small = micro
+
+# E12.5 (D51): how strictly Research diversifies. relaxed (D85 default): two names per
+# industry may rank; an adds_concentration pick drops only on a flagged sector once the
+# book holds max_names_per_industry names in its industry. strict = rollback (E5.9).
+director_diversification:
+  mode: relaxed                 # strict | relaxed (key personas.director_diversification)
+  max_names_per_industry: 2
+  relaxed:                      # relaxed-mode flag thresholds (never below the strict portfolio.*_max_pct)
+    sector_max_pct: 0.55        # strict portfolio.sector_max_pct 0.40
+    stance_max_pct: 0.85        # strict portfolio.stance_max_pct 0.75
+    expiry_max_pct: 0.70        # strict portfolio.expiry_max_pct 0.60
+
+# E16.2 (D76/D78): the code-rendered `tech …` segment on Research's regime lines (RSI14,
+# ATR stretch, 50>200, 20d high distance, RS vs the sector ETF from config/sectors.yaml,
+# squeeze, prior-day range, implied/ATR move). Indicators are always computed and stored
+# on `regime`; this only decides whether Research sees them. Context only.
+research_technicals:
+  enabled: on                   # key personas.research_technicals
+
+# E16.3 (D78): anti-chase entry filter. After Research ranks, a bullish/bearish
+# long-premium idea whose move is stretched is dropped (`stretched_entry`); neutral
+# ideas, credit-capable profiles and missing technicals are kept.
+anti_chase:
+  enabled: on                   # key personas.anti_chase
+  combine: all                  # all (D78): stretch AND RSI | any (D76): stretch OR (RSI AND near 20d extreme)
+  max_stretch_atr: 2.5          # (close - SMA20) / ATR14 at or above this (bears: at or below minus this)
+  rsi_overbought: 75            # bullish: RSI14 at or above this
+  rsi_oversold: 25              # bearish: RSI14 at or below this
+  max_dist_high20_atr: 0.25     # combine any only: within this many ATR of the 20-day high (bears: low)
+  vwap: "off"                   # off | on: also drop when (spot - session VWAP) / ATR14 >= max_vwap_stretch_atr (5-min bars, shared Alpaca data budget)
+  max_vwap_stretch_atr: 0.75
+
+# E16.4 (D76/D83): one code-rendered `Market health (…)` line in Research's market block.
+# The market_health job writes its daily read whatever this says. The thresholds only
+# label that line (never a gate or pipeline input). Percentiles are 1-year (252 prior
+# obs, min 120); an input older than max_lag_sessions sessions is stale.
+market_health_context:
+  enabled: on                   # key personas.market_health_context
+  thresholds:                   # keys market_health.<name>
+    vix_stretched_ratio: 1.2    # vix_stretched_high: VIX >= this x its 50-day mean ...
+    vix_stretched_pct: 0.8      # ... or its 1y percentile >= this
+    vix_compressed_pct: 0.2     # vix_compressed: VIX 1y percentile <= this
+    pc_fear_pct: 0.9            # pc_extreme_fear: equity P/C 5d mean 1y percentile >= this
+    pc_greed_pct: 0.1           # pc_extreme_greed: ... <= this
+    breadth_weak: 0.4           # breadth_weak: share of active names above SMA50 < this
+    breadth_strong: 0.7         # breadth_strong: ... > this
+    max_lag_sessions: 2
+
+# E14.3 (D60): a "Tape movers" block in the Scalp prompt (Alpaca movers + most-actives).
+scalp_movers_context:
+  enabled: off                  # key personas.scalp_movers_context
+
+# E14.5 (D60): Reddit mention velocity + "Fastest risers" in the Scout's retail-buzz
+# section (the velocity knobs are the universe.trending job's `velocity` block).
+scout_buzz_velocity:
+  enabled: off                  # key personas.scout_buzz_velocity
+
+# E14.6 (D60): Stocktwits bull/bear lines for the Scout + one fact per Research pool line.
+retail_sentiment_context:
+  enabled: off                  # key personas.retail_sentiment_context
+
+# D56 idea funnel, read by the Scout, the coverage:scout alert and the Tower funnel.
+# Discovery comes from the Scout's YouTube calls only. The `*_split` values are fixed.
+funnel:
+  scalp:    {doc_budget_split: equal}            # scalp_doc_budget: market_news | company_data
+  scout:    {max_discovery: 25, video_budget_split: equal, min_discovery_alert: 5}
+  research: {max_scout_only_ideas: 20}

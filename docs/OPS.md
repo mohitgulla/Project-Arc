@@ -1863,7 +1863,8 @@ sqlite3 ~/.hermes/cache/scratch/fh.db \
 
 The four kinds above reach the Sweep and the Director only when the switch is on:
 
-    personas.finnhub_context: "on"      # config/routines.yaml; off | on
+    finnhub_context:                    # config/strategy.yaml (E20.3)
+      enabled: on                       # key personas.finnhub_context; off | on
 
 On is the shipped default since D85 (owner decision, D44 waived; the XP-2 draft was
 retired). Off is the rollback: both prompts are byte-identical to the pre-E4.8a prompts
@@ -1892,7 +1893,8 @@ in order to fit:
 
 ### 5.25 Director diversification: strict | relaxed (E12.5, D51, D44)
 
-    personas.director_diversification: relaxed   # config/routines.yaml; strict | relaxed
+    director_diversification:                     # config/strategy.yaml (E20.3)
+      mode: relaxed                               # key personas.director_diversification; strict | relaxed
 
 `relaxed` is the shipped default since D85 (owner decision, D44 waived; the XP-3 draft
 was retired). `strict` (the rollback) is the E5.9 behaviour: the prompt and the Director

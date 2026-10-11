@@ -48,6 +48,7 @@ from arc.routines.config import (
     load_routines,
 )
 from arc.routines.loop import LoopInputs
+from arc.routines.strategy import DEFAULT_STRATEGY_PATH
 from arc.store.db import connect
 from arc.store.migrate import migrate
 from arc.utils.calendar import ET
@@ -81,8 +82,8 @@ def _opts(tickers: list[str], **kw: Any) -> dict[str, Any]:
 
 def test_flag_defaults_on_in_the_shipped_config() -> None:
     # D85: shipped on without an experiment (was off; off = rollback, prompts unchanged).
-    raw = yaml.safe_load(DEFAULT_ROUTINES_PATH.read_text())
-    assert raw["personas"]["finnhub_context"] == "on"
+    raw = yaml.safe_load(DEFAULT_STRATEGY_PATH.read_text())  # E20.3: config/strategy.yaml
+    assert raw["finnhub_context"]["enabled"] is True
     cfg = load_routines(DEFAULT_ROUTINES_PATH)
     assert cfg.finnhub_context.enabled is True
     assert cfg.finnhub_context.max_chars_per_ticker == 300
@@ -126,10 +127,12 @@ def test_registry_choice_key_reads_and_writes_the_switch() -> None:
     assert t is REGISTRY["personas.finnhub_context"]
     assert lookup("routines.personas.finnhub_context") is t
     assert t.choices == ("off", "on") and t.bounds == "off | on"
-    assert read_raw(t, {"personas": {"finnhub_context": "off"}}) == "off"
-    assert read_raw(t, {"personas": {"finnhub_context": True}}) == "on"
-    assert read_raw(t, {"personas": {}}) == "off"
-    assert write_raw(t, "on", {}) == [(("personas", "finnhub_context"), "on")]
+    # E20.3: the key is unchanged; it reads / writes `enabled` in strategy.yaml.
+    assert read_raw(t, {"finnhub_context": {"enabled": "off"}}) == "off"
+    assert read_raw(t, {"finnhub_context": {"enabled": True}}) == "on"
+    assert read_raw(t, {"finnhub_context": {}}) == "off"
+    assert write_raw(t, "on", {}) == [(("finnhub_context", "enabled"), True)]
+    assert write_raw(t, "off", {}) == [(("finnhub_context", "enabled"), False)]
 
 
 def test_slack_override_reaches_the_effective_routines() -> None:

@@ -9,8 +9,9 @@ cross (changing it needs a PR).
 A tunable targets either an :class:`arc.config.ArcSettings` field
 (:attr:`Target.SETTINGS`) or a path in one of the YAML configs
 (``config/exits.yaml``, ``costs.yaml``, ``account_profiles.yaml``,
-``routines.yaml``). YAML overrides patch the file data before the file's own
-pydantic model validates it, so an override passes the same checks as the file.
+``routines.yaml``, ``strategy.yaml``). YAML overrides patch the file data before the
+file's own pydantic model validates it, so an override passes the same checks as the
+file.
 
 Never tunable: ``ARC_ENV``, anything under ``arc/gate/`` (code), secrets
 (gate secret, API keys, tokens) and paths. :data:`NEVER_TUNABLE` lists the
@@ -79,6 +80,7 @@ class Target(StrEnum):
     COSTS = "costs"  # config/costs.yaml
     PROFILES = "account_profiles"  # config/account_profiles.yaml
     ROUTINES = "routines"  # config/routines.yaml
+    STRATEGY = "strategy"  # config/strategy.yaml (E20.3, D85: persona switches + knobs)
     RANKING = "ranking"  # config/ranking.yaml (E6.4a: live Net EV floor)
     EXPERIMENTS = "experiments"  # config/experiments.yaml (E10.1: forward A/B defaults)
     UNIVERSE = "universe"  # config/universe.yaml (liquidity screens, D56)
@@ -1891,9 +1893,9 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         type=ValueType.CHOICE,
         description="E4.8a: show the Finnhub per-ticker facts (earnings surprises, insider, "
         "analyst recs, fundamentals) to the Scalp and Research. D85: default on; off = rollback.",
-        target=Target.ROUTINES,
+        target=Target.STRATEGY,
         risk=Risk.ORDER,
-        path=("personas", "finnhub_context"),
+        path=("finnhub_context", "enabled"),
         choices=("off", "on"),
         aliases=("routines.personas.finnhub_context", "finnhub_context"),
     ),
@@ -1906,9 +1908,9 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         description="E14.3: show the Scalp a 'Tape movers' block (Alpaca movers + "
         "most-actives, only active-list names and names a story mentions, at most 10 "
         "lines). Context only, never a discovery input.",
-        target=Target.ROUTINES,
+        target=Target.STRATEGY,
         risk=Risk.ORDER,
-        path=("personas", "scalp_movers_context"),
+        path=("scalp_movers_context", "enabled"),
         choices=("off", "on"),
         aliases=("routines.personas.scalp_movers_context", "scalp_movers_context"),
     ),
@@ -1923,9 +1925,9 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         "relaxed = two names per industry may rank, adds_concentration drops only on a "
         "flagged sector once the industry holds director_diversification."
         "max_names_per_industry names, looser flag thresholds. D85: default relaxed.",
-        target=Target.ROUTINES,
+        target=Target.STRATEGY,
         risk=Risk.ORDER,
-        path=("personas", "director_diversification"),
+        path=("director_diversification", "mode"),
         choices=("strict", "relaxed"),
         aliases=("routines.personas.director_diversification", "director_diversification"),
     ),
@@ -1938,9 +1940,9 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         description="E14.5: show each Reddit name's code-computed mention velocity "
         "((m + k) / (m24 + k)) and a 'Fastest risers' line in the Scout's retail-buzz "
         "section. Context only; the trending tier is unchanged.",
-        target=Target.ROUTINES,
+        target=Target.STRATEGY,
         risk=Risk.ORDER,
-        path=("personas", "scout_buzz_velocity"),
+        path=("scout_buzz_velocity", "enabled"),
         choices=("off", "on"),
         aliases=("routines.personas.scout_buzz_velocity", "scout_buzz_velocity"),
     ),
@@ -1953,9 +1955,9 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         description="E14.6: add the code-computed Stocktwits bull/bear ratio (user-tagged "
         "messages, min 5 tagged) as a 'Retail sentiment' block in the Scout prompt and one "
         "fact per Research pool line. Context only; never a gate or ranking input.",
-        target=Target.ROUTINES,
+        target=Target.STRATEGY,
         risk=Risk.ORDER,
-        path=("personas", "retail_sentiment_context"),
+        path=("retail_sentiment_context", "enabled"),
         choices=("off", "on"),
         aliases=("routines.personas.retail_sentiment_context", "retail_sentiment_context"),
     ),
@@ -1970,9 +1972,9 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         "line (RSI14, ATR stretch vs SMA20, 50>200, 20-day high distance, RS vs SPY, "
         "squeeze, prior-day range, implied/ATR move). Context only; never a gate input. "
         "off = rollback (prompt as before E16.2).",
-        target=Target.ROUTINES,
+        target=Target.STRATEGY,
         risk=Risk.ORDER,
-        path=("personas", "research_technicals"),
+        path=("research_technicals", "enabled"),
         choices=("off", "on"),
         aliases=("routines.personas.research_technicals", "research_technicals"),
     ),
@@ -1986,9 +1988,9 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         description="E16.3: drop a bullish/bearish long-premium idea before Quant when its "
         "move is already stretched (anti_chase.* thresholds; journaled stretched_entry). "
         "Deterministic, never a gate input. off = rollback (pipeline as before E16.3).",
-        target=Target.ROUTINES,
+        target=Target.STRATEGY,
         risk=Risk.ORDER,
-        path=("personas", "anti_chase"),
+        path=("anti_chase", "enabled"),
         choices=("on", "off"),
         aliases=("routines.personas.anti_chase", "anti_chase"),
     ),
@@ -2001,9 +2003,9 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         description="E16.4: add one code-rendered 'Market health' line to Research's market "
         "block (VIX vs 50d + 1y percentile, VVIX, put/call 5d percentile, active-list "
         "breadth). Context only; never a gate input. off = prompt unchanged.",
-        target=Target.ROUTINES,
+        target=Target.STRATEGY,
         risk=Risk.ORDER,
-        path=("personas", "market_health_context"),
+        path=("market_health_context", "enabled"),
         choices=("off", "on"),
         aliases=("routines.personas.market_health_context", "market_health_context"),
     ),
@@ -2209,7 +2211,7 @@ def _category_tunables() -> tuple[Tunable, ...]:
     return tuple(out)
 
 
-# D56 (E13.3, folds E5.14's config half): the `funnel:` block in routines.yaml. Read
+# D56 (E13.3, folds E5.14's config half): the `funnel:` block in strategy.yaml. Read
 # by the Scout (E13.7), the coverage:scout alert and the Tower funnel report (E13.14).
 _FUNNEL_TUNABLES: tuple[Tunable, ...] = (
     Tunable(
@@ -2217,7 +2219,7 @@ _FUNNEL_TUNABLES: tuple[Tunable, ...] = (
         group=Group.ROUTINES,
         type=_I,
         description="D56: most names the Scout may admit to the discovery tier per day.",
-        target=Target.ROUTINES,
+        target=Target.STRATEGY,
         risk=Risk.UP,
         path=("funnel", "scout", "max_discovery"),
         min=0,
@@ -2230,7 +2232,7 @@ _FUNNEL_TUNABLES: tuple[Tunable, ...] = (
         type=_I,
         description="D56: the coverage:scout ops alert fires when the Scout admits fewer "
         "discovery names than this.",
-        target=Target.ROUTINES,
+        target=Target.STRATEGY,
         risk=Risk.NONE,
         path=("funnel", "scout", "min_discovery_alert"),
         min=0,
@@ -2241,7 +2243,7 @@ _FUNNEL_TUNABLES: tuple[Tunable, ...] = (
         group=Group.ROUTINES,
         type=_I,
         description="D56: most Scout-only ideas (no Scalp story) Research weighs per loop.",
-        target=Target.ROUTINES,
+        target=Target.STRATEGY,
         risk=Risk.UP,
         path=("funnel", "research", "max_scout_only_ideas"),
         min=0,
@@ -2297,7 +2299,8 @@ _IV_BACKFILL_TUNABLES: tuple[Tunable, ...] = (
     ),
 )
 
-# E16.4 (D76): the `market_health:` label thresholds. They only label a context line
+# E16.4 (D76): the label thresholds, `market_health_context.thresholds` in strategy.yaml
+# (E20.3; keys keep the `market_health.` prefix). They only label a context line
 # (never a gate or pipeline input), so no direction is riskier.
 _MARKET_HEALTH_TUNABLES: tuple[Tunable, ...] = tuple(
     Tunable(
@@ -2305,9 +2308,9 @@ _MARKET_HEALTH_TUNABLES: tuple[Tunable, ...] = tuple(
         group=Group.ROUTINES,
         type=typ,
         description=f"E16.4: {desc}",
-        target=Target.ROUTINES,
+        target=Target.STRATEGY,
         risk=Risk.NONE,
-        path=("market_health", name),
+        path=("market_health_context", "thresholds", name),
         min=lo,
         max=hi,
     )
@@ -2372,7 +2375,7 @@ _MARKET_HEALTH_TUNABLES: tuple[Tunable, ...] = tuple(
     )
 )
 
-# E16.3 (D76/D78): the `anti_chase:` thresholds (a higher stretch/RSI bar, a lower
+# E16.3 (D76/D78): the `anti_chase:` thresholds in strategy.yaml (a higher stretch/RSI bar, a lower
 # oversold bar or a tighter 20-day-extreme band drops fewer entries: riskier).
 _ANTI_CHASE_TUNABLES: tuple[Tunable, ...] = (
     Tunable(
@@ -2381,7 +2384,7 @@ _ANTI_CHASE_TUNABLES: tuple[Tunable, ...] = (
         type=ValueType.CHOICE,
         description="E16.3: all = stretch AND RSI (D78); any = stretch OR (RSI and near "
         "the 20-day extreme) (D76 card rule, drops more).",
-        target=Target.ROUTINES,
+        target=Target.STRATEGY,
         risk=Risk.ORDER,
         path=("anti_chase", "combine"),
         choices=("any", "all"),
@@ -2392,7 +2395,7 @@ _ANTI_CHASE_TUNABLES: tuple[Tunable, ...] = (
         type=_F,
         description="E16.3: (close - SMA20) / ATR14 at or above which a bullish idea is "
         "stretched (bears mirror).",
-        target=Target.ROUTINES,
+        target=Target.STRATEGY,
         risk=Risk.UP,
         path=("anti_chase", "max_stretch_atr"),
         unit="ATR",
@@ -2405,7 +2408,7 @@ _ANTI_CHASE_TUNABLES: tuple[Tunable, ...] = (
         group=Group.ROUTINES,
         type=_F,
         description="E16.3: RSI14 at or above which a bullish idea counts as overbought.",
-        target=Target.ROUTINES,
+        target=Target.STRATEGY,
         risk=Risk.UP,
         path=("anti_chase", "rsi_overbought"),
         min=60.0,
@@ -2417,7 +2420,7 @@ _ANTI_CHASE_TUNABLES: tuple[Tunable, ...] = (
         group=Group.ROUTINES,
         type=_F,
         description="E16.3: RSI14 at or below which a bearish idea counts as oversold.",
-        target=Target.ROUTINES,
+        target=Target.STRATEGY,
         risk=Risk.DOWN,
         path=("anti_chase", "rsi_oversold"),
         min=5.0,
@@ -2430,7 +2433,7 @@ _ANTI_CHASE_TUNABLES: tuple[Tunable, ...] = (
         type=_F,
         description="E16.3 (combine any): within this many ATR of the 20-day high (bears: "
         "low) counts as near the extreme.",
-        target=Target.ROUTINES,
+        target=Target.STRATEGY,
         risk=Risk.DOWN,
         path=("anti_chase", "max_dist_high20_atr"),
         unit="ATR",
@@ -2444,7 +2447,7 @@ _ANTI_CHASE_TUNABLES: tuple[Tunable, ...] = (
         description="E16.3: also drop when (spot - session VWAP) / ATR14 >= "
         "anti_chase.max_vwap_stretch_atr (one 5-min bars request per directional idea, "
         "shared Alpaca data budget). off = daily rule only.",
-        target=Target.ROUTINES,
+        target=Target.STRATEGY,
         risk=Risk.ORDER,
         path=("anti_chase", "vwap"),
         choices=("on", "off"),
@@ -2455,7 +2458,7 @@ _ANTI_CHASE_TUNABLES: tuple[Tunable, ...] = (
         type=_F,
         description="E16.3: VWAP stretch in ATR14 at or above which a bullish idea is "
         "stretched (bears mirror); used only with anti_chase.vwap on.",
-        target=Target.ROUTINES,
+        target=Target.STRATEGY,
         risk=Risk.UP,
         path=("anti_chase", "max_vwap_stretch_atr"),
         unit="ATR",
@@ -3127,24 +3130,23 @@ _PLAIN_ROUTINE_SECTIONS = (
     ("options_slow",),  # E13.5
     ("universe",),  # D64 (E14.7): universe.carryover.*
     ("iv_backfill",),  # E16.1 (D76)
-    ("anti_chase",),  # E16.3 (D76/D78)
-    ("market_health",),  # E16.4 (D76)
 )
-# Scalar switches that sit next to the jobs under `personas:` (E4.8a), as `on | off`.
-_PERSONA_SWITCHES = frozenset(
+# E20.3 (D85): feature switches in strategy.yaml, `<block>.enabled` (a YAML bool), shown
+# and set as `on | off` under their pre-E20.3 keys (`personas.<block>`).
+_STRATEGY_SWITCHES = frozenset(
     {
-        ("personas", "finnhub_context"),
-        ("personas", "scout_buzz_velocity"),  # E14.5
-        ("personas", "scalp_movers_context"),  # E14.3
-        ("personas", "retail_sentiment_context"),  # E14.6
-        ("personas", "research_technicals"),  # E16.2
-        ("personas", "anti_chase"),  # E16.3
-        ("personas", "market_health_context"),  # E16.4
+        ("finnhub_context", "enabled"),
+        ("scout_buzz_velocity", "enabled"),  # E14.5
+        ("scalp_movers_context", "enabled"),  # E14.3
+        ("retail_sentiment_context", "enabled"),  # E14.6
+        ("research_technicals", "enabled"),  # E16.2
+        ("anti_chase", "enabled"),  # E16.3
+        ("market_health_context", "enabled"),  # E16.4
     }
 )
-# Scalar choice switches under `personas:` (E12.5) -> the control value when absent.
-_PERSONA_CHOICE_SWITCHES: dict[tuple[str, ...], str] = {
-    ("personas", "director_diversification"): "strict",
+# E20.3: choice switches in strategy.yaml (E12.5) -> the control value when absent.
+_STRATEGY_CHOICE_SWITCHES: dict[tuple[str, ...], str] = {
+    ("director_diversification", "mode"): "strict",
 }
 
 
@@ -3188,16 +3190,16 @@ def _minutes(text: str) -> int:
 
 def read_raw(t: Tunable, raw: dict[str, Any]) -> Any:
     """The value of YAML-targeted *t* in *raw* file data, in registry form."""
-    if t.target is Target.ROUTINES and t.path in _PERSONA_SWITCHES:
+    if t.target is Target.STRATEGY and t.path in _STRATEGY_SWITCHES:
         v = _get(raw, t.path)
         if v is None:
             return "off"  # an absent switch is off (the control behaviour)
         if isinstance(v, bool):  # YAML 1.1 reads a bare on/off as a boolean
             return "on" if v else "off"
         return str(v).strip().lower()
-    if t.target is Target.ROUTINES and t.path in _PERSONA_CHOICE_SWITCHES:
+    if t.target is Target.STRATEGY and t.path in _STRATEGY_CHOICE_SWITCHES:
         v = _get(raw, t.path)
-        return _PERSONA_CHOICE_SWITCHES[t.path] if v is None else str(v).strip().lower()
+        return _STRATEGY_CHOICE_SWITCHES[t.path] if v is None else str(v).strip().lower()
     if t.target is Target.ROUTINES and t.path[:1] in _PLAIN_ROUTINE_SECTIONS:
         v = _get(raw, t.path)
         if v is None:
@@ -3247,9 +3249,9 @@ def write_raw(t: Tunable, value: Any, raw: dict[str, Any]) -> list[tuple[tuple[s
 
     Pure helper for :mod:`arc.control.effective`; the pairs are applied in order.
     """
-    if t.target is Target.ROUTINES and (
-        t.path in _PERSONA_SWITCHES or t.path in _PERSONA_CHOICE_SWITCHES
-    ):
+    if t.target is Target.STRATEGY and t.path in _STRATEGY_SWITCHES:
+        return [(t.path, value == "on")]
+    if t.target is Target.STRATEGY and t.path in _STRATEGY_CHOICE_SWITCHES:
         return [(t.path, str(value))]
     if t.target is Target.ROUTINES and t.path[:1] in _PLAIN_ROUTINE_SECTIONS:
         if t.unit == "m":

@@ -60,7 +60,7 @@ backtest:
   # E7.5 run unchanged; anti_chase = drop directional long-premium candidates on days
   # their trend stance is stretched (daily bars <= the decision day, split-adjusted);
   # anti_chase_vwap = also the close vs the day's bar VWAP. Thresholds default to the
-  # live D78 rule (routines.yaml anti_chase:); override under backtest.anti_chase.
+  # live D78 rule (strategy.yaml anti_chase:); override under backtest.anti_chase.
   entry_filter: none
   # E16.5 (D76): the same breakeven-realism filter as scanner.max_be_atr, ATR14 from
   # split-adjusted daily OHLC <= the decision day. null = off (E7.5 run unchanged).

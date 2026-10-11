@@ -436,6 +436,9 @@ def test_funnel_tunable_round_trips(conn, tmp_path) -> None:
     owner = "U0OWNER001"
     p = tmp_path / "routines.yaml"
     p.write_text(DEFAULT_ROUTINES_PATH.read_text())
+    (tmp_path / "strategy.yaml").write_text(  # E20.3: funnel lives in strategy.yaml
+        (DEFAULT_ROUTINES_PATH.parent / "strategy.yaml").read_text()
+    )
     svc = ControlService(
         conn,
         base=ArcSettings(_env_file=None, approver_slack_user_ids=[owner]),  # type: ignore[call-arg]

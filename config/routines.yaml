@@ -167,14 +167,6 @@ categories:              # D56: equal weight per category; sources split their c
   youtube_micro: {weight: 1, max_age: 48h, label: YouTube micro}   # D60
   retail_buzz:   {weight: 1, max_age: 24h, label: Retail buzz}     # D58: Scout slow feed + the trending tier (code)
 
-# D56 idea funnel, read by the Scout, the coverage:scout alert and the Tower funnel.
-# Discovery comes from the Scout's YouTube calls only. The `*_split` values are fixed;
-# the rest are tunable (`!arc config set funnel.<persona>.<key>`).
-funnel:
-  scalp:    {doc_budget_split: equal}            # scalp_doc_budget: market_news | company_data
-  scout:    {max_discovery: 25, video_budget_split: equal, min_discovery_alert: 5}
-  research: {max_scout_only_ideas: 20}
-
 # E13.5 (D56) options_slow knobs. vx_flat_band (tunable): the VX curve is `flat` when the
 # month1 -> month2 slope is below this %. publish_probe_minutes (measurement only): an
 # unpublished evening run re-probes once a minute for this long (0 = skip at once).
@@ -388,7 +380,7 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     writes: [options_daily]
   # E16.4 (D76): daily market-health read (VIX vs 50d + 1y pct, VVIX, put/call 5d pct,
   # active-list breadth). The 08:20 catch-up runs only when 23:15 did not write. Research
-  # sees it with personas.market_health_context on; thresholds in market_health: below.
+  # sees it with market_health_context on; switch + thresholds in config/strategy.yaml.
   market_health:
     label: Market health
     about: "Daily market-health read: VIX vs its 50-day mean and 1-year percentile, VVIX, Cboe put/call 5-day percentile, active-list breadth"
@@ -629,63 +621,7 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     timeout_s: 15
     retries: 1
 
-# E4.8a (D46): knobs of the Finnhub facts in the Scalp/Research prompts; the switch is
-# `personas.finnhub_context` below (default on, D85; off = rollback).
-finnhub_context:
-  max_chars_per_ticker: 300     # rendered facts line per ticker (hard budget)
-  scalp_max_tickers: 8          # Scalp: tickers its story digests name, first N
-  research_max_tickers: 10      # Research: the candidates it ranks, first N
-  max_age_days:                 # a part fetched longer ago than this is omitted
-    earnings_history: 8
-    insider_activity: 2
-    analyst_recs: 8
-    fundamentals: 8
-  cap_buckets_musd: {mega: 200000, large: 10000, mid: 2000, small: 300}   # below small = micro
-
-# E12.5 (D51): Research diversification knobs, used only when
-# `personas.director_diversification` is relaxed (default, D85; strict = rollback).
-director_diversification:
-  max_names_per_industry: 2     # relaxed: an adds_concentration pick on a flagged sector drops only once the book holds this many names in its industry
-  relaxed:                      # relaxed-mode flag thresholds (never below the strict portfolio.*_max_pct)
-    sector_max_pct: 0.55        # strict portfolio.sector_max_pct 0.40
-    stance_max_pct: 0.85        # strict portfolio.stance_max_pct 0.75
-    expiry_max_pct: 0.70        # strict portfolio.expiry_max_pct 0.60
-
-# E16.3 (D78): anti-chase entry filter (personas.anti_chase; off = rollback). After Research
-# ranks, a bullish/bearish long-premium idea whose move is stretched is dropped
-# (`stretched_entry`); neutral ideas, credit-capable profiles and missing technicals are
-# kept. `combine: any` = stretch or RSI near the 20-day extreme.
-anti_chase:
-  combine: all                  # all (D78): stretch AND RSI | any (D76): stretch OR (RSI AND near 20d extreme)
-  max_stretch_atr: 2.5          # (close - SMA20) / ATR14 at or above this (bears: at or below minus this)
-  rsi_overbought: 75            # bullish: RSI14 at or above this
-  rsi_oversold: 25              # bearish: RSI14 at or below this
-  max_dist_high20_atr: 0.25     # combine any only: within this many ATR of the 20-day high (bears: low)
-  vwap: "off"                   # off | on: also drop when (spot - session VWAP) / ATR14 >= max_vwap_stretch_atr (5-min bars, shared Alpaca data budget)
-  max_vwap_stretch_atr: 0.75
-
-# E16.4 (D76): label thresholds of the daily market_health read (labels on a context
-# line only; never a gate or pipeline input). Percentiles are 1-year (252 prior obs,
-# min 120). An input older than max_lag_sessions sessions is stale (None + missing).
-market_health:
-  vix_stretched_ratio: 1.2      # vix_stretched_high: VIX >= this x its 50-day mean ...
-  vix_stretched_pct: 0.8        # ... or its 1y percentile >= this
-  vix_compressed_pct: 0.2       # vix_compressed: VIX 1y percentile <= this
-  pc_fear_pct: 0.9              # pc_extreme_fear: equity P/C 5d mean 1y percentile >= this
-  pc_greed_pct: 0.1             # pc_extreme_greed: ... <= this
-  breadth_weak: 0.4             # breadth_weak: share of active names above SMA50 < this
-  breadth_strong: 0.7           # breadth_strong: ... > this
-  max_lag_sessions: 2
-
 personas:
-  finnhub_context: "on"         # E4.8a: off | on (D85; off = rollback)
-  scalp_movers_context: "off"   # E14.3 (D60): off | on, the Scalp's "Tape movers" block (strategy lane; default off)
-  director_diversification: relaxed   # E12.5: strict | relaxed (D85; strict = rollback)
-  scout_buzz_velocity: "off"    # E14.5 (D60): off | on: Reddit mention velocity + "Fastest risers" in the Scout's retail-buzz section (strategy lane)
-  retail_sentiment_context: "off"   # E14.6 (D60): off | on: Stocktwits bull/bear lines for the Scout + one fact per Research pool line (strategy; default off)
-  anti_chase: "on"              # E16.3 (D76/D78): off | on: drop stretched directional long-premium ideas before Quant (D78 ships on; off = rollback, pipeline byte-identical)
-  research_technicals: "on"     # E16.2 (D76/D78): off | on: the code-rendered `tech …` segment on Research's regime lines (D78 ships on; off = rollback, prompt byte-identical)
-  market_health_context: "on"   # E16.4 (D76/D83): off | on: one code-rendered `Market health (…)` line in Research's market block (D83 ships it on without an experiment; off = rollback, prompt byte-identical)
   scout:                        # E13.7 (D56): once per trading day, after the 02:00 youtube.briefs + the previous evening's options_slow (18:30 vol_term, 23:00 options_daily/vix_futures; E14.2)
     label: Scout
     about: "Daily read of the YouTube briefs + Cboe options stats; writes the discovery tier and Scout ideas"

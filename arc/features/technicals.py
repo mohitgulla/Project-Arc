@@ -363,7 +363,7 @@ StretchStatus = Literal["stretched", "ok", "missing", "not_directional"]
 
 
 class AntiChaseRule(BaseModel):
-    """Thresholds of the anti-chase rule (D78 defaults; ``config/routines.yaml anti_chase:``).
+    """Thresholds of the anti-chase rule (D78 defaults; ``config/strategy.yaml anti_chase:``).
 
     ``combine: all`` (D78): a bullish idea is stretched when ``stretch_atr >=
     max_stretch_atr`` **and** ``rsi14 >= rsi_overbought``. ``combine: any`` (the D76
