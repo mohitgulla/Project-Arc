@@ -56,6 +56,7 @@ for (const vp of VIEWPORTS) {
         await expect(page.getByTestId("account-split")).toContainText("In positions");
         await expect(page.getByTestId("greeks-theta-risk")).toHaveText(/^Risk (Low|Med|High)$/);
         await expect(page.getByTestId("greeks-gamma-risk")).toHaveText(/^Risk (Low|Med|High)$/);
+        await expect(page.getByTestId("tile-name").first()).toHaveText(/^(Bullish|Bearish|Neutral|—)$/);
         await expect(page.getByTestId("trend-chart").locator("svg path").first()).toBeVisible();
         await expect(page.getByTestId("mtd-ytd")).toContainText("MTD");
         await expect(page.getByText("Debit Vertical").first()).toBeVisible();

@@ -259,7 +259,8 @@ they are never dropped.
   dollar delta`, `|ν| vega dollar/vol pt`); Θ (`dollar/day`) and $Γ (`dollar/1% move`) each
   get their own line with an info-only `Risk Low/Med/High` pill (D87). Position card rows show
   legs as chips with the total $ and % change since entry right-aligned (`CardRow aside`);
-  Movers tiles scroll-snap, ranked by today's change best → worst, pill = today's change.
+  Movers tiles scroll-snap, ranked by today's change best → worst, name line = direction
+  (Bullish / Bearish / Neutral), pill = today's change.
 - **Equity (D87):** dashed SPY / QQQ lines rebased to the range-start equity, legend with each
   benchmark's % and the gap in points; a Cash vs In Positions split (stat pair + bar) below.
 - **Order** at ≤ 1279 px (one column, D87): status → Equity → P&L Today → Movers → Positions →

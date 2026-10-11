@@ -16,7 +16,7 @@ import { ProportionBar } from "../components/ProportionBar";
 import { RangeControl } from "../components/RangeControl";
 import { StatCard } from "../components/StatCard";
 import { StatusStepper } from "../components/StatusStepper";
-import { StructureLabel, structureText } from "../components/StructureLabel";
+import { StructureLabel } from "../components/StructureLabel";
 import { TickerPill } from "../components/TickerPill";
 import { Tile, TileRow } from "../components/Tile";
 import { TrendChart } from "../components/TrendChart";
@@ -33,6 +33,7 @@ import {
 import {
   OVERVIEW_RANGES,
   equityDates,
+  directionView,
   equityView,
   greekRiskLabel,
   parseOverviewRange,
@@ -775,11 +776,12 @@ function PickCard() {
 }
 
 function MoversCard({ o, monitorS }: { o: Overview; monitorS?: number }) {
-  // D87: ranked by today's change, best to worst; the pill is today's change (the overall
+  // D87: ranked by today's change, best to worst; the name line is the trade direction
+  // (Bullish / Bearish / Neutral); the pill is today's change (the overall
   // change since entry lives on the Positions card below).
   const movers = sortMovers(o.movers ?? []);
   return (
-    <Card title="Movers" subtitle="today's change, best to worst" freshness={{ at: o.marks_at, cadenceS: monitorS, label: "monitor mark" }}>
+    <Card title="Movers" freshness={{ at: o.marks_at, cadenceS: monitorS, label: "monitor mark" }}>
       {movers.length === 0 ? (
         <EmptyState caption="No open structures." />
       ) : (
@@ -788,7 +790,8 @@ function MoversCard({ o, monitorS }: { o: Overview; monitorS?: number }) {
             <Tile
               key={m.structure_id}
               ticker={m.ticker}
-              name={structureText(m.kind, m.direction)}
+              name={directionView(m.direction)?.label ?? "—"}
+              nameClassName={directionView(m.direction)?.className}
               values={m.spark ?? []}
               change={m.change_today ?? 0}
               to={`/trades/${m.open_proposal_hash}`}
@@ -918,7 +921,6 @@ export function OverviewPage() {
           <div className="order-4 min-w-0 desktop:order-none">
             <Card
               title="Positions"
-              subtitle="overall change since entry (not today's)"
               action={{ label: "VIEW ALL", to: "/positions" }}
               freshness={{ at: o.marks_at, cadenceS: cad.monitor, label: "monitor mark" }}
             >
