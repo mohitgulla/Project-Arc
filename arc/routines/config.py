@@ -905,29 +905,6 @@ class AntiChaseSettings(BaseModel):
         )
 
 
-class TechnicalsSettings(BaseModel):
-    """E16.2 (D76): ``technicals:`` inputs for the sector relative-strength field.
-
-    ``sector_etf`` maps a sector name from ``config/sectors.yaml`` to the ETF
-    ``rs_sector_20d`` is measured against; an unmapped sector (or a ticker without
-    one) gets ``None``. ``rs_spy_*`` always use SPY. Each reference's bars are
-    fetched once per regime step and reused for every ticker.
-    """
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    sector_etf: dict[str, str] = Field(default_factory=dict)
-
-    @field_validator("sector_etf")
-    @classmethod
-    def _etfs(cls, v: dict[str, str]) -> dict[str, str]:
-        for sector, etf in v.items():
-            if not str(sector).strip() or not _TICKER.match(str(etf)):
-                msg = f"technicals.sector_etf: bad entry {sector!r}: {etf!r}"
-                raise ValueError(msg)
-        return v
-
-
 class ScalpMoversContextSettings(BaseModel):
     """E14.3 (D60, D44): the "Tape movers" block in the Scalp prompt (default off).
 
@@ -1080,7 +1057,6 @@ class RoutinesConfig(BaseModel):
     research_technicals: ResearchTechnicalsSettings = Field(
         default_factory=ResearchTechnicalsSettings
     )
-    technicals: TechnicalsSettings = Field(default_factory=TechnicalsSettings)  # E16.2
     # E16.3 (D76/D78): knobs + the ``personas.anti_chase`` flag (as ``enabled``).
     anti_chase: AntiChaseSettings = Field(default_factory=AntiChaseSettings)
     # E16.4 (D76): the ``personas.market_health_context`` flag (as ``enabled``) and the

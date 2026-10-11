@@ -434,3 +434,20 @@ class TestHandlers:
             )
         )
         assert "{}\n\n### Account equity" in r and "Event risk" not in r
+
+
+@pytest.mark.parametrize("job", ["macro_calendar", "ex_dividend"])
+@pytest.mark.parametrize("bad", [None, 0, 181, "45", True])
+def test_horizon_days_is_a_required_job_option(job: str, bad: object) -> None:
+    """E20.2 (D85): the job option is the only source of the look-ahead (no setting)."""
+    from arc.config import ArcSettings
+    from arc.routines.config import RoutinesConfig, horizon_days_option, load_routines
+
+    assert "ingest_macro_horizon_days" not in ArcSettings.model_fields
+    assert "ex_dividend_horizon_days" not in ArcSettings.model_fields
+    assert horizon_days_option(job, load_routines().sources[job].options) == 45
+    spec: dict[str, Any] = {"schedule": ["06:00"], "writes": ["raw_doc_ref"], "reference": True}
+    if bad is not None:
+        spec["horizon_days"] = bad
+    with pytest.raises(ValueError, match="horizon_days"):
+        RoutinesConfig.model_validate({"sources": {job: spec}})
