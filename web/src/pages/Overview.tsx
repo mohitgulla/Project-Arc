@@ -118,14 +118,13 @@ const PHONE_SPAN: Partial<Record<StatusSlot["key"], string>> = { account: "min-[
 /**
  * Status row (D92; was D48/D50): fixed slots Account · Trading · Orders · Tick · Health · Alerts,
  * each `label value` with a status dot. The account slot (`Paper Trade · Arc Investor`) has a
- * neutral dot; Trading carries the session count (`Enabled (7)`); Tick is `4m 07s`. A 4-column
+ * neutral dot; Trading carries the session count (`Enabled (7)`); Tick is `4m`. A 4-column
  * grid up to 768 px (row 1 Account | Trading, row 2 the four checks); one row above, with a
  * divider before Trading and before Orders. A halt replaces the Trading slot with HALTED +
  * reason + age (full width on a phone).
  */
-function StatusStrip({ o, cad }: { o: Overview; cad: ReturnType<typeof useCadences> }) {
+function StatusStrip({ o, cad, now }: { o: Overview; cad: ReturnType<typeof useCadences>; now: number }) {
   const [open, setOpen] = useState(false);
-  const now = useNow(1_000); // Tick shows seconds
   const s = o.status;
   const tone = stripTone(o);
   const alerts = s.alerts ?? [];
@@ -935,7 +934,7 @@ export function OverviewPage() {
   const col = "contents desktop:grid desktop:min-w-0 desktop:content-start desktop:gap-10";
   return (
     <div className="grid gap-6 desktop:gap-10" data-testid="overview" data-marks-stale={o.marks_stale}>
-      <StatusStrip o={o} cad={cad} />
+      <StatusStrip o={o} cad={cad} now={now} />
       <div className="grid gap-6 desktop:grid-cols-2 desktop:gap-10" data-testid="overview-grid">
         <div className={col}>
           <div className="order-1 min-w-0 desktop:order-none">

@@ -1,7 +1,7 @@
 // E8.8b (D48): Overview status row model, Greeks used/cap, and the "Orders today" grep.
 import { describe, expect, it } from "vitest";
 
-import { accountLabel, envLabel, minSecAge, shortAge, statusRow, statusWord, usedOfCap, type Overview } from "./overview";
+import { accountLabel, envLabel, shortAge, statusRow, statusWord, usedOfCap, type Overview } from "./overview";
 
 const NOW = Date.parse("2026-09-28T19:40:00Z"); // Mon 15:40 ET
 const min = (m: number) => new Date(NOW - m * 60_000).toISOString();
@@ -31,13 +31,13 @@ const CTX = { now: NOW, tickS: 300, healthS: 1800, env: "paper", accountProfile:
 describe("E8.8b status row", () => {
   it("has the fixed slot order and plain `label value` text", () => {
     const row = statusRow(status(), CTX);
-    // D92: Account · Trading (sessions) · Orders · Tick (min + sec) · Health · Alerts.
+    // D92: Account · Trading (sessions) · Orders · Tick (minutes) · Health · Alerts.
     expect(row.map((s) => s.key)).toEqual(["account", "trading", "orders", "tick", "health", "alerts"]);
     expect(row.map((s) => `${s.label} ${s.value}`.trim())).toEqual([
       "Paper Trade · Arc Investor",
       "Trading Enabled (7)",
       "Orders 8/200",
-      "Tick 3m 00s",
+      "Tick 3m",
       "Health OK 7m",
       "Alerts 0",
     ]);
@@ -56,12 +56,9 @@ describe("E8.8b status row", () => {
     expect(statusRow(status({ sessions: 0 }), CTX)[1]?.value).toBe("Enabled (0)");
   });
 
-  it("tick age in minutes and seconds", () => {
-    expect(minSecAge(sec(42), NOW)).toBe("42s");
-    expect(minSecAge(sec(4 * 60 + 7), NOW)).toBe("4m 07s");
-    expect(minSecAge(min(75), NOW)).toBe("1h");
-    expect(minSecAge(null, NOW)).toBe("—");
-    expect(statusRow(status({ tick_at: sec(247) }), CTX)[3]).toMatchObject({ key: "tick", value: "4m 07s" });
+  it("tick age in minutes only (D92 rev)", () => {
+    expect(statusRow(status({ tick_at: sec(247) }), CTX)[3]).toMatchObject({ key: "tick", value: "4m" });
+    expect(statusRow(status({ tick_at: sec(42) }), CTX)[3]).toMatchObject({ key: "tick", value: "now" });
   });
 
   it("a halt replaces slot 1 with HALTED + reason + age", () => {
@@ -82,11 +79,11 @@ describe("E8.8b status row", () => {
 
   it("stale or non-ok heartbeats turn --warn (no pill), with the threshold in the title", () => {
     const row = statusRow(status({ tick_at: min(16), health_at: min(95) }), CTX);
-    expect(row[3]).toMatchObject({ key: "tick", value: "16m 00s", tone: "warn" });
+    expect(row[3]).toMatchObject({ key: "tick", value: "16m", tone: "warn" });
     expect(row[3]?.title).toContain("stale (after 15m)");
     expect(row[4]).toMatchObject({ key: "health", value: "OK 1h", tone: "warn" });
     const bad = statusRow(status({ tick_status: "partial" }), CTX);
-    expect(bad[3]).toMatchObject({ value: "Partial 3m 00s", tone: "warn" });
+    expect(bad[3]).toMatchObject({ value: "Partial 3m", tone: "warn" });
     const failed = statusRow(status({ health_status: "failed", health_at: min(25) }), CTX);
     expect(`${failed[4]?.label} ${failed[4]?.value}`).toBe("Health Failed 25m");
     const none = statusRow(status({ tick_at: null }), CTX);

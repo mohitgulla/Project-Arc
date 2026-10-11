@@ -39,7 +39,7 @@ for (const vp of VIEWPORTS) {
         // E8.8b status row: fixed slots, `Orders n/limit` (never "Orders today").
         await expect(page.getByTestId("order-budget")).toHaveText(/^Orders 31\/200/);
         await expect(strip).not.toContainText("Orders today");
-        await expect(page.getByTestId("slot-tick")).toHaveText(/^Tick (\d+m \d{2}s|\d+s|\d+h)$/);
+        await expect(page.getByTestId("slot-tick")).toHaveText(/^Tick (\d+m|now|\d+h|\d+d)$/);
         await expect(page.getByTestId("slot-health")).toContainText("Health");
         // D92: the account slot names the account (Arc Investor), never "Control".
         await expect(page.getByTestId("account-slot")).toHaveText("Paper Trade · Arc Investor");

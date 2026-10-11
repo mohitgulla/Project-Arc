@@ -224,13 +224,13 @@ they are never dropped.
 
 - **Status row** (order and wording D92; was D50 `Trading · env · Health · Orders · Tick ·
   Alerts`): fixed slots `● Paper Trade · Arc Investor` · `● Trading Enabled (7)` · `Orders 8/200`
-  (+ tier when not normal; never "Orders today") · `Tick 4m 07s` · `Health OK 1m` · `Alerts n`
+  (+ tier when not normal; never "Orders today") · `Tick 4m` · `Health OK 1m` · `Alerts n`
   (button; expands the open alerts inline, capped). The account slot names the account under view:
   **Arc Investor** for production (never "Control"), an arm's treatment name (`XP-12 · T1`) in
   E15.7's arm view, which also has no "from Control" tag. The account profile (`cash_debit`) is
   in its tooltip only; neutral dot, never a pill. `(n)` = trading sessions since the account
-  started (`status.sessions`; tooltip `n trading sessions since <day>`). Tick shows minutes and
-  seconds. Values are Title Case (`Enabled`, `OK`, `Failed`, `No data`). Each slot is `label
+  started (`status.sessions`; tooltip `n trading sessions since <day>`). Tick shows minutes only
+  (D92 rev; seconds dropped). Values are Title Case (`Enabled`, `OK`, `Failed`, `No data`). Each slot is `label
   value` with a status dot, no nested pills. A stale or non-ok heartbeat turns the value `--warn`
   (stale = 3× the cadence from `/api/meta` `cadences.tick|health`). A halt replaces the Trading
   slot with the red `HALTED` pill + reason + actor · age. ≤ 768 px: a 4-column grid, row 1
