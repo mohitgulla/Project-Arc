@@ -703,11 +703,11 @@ def test_registry_entries() -> None:
         assert name in raw["market_health"]
 
 
-def test_xp13_has_no_market_health_arm() -> None:
-    # D83: market_health_context ships on, so an XP-13 arm turning it on would equal control.
-    spec = yaml.safe_load((REPO / "config/experiments/live/xp13_technicals.yaml").read_text())
-    assert "t5" not in spec["arms"]["treatments"]
-    assert "market_health_context" not in yaml.safe_dump(spec)
+def test_no_committed_spec_tests_market_health() -> None:
+    # D83: market_health_context ships on; D86: no dev-drafted XP specs. No committed spec
+    # may carry an arm on it (the Analyst proposes experiments, the owner adopts them).
+    for path in (REPO / "config/experiments/live").glob("*.yaml"):
+        assert "market_health_context" not in path.read_text(), path
 
 
 def test_never_a_gate_input() -> None:

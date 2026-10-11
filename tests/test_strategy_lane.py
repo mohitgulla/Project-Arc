@@ -32,10 +32,10 @@ def _load(name: str, path: Path) -> Any:
 lane = _load("strategy_lane_check", REPO / "scripts" / "strategy_lane_check.py")
 CFG = lane.load_lane_config(REPO / "config" / "strategy_lane.yaml")
 
-# XP-2: v1 spec (one treatment = t1) on exits; XP-14: v2 spec with three arms on exits.
+# XP-2: v1 spec (one treatment = t1) on exits; XP-24: v2 spec with three arms on exits.
 TP = ("exits", "kinds", "long_call", "take_profit_pct_of_debit")
 X2_ARMS = {"t1": {"exits": {"kinds": {"long_call": {"take_profit_pct_of_debit": 0.75}}}}}
-X14_ARMS = {
+X24_ARMS = {
     "t1": {"exits": {"pipeline": {"menu_measure": "rorc_day_full"}}},
     "t2": {"exits": {"pipeline": {"menu_measure": "rorc_day_tilted", "direction_tilt": 0.25}}},
     "t3": {"exits": {"pipeline": {"menu_measure": "managed_net_ev_full"}}},
@@ -46,7 +46,7 @@ def _exp(xid: str, arms: dict[str, Any], **kw: Any) -> Any:
     return lane.Experiment(id=xid, arms=arms, **kw)
 
 
-OPEN = {"XP-2": _exp("XP-2", X2_ARMS), "XP-14": _exp("XP-14", X14_ARMS)}
+OPEN = {"XP-2": _exp("XP-2", X2_ARMS), "XP-24": _exp("XP-24", X24_ARMS)}
 
 
 def _eval(
@@ -206,7 +206,7 @@ def test_unknown_experiment_is_a_note() -> None:
 def test_locked_leaf_change_fails() -> None:
     r = _eval(["config/exits.yaml"], "XP-advisory: none", _exits(BASE, _with(direction_tilt=0.1)))
     assert not r.ok and r.status == "locked"
-    assert "XP-14 is open" in r.errors[0] and "exits.pipeline.direction_tilt" in r.errors[0]
+    assert "XP-24 is open" in r.errors[0] and "exits.pipeline.direction_tilt" in r.errors[0]
     assert any(a.startswith("::error title=strategy-lane::") for a in r.annotations())
     assert "FAIL (locked)" in r.render()
 
@@ -230,7 +230,7 @@ def test_adding_a_locked_leaf_fails() -> None:
 def test_replacing_a_locked_parent_fails() -> None:
     # The whole `pipeline` mapping replaced by a scalar: the locked leaves go with it.
     r = _eval(["config/exits.yaml"], "", _exits(BASE, {**BASE, "pipeline": "off"}))
-    assert not r.ok and "XP-14" in r.errors[0]
+    assert not r.ok and "XP-24" in r.errors[0]
 
 
 def test_locked_leaf_untouched_when_a_sibling_changes() -> None:
@@ -239,7 +239,7 @@ def test_locked_leaf_untouched_when_a_sibling_changes() -> None:
 
 
 def test_lock_lifts_with_a_verdict_on_the_base() -> None:
-    closed = {"XP-14": _exp("XP-14", X14_ARMS, verdict="futility", open_at_base=False)}
+    closed = {"XP-24": _exp("XP-24", X24_ARMS, verdict="futility", open_at_base=False)}
     r = _eval(["config/exits.yaml"], "", _exits(BASE, _with(direction_tilt=0.1)), closed)
     assert r.ok
 
@@ -257,29 +257,29 @@ def _won(xid: str, arms: dict[str, Any], winner: str | None) -> dict[str, Any]:
 
 
 def test_promotion_with_the_winner_arm_passes() -> None:
-    exp = _won("XP-14", X14_ARMS, "t2")
+    exp = _won("XP-24", X24_ARMS, "t2")
     deltas = _exits(BASE, _with(menu_measure="rorc_day_tilted", direction_tilt=0.25))
-    r = _eval(["config/exits.yaml"], "Experiment: XP-14\nXP-advisory: none", deltas, exp)
-    assert r.ok and r.status == "promotion" and "promotes XP-14 (t2)" in r.notes
+    r = _eval(["config/exits.yaml"], "Experiment: XP-24\nXP-advisory: none", deltas, exp)
+    assert r.ok and r.status == "promotion" and "promotes XP-24 (t2)" in r.notes
 
 
 def test_promotion_of_part_of_the_winner_arm_passes() -> None:
-    exp = _won("XP-14", X14_ARMS, "t2")
+    exp = _won("XP-24", X24_ARMS, "t2")
     deltas = _exits(BASE, _with(direction_tilt=0.25))
-    assert _eval(["config/exits.yaml"], "Experiment: XP-14", deltas, exp).ok
+    assert _eval(["config/exits.yaml"], "Experiment: XP-24", deltas, exp).ok
 
 
 def test_promotion_with_a_wrong_arm_value_fails() -> None:
-    exp = _won("XP-14", X14_ARMS, "t2")
+    exp = _won("XP-24", X24_ARMS, "t2")
     deltas = _exits(BASE, _with(menu_measure="rorc_day_full"))  # t1's value, t2 won
-    r = _eval(["config/exits.yaml"], "Experiment: XP-14", deltas, exp)
+    r = _eval(["config/exits.yaml"], "Experiment: XP-24", deltas, exp)
     assert not r.ok and "not arm t2's overlay value ('rorc_day_tilted')" in r.errors[0]
 
 
 def test_promotion_of_a_leaf_the_winner_did_not_test_fails() -> None:
-    exp = _won("XP-14", X14_ARMS, "t1")
+    exp = _won("XP-24", X24_ARMS, "t1")
     deltas = _exits(BASE, _with(menu_measure="rorc_day_full", direction_tilt=0.25))
-    r = _eval(["config/exits.yaml"], "Experiment: XP-14", deltas, exp)
+    r = _eval(["config/exits.yaml"], "Experiment: XP-24", deltas, exp)
     assert not r.ok and "direction_tilt" in r.errors[0] and "untested" in r.errors[0]
 
 
@@ -331,10 +331,10 @@ def test_deleted_open_spec_is_a_warning() -> None:
 
 V1 = {"id": "XP-2", "arms": {"control": {"overlay": {}}, "treatment": {"overlay": X2_ARMS["t1"]}}}
 V2 = {
-    "id": "XP-14",
+    "id": "XP-24",
     "arms": {
         "control": {"overlay": {}},
-        "treatments": {k: {"overlay": v} for k, v in X14_ARMS.items()},
+        "treatments": {k: {"overlay": v} for k, v in X24_ARMS.items()},
     },
 }
 WIN = lane.Verdict(verdict="win", winner=None)
@@ -343,8 +343,8 @@ WIN = lane.Verdict(verdict="win", winner=None)
 def test_build_experiments_reads_v1_and_v2_arms() -> None:
     specs = {"a.yaml": V1, "b.yaml": V2, "c.yaml": {"not": "a spec"}}
     xs, removed = lane.build_experiments(specs, specs, {}, {})
-    assert set(xs) == {"XP-2", "XP-14"} and removed == []
-    assert xs["XP-2"].arms == X2_ARMS and xs["XP-14"].arms == X14_ARMS
+    assert set(xs) == {"XP-2", "XP-24"} and removed == []
+    assert xs["XP-2"].arms == X2_ARMS and xs["XP-24"].arms == X24_ARMS
     assert all(x.open_at_base for x in xs.values())
 
 
@@ -368,8 +368,8 @@ def test_editing_an_open_spec_keeps_the_base_lock() -> None:
 
 def test_verdict_comes_from_the_head() -> None:
     v = lane.Verdict(verdict="win", winner="t2")
-    xs, _ = lane.build_experiments({"b.yaml": V2}, {"b.yaml": V2}, {}, {"XP-14": v})
-    assert xs["XP-14"].open_at_base and xs["XP-14"].winning_arm() == "t2"
+    xs, _ = lane.build_experiments({"b.yaml": V2}, {"b.yaml": V2}, {}, {"XP-24": v})
+    assert xs["XP-24"].open_at_base and xs["XP-24"].winning_arm() == "t2"
 
 
 def test_parse_verdict_is_strict() -> None:
@@ -503,12 +503,12 @@ def test_e2e_code_change_is_advisory(repo: Path, tmp_path: Path, capsys: Any) ->
 def test_e2e_locked_leaf_then_promotion(repo: Path, tmp_path: Path, capsys: Any) -> None:
     _write(repo, "config/exits.yaml", _with(menu_measure="managed_net_ev_full"))
     rc, out = _run(repo, "XP-advisory: none", tmp_path, capsys)
-    assert rc == 1 and "XP-14 is open" in out
-    rc, out = _run(repo, "Experiment: XP-14", tmp_path, capsys)
+    assert rc == 1 and "XP-24 is open" in out
+    rc, out = _run(repo, "Experiment: XP-24", tmp_path, capsys)
     assert rc == 1 and "not committed" in out
-    _verdict(repo, "XP-14", winner="t3")
-    rc, out = _run(repo, "Experiment: XP-14", tmp_path, capsys)
-    assert rc == 0 and "PASS (promotion)" in out and "promotes XP-14 (t3)" in out
+    _verdict(repo, "XP-24", winner="t3")
+    rc, out = _run(repo, "Experiment: XP-24", tmp_path, capsys)
+    assert rc == 0 and "PASS (promotion)" in out and "promotes XP-24 (t3)" in out
 
 
 def test_e2e_v1_verdict_is_t1(repo: Path, tmp_path: Path, capsys: Any) -> None:

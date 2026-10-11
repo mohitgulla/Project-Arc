@@ -49,6 +49,7 @@ REPO = Path(__file__).resolve().parent.parent
 SPEC = REPO / "config" / "experiments" / "live" / "xp1_aa_baseline.yaml"
 DOC = REPO / "docs" / "RESEARCH" / "experiments" / "XP-1-aa.md"
 EID = "XP-1"
+APPROVAL = "owner:XP-1 A/A dry run on scratch stores"  # D86 registry write guard
 T0 = FIXTURE_NOW - dt.timedelta(hours=1)  # before the fixture loop chain (max_lag)
 T0_EQUITY = 100_000.0  # arc/pipeline/fixtures/account.json
 CTRL_SD = 300.0  # control's daily P&L sd ($)
@@ -184,8 +185,11 @@ def run(
     if control.resolve() == DEFAULT_DB_PATH.resolve():  # pragma: no cover - defensive
         raise SystemExit("refusing to touch data/arc.db")
     db = ("--db", str(control))
-    _check(*_arc("experiment", "create", "--spec", str(SPEC), *db), "create")
-    _check(*_arc("experiment", "register", EID, *db), "register")
+    _check(
+        *_arc("experiment", "create", "--owner-approval", APPROVAL, "--spec", str(SPEC), *db),
+        "create",
+    )
+    _check(*_arc("experiment", "register", "--owner-approval", APPROVAL, EID, *db), "register")
     conn = connect(control)
     defaults_before = experiments_config(effective_settings(conn)).defaults
     conn.close()

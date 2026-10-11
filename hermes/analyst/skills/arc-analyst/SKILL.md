@@ -88,6 +88,10 @@ line under "Obvious flaws" as `→ Sentinel` and do not draft a card for it.
      `backtest_ref`. Leave alpha, power, sessions and `mde` unset: `arc experiment create`
      fills them from `config/experiments.yaml`. `record` sets `proposed_by` to the A-id and
      writes the draft to `RUN_DIR/forward-specs/<XP-n>.yaml` for the owner.
+   - **Idea seed (D86, E21.2).** The context lists `## Experiment idea seed`: leads `S-<n>`
+     from retired dev drafts (variables, treatments, source, evidence). They are leads, not
+     proposals: use one only with your own evidence, and say in the report when you set one
+     aside and why.
    - Every run gives each draft/queued/registered/running/stopped experiment one line in
      `experiments` (status equal to the registry's) and names `next_experiment`: the finding key
      whose `forward_spec` should run next, or `none: <why>` (e.g. no bucket at n ≥ 30, or the
@@ -214,8 +218,9 @@ Only the owner (`U0C5KUMH28G`) may trigger actions. Resolve an A-id from the new
 - `rerun`: `arc_analyst.py reset`, then `hermes -p arc-analyst cron run <arc-analyst-weekly-audit id from hermes -p arc-analyst cron list>`.
 - `register XP-<n>` / `start XP-<n>` / `promote XP-<n>`: not yours. Reply with the draft's path
   (`RUN_DIR/forward-specs/XP-<n>.yaml`) and the owner's commands: copy it to
-  `config/experiments/live/`, then `arc experiment create --spec <file>` and
-  `arc experiment register XP-<n>`; promotion is the owner's PR citing `Experiment: XP-<n>`.
+  `config/experiments/live/`, then `arc experiment create --spec <file> --owner-approval <ref>`
+  and `arc experiment register XP-<n> --owner-approval <ref>` (D86: both refuse without
+  it; `arc experiment adopt`, E21.4, will do this from `approve P-<n>`); promotion is the owner's PR citing `Experiment: XP-<n>`.
 - Questions: answer from RUN_DIR artefacts and the DB copy. Never change config or code.
 
 ## Pitfalls

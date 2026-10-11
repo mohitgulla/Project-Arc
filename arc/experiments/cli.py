@@ -1,8 +1,11 @@
 """``arc experiment``: the forward A/B experiment registry CLI (PLAN D44, E10.1).
 
-- ``arc experiment create --spec <yaml>``    store a draft (defaults filled from
-  ``config/experiments.yaml`` + D26 overrides); a draft may be re-created
-- ``arc experiment register <id>``           hash-lock the spec; queues if its area is busy
+- ``arc experiment create --spec <yaml> --owner-approval <ref>``  store a draft (defaults
+  filled from ``config/experiments.yaml`` + D26 overrides); a draft may be re-created
+- ``arc experiment register <id> --owner-approval <ref>``  hash-lock the spec; queues if
+  its area is busy. D86: both refuse without ``--owner-approval`` (``P-<n>``,
+  ``slack:<ts>`` or ``owner:<note>``); dev cards never write experiment rows, the owner
+  adopts an approved Analyst proposal (``arc experiment adopt``, E21.4)
 - ``arc experiment list [--status S]``
 - ``arc experiment show <id> [--json]``
 - ``arc experiment verify <id>``             recompute the spec hash (exit 1 on mismatch)
@@ -34,6 +37,10 @@ if TYPE_CHECKING:
 __all__ = ["add_experiment_parser", "run_experiment"]
 
 LOCAL_ACTOR = "local"
+OWNER_APPROVAL_HELP = (
+    "required (D86): the owner's approval of this experiment, P-<n> (Analyst proposal), "
+    "slack:<ts> or owner:<note>; normally set by `arc experiment adopt` (E21.4)"
+)
 
 
 def add_experiment_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -50,9 +57,11 @@ def add_experiment_parser(sub: argparse._SubParsersAction[argparse.ArgumentParse
     c = common(esub.add_parser("create", help="Store a spec as a draft"))
     c.add_argument("--spec", required=True, help="config/experiments/live/<x>.yaml")
     c.add_argument("--actor", default=LOCAL_ACTOR, help="owner Slack id, arc-analyst, or local")
+    c.add_argument("--owner-approval", default=None, help=OWNER_APPROVAL_HELP)
     r = common(esub.add_parser("register", help="Pre-register: hash-lock the spec"))
     r.add_argument("experiment_id")
     r.add_argument("--actor", default=LOCAL_ACTOR)
+    r.add_argument("--owner-approval", default=None, help=OWNER_APPROVAL_HELP)
     ls = common(esub.add_parser("list", help="All experiments and their status"))
     ls.add_argument("--status", choices=[s.value for s in ExperimentStatus], default=None)
     s = common(esub.add_parser("show", help="One experiment: spec, hash, status, events"))
@@ -140,7 +149,11 @@ def _detail(s: ExperimentState) -> list[str]:
     lines.append("  events:")
     for e in s.events:
         reason = f" ({e.reason.value})" if e.reason else ""
-        lines.append(f"    #{e.id} {e.at:%Y-%m-%d %H:%M %Z} {e.status.value}{reason} by {e.actor}")
+        ok = e.detail.get("owner_approval") if isinstance(e.detail, dict) else None
+        approval = f" (approval {ok})" if ok else ""
+        lines.append(
+            f"    #{e.id} {e.at:%Y-%m-%d %H:%M %Z} {e.status.value}{reason} by {e.actor}{approval}"
+        )
     return lines
 
 
@@ -471,16 +484,20 @@ def run_experiment(args: argparse.Namespace) -> int:
         store = ExperimentStore.for_runner(conn, runner)
         if cmd == "create":
             from arc.experiments.overlay import fill_defaults, load_spec
+            from arc.experiments.store import check_owner_approval
 
+            check_owner_approval(args.owner_approval)  # refuse before reading the spec
             try:
                 spec = load_spec(args.spec)
             except (ValidationError, ValueError, OSError) as exc:
                 _err(f"arc experiment create: invalid spec {args.spec}: {exc}")
                 return 2
             spec = fill_defaults(spec, experiments_config(effective_settings(conn)).defaults)
-            st = store.create(spec, actor=args.actor)
+            st = store.create(spec, actor=args.actor, owner_approval=args.owner_approval)
         elif cmd == "register":
-            st = store.register(args.experiment_id, actor=args.actor)
+            st = store.register(
+                args.experiment_id, actor=args.actor, owner_approval=args.owner_approval
+            )
         elif cmd == "list":
             states = store.all(status=ExperimentStatus(args.status) if args.status else None)
             if args.json:

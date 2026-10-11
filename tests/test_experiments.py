@@ -35,8 +35,10 @@ from arc.experiments.overlay import arm_config_data, fill_defaults, load_spec, v
 from arc.experiments.store import (
     AaRequiredError,
     ExperimentStore,
+    OwnerApprovalError,
     SpecLockedError,
     TransitionError,
+    check_owner_approval,
 )
 from arc.journal.reasons import ReasonCode, Stage
 from arc.journal.store import JournalStore
@@ -258,24 +260,26 @@ def test_every_live_spec_loads(path: Path) -> None:
 
 
 def test_create_revises_draft_and_register_locks(store: ExperimentStore) -> None:
-    s = store.create(_spec(), actor=OWNER)
+    s = store.create(_spec(), actor=OWNER, owner_approval="P-1")
     assert (s.status, s.revision, s.registered_hash) == (ExperimentStatus.DRAFT, 1, None)
-    assert store.create(_spec(), actor=OWNER).revision == 1  # identical: no new revision
-    s = store.create(_spec(title="better title"), actor=OWNER)
+    assert (
+        store.create(_spec(), actor=OWNER, owner_approval="P-1").revision == 1
+    )  # identical: no new revision
+    s = store.create(_spec(title="better title"), actor=OWNER, owner_approval="P-1")
     assert s.revision == 2 and s.spec.title == "better title"
-    r = store.register("XP-1", actor=OWNER)
+    r = store.register("XP-1", actor=OWNER, owner_approval="P-1")
     assert r.status is ExperimentStatus.REGISTERED
     assert r.registered_hash == spec_hash(r.spec) == r.spec_hash
     with pytest.raises(SpecLockedError, match="new id"):
-        store.create(_spec(title="sneaky edit"), actor=OWNER)
+        store.create(_spec(title="sneaky edit"), actor=OWNER, owner_approval="P-1")
     with pytest.raises(TransitionError):
-        store.register("XP-1", actor=OWNER)
+        store.register("XP-1", actor=OWNER, owner_approval="P-1")
     assert store.verify("XP-1")["ok"]
 
 
 def test_lock_is_enforced_by_the_db_too(conn: sqlite3.Connection, store: ExperimentStore) -> None:
-    store.create(_spec(), actor=OWNER)
-    store.register("XP-1", actor=OWNER)
+    store.create(_spec(), actor=OWNER, owner_approval="P-1")
+    store.register("XP-1", actor=OWNER, owner_approval="P-1")
     with pytest.raises(sqlite3.IntegrityError, match="locked after registration"):
         conn.execute(
             """INSERT INTO experiments (experiment_id, revision, spec_version, area, kind,
@@ -290,8 +294,8 @@ def test_lock_is_enforced_by_the_db_too(conn: sqlite3.Connection, store: Experim
 
 
 def test_verify_detects_a_tampered_spec(conn: sqlite3.Connection, store: ExperimentStore) -> None:
-    store.create(_spec(), actor=OWNER)
-    store.register("XP-1", actor=OWNER)
+    store.create(_spec(), actor=OWNER, owner_approval="P-1")
+    store.register("XP-1", actor=OWNER, owner_approval="P-1")
     conn.execute("DROP TRIGGER experiments_no_update")  # simulate out-of-band tampering
     row = conn.execute("SELECT spec FROM experiments").fetchone()
     tampered = json.loads(row[0]) | {"alpha": 0.2}
@@ -304,15 +308,25 @@ def test_verify_detects_a_tampered_spec(conn: sqlite3.Connection, store: Experim
 
 def test_one_registered_or_running_per_area_others_queue(store: ExperimentStore) -> None:
     for eid in ("XP-1", "XP-2", "XP-3"):
-        store.create(_spec(eid, area="other", kind="ab"), actor=OWNER)
-    store.create(_spec("XP-4", area="ranking", kind="ab"), actor=OWNER)
-    assert store.register("XP-1", actor=OWNER).status is ExperimentStatus.REGISTERED
-    assert store.register("XP-2", actor=OWNER).status is ExperimentStatus.QUEUED
-    assert store.register("XP-3", actor=OWNER).status is ExperimentStatus.QUEUED
-    assert store.register("XP-4", actor=OWNER).status is ExperimentStatus.REGISTERED  # other area
+        store.create(_spec(eid, area="other", kind="ab"), actor=OWNER, owner_approval="P-1")
+    store.create(_spec("XP-4", area="ranking", kind="ab"), actor=OWNER, owner_approval="P-1")
+    assert (
+        store.register("XP-1", actor=OWNER, owner_approval="P-1").status
+        is ExperimentStatus.REGISTERED
+    )
+    assert (
+        store.register("XP-2", actor=OWNER, owner_approval="P-1").status is ExperimentStatus.QUEUED
+    )
+    assert (
+        store.register("XP-3", actor=OWNER, owner_approval="P-1").status is ExperimentStatus.QUEUED
+    )
+    assert (
+        store.register("XP-4", actor=OWNER, owner_approval="P-1").status
+        is ExperimentStatus.REGISTERED
+    )  # other area
     # a queued spec is locked too
     with pytest.raises(SpecLockedError):
-        store.create(_spec("XP-2", kind="ab", title="edit"), actor=OWNER)
+        store.create(_spec("XP-2", kind="ab", title="edit"), actor=OWNER, owner_approval="P-1")
     store.start("XP-1", _running(), actor=OWNER, aa_override=True)
     assert [s.experiment_id for s in store.active_in_area("other")] == ["XP-1"]
     with pytest.raises(TransitionError):
@@ -327,8 +341,8 @@ def test_one_registered_or_running_per_area_others_queue(store: ExperimentStore)
 def test_ab_needs_aa_sigma_unless_owner_overrides(
     conn: sqlite3.Connection, store: ExperimentStore
 ) -> None:
-    store.create(_spec("XP-2", area="exits", kind="ab"), actor=OWNER)
-    store.register("XP-2", actor=OWNER)
+    store.create(_spec("XP-2", area="exits", kind="ab"), actor=OWNER, owner_approval="P-1")
+    store.register("XP-2", actor=OWNER, owner_approval="P-1")
     with pytest.raises(AaRequiredError, match="A/A"):
         store.start("XP-2", _running(), actor=OWNER)
     with pytest.raises(AaRequiredError, match="owner"):
@@ -340,18 +354,18 @@ def test_ab_needs_aa_sigma_unless_owner_overrides(
 
 
 def test_ab_starts_after_an_aa_recorded_sigma(store: ExperimentStore) -> None:
-    store.create(_spec("XP-1"), actor=OWNER)
-    store.register("XP-1", actor=OWNER)
+    store.create(_spec("XP-1"), actor=OWNER, owner_approval="P-1")
+    store.register("XP-1", actor=OWNER, owner_approval="P-1")
     store.start("XP-1", _running(), actor=OWNER)
     store.stop("XP-1", StopReason.FUTILITY, actor=OWNER)  # no sigma: does not count
     assert store.aa_sigma() is None
-    store.create(_spec("XP-3"), actor=OWNER)
-    store.register("XP-3", actor=OWNER)
+    store.create(_spec("XP-3"), actor=OWNER, owner_approval="P-1")
+    store.register("XP-3", actor=OWNER, owner_approval="P-1")
     store.start("XP-3", _running(), actor=OWNER)
     store.stop("XP-3", StopReason.FUTILITY, actor=OWNER, detail=StopDetail(sigma=0.35))
     assert store.aa_sigma() == 0.35
-    store.create(_spec("XP-2", area="exits", kind="ab"), actor=OWNER)
-    store.register("XP-2", actor=OWNER)
+    store.create(_spec("XP-2", area="exits", kind="ab"), actor=OWNER, owner_approval="P-1")
+    store.register("XP-2", actor=OWNER, owner_approval="P-1")
     s = store.start("XP-2", _running(), actor="arc.experiments")
     assert s.status is ExperimentStatus.RUNNING and s.running and not s.running.aa_override
     assert s.running.t0 == NOW and s.running.t0_equity == 100_000.0
@@ -360,10 +374,10 @@ def test_ab_starts_after_an_aa_recorded_sigma(store: ExperimentStore) -> None:
 def test_lifecycle_transitions_and_journal(
     conn: sqlite3.Connection, store: ExperimentStore
 ) -> None:
-    store.create(_spec(), actor=OWNER)
+    store.create(_spec(), actor=OWNER, owner_approval="P-1")
     with pytest.raises(TransitionError):
         store.stop("XP-1", StopReason.OWNER, actor=OWNER)  # draft cannot stop
-    store.register("XP-1", actor=OWNER)
+    store.register("XP-1", actor=OWNER, owner_approval="P-1")
     with pytest.raises(TransitionError):
         store.decide("XP-1", promote=True, actor=OWNER)
     store.start("XP-1", _running(), actor=OWNER)
@@ -393,15 +407,15 @@ def test_lifecycle_transitions_and_journal(
 
 def test_register_refuses_incomplete_spec(store: ExperimentStore) -> None:
     raw = ExperimentSpec.model_validate(_spec().model_dump() | {"alpha": None})
-    store.create(raw, actor=OWNER)
+    store.create(raw, actor=OWNER, owner_approval="P-1")
     with pytest.raises(ValueError, match="unset defaults"):
-        store.register("XP-1", actor=OWNER)
+        store.register("XP-1", actor=OWNER, owner_approval="P-1")
 
 
 def test_unknown_experiment(store: ExperimentStore) -> None:
     assert store.get("XP-404") is None
     with pytest.raises(ValueError, match="unknown experiment"):
-        store.register("XP-404", actor=OWNER)
+        store.register("XP-404", actor=OWNER, owner_approval="P-1")
 
 
 # ---------------------------------------------------------------------------
@@ -480,9 +494,11 @@ def test_cli_create_register_show_verify_stop(
 ) -> None:
     db = str(tmp_path / "x.db")
     spec = str(LIVE / "xp1_aa_baseline.yaml")
-    assert run_experiment(_cli("create", "--spec", spec, "--db", db)) == 0
+    assert (
+        run_experiment(_cli("create", "--owner-approval", "P-1", "--spec", spec, "--db", db)) == 0
+    )
     assert "XP-1  draft" in capsys.readouterr().out
-    assert run_experiment(_cli("register", "XP-1", "--db", db)) == 0
+    assert run_experiment(_cli("register", "--owner-approval", "P-1", "XP-1", "--db", db)) == 0
     assert "XP-1  registered" in capsys.readouterr().out
     assert run_experiment(_cli("show", "XP-1", "--db", db, "--json")) == 0
     out = capsys.readouterr().out
@@ -496,7 +512,9 @@ def test_cli_create_register_show_verify_stop(
     assert run_experiment(_cli("list", "--db", db)) == 0
     assert "XP-1" in capsys.readouterr().out
     # re-create after registration is refused (exit 2)
-    assert run_experiment(_cli("create", "--spec", spec, "--db", db)) == 2
+    assert (
+        run_experiment(_cli("create", "--owner-approval", "P-1", "--spec", spec, "--db", db)) == 2
+    )
     assert "locked" in capsys.readouterr().err
     assert run_experiment(_cli("stop", "XP-1", "--reason", "owner", "--actor", "U_NOBODY",
                                "--db", db)) == 2  # fmt: skip
@@ -510,8 +528,81 @@ def test_cli_create_register_show_verify_stop(
 def test_cli_rejects_bad_spec_file(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     bad = tmp_path / "bad.yaml"
     bad.write_text("id: XP-1\ntitle: t\n")
-    assert run_experiment(_cli("create", "--spec", str(bad), "--db", str(tmp_path / "x.db"))) == 2
+    assert (
+        run_experiment(
+            _cli(
+                "create",
+                "--owner-approval",
+                "P-1",
+                "--spec",
+                str(bad),
+                "--db",
+                str(tmp_path / "x.db"),
+            )
+        )
+        == 2
+    )
     assert "invalid spec" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# D86 (E21.2): no experiment rows without an owner-approval reference
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("ref", ["P-1", "P-12", "slack:1791668051.305679", "owner:A/A rerun"])
+def test_owner_approval_refs_accepted(ref: str) -> None:
+    assert check_owner_approval(f" {ref} ") == ref
+
+
+@pytest.mark.parametrize(
+    "ref", [None, "", "  ", "P-0", "P-01", "p-1", "XP-1", "slack:", "slack:abc", "owner:", "yes"]
+)
+def test_owner_approval_refs_refused(ref: str | None) -> None:
+    with pytest.raises(OwnerApprovalError, match="arc experiment adopt"):
+        check_owner_approval(ref)
+
+
+def test_store_create_and_register_need_owner_approval(
+    conn: sqlite3.Connection, store: ExperimentStore
+) -> None:
+    with pytest.raises(OwnerApprovalError, match="owner approval required"):
+        store.create(_spec(), actor=OWNER, owner_approval="")
+    assert store.get("XP-1") is None  # nothing written
+    store.create(_spec(), actor=OWNER, owner_approval="slack:1791668051.305679")
+    with pytest.raises(OwnerApprovalError, match="invalid owner approval 'later'"):
+        store.register("XP-1", actor=OWNER, owner_approval="later")
+    assert store.require("XP-1").status is ExperimentStatus.DRAFT
+    st = store.register("XP-1", actor=OWNER, owner_approval="P-3")
+    details = [(e.status.value, e.detail.get("owner_approval")) for e in st.events]
+    assert details == [("draft", "slack:1791668051.305679"), ("registered", "P-3")]
+
+
+def test_cli_create_and_register_refuse_without_owner_approval(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    db = str(tmp_path / "x.db")
+    spec = str(LIVE / "xp1_aa_baseline.yaml")
+    assert run_experiment(_cli("create", "--spec", spec, "--db", db)) == 2
+    err = capsys.readouterr().err
+    assert "arc experiment create: owner approval required" in err
+    assert "arc experiment adopt P-<n>" in err and "PLAN D86" in err
+    assert run_experiment(_cli("list", "--db", db)) == 0
+    assert "no experiments" in capsys.readouterr().out
+    # refused before the spec is read: a bad path still names the approval
+    assert run_experiment(_cli("create", "--spec", "nope.yaml", "--db", db)) == 2
+    assert "owner approval required" in capsys.readouterr().err
+    assert (
+        run_experiment(_cli("create", "--owner-approval", "P-7", "--spec", spec, "--db", db)) == 0
+    )
+    capsys.readouterr()
+    assert run_experiment(_cli("register", "XP-1", "--db", db)) == 2
+    assert "arc experiment register: owner approval required" in capsys.readouterr().err
+    assert run_experiment(_cli("register", "--owner-approval", "P-7", "XP-1", "--db", db)) == 0
+    capsys.readouterr()
+    assert run_experiment(_cli("show", "XP-1", "--db", db)) == 0
+    out = capsys.readouterr().out
+    assert "draft by local (approval P-7)" in out and "registered by local (approval P-7)" in out
 
 
 @pytest.mark.parametrize("bad", ["X-1", "XP-0", "xp-1", "XP-01", "XP-", "XP1"])
@@ -520,4 +611,4 @@ def test_experiment_ids_are_xp_n(bad: str) -> None:
     data = _spec("XP-1").model_dump(mode="json") | {"id": bad}
     with pytest.raises(ValidationError, match="XP-<n>"):
         ExperimentSpec.model_validate(data)
-    assert arm_id("XP-12", "treatment") == "XP-12:treatment"
+    assert arm_id("XP-22", "treatment") == "XP-22:treatment"

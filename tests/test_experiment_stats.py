@@ -543,8 +543,8 @@ def test_ab_uses_aa_sigma_when_recorded(conn: sqlite3.Connection) -> None:
             detail=__import__("arc.experiments.models", fromlist=["StopDetail"]).StopDetail(
                 sigma=0.002))  # fmt: skip
     store = ExperimentStore(conn, now=lambda: fx.T0)
-    store.create(fx.spec(), actor="local")
-    store.register("XP-2", actor="local")
+    store.create(fx.spec(), actor="local", owner_approval="P-1")
+    store.register("XP-2", actor="local", owner_approval="P-1")
     from arc.experiments.models import RunningDetail
 
     store.start("XP-2", RunningDetail(t0=fx.T0, t0_equity=1e5, control_sha=fx.CONTROL_SHA),
@@ -700,7 +700,7 @@ def _outcome(
 
 def test_evaluate_refuses_non_running(conn: sqlite3.Connection) -> None:
     store = ExperimentStore(conn, now=lambda: fx.T0)
-    store.create(fx.spec(), actor="local")
+    store.create(fx.spec(), actor="local", owner_approval="P-1")
     with pytest.raises(ExperimentError, match="not running"):
         evaluate(store, "XP-2", CFG, now=fx.T0)
     with pytest.raises(ExperimentError, match="never started"):

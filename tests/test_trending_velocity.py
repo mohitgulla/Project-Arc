@@ -7,7 +7,7 @@
 - ranker parity: ``scoring: rank_gain`` reproduces the pre-E14.5 tier byte for byte;
   the ``velocity`` arm promotes fast risers;
 - the flags: ``universe.trending.scoring`` and ``personas.scout_buzz_velocity`` in the
-  registry (choices, default control), the XP-10 draft, the arm owns the trending job;
+  registry (choices, default control), a velocity arm overlay owns the trending job;
 - the Scout lines with the flag on / off, the golden prompt, the handler wiring;
 - the Tower ``/api/ops/universe`` trending member carries its velocity.
 """
@@ -236,18 +236,14 @@ def test_flags_in_the_registry_default_control() -> None:
     assert TrendingOptions.from_options(job[1].options).scoring == "velocity"
 
 
-def test_xp10_draft_owns_the_trending_job_and_the_scout() -> None:
+def test_velocity_overlay_owns_the_trending_job_and_the_scout() -> None:
+    # D86: the retired velocity draft is idea-seed lead S-1; an arm overlay that
+    # switches the scoring must still fork the trending job and the Scout.
     from arc.experiments.config import RunnerConfig
-    from arc.experiments.models import ExperimentSpec
     from arc.experiments.runner import arm_owned_personas, arm_plan, persona_jobs
     from arc.routines.config import load_routines
 
-    spec = ExperimentSpec.model_validate(
-        yaml.safe_load((REPO / "config/experiments/live/xp10_trending_velocity.yaml").read_text())
-    )
-    assert spec.id == "XP-10"
-    ov = spec.arms.treatment.overlay
-    assert ov == {"routines": {"sources": {"universe.trending": {"scoring": "velocity"}}}}
+    ov = {"routines": {"sources": {"universe.trending": {"scoring": "velocity"}}}}
     assert arm_owned_personas(ov) == {"trending", "scout"}
     assert arm_owned_personas({"routines": {"personas": {"scout_buzz_velocity": "on"}}}) == {
         "scout"

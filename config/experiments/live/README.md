@@ -10,8 +10,8 @@ deep-merged over it with `arc.utils.yamlpatch.deep_merge` (the function
 
 Lifecycle:
 
-    arc experiment create --spec config/experiments/live/xp1_aa_baseline.yaml --db <db>
-    arc experiment register XP-1 --db <db>     # locks sha256(canonical spec)
+    arc experiment create --spec config/experiments/live/xp1_aa_baseline.yaml --owner-approval P-<n> --db <db>
+    arc experiment register XP-1 --owner-approval P-<n> --db <db>     # locks sha256(canonical spec)
     arc experiment show XP-1 --db <db>
     arc experiment verify XP-1 --db <db>
 
@@ -30,6 +30,15 @@ single-treatment run = `t1`) and the stored report's `report_hash` (from
 Who adds specs (D86): specs are added only by `arc experiment adopt` (E21.4) after the
 owner approves an Analyst proposal (`approve P-<n>` in #arc-analyst). Cards and PRs never
 draft XP specs here; a strategy PR's only XP touchpoint is its `XP-advisory:` line.
+`create` and `register` refuse without `--owner-approval <P-<n> | slack:<ts> | owner:<note>>`.
+
+Retired drafts (E21.2, D86): the five dev-drafted specs XP-10 (trending velocity;
+registered once, then cleared from the registry with the 2026-10-10 reset) and the four
+after it (Scalp tape movers, Stocktwits sentiment, technicals / anti-chase variants,
+unified menu measure) are gone. Their ideas are leads in the Analyst idea seed
+(`hermes/analyst/idea_seed.yaml`, each with a `git show` ref to the old spec); the flags
+they flipped keep their shipped values. XP-1 stays as history (the A/A on the new
+accounts is E15.9).
 
 Fork at any persona (E13.12, D56): `arc experiment start` computes each arm's plan
 (`arc.experiments.runner.arm_plan`) and stores it on the arm's identity and in the
