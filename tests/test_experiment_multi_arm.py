@@ -54,12 +54,12 @@ ACCT = "PA3EXP0001"
 OTHER_ACCT = "PA3EXP9999"
 
 # Hashes locked before D69 (spec v1): loading under v2 must reproduce every one.
-# D85 retired the XP-2 / XP-3 drafts (their treatments became the shipped defaults).
+# D85 retired the XP-2 / XP-3 drafts, D86 (E21.2) the five later drafts; the committed A/A spec and
+# the XP-5 fixture (a v1 A/B with a real overlay) keep the v1 -> v2 invariant pinned.
+XP5 = "tests/fixtures/experiments/xp5_universe_screen.yaml"
 V1_HASHES = {
-    "xp10_trending_velocity.yaml": "9c159cb68a47d3b8574a66b21eda55d78eee6762a0478a4d664196d49f96e245",  # noqa: E501
-    "xp11_scalp_movers.yaml": "b511804da283981b3622a0c166e245a19325a2ad7b80f258775c1af2610d6ee9",  # noqa: E501
-    "xp12_retail_sentiment.yaml": "c88e20f231a67444653ba5d29c0e596ceadd7aea7336c6159faf5803c1b518fb",  # noqa: E501
-    "xp1_aa_baseline.yaml": "7d02a85573156876e3b8d0a4e57e195d9ce04f6399966103843224d8749d8d20",  # noqa: E501
+    "config/experiments/live/xp1_aa_baseline.yaml": "7d02a85573156876e3b8d0a4e57e195d9ce04f6399966103843224d8749d8d20",  # noqa: E501
+    XP5: "6c6865ff6af3bac40a858bd0dd044d7b47b6f8815a2435dd2f6d9e60d9cf892b",
 }
 
 
@@ -124,8 +124,11 @@ def _probe(number: str = ACCT, equity: str = "100000", positions: int = 0, order
 
 def _registered(conn: sqlite3.Connection, spec: ExperimentSpec, runner: RunnerConfig) -> None:
     store = ExperimentStore.for_runner(conn, runner)
-    store.create(spec, actor=OWNER)
-    assert store.register(spec.id, actor=OWNER).status is ExperimentStatus.REGISTERED
+    store.create(spec, actor=OWNER, owner_approval="P-1")
+    assert (
+        store.register(spec.id, actor=OWNER, owner_approval="P-1").status
+        is ExperimentStatus.REGISTERED
+    )
 
 
 def _start(
@@ -154,39 +157,28 @@ def _start(
 # --- spec v1 -> v2 ------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("name", sorted(V1_HASHES))
-def test_every_committed_v1_spec_loads_as_t1_with_its_hash_unchanged(name: str) -> None:
-    raw = yaml.safe_load((LIVE / name).read_text())
+@pytest.mark.parametrize("path", sorted(V1_HASHES))
+def test_every_committed_v1_spec_loads_as_t1_with_its_hash_unchanged(path: str) -> None:
+    raw = yaml.safe_load((REPO / path).read_text())
     assert "treatment" in raw["arms"]  # committed as v1
     sp = ExperimentSpec.model_validate(raw)
     assert sp.spec_version == 1 and sp.arms.names == ["t1"]
     assert sp.arms.arm("treatment") is sp.arms.treatments["t1"]
-    assert spec_hash(sp) == V1_HASHES[name]
+    assert spec_hash(sp) == V1_HASHES[path]
     # the hashed document is still the v1 document
     assert '"treatment":' in canonical_json(sp) and '"treatments"' not in canonical_json(sp)
 
 
-# Specs committed as v2 (D69 multi-arm); never loaded as v1.
-V2_SPECS = {
-    "xp13_technicals.yaml",  # E16.3: draft, unregistered
-    "xp14_menu_measure.yaml",  # E7.5b: draft, unregistered
-}
-
-
 def test_committed_specs_are_all_covered() -> None:
-    assert {p.name for p in LIVE.glob("*.yaml")} == set(V1_HASHES) | V2_SPECS
-
-
-@pytest.mark.parametrize("name", sorted(V2_SPECS))
-def test_committed_v2_specs_load_with_their_arms(name: str) -> None:
-    sp = ExperimentSpec.model_validate(yaml.safe_load((LIVE / name).read_text()))
-    assert sp.spec_version == 2 and len(sp.arms.names) >= 2
+    # D86: dev cards never draft XP specs; only XP-1 (history) is committed until
+    # `arc experiment adopt` (E21.4) adds owner-approved Analyst proposals.
+    assert {f"{p.relative_to(REPO)}" for p in LIVE.glob("*.yaml")} == {
+        p for p in V1_HASHES if p.startswith("config/")
+    }
 
 
 def test_a_v1_spec_round_trips_through_its_stored_json() -> None:
-    sp = ExperimentSpec.model_validate(
-        yaml.safe_load((LIVE / "xp11_scalp_movers.yaml").read_text())
-    )
+    sp = ExperimentSpec.model_validate(yaml.safe_load((REPO / XP5).read_text()))
     again = ExperimentSpec.model_validate(json.loads(canonical_json(sp)))
     assert spec_hash(again) == spec_hash(sp) and again.spec_version == 1
 
@@ -354,29 +346,43 @@ def test_max_parallel_arms_queues_then_promotes(tmp_path: Path) -> None:
     conn = _db()
     store = ExperimentStore.for_runner(conn, _shared(max_parallel_arms=5), now=lambda: T0)
     for eid, k in (("XP-20", 3), ("XP-21", 3), ("XP-22", 2)):
-        store.create(_spec(eid, k=k), actor=OWNER)
-    assert store.register("XP-20", actor=OWNER).status is ExperimentStatus.REGISTERED
-    st = store.register("XP-21", actor=OWNER)  # 3 + 3 > 5
+        store.create(_spec(eid, k=k), actor=OWNER, owner_approval="P-1")
+    assert (
+        store.register("XP-20", actor=OWNER, owner_approval="P-1").status
+        is ExperimentStatus.REGISTERED
+    )
+    st = store.register("XP-21", actor=OWNER, owner_approval="P-1")  # 3 + 3 > 5
     assert st.status is ExperimentStatus.QUEUED
     assert st.events[-1].detail is not None
     assert "max_parallel_arms 5" in st.events[-1].detail["arm_cap"]
-    assert store.register("XP-22", actor=OWNER).status is ExperimentStatus.REGISTERED  # 3 + 2
+    assert (
+        store.register("XP-22", actor=OWNER, owner_approval="P-1").status
+        is ExperimentStatus.REGISTERED
+    )  # 3 + 2
     store.stop("XP-20", StopReason.OWNER, actor=OWNER)  # 2 used: XP-21 (3) fits
     assert store.require("XP-21").status is ExperimentStatus.REGISTERED
     # one experiment wider than the cap could never start: refused outright
-    store.create(_spec("XP-23", k=6), actor=OWNER)
+    store.create(_spec("XP-23", k=6), actor=OWNER, owner_approval="P-1")
     with pytest.raises(Exception, match="could never start"):  # noqa: PT011
-        store.register("XP-23", actor=OWNER)
+        store.register("XP-23", actor=OWNER, owner_approval="P-1")
 
 
 def test_aa_is_exempt_from_the_area_lock_but_ab_is_not(tmp_path: Path) -> None:
     store = ExperimentStore(_db(), now=lambda: T0)
-    store.create(_spec("XP-20", kind="ab", area="exits", k=1), actor=OWNER)
-    store.create(_spec("XP-21", kind="aa", area="exits", k=2), actor=OWNER)
-    store.create(_spec("XP-22", kind="ab", area="exits", k=1), actor=OWNER)
-    assert store.register("XP-20", actor=OWNER).status is ExperimentStatus.REGISTERED
-    assert store.register("XP-21", actor=OWNER).status is ExperimentStatus.REGISTERED  # A/A
-    assert store.register("XP-22", actor=OWNER).status is ExperimentStatus.QUEUED  # A/B
+    store.create(_spec("XP-20", kind="ab", area="exits", k=1), actor=OWNER, owner_approval="P-1")
+    store.create(_spec("XP-21", kind="aa", area="exits", k=2), actor=OWNER, owner_approval="P-1")
+    store.create(_spec("XP-22", kind="ab", area="exits", k=1), actor=OWNER, owner_approval="P-1")
+    assert (
+        store.register("XP-20", actor=OWNER, owner_approval="P-1").status
+        is ExperimentStatus.REGISTERED
+    )
+    assert (
+        store.register("XP-21", actor=OWNER, owner_approval="P-1").status
+        is ExperimentStatus.REGISTERED
+    )  # A/A
+    assert (
+        store.register("XP-22", actor=OWNER, owner_approval="P-1").status is ExperimentStatus.QUEUED
+    )  # A/B
     assert [s.experiment_id for s in store.active_in_area("exits")] == ["XP-20"]
 
 
@@ -653,8 +659,8 @@ def test_cli_fixture_k3_aa_shared(tmp_path: Path, capsys: pytest.CaptureFixture[
     xcfg = tmp_path / "experiments.yaml"
     xcfg.write_text(yaml.safe_dump(cfg))
     db = ("--db", str(tmp_path / "arc.db"))
-    assert _arc("experiment", "create", "--spec", str(spec), *db) == 0
-    assert _arc("experiment", "register", "XP-20", *db) == 0
+    assert _arc("experiment", "create", "--owner-approval", "P-1", "--spec", str(spec), *db) == 0
+    assert _arc("experiment", "register", "--owner-approval", "P-1", "XP-20", *db) == 0
     capsys.readouterr()
     assert (
         _arc("experiment", "start", "XP-20", "--fixtures", "--t0-equity", "10000",

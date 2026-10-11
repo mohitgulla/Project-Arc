@@ -205,6 +205,7 @@ def test_context_contains_scorecard_and_ledger(
             "id": "A-1", "key": "flaw:auto-approve-negative-ev", "status": "open",
             "severity": "high", "title": "auto-approve on with negative realised EV", "n": 4}}},
     )  # fmt: skip
+    p.idea_seed.write_text((ANALYST / "idea_seed.yaml").read_text())  # as install.sh does
     assert aa.main([], p, NOW) == 0
     out = capsys.readouterr().out
     assert "wakeAgent" not in out
@@ -232,6 +233,10 @@ def test_context_contains_scorecard_and_ledger(
     for theme in aa.THEMES:
         assert f"- {theme}:" in out
     assert "- A-1 [open] key=flaw:auto-approve-negative-ev sev=high n=4" in out
+    # E21.2 (D86): the installed idea seed's leads
+    assert "## Experiment idea seed (D86: leads from retired dev drafts" in out
+    assert "- S-1 [entries] Velocity-weighted trending tier" in out
+    assert "- S-5 [entries] Unified managed-EV menu measure" in out
     # artefacts
     assert (run_dir / "arc-copy.db").is_file()
     assert (run_dir / "config" / "costs.yaml").is_file()

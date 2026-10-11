@@ -105,8 +105,15 @@ def test_open_book_lists_only_open_structures() -> None:
 def started(tmp_path: Path) -> tuple[Path, str]:
     """A running XP-1 with a treatment arm, and one control loop chain (fixtures)."""
     control = tmp_path / "control.db"
-    assert _arc("experiment", "create", "--spec", SPEC, "--db", str(control)) == 0
-    assert _arc("experiment", "register", "XP-1", "--db", str(control)) == 0
+    assert (
+        _arc(
+            "experiment", "create", "--owner-approval", "P-1", "--spec", SPEC, "--db", str(control)
+        )
+        == 0
+    )
+    assert (
+        _arc("experiment", "register", "--owner-approval", "P-1", "XP-1", "--db", str(control)) == 0
+    )
     conn = _db(control)
     start_arms(
         conn,

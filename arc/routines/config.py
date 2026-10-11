@@ -867,7 +867,7 @@ class AntiChaseSettings(BaseModel):
 
     ``combine: all`` (D78): stretch >= ``max_stretch_atr`` **and** RSI14 >=
     ``rsi_overbought`` (bears: <= -stretch and RSI <= ``rsi_oversold``). ``any`` is the
-    D76 card rule (stretch, **or** RSI near the 20-day extreme), kept for XP-13.
+    D76 card rule (stretch, **or** RSI near the 20-day extreme), kept as a variant.
     ``vwap: on`` (default off) adds the intraday VWAP stretch input (one 5-min bars
     request per surviving directional idea, on the shared ``alpaca_data:calls``
     budget; a failed fetch skips that part, journaled ``vwap_missing``).

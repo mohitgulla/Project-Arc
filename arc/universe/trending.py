@@ -7,8 +7,8 @@ this module scores them and builds the ``universe_tier`` entry (subject ``trendi
 Per input (restored from E12.3, ``f0101ea:arc/universe/trending.py``):
 
 * ``apewisdom`` (Reddit): the mean of the rank-normalised mentions and 24 h rank gain
-  (``scoring: rank_gain``, the default). E14.5 (D60): ``scoring: velocity`` (strategy
-  lane, flag ``universe.trending.scoring``, draft XP-10) swaps the rank gain for the
+  (``scoring: rank_gain``, the default). E14.5 (D60): ``scoring: velocity`` (flag
+  ``universe.trending.scoring``, a runtime-tunable registry key) swaps the rank gain for the
   rank-normalised mention velocity (:func:`mention_velocity`); a row without one scores
   0 on that half (never infinite growth).
 * ``stocktwits``: ``trending_score`` (list position when absent); crypto and non-US

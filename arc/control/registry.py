@@ -1893,14 +1893,14 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         aliases=("routines.personas.finnhub_context", "finnhub_context"),
     ),
     # E14.3 (D60/D44): Alpaca movers + most-actives as a "Tape movers" block in the
-    # Scalp prompt. Strategy lane: off until an experiment (XP-11) returns `win`.
+    # Scalp prompt. Context only; default off (D86: an Analyst idea-seed lead, not a draft XP).
     Tunable(
         key="personas.scalp_movers_context",
         group=Group.ROUTINES,
         type=ValueType.CHOICE,
         description="E14.3: show the Scalp a 'Tape movers' block (Alpaca movers + "
         "most-actives, only active-list names and names a story mentions, at most 10 "
-        "lines). Context only, never a discovery input. Experiment XP-11 tests it.",
+        "lines). Context only, never a discovery input.",
         target=Target.ROUTINES,
         risk=Risk.ORDER,
         path=("personas", "scalp_movers_context"),
@@ -1940,7 +1940,7 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         aliases=("routines.personas.scout_buzz_velocity", "scout_buzz_velocity"),
     ),
     # E14.6 (D60/D44): Stocktwits per-ticker sentiment in the Scout and Research
-    # prompts. Strategy lane (a prompt change): default off; draft XP-12 tests on.
+    # prompts. Strategy (a prompt change): default off (D86: an Analyst idea-seed lead).
     Tunable(
         key="personas.retail_sentiment_context",
         group=Group.ROUTINES,
@@ -2436,15 +2436,14 @@ _OPTIONS_FAST_TUNABLES: tuple[Tunable, ...] = (
         max=60,
         hard_ceiling=60,
     ),
-    # E14.5 (D60/D44): the trending ranker's Reddit scoring. Strategy lane (a selection
-    # change): rank_gain is the control; draft XP-10 tests velocity.
+    # E14.5 (D60/D44): the trending ranker's Reddit scoring. Strategy (a selection
+    # change): rank_gain is the default (D86: velocity is an Analyst idea-seed lead).
     Tunable(
         key="universe.trending.scoring",
         group=Group.ROUTINES,
         type=ValueType.CHOICE,
         description="E14.5: how the trending tier scores Reddit: mentions plus the 24 h "
-        "rank gain (rank_gain) or plus the mention velocity (m + k) / (m24 + k) (velocity). "
-        "Experiment XP-10 tests velocity.",
+        "rank gain (rank_gain) or plus the mention velocity (m + k) / (m24 + k) (velocity).",
         target=Target.ROUTINES,
         risk=Risk.ORDER,
         path=("sources", "universe.trending", "scoring"),

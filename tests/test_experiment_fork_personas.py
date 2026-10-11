@@ -261,8 +261,10 @@ def test_pre_e13_12_store_loads_with_no_personas(tmp_path: Path) -> None:
 @pytest.fixture
 def control(tmp_path: Path) -> Path:
     db = tmp_path / "control.db"
-    assert _arc("experiment", "create", "--spec", XP5, "--db", str(db)) == 0
-    assert _arc("experiment", "register", "XP-5", "--db", str(db)) == 0
+    assert (
+        _arc("experiment", "create", "--owner-approval", "P-1", "--spec", XP5, "--db", str(db)) == 0
+    )
+    assert _arc("experiment", "register", "--owner-approval", "P-1", "XP-5", "--db", str(db)) == 0
     return db
 
 
@@ -543,7 +545,19 @@ def test_bad_universe_overlay_is_refused_at_create(tmp_path: Path) -> None:
 
 def test_migration_026_keeps_every_experiment_row_and_the_triggers(tmp_path: Path) -> None:
     conn = _db(tmp_path / "x.db")
-    assert _arc("experiment", "create", "--spec", XP5, "--db", str(tmp_path / "x.db")) == 0
+    assert (
+        _arc(
+            "experiment",
+            "create",
+            "--owner-approval",
+            "P-1",
+            "--spec",
+            XP5,
+            "--db",
+            str(tmp_path / "x.db"),
+        )
+        == 0
+    )
     row = conn.execute("SELECT area FROM experiments WHERE experiment_id = 'XP-5'").fetchone()
     assert row[0] == "universe"
     with pytest.raises(sqlite3.IntegrityError, match="append-only"):

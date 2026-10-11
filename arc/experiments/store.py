@@ -18,6 +18,10 @@ Rules enforced here (and, for the spec lock, by a DB trigger too):
 - **Arm cap (D69).** The arms of every registered/running experiment together stay
   within ``experiments.runner.max_parallel_arms`` (:meth:`ExperimentStore.for_runner`);
   a registration that would exceed it is ``queued`` until arms free up.
+- **Owner approval (D86).** ``create`` and ``register`` require an ``owner_approval``
+  reference (``P-<n>`` Analyst proposal, ``slack:<ts>`` thread message, or
+  ``owner:<note>``), stored in the event ``detail``. Dev cards never write experiment
+  rows; specs arrive through ``arc experiment adopt`` (E21.4) after the owner approves.
 - **A/A first.** An ``ab`` experiment may not start until an ``aa`` experiment has
   stopped with a recorded sigma (E10.4). The owner can override; the override is
   journaled (``experiment:aa_override``) and recorded on the running event.
@@ -28,6 +32,7 @@ The caller injects ``now``; nothing here reads the wall clock.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from typing import TYPE_CHECKING, Any
 
@@ -58,12 +63,15 @@ if TYPE_CHECKING:
     from arc.experiments.config import RunnerConfig
 
 __all__ = [
+    "OWNER_APPROVAL_RE",
     "AaRequiredError",
     "ExperimentError",
     "ExperimentStore",
+    "OwnerApprovalError",
     "SpecLockedError",
     "TransitionError",
     "Verification",
+    "check_owner_approval",
 ]
 
 log = structlog.get_logger(__name__)
@@ -83,6 +91,30 @@ class TransitionError(ExperimentError):
 
 class AaRequiredError(ExperimentError):
     """An ab experiment may not start before an A/A has recorded sigma."""
+
+
+class OwnerApprovalError(ExperimentError):
+    """``create`` / ``register`` without a well-formed owner-approval reference (D86)."""
+
+
+#: D86: ``P-<n>`` (an approved Analyst proposal), ``slack:<ts>`` (the owner's message),
+#: or ``owner:<free text>`` (a shell decision the owner records by hand).
+OWNER_APPROVAL_RE = re.compile(r"^(P-[1-9]\d*|slack:\d+\.\d+|owner:\S.{0,199})$")
+ADOPT_HINT = (
+    "experiments enter the registry only after the owner approves an Analyst proposal: "
+    "use `arc experiment adopt P-<n>` (E21.4), or pass --owner-approval "
+    "<P-<n> | slack:<ts> | owner:<note>> (PLAN D86)"
+)
+
+
+def check_owner_approval(ref: str | None) -> str:
+    """The stripped *ref*, or :class:`OwnerApprovalError` naming ``arc experiment adopt``."""
+    ref = (ref or "").strip()
+    if not OWNER_APPROVAL_RE.match(ref):
+        what = f"invalid owner approval {ref!r}" if ref else "owner approval required"
+        msg = f"{what}: {ADOPT_HINT}"
+        raise OwnerApprovalError(msg)
+    return ref
 
 
 class Verification(dict[str, Any]):
@@ -343,11 +375,13 @@ class ExperimentStore:
             msg = f"{st.experiment_id}: cannot go from {st.status.value} to {to.value}"
             raise TransitionError(msg)
 
-    def create(self, spec: ExperimentSpec, *, actor: str) -> ExperimentState:
+    def create(self, spec: ExperimentSpec, *, actor: str, owner_approval: str) -> ExperimentState:
         """Store *spec* as a draft (a new revision when the id is still a draft).
 
-        Refused once the experiment left draft: the spec is hash-locked.
+        Refused once the experiment left draft: the spec is hash-locked. Refused
+        without an *owner_approval* reference (D86, :func:`check_owner_approval`).
         """
+        approval = check_owner_approval(owner_approval)
         current = self.get(spec.id)
         if current is not None and current.status is not ExperimentStatus.DRAFT:
             msg = (
@@ -385,14 +419,16 @@ class ExperimentStore:
                 ExperimentStatus.DRAFT,
                 hash_=h,
                 actor=actor,
-                detail={"revision": revision},
+                detail={"revision": revision, "owner_approval": approval},
                 text=f"{spec.title} (revision {revision})",
             )
         return self.require(spec.id)
 
-    def register(self, experiment_id: str, *, actor: str) -> ExperimentState:
+    def register(self, experiment_id: str, *, actor: str, owner_approval: str) -> ExperimentState:
         """Lock the spec (sha256) and register it, or queue it when its area is busy
-        (A/B only, D69) or its arms would exceed ``max_parallel_arms``."""
+        (A/B only, D69) or its arms would exceed ``max_parallel_arms``. Refused without
+        an *owner_approval* reference (D86)."""
+        approval = check_owner_approval(owner_approval)
         st = self.require(experiment_id)
         if st.status is not ExperimentStatus.DRAFT:
             msg = f"{experiment_id} is {st.status.value}, not draft: already registered"
@@ -421,7 +457,7 @@ class ExperimentStore:
             )
         if cap:
             text += f"; {cap}"
-        detail: dict[str, Any] = {}
+        detail: dict[str, Any] = {"owner_approval": approval}
         if busy:
             detail["queued_behind"] = [b.experiment_id for b in busy]
         if cap:
@@ -432,7 +468,7 @@ class ExperimentStore:
                 to,
                 hash_=st.spec_hash,
                 actor=actor,
-                detail=detail or None,
+                detail=detail,
                 text=text,
             )
         return self.require(experiment_id)
