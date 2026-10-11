@@ -200,9 +200,18 @@ def test_rate_curve_flat_and_treasury(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+# The close marks are IVs from an iterative Black-Scholes solve; its last few
+# digits move with Linux CI's libm/BLAS (3e-11 relative seen on main's CI vs the
+# macOS-captured golden), above the shared 1e-12. 1e-9 still fails any real
+# pricing change (a 0.0001-vol shift is ~4e-4 relative).
+MARKS_GOLDEN_REL_TOL = 1e-9
+
+
 def test_smile_and_close_marks_match_the_pre_move_golden() -> None:
     want = json.loads((FIXTURES / "marks_golden.json").read_text())
-    assert_json_close(marks_golden_payload(remark_chains, clean_chains), want)
+    assert_json_close(
+        marks_golden_payload(remark_chains, clean_chains), want, rel_tol=MARKS_GOLDEN_REL_TOL
+    )
 
 
 def test_ranking_reexports_the_moved_functions() -> None:
