@@ -11,7 +11,7 @@
 #   05:30          active universe (D56 tiers; Mon symbol master)
 #   07:10 / 07:15  betas vs SPY (D62, D90) / iv.backfill top-up (D81), after the final active list
 #   06:00          earnings calendar; rss / edgar every 15 min until 20:00
-#   08:15 / 08:20  options_slow / market_health catch-ups (only if the evening slot missed)
+#   08:00 / 08:30  options_slow / market_health catch-ups (only if the evening slot missed; D96)
 #   06:30-20:00    Scalp every 30 min (D91; no overnight run)
 #   09:30-16:00    monitor every 10 min; broker.reattach 09:30-16:10 (D72)
 #   09:40-15:50    trading loop every 10 min (D52, D56): research -> exits.mandatory ->
@@ -21,7 +21,7 @@
 #   16:30          broker.reconcile; (event) reconcile.intraday after an unconfirmed ladder
 #   16:40          experiments.evaluate; 16:45 Fri weekly scorecard ([Ops])
 #   18:00 / 18:30  earnings calendar / vol_term
-#   23:00 / 23:15  options_daily + vix_futures (read by the 06:00 Scout) / market_health
+#   23:00 / 23:30  options_daily + vix_futures (read by the 06:00 Scout) / market_health (D96)
 #
 # lane (D39): `background` = run detached so a slow job (p90 > 30 s) never delays the
 # tick; a background after_sources Scalp waits up to tick.after_sources_wait.
@@ -345,9 +345,9 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
   vol_term:                     # Cboe VIX9D/VIX/VIX3M/VVIX closes -> contango/backwardation
     label: VIX term structure
     about: "Cboe VIX9D / VIX / VIX3M / VVIX closes -> contango or backwardation"
-    # 18:30 reads today's close (Cboe history CSVs update after 16:45); the 08:15
-    # catch-up runs only when 18:30 did not write that session.
-    schedule: ["18:30", "08:15"]
+    # 18:30 reads today's close (Cboe history CSVs update after 16:45); the 08:00
+    # catch-up (D96; was 08:15) runs only when 18:30 did not write that session.
+    schedule: ["18:30", "08:00"]
     days: trading
     ttl: 2h
     catch_up: {days: trading, until_written: "vol_term:{day}"}
@@ -356,12 +356,12 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     feed: scout                 # D56: daily Cboe closes (Scout's slow feed)
     writes: [vol_term]
   # E13.5 (D56): options_slow. 23:00 runs after the Cboe publish (~21:00-22:50 ET, OPS
-  # 5.28) and feeds the 06:00 Scout; the 08:15 catch-up runs only when 23:00 did not write
-  # that session (unpublished: skipped at 23:00, failed at 08:15).
+  # 5.28) and feeds the 06:00 Scout; the 08:00 catch-up (D96; was 08:15) runs only when
+  # 23:00 did not write that session (unpublished: skipped at 23:00, failed at 08:00).
   options_daily:                # Cboe daily options statistics: P/C x6 + volume/OI per product
     label: Cboe daily options
     about: "Cboe put/call ratios (total, index, ETP, equity, VIX, SPX) and volume + open interest per product"
-    schedule: ["23:00", "08:15"]
+    schedule: ["23:00", "08:00"]
     days: trading
     ttl: 2h
     catch_up: {days: trading, until_written: "options_daily:{day}"}
@@ -369,12 +369,13 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     feed: scout
     writes: [options_daily]
   # E16.4 (D76): daily market-health read (VIX vs 50d + 1y pct, VVIX, put/call 5d pct,
-  # active-list breadth). The 08:20 catch-up runs only when 23:15 did not write. Research
+  # active-list breadth). D96: 23:30 + 08:30 (was 23:15 / 08:20), each 30 min after the
+  # options_slow slot it reads; the 08:30 catch-up runs only when 23:30 did not write. Research
   # sees it with market_health_context on; switch + thresholds in config/strategy.yaml.
   market_health:
     label: Market health
     about: "Daily market-health read: VIX vs its 50-day mean and 1-year percentile, VVIX, Cboe put/call 5-day percentile, active-list breadth"
-    schedule: ["23:15", "08:20"]
+    schedule: ["23:30", "08:30"]
     days: trading
     ttl: 2h
     catch_up: {days: trading, until_written: "market_health:{day}"}
@@ -384,7 +385,7 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
   vix_futures:                  # CFE VX futures settlement curve (monthlies + weeklies)
     label: VX futures curve
     about: "CFE VX futures settlements: front / second / back month, slope and contango or backwardation"
-    schedule: ["23:00", "08:15"]
+    schedule: ["23:00", "08:00"]
     days: trading
     ttl: 2h
     catch_up: {days: trading, until_written: "vx_curve:{day}"}
