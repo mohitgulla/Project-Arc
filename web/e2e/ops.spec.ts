@@ -216,7 +216,7 @@ test.describe("ops behaviour", () => {
     const bands = await tl.getByTestId("band").evaluateAll((els) => els.map((e) => e.getAttribute("data-band")));
     expect(bands[0]).toMatch(/^sources\./);
     const loop = page.getByTestId("loop-row");
-    await expect(loop).toContainText("Research → Quant → Risk → Propose → Execute");
+    await expect(loop).toContainText("Trade Loop");
     // D59: the loop label is the same size as every other job label (bold only), and
     // band / job labels are Title Case.
     const fs = async (l: import("@playwright/test").Locator) => l.evaluate((el) => getComputedStyle(el).fontSize);
@@ -283,7 +283,7 @@ test.describe("ops behaviour", () => {
     const cand = page.locator('[data-testid=context-kind][data-kind="candidate"]');
     await expect(cand).toContainText("Candidate");
     await expect(cand.getByTestId("context-writers")).toContainText("Scalp");
-    await expect(cand.getByTestId("context-readers")).toContainText("Research loop");
+    await expect(cand.getByTestId("context-readers")).toContainText("Trade Loop");
   });
 
   test("health chips, auto-approve key/values and grouped alerts", async ({ page }) => {
