@@ -674,7 +674,7 @@ class TestWiring:
     def test_routing_and_kinds(self) -> None:
         assert Persona.SCOUT.value == "scout"
         assert KINDS["scout_read"].model is ScoutReadPayload
-        assert KINDS["candidate"].schema_version == 3
+        assert KINDS["candidate"].schema_version == 4  # E23.2: origin
         legacy = CandidatePayload.model_validate(
             {
                 "ticker": "NVDA",

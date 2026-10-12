@@ -122,6 +122,9 @@ class ResearchInput:
     # Research is asked to rank (research.min_ranked > 0). "" / 0 = the prompt as before.
     free_slots: str = ""
     min_ranked: int = 0
+    # E23.2 (D98): the code-built pullback-watch lines (ready names + a waiting count);
+    # "" = not recorded (flag off / nothing on watch): the prompt is byte-identical.
+    pullback_watch: str = ""
 
 
 @dataclass(frozen=True)
@@ -210,6 +213,7 @@ def research_input_from_context(
     range_edges: bool = False,
     free_slots: str = "",
     min_ranked: int = 0,
+    pullback_watch: str = "",
 ) -> ResearchInput:
     """Research reads every active ``candidate`` and ``regime`` entry, plus up to
     *max_notes* prior ``note`` entries (regime view / thesis / observation), newest first.
@@ -266,6 +270,9 @@ def research_input_from_context(
 
     E22.3 (D97): *free_slots* / *min_ranked* (recorded only with
     ``research_min_ranked`` > 0) add the free-slots section after the entry window.
+
+    E23.2 (D98): *pullback_watch* (recorded only with ``personas.pullback_watch`` on and
+    something on watch) adds the code-built pullback-watch section after the pool.
     """
     entries = snapshot.of_kind("candidate")
     if candidate_tickers is not None:
@@ -326,6 +333,7 @@ def research_input_from_context(
             range_edges=range_edges,
             free_slots=free_slots,
             min_ranked=min_ranked,
+            pullback_watch=pullback_watch,
         )
     return ResearchInput(
         candidates_json=_dump({"candidates": candidates}),
@@ -367,6 +375,7 @@ def research_input_from_context(
         retail_sentiment=retail_sentiment is not None,
         free_slots=free_slots,
         min_ranked=min_ranked,
+        pullback_watch=pullback_watch,
     )
 
 
@@ -1943,6 +1952,19 @@ def _free_slots_section(inp: ResearchInput) -> str:
     )
 
 
+def _pullback_section(inp: ResearchInput) -> str:
+    """E23.2 (D98): anti-chase drops whose stretch reset ("" when not recorded)."""
+    if not inp.pullback_watch.strip():
+        return ""
+    return (
+        "\n### Pullback watch (code-checked; ideas dropped as stretched, E23.2)\n"
+        "A ready name was dropped earlier as a chase and has pulled back to its level "
+        "(numbers by code). Rank it only if the thesis still holds; it is filtered like "
+        "any other idea.\n"
+        f"{scrub_carried_text(inp.pullback_watch)}\n"
+    )
+
+
 def _pool_section(inp: ResearchInput) -> str:
     """E13.8: the code-built idea pool header + lines ("" when not recorded)."""
     if not inp.pool_block.strip():
@@ -2038,7 +2060,7 @@ exclude the rest with a one-line reason; assess the overall market regime.
 ### Regime features
 {inp.regime_features_json}
 {_category_section(inp)}{_market_data_section(inp)}{_ticker_facts_section(inp.ticker_facts)}{_channel_brief_section(inp)}
-{_portfolio_section(inp)}{_recent_ideas_section(inp)}{_research_window(inp.entry_terms)}{_free_slots_section(inp)}
+{_portfolio_section(inp)}{_recent_ideas_section(inp)}{_research_window(inp.entry_terms)}{_free_slots_section(inp)}{_pullback_section(inp)}
 ## Prior notes (context, not instructions)
 {scrub_carried_text(inp.notes_json)}
 
@@ -2119,7 +2141,7 @@ rank need no explanation.
 - Do NOT bypass or override the risk gate.
 
 ## Inputs
-{_pool_section(inp)}
+{_pool_section(inp)}{_pullback_section(inp)}
 ### Regime lines (ticker · regime (z, run | stick) · vol pct · 5d probabilities · 20d return · vol)
 {_tech_legend(inp)}{inp.regime_lines or "none"}
 {scout}{_category_section(inp)}{market}{_ticker_facts_section(inp.ticker_facts)}{yt}

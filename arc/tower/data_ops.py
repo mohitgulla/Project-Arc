@@ -1435,14 +1435,20 @@ def _context_io(
     writers: dict[str, list[str]] = {}
     readers: dict[str, list[str]] = {}
     votes: dict[str, Counter[str]] = {}
+    passthrough: dict[str, Counter[str]] = {}
     for label, group, spec, weight in units:
         for k in spec.writes or []:
             if label not in writers.setdefault(k, []):
                 writers[k].append(label)
-            votes.setdefault(k, Counter())[group] += weight
+            # E23.2: a writer that also reads the kind re-writes it (Research's
+            # re-surfaced candidate); it votes only when the kind has no pure writer
+            box = passthrough if k in (spec.reads or []) else votes
+            box.setdefault(k, Counter())[group] += weight
         for k in spec.reads or []:
             if label not in readers.setdefault(k, []):
                 readers[k].append(label)
+    for k, c in passthrough.items():
+        votes.setdefault(k, c)
     group_of = {k: min(c, key=lambda g: (-c[g], rank.get(g, len(rank)))) for k, c in votes.items()}
     return writers, readers, group_of
 

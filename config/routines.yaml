@@ -152,6 +152,7 @@ context_ttl:
   exit_watchlist: {ttl: 30m, supersede: latest}          # E13.17 (D56) Research exit watch; subject = session
   exit_case:     {ttl: 30m, supersede: latest}             # E13.17 (D56) Quant exit case; subject = open structure id
   risk_exit_review: {ttl: 30m, supersede: latest}          # E13.18 (D56) Risk exit verdicts; subject = session
+  pullback_watch: {ttl: 8 sessions, supersede: latest}     # E23.2 (D98) anti-chase drops on watch; subject = TICKER:stance; outlives drop session + ttl_sessions (max 5) + 1 so expiry is journaled
 
 # Source categories (D47/D49/D56), weighted EQUALLY. A source's `weight:` is its share
 # inside its category. `max_age` is the freshness window: older docs are never stored or
@@ -660,8 +661,8 @@ personas:
     chain: auto                 # E13.15 AUTO_CHAINS: exits.mandatory, quant.exit, risk.exit, quant.open, risk.open, quant.revise, quant.propose, broker.execute (D34/D56)
     reads: [candidate, regime, channel_brief, note, vol_term, macro_calendar, position_review, story,
             earnings_history, insider_activity, analyst_recs, fundamentals, scout_read, ex_dividend,
-            retail_sentiment, market_health, levels]   # == RESEARCH_READS (arc/pipeline/steps.py); E4.8a facts render only with finnhub_context on; E13.8 scout_read in the compact prompt; E13.17 ex_dividend feeds the exit-watch facts; E14.6 retail_sentiment renders only with retail_sentiment_context on; E16.4 market_health only with market_health_context on; E23.0 levels merged into regime technicals
-    writes: [shortlist, regime, note, portfolio_context, exit_watchlist, position_review]   # E5.9: portfolio_context + portfolio_view/thesis_check notes; E13.17: exit_watchlist + the reviews Research saw
+            retail_sentiment, market_health, levels, pullback_watch]   # == RESEARCH_READS (arc/pipeline/steps.py); E4.8a facts render only with finnhub_context on; E13.8 scout_read in the compact prompt; E13.17 ex_dividend feeds the exit-watch facts; E14.6 retail_sentiment renders only with retail_sentiment_context on; E16.4 market_health only with market_health_context on; E23.0 levels merged into regime technicals; E23.2 pullback_watch
+    writes: [shortlist, regime, note, portfolio_context, exit_watchlist, position_review, pullback_watch, candidate]   # E5.9: portfolio_context + portfolio_view/thesis_check notes; E13.17: exit_watchlist + the reviews Research saw; E23.2: pullback_watch + the candidate a re-surfaced watch name needs
     ttl: 5m                     # never a backlog: a slot missed by 5 min is skipped
     notify: card
   monitor:                      # intraday: positions, net Greeks, expiries, daily-loss halt (read-only)

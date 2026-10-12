@@ -85,6 +85,25 @@ range_edges:
   bear_min_pos: 0.65            # bearish idea kept only when pos >= this
   min_range_atr: 1.5            # range width / ATR14 below this = no usable range: rule skipped (idea kept)
 
+# E23.2 (D98): pullback watch. A `stretched_entry` drop is kept on watch for
+# `ttl_sessions` sessions after the drop and re-surfaced to Research (one code-built
+# `Pullback watch (ready)` line; anti-chase + range edges still apply) once the stretch
+# resets: target `value` = spot within `rearm_level_atr` ATR of the nearest volume-profile
+# support (bullish: POC/VAH/HVN below; bears mirror; no levels -> sma20, `vp_missing`),
+# `sma20` = stance-signed (spot - SMA20)/ATR14 <= `rearm_stretch_atr`. With anti_chase.vwap
+# on, the VWAP stretch must also be <= `rearm_vwap_atr`. A regime flip or a drop through
+# SMA20 by `invalidate_below_sma20_atr` ends the watch. Shipped on (D86); `enabled: off` =
+# rollback (no writes, prompt byte-identical).
+pullback_watch:
+  enabled: on                   # key personas.pullback_watch
+  target: value                 # value: nearest volume-profile level | sma20: SMA20 stretch
+  ttl_sessions: 3               # trading sessions after the drop session a dropped idea is watched
+  rearm_stretch_atr: 1.0        # target sma20: ready when stance-signed (spot - SMA20)/ATR14 <= this
+  rearm_level_atr: 0.5          # target value: ready when within this many ATR of the level (or past it)
+  rearm_vwap_atr: 0.25          # with anti_chase.vwap on: also need stance-signed VWAP stretch <= this
+  invalidate_below_sma20_atr: -1.0   # bullish: (spot - SMA20)/ATR14 below this = thesis broken (bears mirror)
+  max_ready_in_prompt: 5        # ready lines shown to Research (highest confidence first)
+
 # E16.4 (D76/D83): one code-rendered `Market health (…)` line in Research's market block.
 # The market_health job writes its daily read whatever this says. The thresholds only
 # label that line (never a gate or pipeline input). Percentiles are 1-year (252 prior

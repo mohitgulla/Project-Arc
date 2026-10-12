@@ -2684,3 +2684,51 @@ to before E23.1.
 
 Check: `arc journal show --reason mid_range_entry` (or `decisions where
 reason_code='mid_range_entry'`) after a Research run on a sideways day.
+
+## E23.2 pullback watch for anti-chase drops (D98)
+
+**What it does.** A bullish/bearish idea that anti-chase drops (`stretched_entry`) goes
+on watch instead of being forgotten: one `pullback_watch` context entry per
+`<TICKER>:<stance>` (supersede latest, journaled `pullback_watch_added`), carrying the
+drop numbers (spot, SMA20, ATR14, stretch, RSI), Research's thesis and confidence, and
+the last session it is watched (`ttl_sessions` 3 trading sessions after the drop
+session). A live watch is never re-extended by a later drop of the same name.
+
+**Each Research run** (also on runs with no new feed ideas) re-checks every live watch
+with the pure rule `arc.pipeline.pullback.rearm_verdict` on today's regime technicals
+and the reference spot:
+- `expired` after its last session (`pullback_expired`);
+- `invalidated` on a regime flip against the stance, or when the stance-signed
+  (spot − SMA20)/ATR14 falls below `invalidate_below_sma20_atr` (−1.0)
+  (`pullback_invalidated`);
+- `ready` when the stretch has reset. `target: value` (default): spot within
+  `rearm_level_atr` (0.5) ATR of the nearest volume-profile support on the stance side
+  (bullish: POC, VAH or the HVN below, under the drop price; bearish: POC, VAL or the
+  HVN above), or already past it;
+  no levels → the SMA20 rule, noted `vp_missing`. `target: sma20`: stance-signed
+  (spot − SMA20)/ATR14 ≤ `rearm_stretch_atr` (1.0). With `anti_chase.vwap` on the
+  session VWAP stretch must also be ≤ `rearm_vwap_atr` (0.25); a failed VWAP read waits
+  (`vwap_missing`). First ready → `pullback_rearmed` (once per watch);
+- `waiting` otherwise; missing spot/technicals also wait.
+A name with an open position or a pending approval request is closed `retired`
+(`pullback_retired`).
+
+**Re-surfacing.** A ready name that is not already a feed candidate today gets a
+`candidates` row (source `pullback_watch:<drop session>`) and a `candidate` entry with
+`origin: pullback_watch` (schema v4, older rows default `feed`), so the normal Research
+→ anti-chase → range edges → Quant path applies to it unchanged. The prompt gains one
+code-built line per ready name (`Pullback watch (ready): PLTR bullish · dropped Fri at
++2.9 ATR / RSI 64 · now 0.4 ATR above POC 178.00, +0.3 ATR vs SMA20 · thesis: …`, at most
+`max_ready_in_prompt` 5, highest confidence first) and one `Pullback watch: N waiting`
+count line. Both are digest facts, so a newly ready watch is a changed loop input.
+
+**Switches** (`config/strategy.yaml pullback_watch:`, registry): `personas.pullback_watch`
+(on, D86/D98), `pullback_watch.target`, `.ttl_sessions` (1–5), `.rearm_stretch_atr`
+(0–2.5), `.rearm_level_atr` (0–2), `.rearm_vwap_atr` (0–1), `.invalidate_below_sma20_atr`
+(−5–0), `.max_ready_in_prompt` (0–10). Rollback: `!arc config set personas.pullback_watch
+off` (no watch writes, prompt and journal byte-identical to before E23.2). Context TTL
+`pullback_watch: 8 sessions` (routines.yaml) outlives any watch so expiry is journaled.
+Deterministic, never a gate input.
+
+Check: `arc context show --kind pullback_watch --latest` and `decisions where reason_code
+like 'pullback_%'` after a run following a `stretched_entry` drop.

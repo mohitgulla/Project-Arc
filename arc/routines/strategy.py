@@ -34,6 +34,7 @@ from arc.routines.config import (
     FunnelConfig,
     MarketHealthContextSettings,
     OiWallsSettings,
+    PullbackWatchSettings,
     RangeEdgesSettings,
     ResearchDiversificationSettings,
     ResearchTechnicalsSettings,
@@ -87,6 +88,7 @@ MOVED_BLOCKS: tuple[str, ...] = (
     "volume_profile",  # E23.0 (D98): born in strategy.yaml; refused in routines.yaml
     "oi_walls",  # E23.0 (D98)
     "range_edges",  # E23.1 (D98)
+    "pullback_watch",  # E23.2 (D98)
 )
 
 
@@ -127,6 +129,8 @@ class StrategyConfig(BaseModel):
     oi_walls: OiWallsSettings = Field(default_factory=OiWallsSettings)
     # E23.1 (D98): the range-edge entry filter
     range_edges: RangeEdgesSettings = Field(default_factory=RangeEdgesSettings)
+    # E23.2 (D98): the pullback watch for anti-chase drops
+    pullback_watch: PullbackWatchSettings = Field(default_factory=PullbackWatchSettings)
 
     def routines_fields(self) -> dict[str, Any]:
         """The :class:`~arc.routines.config.RoutinesConfig` fields this file sets."""
@@ -145,6 +149,7 @@ class StrategyConfig(BaseModel):
             "volume_profile": self.volume_profile,
             "oi_walls": self.oi_walls,
             "range_edges": self.range_edges,
+            "pullback_watch": self.pullback_watch,
         }
 
 

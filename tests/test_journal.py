@@ -205,6 +205,7 @@ class TestPipelineRecords:
             chain_run_id = "chain-x"
             run_id = "run-x"
             settings = ArcSettings(_env_file=None, account_profile="margin")  # type: ignore[call-arg]
+            routines = load_routines()
 
             def __init__(self) -> None:
                 self.conn = connect(":memory:")

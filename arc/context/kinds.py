@@ -70,17 +70,21 @@ class ChannelBriefPayload(ChannelBrief):
 
 
 class CandidatePayload(Candidate):
-    """Candidate entry (E4.2 Scalp; v3, E13.7: also the Scout).
+    """Candidate entry (E4.2 Scalp; v3, E13.7: also the Scout; v4, E23.2: pullback watch).
 
     v3 (D53/D56, text-free additions, both defaulted so v2 rows still validate):
     ``feed`` names the persona that raised it; ``origins`` are the Scout's YouTube
     channel ids (``youtube:<slug>``), validated by code against that run's briefs.
+    v4 (E23.2, D98): ``origin`` (defaulted ``feed``, so v3 rows still validate) is
+    ``pullback_watch`` when the Research step re-raised an anti-chase drop whose
+    stretch reset (the ticker was not in the day's candidates).
     """
 
     model_config = _FORBID
 
     feed: Literal["scalp", "scout"] = "scalp"
     origins: list[str] = Field(default_factory=list, max_length=6)
+    origin: Literal["feed", "pullback_watch"] = "feed"
 
     @field_validator("origins")
     @classmethod
@@ -236,6 +240,44 @@ class ExitCasePayload(ExitCase):
     """One exit case Quant judged (E13.17, D56); kind ``exit_case``, subject = structure id."""
 
     model_config = _FORBID
+
+
+PullbackWatchStatus = Literal["watching", "expired", "invalidated", "retired"]
+
+
+class PullbackWatchPayload(BaseModel):
+    """E23.2 (D98): an anti-chase drop kept on watch for a pullback; kind ``pullback_watch``.
+
+    Subject ``<TICKER>:<stance>`` (one live entry per ticker and stance; supersede
+    latest). Written by the Research step in the run that journals ``stretched_entry``;
+    every later Research run re-checks it (:func:`arc.pipeline.pullback.rearm_verdict`).
+    A watch is closed by writing a successor with ``status`` ``expired`` /
+    ``invalidated`` / ``retired`` (dedupe: an open position or pending proposal on
+    the ticker), so the store keeps the history. ``rearmed_at`` is set the first time
+    the watch is ready (journaled ``pullback_rearmed`` once). Numbers only, plus
+    Research's thesis text (<= 400 chars) for the ready line; never a gate input.
+    """
+
+    model_config = _FORBID
+
+    ticker: str = Field(..., pattern=r"^[A-Z][A-Z0-9.]{0,9}$")
+    stance: Literal["bullish", "bearish"]
+    status: PullbackWatchStatus = "watching"
+    dropped_at: str = Field(..., description="ISO-8601 ET time of the stretched_entry drop")
+    drop_session: str = Field(..., description="YYYY-MM-DD session of the drop")
+    expires_session: str = Field(..., description="YYYY-MM-DD: last session it is watched")
+    research_call_id: str | None = None
+    confidence: float = Field(..., ge=0.0, le=1.0, description="Research's confidence")
+    price_at_drop: float | None = Field(None, description="Daily close behind the drop")
+    stretch_atr_at_drop: float | None = None
+    vwap_stretch_at_drop: float | None = None
+    rsi14_at_drop: float | None = None
+    sma20: float | None = None
+    atr14: float | None = None
+    thesis: str = Field("", max_length=400)
+    rearmed_at: str | None = None
+    closed_reason: str | None = Field(None, max_length=240)
+    schema_version: int = 1
 
 
 class RiskExitReviewPayload(BaseModel):
@@ -963,7 +1005,7 @@ def _registry(*specs: KindSpec) -> Mapping[str, KindSpec]:
 KINDS: Mapping[str, KindSpec] = _registry(
     KindSpec("raw_doc_ref", RawDocRefPayload),
     KindSpec("channel_brief", ChannelBriefPayload),
-    KindSpec("candidate", CandidatePayload, schema_version=3),  # E13.7: feed, origins
+    KindSpec("candidate", CandidatePayload, schema_version=4),  # E23.2: origin
     KindSpec("regime", RegimePayload, schema_version=6),  # E23.1 (D98): range_pos_20d
     KindSpec("shortlist", ShortlistPayload, schema_version=6),  # E17.2: market_guard run/margin z
     KindSpec("structures", StructuresPayload, schema_version=4),  # E18.1: profit_lock
@@ -1021,6 +1063,8 @@ KINDS: Mapping[str, KindSpec] = _registry(
     KindSpec("exit_case", ExitCasePayload),
     # E13.18 (D56): Risk's exit review; subject = "session"
     KindSpec("risk_exit_review", RiskExitReviewPayload),
+    # E23.2 (D98): anti-chase drops on watch for a pullback; subject = "<TICKER>:<stance>"
+    KindSpec("pullback_watch", PullbackWatchPayload),
 )
 
 
