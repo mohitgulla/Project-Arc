@@ -2415,7 +2415,22 @@ account profile can only structure as long premium** (long call/put, debit verti
   `max_dist_high20_atr` of the 20-day high/low), kept as a variant.
 - Optional VWAP part (`anti_chase.vwap: on`, default off): one 5-min bars request per
   checked idea (shared `alpaca_data:calls` budget); dropped also when
-  (last 5-min close − session VWAP) / ATR14 ≥ `max_vwap_stretch_atr` (0.75; mirrored).
+  (spot − session VWAP) / ATR14 ≥ `max_vwap_stretch_atr` (0.75; mirrored).
+  Feed (E23.0a, D98): with `data.alpaca_history_feed: sip` (default) the VWAP is the
+  consolidated tape up to now − 16 min (the free tier refuses newer SIP) and the spot is
+  the live IEX quote (`market_spot`, one more budgeted call; the last SIP close if the
+  quote fails). Before 09:51 ET, and with the rollback `iex`, it is IEX bars up to now
+  and the last 5-min close. The verdict payload carries `vwap_feed`.
+
+Stock data feeds (E23.0a, D98): live quotes (`underlying_quote`) stay on
+`ARC_ALPACA_DATA_FEED` (iex; SIP live quotes need a paid plan). Volume-weighted history
+reads go to SIP: the regime step's daily bars (`data.alpaca_history_feed`), the
+anti-chase VWAP (above) and the universe ADV screen (`liquidity_screen.*.adv_feed: sip`
+in `config/universe.yaml`, already so). IEX carries ~2–3% of consolidated volume (AAPL
+20-day ADV 1.09M IEX vs 37.9M SIP). The adapter clamps a SIP request's end to now −
+16 min and falls back to IEX once on a 403 "subscription does not permit querying
+recent SIP data" (logged `feed_fallback`). Price-only reads (spot fallback, monitor,
+reconcile, betas, IV backfill, exits CLI) keep the default feed.
 
 Never filtered: neutral ideas, any stance the profile maps to a credit spread
 (`margin`), exits. Missing technicals keep the idea (an optional filter, not a safety

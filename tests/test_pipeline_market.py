@@ -135,7 +135,7 @@ class OneSided(FakeMarket):
     def underlying_quote(self, symbol: str) -> UnderlyingQuote:
         return UnderlyingQuote(symbol=symbol, bid=580.0, ask=0.0, mid=290.0, timestamp=NOW)
 
-    def history_bars(self, symbol, start, end, timeframe="1Day"):  # noqa: ANN001, ANN201
+    def history_bars(self, symbol, start, end, timeframe="1Day", feed=None):  # noqa: ANN001, ANN201
         from arc.data.base import HistoryBar
 
         if self.close is None:

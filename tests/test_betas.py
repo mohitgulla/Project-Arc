@@ -173,7 +173,7 @@ class _Bars:
             "THIN": _series(days[-60:], [r for r in rm[-59:]]),
         }
 
-    def history_bars(self, symbol, start, end, timeframe="1Day"):  # noqa: ANN001, ANN201
+    def history_bars(self, symbol, start, end, timeframe="1Day", feed=None):  # noqa: ANN001, ANN201
         self.calls.append((symbol, start, end))
         if symbol == "BAD":
             raise RuntimeError("bars down")
@@ -243,7 +243,7 @@ def test_betas_handler(conn: sqlite3.Connection) -> None:
 
 def test_betas_handler_partial_and_total_failure(conn: sqlite3.Connection) -> None:
     class _Down(_Bars):
-        def history_bars(self, symbol, start, end, timeframe="1Day"):  # noqa: ANN001, ANN201
+        def history_bars(self, symbol, start, end, timeframe="1Day", feed=None):  # noqa: ANN001, ANN201
             if symbol != "SPY":
                 raise RuntimeError("down")
             return super().history_bars(symbol, start, end)
@@ -252,7 +252,7 @@ def test_betas_handler_partial_and_total_failure(conn: sqlite3.Connection) -> No
     assert res.metrics["errors"] == 3 and res.summary.endswith("· 3 errors")  # MU, QQQ, IWM
 
     class _NoBench(_Bars):
-        def history_bars(self, symbol, start, end, timeframe="1Day"):  # noqa: ANN001, ANN201
+        def history_bars(self, symbol, start, end, timeframe="1Day", feed=None):  # noqa: ANN001, ANN201
             return []
 
     with pytest.raises(LookupError):

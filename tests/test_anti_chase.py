@@ -442,11 +442,13 @@ class _Snap:
 
 
 class _Ctx:
-    def __init__(self, cfg: AntiChaseSettings, now: dt.datetime) -> None:
+    def __init__(self, cfg: AntiChaseSettings, now: dt.datetime, feed: str = "iex") -> None:
         from arc.config import ArcSettings
 
         self.routines = load_routines().model_copy(update={"anti_chase": cfg})
-        self.settings = ArcSettings(_env_file=None, account_profile="cash_debit")  # type: ignore[call-arg]
+        self.settings = ArcSettings(  # type: ignore[call-arg]
+            _env_file=None, account_profile="cash_debit", alpaca_history_feed=feed
+        )
         self.now = now
         self.inputs: list[str] = []
 
@@ -455,15 +457,30 @@ class _Ctx:
 
 
 class _Market:
-    def __init__(self, bars: list[Any] | Exception) -> None:
+    def __init__(
+        self, bars: list[Any] | Exception, quote: tuple[float, float] | Exception = (0.0, 0.0)
+    ) -> None:
         self._bars = bars
-        self.calls: list[tuple[str, str]] = []
+        self._quote = quote
+        self.calls: list[tuple[str, str, str | None]] = []
+        self.quotes = 0
 
-    def history_bars(self, t: str, s: dt.date, e: dt.date, tf: str = "1Day") -> list[Any]:
-        self.calls.append((t, tf))
+    def history_bars(
+        self, t: str, s: dt.date, e: dt.date, tf: str = "1Day", *, feed: str | None = None
+    ) -> list[Any]:
+        self.calls.append((t, tf, feed))
         if isinstance(self._bars, Exception):
             raise self._bars
         return self._bars
+
+    def underlying_quote(self, symbol: str) -> Any:
+        from arc.data.base import UnderlyingQuote
+
+        self.quotes += 1
+        if isinstance(self._quote, Exception):
+            raise self._quote
+        bid, ask = self._quote
+        return UnderlyingQuote(symbol=symbol, bid=bid, ask=ask, mid=(bid + ask) / 2, timestamp=NOW)
 
 
 class _Env:
@@ -517,7 +534,9 @@ def test_vwap_part_uses_intraday_bars_and_a_failure_only_skips_it() -> None:
     mk = _Market(bars)
     out = _anti_chase_filter(ctx, _Env(mk), _Snap({"AAA": calm}), [_item("AAA", "bullish", 1)])  # type: ignore[arg-type]
     assert out.kept == [] and out.dropped == {"stretched_entry": 1}
-    assert mk.calls == [("AAA", "5Min")] and ctx.inputs == ["bars5m:AAA"]
+    assert mk.calls == [("AAA", "5Min", "iex")] and ctx.inputs == ["bars5m:AAA"]
+    assert mk.quotes == 0  # IEX: the last bar's close is the spot
+    assert out.verdicts["AAA"].vwap_feed == "iex"
     assert out.verdicts["AAA"].vwap_stretch_atr == pytest.approx(
         (102 - 100.0 * 1000 / 1001 - 101.5 / 1001 * 1) / 2.0, abs=0.01
     )
@@ -546,3 +565,56 @@ def test_vwap_part_uses_intraday_bars_and_a_failure_only_skips_it() -> None:
         [_item("AAA", "bullish", 1)],
     )
     assert mk.calls == []
+
+
+def test_vwap_reads_delayed_sip_with_a_live_spot_and_iex_before_the_window_opens() -> None:
+    """E23.0a (D98): with the default ``sip`` history feed the session VWAP covers the
+    session up to now - 16 min on SIP and the spot is the live quote; before a full SIP
+    bar exists (09:51) it reads IEX up to now. The feed is on the verdict payload."""
+    from arc.pipeline.steps import _anti_chase_filter, _vwap_feed_plan
+
+    assert _vwap_feed_plan(NOW, "sip") == ("sip", NOW - dt.timedelta(minutes=16))
+    assert _vwap_feed_plan(_at(9, 50), "sip") == ("iex", _at(9, 50))
+    assert _vwap_feed_plan(_at(9, 51), "sip") == ("sip", _at(9, 35))
+    assert _vwap_feed_plan(NOW, "iex") == ("iex", NOW)
+
+    cfg = AntiChaseSettings(enabled=True, vwap=True)
+    calm = _tech_payload(stretch=0.5, rsi=55, atr=2.0)
+    bars = [
+        _Bar(_at(9, 30), 101, 99, 100, 1000),  # typical 100, inside the SIP window
+        _Bar(_at(10, 50), 300, 300, 300, 1000),  # after now - 16 min: not in the VWAP
+    ]
+    mk = _Market(bars, quote=(101.99, 102.01))  # live spot 102 -> +1.0 ATR vs VWAP 100
+    ctx = _Ctx(cfg, NOW, feed="sip")
+    out = _anti_chase_filter(ctx, _Env(mk), _Snap({"AAA": calm}), [_item("AAA", "bullish", 1)])  # type: ignore[arg-type]
+    assert mk.calls == [("AAA", "5Min", "sip")] and mk.quotes == 1
+    v = out.verdicts["AAA"]
+    assert v.vwap_feed == "sip" and v.vwap_stretch_atr == pytest.approx(1.0)
+    assert out.dropped == {"stretched_entry": 1}
+    assert v.model_dump(mode="json")["vwap_feed"] == "sip"  # journaled on the payload
+
+    # a failed live quote keeps the last delayed SIP close as the spot (never raises)
+    mk = _Market(bars[:1], quote=RuntimeError("quote down"))
+    out = _anti_chase_filter(  # type: ignore[arg-type]
+        _Ctx(cfg, NOW, feed="sip"), _Env(mk), _Snap({"AAA": calm}), [_item("AAA", "bullish", 1)]
+    )
+    assert out.verdicts["AAA"].vwap_stretch_atr == pytest.approx(0.0)
+    assert out.vwap_missing == [] and [i.ticker for i in out.kept] == ["AAA"]
+
+    # before 09:51 the SIP window is empty: IEX up to now, no quote call
+    early = dt.datetime(2026, 10, 9, 9, 45, tzinfo=ET)
+    mk = _Market([_Bar(_at(9, 30), 101, 99, 100, 1000)], quote=(1.0, 1.0))
+    out = _anti_chase_filter(  # type: ignore[arg-type]
+        _Ctx(cfg, early, feed="sip"), _Env(mk), _Snap({"AAA": calm}), [_item("AAA", "bullish", 1)]
+    )
+    assert mk.calls == [("AAA", "5Min", "iex")] and mk.quotes == 0
+    assert out.verdicts["AAA"].vwap_feed == "iex"
+
+    # vwap off: no feed on the verdict (the payload is unchanged from before E23.0a)
+    out = _anti_chase_filter(  # type: ignore[arg-type]
+        _Ctx(AntiChaseSettings(enabled=True), NOW, feed="sip"),
+        _Env(_Market(bars)),
+        _Snap({"AAA": calm}),
+        [_item("AAA", "bullish", 1)],
+    )
+    assert out.verdicts["AAA"].vwap_feed is None

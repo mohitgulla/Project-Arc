@@ -261,6 +261,46 @@ def test_tape_records_control_and_replays_identically() -> None:
     assert prune_tape(ctl, keep_days=3, now=NOW + dt.timedelta(days=10)) == 1
 
 
+class _Bars:
+    """A provider whose bars differ by feed (SIP vs IEX volume); the default feed is
+    called without a ``feed`` argument (pre-E23.0a providers)."""
+
+    def __init__(self) -> None:
+        self.calls: list[str | None] = []
+
+    def history_bars(self, symbol, start, end, timeframe="1Day", **kw):  # noqa: ANN001, ANN003, ANN201
+        from arc.data.base import HistoryBar
+
+        feed = kw.get("feed")
+        self.calls.append(feed)
+        vol = {"sip": 38e6, "iex": 2e6}.get(feed or "", 1e6)
+        return [HistoryBar(timestamp=NOW, open=1, high=1, low=1, close=1, volume=vol)]
+
+
+def test_tape_keys_bars_on_the_feed() -> None:
+    """E23.0a (D98): SIP and IEX bars are taped apart, so an arm replays the feed it
+    asked for; a read without a feed keeps the pre-E23.0a key."""
+    ctl = _db()
+    live = _Bars()
+    rec = TapeRecorder(live, ctl, "chain-1")  # type: ignore[arg-type]
+    d = NOW.date()
+    sip = rec.history_bars("SPY", d, d, "5Min", feed="sip")
+    iex = rec.history_bars("SPY", d, d, "5Min", feed="iex")
+    plain = rec.history_bars("SPY", d, d, "5Min")
+    assert live.calls == ["sip", "iex", None]  # no feed kwarg forwarded for the default
+    replay_ = TapeReplay.from_store(ctl, "chain-1", None)
+    assert call_key("history_bars", "SPY", d, d, "5Min") in replay_.tape
+    assert call_key("history_bars", "SPY", d, d, "5Min", "sip") in replay_.tape
+    assert replay_.history_bars("SPY", d, d, "5Min", feed="sip") == sip
+    assert replay_.history_bars("SPY", d, d, "5Min", feed="iex") == iex
+    assert replay_.history_bars("SPY", d, d, "5Min") == plain
+    assert sip[0].volume == 38e6 and iex[0].volume == 2e6 and replay_.hits == 3
+    # a feed control never read is a miss that falls through to the live provider
+    fallback = TapeReplay.from_store(ctl, "chain-1", live)  # type: ignore[arg-type]
+    fallback.history_bars("QQQ", d, d, "5Min", feed="sip")
+    assert fallback.misses == 1 and live.calls[-1] == "sip"
+
+
 class _Chain:
     """A provider with one option chain whose quote is stamped at *NOW*."""
 

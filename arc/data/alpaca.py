@@ -16,6 +16,7 @@ import os
 from typing import Any
 
 import structlog
+from alpaca.common.exceptions import APIError
 from alpaca.data.enums import DataFeed, OptionsFeed
 from alpaca.data.historical.option import OptionHistoricalDataClient
 from alpaca.data.historical.stock import StockHistoricalDataClient
@@ -184,6 +185,25 @@ def _parse_occ_symbol(symbol: str) -> dict[str, Any]:
         "option_type": "call" if option_type_char == "C" else "put",
         "strike": int(strike_str) / 1000.0,
     }
+
+
+#: E23.0a (D98): the free tier serves SIP only for windows ending >= 15 min ago;
+#: one extra minute of margin for clock skew.
+SIP_DELAY = dt.timedelta(minutes=16)
+
+
+def sip_window_end(now: dt.datetime) -> dt.datetime:
+    """The latest request end the free tier accepts on the SIP feed (``now - 16 min``)."""
+    return now - SIP_DELAY
+
+
+def _is_sip_refusal(exc: APIError) -> bool:
+    """A free-tier refusal of recent SIP data (HTTP 403 / "subscription does not permit")."""
+    try:
+        status = exc.status_code
+    except Exception:  # noqa: BLE001 - a malformed error still reads by its text
+        status = None
+    return status == 403 or "subscription does not permit" in str(exc).lower()
 
 
 # ---------------------------------------------------------------------------
@@ -433,33 +453,72 @@ class AlpacaMarketData:
         start: dt.date,
         end: dt.date,
         timeframe: str = "1Day",
+        *,
+        feed: AlpacaDataFeed | str | None = None,
     ) -> list[HistoryBar]:
+        """OHLCV bars for [*start*, *end*] on *feed* (``None``: the configured data feed).
+
+        E23.0a (D98): on ``sip`` the request end is clamped to :func:`sip_window_end`
+        (the free tier refuses SIP data from the last 15 minutes). A refusal anyway
+        (403 / "subscription does not permit") falls back to IEX once, logged
+        ``feed_fallback``; it never raises for that reason.
+        """
         tf = _parse_timeframe(timeframe)
+        data_feed = self._data_feed if feed is None else DataFeed(AlpacaDataFeed(feed).value)
+        end_at = dt.datetime.combine(end, dt.time.max, tzinfo=ET)
+        if data_feed is DataFeed.SIP:
+            end_at = min(end_at, sip_window_end(now_et()))
+        start_at = dt.datetime.combine(start, dt.time.min, tzinfo=ET)
+        try:
+            bars_map = self._get_bars(symbol, start_at, end_at, tf, data_feed)
+        except APIError as exc:
+            if data_feed is not DataFeed.SIP or not _is_sip_refusal(exc):
+                raise
+            log.warning(
+                "feed_fallback",
+                symbol=symbol,
+                timeframe=timeframe,
+                requested="sip",
+                used="iex",
+                error=str(exc)[:200],
+            )
+            end_at = dt.datetime.combine(end, dt.time.max, tzinfo=ET)
+            bars_map = self._get_bars(symbol, start_at, end_at, tf, DataFeed.IEX)
+        return _to_history_bars(bars_map, symbol)
+
+    def _get_bars(
+        self,
+        symbol: str,
+        start_at: dt.datetime,
+        end_at: dt.datetime,
+        tf: TimeFrame,
+        feed: DataFeed,
+    ) -> Any:
         req = StockBarsRequest(
             symbol_or_symbols=symbol,
-            start=dt.datetime.combine(start, dt.time.min, tzinfo=ET),
-            end=dt.datetime.combine(end, dt.time.max, tzinfo=ET),
+            start=start_at,
+            end=max(end_at, start_at),
             timeframe=tf,
-            feed=self._data_feed,
+            feed=feed,
         )
-        bars_map = self._stock_client.get_stock_bars(req)
-        # BarSet is a pydantic model: ``symbol in BarSet`` iterates model
-        # fields, not symbols, so always go through ``.data``.
-        bars_by_symbol = getattr(bars_map, "data", bars_map)
+        return self._stock_client.get_stock_bars(req)
 
-        result: list[HistoryBar] = []
-        for bar in bars_by_symbol.get(symbol, []):
-            result.append(
-                HistoryBar(
-                    timestamp=bar.timestamp,
-                    open=bar.open,
-                    high=bar.high,
-                    low=bar.low,
-                    close=bar.close,
-                    volume=bar.volume,
-                    trade_count=bar.trade_count,
-                    vwap=bar.vwap,
-                )
-            )
 
-        return result
+def _to_history_bars(bars_map: Any, symbol: str) -> list[HistoryBar]:
+    """``get_stock_bars`` output -> :class:`HistoryBar` list for *symbol*."""
+    # BarSet is a pydantic model: ``symbol in BarSet`` iterates model
+    # fields, not symbols, so always go through ``.data``.
+    bars_by_symbol = getattr(bars_map, "data", bars_map)
+    return [
+        HistoryBar(
+            timestamp=bar.timestamp,
+            open=bar.open,
+            high=bar.high,
+            low=bar.low,
+            close=bar.close,
+            volume=bar.volume,
+            trade_count=bar.trade_count,
+            vwap=bar.vwap,
+        )
+        for bar in bars_by_symbol.get(symbol, [])
+    ]
