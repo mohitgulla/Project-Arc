@@ -27,7 +27,7 @@ class _P:
         mid = (self.bid + self.ask) / 2
         return UnderlyingQuote(symbol=symbol, bid=self.bid, ask=self.ask, mid=mid, timestamp=ts)
 
-    def history_bars(self, symbol, start, end, timeframe="1Day"):  # noqa: ANN001, ANN201
+    def history_bars(self, symbol, start, end, timeframe="1Day", feed=None):  # noqa: ANN001, ANN201
         self.bar_calls += 1
         if self.close is None:
             return []

@@ -6,8 +6,10 @@ import datetime as dt
 from unittest.mock import MagicMock, patch
 
 import pytest
+from alpaca.common.exceptions import APIError
 from alpaca.data.enums import DataFeed, OptionsFeed
 from alpaca.data.models.bars import BarSet
+from structlog.testing import capture_logs
 
 from arc.config import AlpacaOptionsFeed, ArcSettings
 from arc.data.alpaca import (
@@ -15,6 +17,7 @@ from arc.data.alpaca import (
     _check_quality,
     _parse_occ_symbol,
     _parse_timeframe,
+    sip_window_end,
 )
 from arc.data.base import OptionGreeks
 from arc.utils.calendar import ET
@@ -361,3 +364,99 @@ class TestDataFeed:
                 data_feed="bogus",
                 options_feed="indicative",
             )
+
+
+# ---------------------------------------------------------------------------
+# E23.0a (D98): per-call history feed, SIP window clamp, SIP refusal fallback
+# ---------------------------------------------------------------------------
+
+
+def _sip_refusal() -> APIError:
+    resp = MagicMock(status_code=403)
+    http = MagicMock(response=resp)
+    return APIError('{"message":"subscription does not permit querying recent SIP data"}', http)
+
+
+def _utc(t: dt.datetime) -> dt.datetime:
+    """The request model stores ``start``/``end`` as naive UTC."""
+    return t.astimezone(dt.UTC).replace(tzinfo=None)
+
+
+class TestHistoryFeed:
+    NOW = dt.datetime(2026, 10, 9, 11, 0, tzinfo=ET)
+
+    def _adapter(self, stock: MagicMock) -> AlpacaMarketData:
+        return AlpacaMarketData(
+            option_client=MagicMock(),
+            stock_client=stock,
+            data_feed="iex",
+            options_feed="indicative",
+            api_key="k",
+            secret_key="s",
+        )
+
+    def test_sip_window_end_is_16_minutes_back(self) -> None:
+        assert sip_window_end(self.NOW) == dt.datetime(2026, 10, 9, 10, 44, tzinfo=ET)
+
+    def test_feed_reaches_the_bars_request(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("arc.data.alpaca.now_et", lambda: self.NOW)
+        stock = _stock_client()
+        adapter = self._adapter(stock)
+        day = self.NOW.date()
+        adapter.history_bars("SPY", day, day, "5Min")  # default: the configured feed
+        req = stock.get_stock_bars.call_args.args[0]
+        assert req.feed == DataFeed.IEX and req.end == _utc(
+            dt.datetime.combine(day, dt.time.max, ET)
+        )
+        adapter.history_bars("SPY", day, day, "5Min", feed="sip")
+        req = stock.get_stock_bars.call_args.args[0]
+        assert req.feed == DataFeed.SIP
+        assert req.end == _utc(sip_window_end(self.NOW))  # clamped: free tier, >= 15 min old
+        assert req.to_request_fields()["feed"] == "sip"
+        # a past window is not clamped
+        past = dt.date(2026, 10, 1)
+        adapter.history_bars("SPY", past - dt.timedelta(days=30), past, feed="sip")
+        req = stock.get_stock_bars.call_args.args[0]
+        assert req.end == _utc(dt.datetime.combine(past, dt.time.max, ET))
+        adapter.history_bars("SPY", day, day, feed="iex")
+        assert stock.get_stock_bars.call_args.args[0].feed == DataFeed.IEX
+
+    def test_sip_window_before_the_start_never_inverts(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        early = dt.datetime(2026, 10, 9, 0, 5, tzinfo=ET)  # now - 16 min is yesterday
+        monkeypatch.setattr("arc.data.alpaca.now_et", lambda: early)
+        stock = _stock_client()
+        self._adapter(stock).history_bars("SPY", early.date(), early.date(), feed="sip")
+        req = stock.get_stock_bars.call_args.args[0]
+        assert req.end >= req.start
+
+    def test_sip_refusal_falls_back_to_iex_once(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("arc.data.alpaca.now_et", lambda: self.NOW)
+        stock = _stock_client()
+        bar = MagicMock(
+            timestamp=self.NOW, open=1.0, high=1.0, low=1.0, close=1.0, volume=5.0,
+            trade_count=1.0, vwap=1.0,
+        )  # fmt: skip
+        stock.get_stock_bars.side_effect = [_sip_refusal(), {"SPY": [bar]}]
+        day = self.NOW.date()
+        with capture_logs() as logs:
+            bars = self._adapter(stock).history_bars("SPY", day, day, "5Min", feed="sip")
+        assert [b.volume for b in bars] == [5.0]
+        feeds = [c.args[0].feed for c in stock.get_stock_bars.call_args_list]
+        assert feeds == [DataFeed.SIP, DataFeed.IEX]
+        assert any(e["event"] == "feed_fallback" and e["used"] == "iex" for e in logs)
+
+    def test_other_errors_are_not_swallowed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("arc.data.alpaca.now_et", lambda: self.NOW)
+        stock = _stock_client()
+        resp = MagicMock(status_code=500)
+        stock.get_stock_bars.side_effect = APIError('{"message":"boom"}', MagicMock(response=resp))
+        day = self.NOW.date()
+        with pytest.raises(APIError):
+            self._adapter(stock).history_bars("SPY", day, day, feed="sip")
+        # an IEX refusal is never retried either (nothing to fall back to)
+        stock.get_stock_bars.side_effect = _sip_refusal()
+        with pytest.raises(APIError):
+            self._adapter(stock).history_bars("SPY", day, day, feed="iex")
+        assert stock.get_stock_bars.call_count == 2

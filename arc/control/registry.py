@@ -819,6 +819,18 @@ _STATIC: tuple[Tunable, ...] = (
     ),
     # -- entries -----------------------------------------------------------------
     _s(
+        "data.alpaca_history_feed",
+        Group.ENTRIES,
+        ValueType.CHOICE,
+        "E23.0a (D98): stock feed for volume-weighted history reads (regime technicals' "
+        "daily bars, the anti-chase session VWAP). sip = consolidated tape, delayed 16 min "
+        "intraday (free tier); iex = one exchange (~5% of volume), the rollback. Live quotes "
+        "always stay on IEX.",
+        Risk.NONE,
+        field="alpaca_history_feed",
+        choices=("sip", "iex"),
+    ),
+    _s(
         "dte_min",
         Group.ENTRIES,
         _I,

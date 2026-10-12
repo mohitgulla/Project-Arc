@@ -52,7 +52,7 @@ import sqlite3
 import time
 from collections import Counter
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import structlog
 from pydantic import BaseModel, ValidationError
@@ -723,7 +723,14 @@ class _TechRefs:
         """*ticker*'s daily bars (recorded on the run manifest once); raises on failure."""
         if ticker not in self._bars:
             env, today = self._env, self._today
-            bars = env.market.history_bars(ticker, today - _dt.timedelta(days=self._days), today)
+            # E23.0a (D98): consolidated (SIP) volume by default; the adapter clamps the
+            # window end to now - 16 min (free tier).
+            bars = env.market.history_bars(
+                ticker,
+                today - _dt.timedelta(days=self._days),
+                today,
+                feed=self._ctx.settings.alpaca_history_feed,
+            )
             self._ctx.record_input(
                 f"bars:{ticker}", _source(env), bars, as_of=self._ctx.now, count=len(bars)
             )
@@ -1170,39 +1177,77 @@ def _long_premium_only(stance: str, settings: ArcSettings) -> bool:
     return bool(names) and not (set(names) & _CREDIT_STRATEGY_NAMES)
 
 
+def _vwap_feed_plan(
+    now: _dt.datetime, history_feed: str
+) -> tuple[Literal["sip", "iex"], _dt.datetime]:
+    """E23.0a (D98): which feed the session VWAP reads, and the end of its window.
+
+    ``sip`` (the default history feed): the free tier serves SIP only for windows
+    ending >= 15 min ago, so the VWAP covers the session up to ``now - 16 min``. When
+    that window holds no complete 5-min bar yet (before ~09:51 ET) it reads IEX up to
+    *now* instead. ``iex`` (the rollback): IEX up to *now*, as before E23.0a.
+    """
+    from arc.data.alpaca import sip_window_end
+
+    if history_feed == "sip":
+        sip_end = sip_window_end(now)
+        first_bar_end = _dt.datetime.combine(now.astimezone(ET).date(), _dt.time(9, 35), ET)
+        if sip_end >= first_bar_end:
+            return "sip", sip_end
+    return "iex", now
+
+
 def _session_vwap_stretch(
     ctx: JobContext,
     env: PipelineEnv,
     ticker: str,
     atr14: float | None,
     take: Callable[[], object] | None,
-) -> tuple[float | None, str]:
-    """``((spot - session VWAP) / ATR14, why-missing)`` from today's 5-min bars.
+) -> tuple[float | None, str, Literal["sip", "iex"]]:
+    """``((spot - session VWAP) / ATR14, why-missing, feed)`` from today's 5-min bars.
 
-    Spot is the last bar's close (no extra quote call). One ``history_bars`` request,
-    taken from the shared ``alpaca_data:calls`` budget (*take*). Any failure returns
-    ``(None, reason)``: the caller skips the VWAP part and keeps the daily rule.
+    One ``history_bars`` request on the feed :func:`_vwap_feed_plan` picks, taken from
+    the shared ``alpaca_data:calls`` budget (*take*). On IEX the spot is the last bar's
+    close (no extra quote call). On delayed SIP the last bar is >= 16 min old, so the
+    spot is the live IEX quote (:func:`arc.data.base.market_spot`, a second budgeted
+    call), falling back to the last SIP close when no usable quote comes back. Any bars
+    failure returns ``(None, reason, feed)``: the caller skips the VWAP part and keeps
+    the daily rule.
     """
+    from arc.data.base import market_spot
     from arc.features.technicals import session_vwap, vwap_stretch_atr
 
     today = _today(ctx)
+    feed, window_end = _vwap_feed_plan(ctx.now, ctx.settings.alpaca_history_feed)
     try:
         if take is not None:
             take()
-        bars = env.market.history_bars(ticker, today, today, "5Min")
+        bars = env.market.history_bars(ticker, today, today, "5Min", feed=feed)
         ctx.record_input(f"bars5m:{ticker}", _source(env), bars, as_of=ctx.now, count=len(bars))
     except Exception as exc:  # noqa: BLE001 - a missing intraday read only skips VWAP
-        return None, f"5-min bars failed: {exc}"[:200]
+        return None, f"5-min bars failed: {exc}"[:200], feed
     open_at = _dt.time(9, 30)
-    vwap = session_vwap(bars, start=open_at, end=ctx.now)
+    vwap = session_vwap(bars, start=open_at, end=window_end)
     spot = None
     for b in bars:
         if b.timestamp.astimezone(ET) < ctx.now:
             spot = float(b.close)
+    if feed == "sip" and vwap is not None:
+        try:
+            if take is not None:
+                take()
+            live = market_spot(
+                env.market, ticker, today, max_spread_pct=ctx.settings.spot_max_spread_pct
+            )
+        except Exception as exc:  # noqa: BLE001 - the delayed close stays the spot
+            log.warning("pipeline.vwap_spot_failed", ticker=ticker, error=str(exc)[:200])
+        else:
+            if live.price is not None:
+                spot = live.price
     out = vwap_stretch_atr(spot, vwap, atr14)
     if out is None:
-        return None, "no session bars yet" if vwap is None else "no ATR14"
-    return out, ""
+        return None, "no session bars yet" if vwap is None else "no ATR14", feed
+    return out, "", feed
 
 
 def _alpaca_take(ctx: JobContext, env: PipelineEnv) -> Callable[[], object] | None:
@@ -1249,13 +1294,16 @@ def _anti_chase_filter(
         raw = (entry.payload.get("technicals") if entry is not None else None) or None
         tech = TechnicalFeatures.model_validate(raw) if raw is not None else None
         vwap_stretch: float | None = None
+        vwap_feed: Literal["sip", "iex"] | None = None
         if cfg.vwap:
-            vwap_stretch, why = _session_vwap_stretch(
+            vwap_stretch, why, vwap_feed = _session_vwap_stretch(
                 ctx, env, item.ticker, tech.atr14 if tech is not None else None, take
             )
             if vwap_stretch is None:
                 res.vwap_missing.append((item, why))
         verdict = is_stretched(tech, stance, rule, vwap_stretch=vwap_stretch)
+        if vwap_feed is not None and verdict.status != "not_directional":
+            verdict = verdict.model_copy(update={"vwap_feed": vwap_feed})
         res.verdicts[item.ticker] = verdict
         if verdict.stretched:
             res.dropped[ReasonCode.STRETCHED_ENTRY.value] += 1

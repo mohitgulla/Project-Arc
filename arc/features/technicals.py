@@ -402,6 +402,9 @@ class StretchVerdict(BaseModel):
         None, description="dist_high20_atr (bullish) / dist_low20_atr (bearish)"
     )
     vwap_stretch_atr: float | None = None
+    vwap_feed: Literal["sip", "iex"] | None = Field(
+        None, description="E23.0a (D98): stock feed the session VWAP was read from"
+    )
     rule: AntiChaseRule
 
     @property

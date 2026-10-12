@@ -112,8 +112,10 @@ class MarketDataProvider(Protocol):
         Stale, missing-greeks, and zero-bid contracts are flagged.
     underlying_quote(symbol)
         Latest bid/ask/mid for an underlying equity.
-    history_bars(symbol, start, end, timeframe)
-        OHLCV bars for *symbol* over [start, end].
+    history_bars(symbol, start, end, timeframe, *, feed=None)
+        OHLCV bars for *symbol* over [start, end]. *feed* (E23.0a, D98) names the
+        stock feed (``sip`` / ``iex``) where the venue has several; ``None`` = the
+        provider's default. Providers with one feed ignore it.
     """
 
     def option_chain(
@@ -131,6 +133,8 @@ class MarketDataProvider(Protocol):
         start: dt.date,
         end: dt.date,
         timeframe: str = "1Day",
+        *,
+        feed: str | None = None,
     ) -> list[HistoryBar]: ...
 
 

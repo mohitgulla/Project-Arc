@@ -800,6 +800,15 @@ class ArcSettings(BaseSettings):
         default=AlpacaOptionsFeed.INDICATIVE,
         description="Alpaca options data feed (ARC_ALPACA_OPTIONS_FEED). Free tier: indicative.",
     )
+    alpaca_history_feed: Literal["sip", "iex"] = Field(
+        default="sip",
+        description=(
+            "E23.0a (D98): stock feed for volume-weighted history reads (regime technicals' "
+            "daily bars, the anti-chase session VWAP). sip = consolidated tape, free for "
+            "windows ending >= 15 min ago (the adapter clamps the request end); iex = one "
+            "exchange (~5% of volume), the rollback. Live quotes stay on alpaca_data_feed."
+        ),
+    )
 
     # -- Chain scanner (E2.3) ------------------------------------------------
     # Liquidity: the spread rule reuses spread_max_pct / spread_max_abs (§5).

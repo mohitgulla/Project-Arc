@@ -565,6 +565,7 @@ def test_sector_etf_map_lives_in_sectors_yaml(tmp_path: Path) -> None:
 class _Market:
     def __init__(self, fail: frozenset[str] = frozenset()) -> None:
         self.calls: list[str] = []
+        self.feeds: list[str | None] = []
         self.fail = fail
         self.frames = {
             "NVDA": _nvda(),
@@ -573,8 +574,9 @@ class _Market:
             "XLK": _nvda() * 0.9,
         }
 
-    def history_bars(self, symbol, start, end, timeframe="1Day"):  # noqa: ANN001, ANN201
+    def history_bars(self, symbol, start, end, timeframe="1Day", feed=None):  # noqa: ANN001, ANN201
         self.calls.append(symbol)
+        self.feeds.append(feed)
         if symbol in self.fail:
             raise RuntimeError("bars down")
         return _bars_from(self.frames[symbol])
@@ -634,6 +636,7 @@ def test_regime_step_stores_technicals_and_fetches_refs_once() -> None:
     written, snap = _step(conn, m, ["AAPL", "NVDA", "SPY"])
     assert written == ["AAPL", "NVDA", "SPY"]
     assert sorted(m.calls) == ["AAPL", "NVDA", "SPY", "XLK"]  # SPY + XLK once each
+    assert set(m.feeds) == {"sip"}  # E23.0a (D98): daily bars read consolidated volume
     nv = snap.latest("regime", "NVDA").payload["technicals"]
     assert nv["sector_etf"] == "XLK" and nv["rs_sector_20d"] is not None
     assert nv["rs_spy_20d"] == pytest.approx(
