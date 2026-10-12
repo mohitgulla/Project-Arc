@@ -77,10 +77,12 @@ __all__ = [
     "DayTrades",
     "DteSleeve",
     "ShortLegPolicy",
+    "SleeveSlots",
     "entry_dte_of",
     "load_account_profiles",
     "sleeve_for_dte",
     "sleeve_of",
+    "sleeve_slots",
 ]
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -230,6 +232,49 @@ def sleeve_of(
     the open); exits then use the kind policy. Pure; never raises on a valid structure.
     """
     return sleeve_for_dte(sleeves, entry_dte_of(structure, opened_at))
+
+
+class SleeveSlots(BaseModel):
+    """E22.2 (D97): one sleeve's occupancy (open positions by entry DTE vs its cap)."""
+
+    model_config = _FORBID
+
+    sleeve: DteSleeve
+    held: int = Field(..., ge=0)
+
+    @property
+    def free(self) -> int | None:
+        """Free slots; ``None`` = uncapped (``max_positions`` unset)."""
+        cap = self.sleeve.max_positions
+        return None if cap is None else max(cap - self.held, 0)
+
+    @property
+    def open(self) -> bool:
+        """True while the sleeve can take one more open (uncapped or a free slot)."""
+        free = self.free
+        return free is None or free > 0
+
+    def text(self) -> str:
+        """``short 3/5`` (held/cap) or ``swing 2`` when uncapped."""
+        cap = self.sleeve.max_positions
+        return f"{self.sleeve.name} {self.held}" + ("" if cap is None else f"/{cap}")
+
+
+def sleeve_slots(
+    sleeves: Sequence[DteSleeve], entry_dtes: Sequence[int | None]
+) -> list[SleeveSlots]:
+    """E22.2 (D97): occupancy of each sleeve, counted like gate rule ``sleeve_max_positions``.
+
+    A held position belongs to the sleeve containing its entry DTE; one with an
+    unknown entry DTE (``None``) counts toward every sleeve (fail closed). Pure.
+    """
+    return [
+        SleeveSlots(
+            sleeve=s,
+            held=sum(1 for d in entry_dtes if d is None or sleeve_for_dte(sleeves, d) == s),
+        )
+        for s in sleeves
+    ]
 
 
 class AccountProfile(BaseModel):

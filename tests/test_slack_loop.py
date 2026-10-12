@@ -75,6 +75,12 @@ class TestRootLine:
         assert slot_stamp(dt.datetime(2026, 9, 28, 13, 40, tzinfo=dt.UTC)) == "2026-09-28 09:40ET"
         assert slot_stamp(dt.datetime(2026, 12, 1, 14, 40, tzinfo=dt.UTC)) == "2026-12-01 09:40ET"
 
+    def test_sleeve_counts_follow_the_action(self) -> None:
+        # E22.2 (D97): sleeved profiles show opens per sleeve; absent otherwise
+        r = _root(buys=["SPY"], pending=["NVDA"], sleeves={"short": 1, "swing": 1})
+        assert r.text() == f":white_check_mark: {FACTS} • BUY: SPY • Sleeves: short 1, swing 1"
+        assert "Sleeves" not in _root(buys=["SPY"]).text()
+
     def test_round_trip_through_json(self) -> None:
         r = _root(buys=["SPY"])
         again = LoopRoot.model_validate(r.model_dump(mode="json"))

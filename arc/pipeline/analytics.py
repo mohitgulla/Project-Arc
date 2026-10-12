@@ -65,6 +65,7 @@ def build_analytics(
     regime: dict[str, Any] | None = None,
     exit_model: ExitModelResult | None = None,
     account_profile: str | None = None,
+    sleeve_window: str | None = None,
 ) -> ProposalAnalytics:
     """Analytics for *priced* (raises ``ValueError`` without a spot)."""
     st = priced.structure
@@ -151,4 +152,5 @@ def build_analytics(
         entry_fees=fees_total,
         exit_model=exit_model,
         account_profile=account_profile,
+        sleeve_window=sleeve_window,
     )

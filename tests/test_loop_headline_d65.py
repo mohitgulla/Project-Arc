@@ -102,9 +102,12 @@ def _proposal(
     qty: int = 1,
     price: str = "0",
     approval: str = "approved",
+    sleeve: str | None = None,
 ) -> str:
     phash = uuid.uuid4().hex
-    structure = {"kind": struct, "legs": [{"occ_symbol": occ}]}
+    structure: dict[str, object] = {"kind": struct, "legs": [{"occ_symbol": occ}]}
+    if sleeve is not None:
+        structure["sleeve"] = sleeve
     conn.execute(
         """INSERT INTO proposals (candidate_id, proposal_hash, structure_json, thesis, quant_json,
                sizing_json, expires_at, created_at, run_id, ticker, kind)
@@ -175,6 +178,34 @@ HOOD_THESIS = (
 def _close_review(conn: sqlite3.Connection, sid: str, code: str, reason: str) -> None:
     verdict = {"verdict": "close", "reason_code": code, "reason": reason}
     _dec(conn, "risk", "exit", sid, "noted", "exit:research_review", {"verdict": verdict})
+
+
+class TestLoopSleeves:
+    """E22.2 (D97): the loop root counts the opens it shows, per DTE sleeve."""
+
+    def test_counts_shown_opens_per_sleeve(self) -> None:
+        conn = _conn()
+        runs = _full_chain(conn)
+        qp = runs["quant.propose"]
+        kw = {"struct": "vertical_debit", "occ": "HOOD261120P00110000"}
+        _proposal(conn, qp, "HOOD", "open", execution="filled", sleeve="short", **kw)  # type: ignore[arg-type]
+        _proposal(conn, qp, "XOM", "open", execution=None, approval="pending", sleeve="swing", **kw)  # type: ignore[arg-type]
+        _proposal(conn, qp, "NVDA", "open", execution="filled", sleeve="swing", **kw)  # type: ignore[arg-type]
+        _proposal(
+            conn, qp, "PLTR", "open", execution=None, approval="rejected", sleeve="short", **kw
+        )  # type: ignore[arg-type]
+        _proposal(conn, qp, "AAPL", "close", execution="filled", sleeve="short", **kw)  # type: ignore[arg-type]
+        root = loop_root_from_db(conn, CHAIN, SLOT)
+        assert root.sleeves == {"short": 1, "swing": 2}
+        assert "Sleeves: short 1, swing 2" in root.text().split("\n")[0]
+
+    def test_no_sleeve_no_counts(self) -> None:
+        conn = _conn()
+        runs = _full_chain(conn)
+        kw = {"struct": "vertical_debit", "occ": "HOOD261120P00110000"}
+        _proposal(conn, runs["quant.propose"], "HOOD", "open", execution="filled", **kw)  # type: ignore[arg-type]
+        root = loop_root_from_db(conn, CHAIN, SLOT)
+        assert root.sleeves == {} and "Sleeves" not in root.text()
 
 
 class TestLoopHeadline:

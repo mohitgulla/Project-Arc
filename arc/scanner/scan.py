@@ -77,6 +77,7 @@ from arc.utils.calendar import dte_calendar
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
+    from arc.account_profiles import DteSleeve
     from arc.config import ArcSettings
     from arc.data.base import MarketDataProvider, OptionContract
 
@@ -208,14 +209,19 @@ class ScanParams(BaseModel):
         return self
 
     @classmethod
-    def from_settings(cls, settings: ArcSettings, **overrides: object) -> ScanParams:
+    def from_settings(
+        cls, settings: ArcSettings, *, sleeve: DteSleeve | None = None, **overrides: object
+    ) -> ScanParams:
         """Defaults from :class:`arc.config.ArcSettings`, then *overrides*.
 
         The DTE window is the account profile's entry window (D25) and the default
         strategies are every strategy the profile maps a stance to. E22.1: a profile
         with sleeves scans the envelope and keeps expiries inside some sleeve.
+        E22.2: with *sleeve* the window is that sleeve's alone (one menu per sleeve).
         """
         dte_min, dte_max = settings.entry_dte_window
+        if sleeve is not None:
+            dte_min, dte_max = sleeve.dte_min, sleeve.dte_max
         profile_strategies = profile_strategy_set(settings)
         base: dict[str, object] = {
             "dte_min": dte_min,
@@ -239,7 +245,7 @@ class ScanParams(BaseModel):
         }
         if profile_strategies:
             base["strategies"] = profile_strategies
-        if settings.profile.has_sleeves:
+        if settings.profile.has_sleeves and sleeve is None:
             base["dte_windows"] = [(w.dte_min, w.dte_max) for w in settings.entry_sleeves]
         base.update({k: v for k, v in overrides.items() if v is not None})
         return cls.model_validate(base)
