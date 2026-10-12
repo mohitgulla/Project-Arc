@@ -7170,6 +7170,92 @@
         "title": "LegView",
         "type": "object"
       },
+      "LevelCrossing": {
+        "additionalProperties": false,
+        "description": "E23.3 (D98): where one target (short strike / breakeven) sits vs the levels.\n\nThe levels are the E23.0 volume-profile (POC, VAH, VAL, nearest HVNs) and OI-wall\nprices on the ticker's regime technicals. Walking from spot toward the target:\n\n* ``at``: the target is within :data:`AT_LEVEL_ATR` ATR14 of a level (that level);\n* ``beyond``: the move must push through at least one level first (the first one\n  it meets from spot; ``crossed`` counts them all);\n* ``before``: no level between spot and the target (the first level past it).\n\n``beyond_first`` (the replay split): the target sits beyond the first level, i.e.\n``crossed >= 1`` (an ``at`` target with a level crossed on the way counts too).\n\n``dist_atr`` = (target \u2212 level) / ATR14 measured in the direction of travel\n(> 0 beyond, < 0 before); ``None`` without ATR14. Context only, never a gate input.",
+        "properties": {
+          "crossed": {
+            "default": 0,
+            "description": "Levels strictly between spot and the target",
+            "minimum": 0.0,
+            "title": "Crossed",
+            "type": "integer"
+          },
+          "direction": {
+            "description": "+1 = above spot, -1 = below",
+            "enum": [
+              1,
+              -1
+            ],
+            "title": "Direction",
+            "type": "integer"
+          },
+          "dist_atr": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dist Atr"
+          },
+          "label": {
+            "description": "Rendered name, e.g. `BE`, `upper BE`, `short call`",
+            "title": "Label",
+            "type": "string"
+          },
+          "level_kind": {
+            "enum": [
+              "poc",
+              "vah",
+              "val",
+              "hvn",
+              "call_wall",
+              "put_wall"
+            ],
+            "title": "Level Kind",
+            "type": "string"
+          },
+          "price": {
+            "title": "Price",
+            "type": "number"
+          },
+          "side": {
+            "enum": [
+              "before",
+              "at",
+              "beyond"
+            ],
+            "title": "Side",
+            "type": "string"
+          },
+          "target": {
+            "title": "Target",
+            "type": "number"
+          },
+          "which": {
+            "enum": [
+              "short_strike",
+              "breakeven"
+            ],
+            "title": "Which",
+            "type": "string"
+          }
+        },
+        "required": [
+          "which",
+          "target",
+          "direction",
+          "level_kind",
+          "price",
+          "side",
+          "label"
+        ],
+        "title": "LevelCrossing",
+        "type": "object"
+      },
       "LinkRef": {
         "additionalProperties": false,
         "properties": {
@@ -10987,6 +11073,21 @@
             "title": "Legs",
             "type": "array"
           },
+          "levels": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/LevelCrossing"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "E23.3 (D98): short strike / breakeven vs the volume-profile and OI-wall levels; None = strike_levels off (or analytics stored before E23.3)",
+            "title": "Levels"
+          },
           "prev_close": {
             "anyOf": [
               {
@@ -11562,6 +11663,18 @@
             ],
             "description": "Quant's EV per contract (model inputs)",
             "title": "Ev"
+          },
+          "levels_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "E23.3 (D98): `BE beyond POC 186.1 (+0.4 ATR) \u00b7 short strike at call wall 190`, the trade card's Levels fact; None when no level was stored",
+            "title": "Levels Text"
           },
           "max_gain": {
             "anyOf": [

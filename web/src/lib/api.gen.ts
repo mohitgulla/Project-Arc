@@ -3433,6 +3433,64 @@ export interface components {
             /** Unrealized Pl */
             unrealized_pl?: string | null;
         };
+        /**
+         * LevelCrossing
+         * @description E23.3 (D98): where one target (short strike / breakeven) sits vs the levels.
+         *
+         *     The levels are the E23.0 volume-profile (POC, VAH, VAL, nearest HVNs) and OI-wall
+         *     prices on the ticker's regime technicals. Walking from spot toward the target:
+         *
+         *     * ``at``: the target is within :data:`AT_LEVEL_ATR` ATR14 of a level (that level);
+         *     * ``beyond``: the move must push through at least one level first (the first one
+         *       it meets from spot; ``crossed`` counts them all);
+         *     * ``before``: no level between spot and the target (the first level past it).
+         *
+         *     ``beyond_first`` (the replay split): the target sits beyond the first level, i.e.
+         *     ``crossed >= 1`` (an ``at`` target with a level crossed on the way counts too).
+         *
+         *     ``dist_atr`` = (target − level) / ATR14 measured in the direction of travel
+         *     (> 0 beyond, < 0 before); ``None`` without ATR14. Context only, never a gate input.
+         */
+        LevelCrossing: {
+            /**
+             * Crossed
+             * @description Levels strictly between spot and the target
+             * @default 0
+             */
+            crossed: number;
+            /**
+             * Direction
+             * @description +1 = above spot, -1 = below
+             * @enum {integer}
+             */
+            direction: 1 | -1;
+            /** Dist Atr */
+            dist_atr?: number | null;
+            /**
+             * Label
+             * @description Rendered name, e.g. `BE`, `upper BE`, `short call`
+             */
+            label: string;
+            /**
+             * Level Kind
+             * @enum {string}
+             */
+            level_kind: "poc" | "vah" | "val" | "hvn" | "call_wall" | "put_wall";
+            /** Price */
+            price: number;
+            /**
+             * Side
+             * @enum {string}
+             */
+            side: "before" | "at" | "beyond";
+            /** Target */
+            target: number;
+            /**
+             * Which
+             * @enum {string}
+             */
+            which: "short_strike" | "breakeven";
+        };
         /** LinkRef */
         LinkRef: {
             /** Id */
@@ -4748,6 +4806,11 @@ export interface components {
             /** Legs */
             legs: components["schemas"]["LegAnalytics"][];
             /**
+             * Levels
+             * @description E23.3 (D98): short strike / breakeven vs the volume-profile and OI-wall levels; None = strike_levels off (or analytics stored before E23.3)
+             */
+            levels?: components["schemas"]["LevelCrossing"][] | null;
+            /**
              * Prev Close
              * @description Last close in the regime snapshot
              */
@@ -4876,6 +4939,11 @@ export interface components {
              * @description Quant's EV per contract (model inputs)
              */
             ev?: string | null;
+            /**
+             * Levels Text
+             * @description E23.3 (D98): `BE beyond POC 186.1 (+0.4 ATR) · short strike at call wall 190`, the trade card's Levels fact; None when no level was stored
+             */
+            levels_text?: string | null;
             /**
              * Max Gain
              * @description Per unit, $

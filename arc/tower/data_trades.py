@@ -47,7 +47,10 @@ from typing import TYPE_CHECKING, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from arc.journal import legacy
-from arc.journal.analytics import ProposalAnalytics  # noqa: TC001 - pydantic field
+from arc.journal.analytics import (
+    ProposalAnalytics,  # noqa: TC001 - pydantic field
+    levels_text,
+)
 from arc.journal.floor_exit import FloorExitFacts, floor_exit_facts
 from arc.journal.reasons import gate_reason, reason_label
 from arc.journal.sleeves import OTHER, sleeve_name
@@ -508,6 +511,11 @@ class QuantSection(BaseModel):
     analytics: ProposalAnalytics | None = None
     analytics_at: _dt.datetime | None = None
     analytics_error: str | None = None
+    levels_text: str | None = Field(
+        default=None,
+        description="E23.3 (D98): `BE beyond POC 186.1 (+0.4 ATR) · short strike at call "
+        "wall 190`, the trade card's Levels fact; None when no level was stored",
+    )
 
 
 class PersonaCallView(BaseModel):
@@ -1555,6 +1563,9 @@ def _quant(p: sqlite3.Row, mc: sqlite3.Row | None) -> QuantSection:
         analytics=analytics,
         analytics_at=parse_ts(mc["created_at"]) if mc is not None else None,
         analytics_error=error,
+        levels_text=(levels_text(analytics.levels) or None)
+        if analytics is not None and analytics.levels
+        else None,
     )
 
 

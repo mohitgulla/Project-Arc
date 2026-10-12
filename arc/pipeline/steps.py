@@ -2917,11 +2917,13 @@ def _menu_entry(
     be_atr: float | None = None,
     *,
     sleeve: str | None = None,
+    levels: str | None = None,
 ) -> dict[str, Any]:
     """One Quant menu row. ``rank_key``/``rank_measure`` (E7.5b) appear only under a
     non-control ``pipeline.menu_measure``, so the control menu is byte-identical.
     ``be_atr`` (E16.5) appears only with ``scanner.max_be_atr`` set and ATR14 known.
-    ``sleeve`` (E22.2) appears only for a profile with DTE sleeves."""
+    ``sleeve`` (E22.2) appears only for a profile with DTE sleeves. ``levels`` (E23.3)
+    appears only with ``strike_levels`` on and a level known on the target's side."""
     st = c.structure
     extra: dict[str, Any] = {}
     if sleeve is not None:
@@ -2935,6 +2937,8 @@ def _menu_entry(
             extra["rank_tilt"] = rank_key.tilt
     if be_atr is not None:
         extra["be_atr"] = round(be_atr, 2)
+    if levels:
+        extra["levels"] = levels
     return {
         "structure_type": _structure_type(c),
         "strategy": c.strategy.value,
@@ -3160,6 +3164,25 @@ def _sleeve_slots(ctx: JobContext, env: PipelineEnv) -> list[SleeveSlots]:
     return sleeve_slots(ctx.settings.entry_sleeves, dtes)
 
 
+def _menu_levels(
+    ctx: JobContext, ticker: str, cands: Sequence[ScanCandidate], spot: float
+) -> dict[int, str]:
+    """E23.3 (D98): id(candidate) -> ``BE beyond POC 186.1 (+0.4 ATR) · …`` from the
+    ticker's ``regime`` technicals (E23.0 levels); candidates without a level get none.
+    Context only: no filter, no ranking change, no data call."""
+    from arc.journal.analytics import levels_text
+    from arc.pipeline.analytics import structure_levels
+
+    entry = ctx.snapshot.latest("regime", ticker)
+    regime = entry.payload if entry is not None else None
+    out: dict[int, str] = {}
+    for c in cands:
+        text = levels_text(structure_levels(c.structure, spot, regime))
+        if text:
+            out[id(c)] = text
+    return out
+
+
 def _quant_menus(ctx: JobContext, env: PipelineEnv, items: list[ResearchRankedItem]) -> _QuantMenus:
     """Scan each item's chain into a menu (with the E2.4 exit model per structure).
 
@@ -3306,6 +3329,9 @@ def _quant_menus(ctx: JobContext, env: PipelineEnv, items: list[ResearchRankedIt
                 no_chain_why[item.ticker] = "scanner found no structure in an open DTE sleeve"
             continue
         m.sleeve_of.update(sleeve_of_c)
+        lv: dict[int, str] = {}
+        if ctx.routines.strike_levels.enabled:  # E23.3 (D98): off = menu byte-identical
+            lv = _menu_levels(ctx, item.ticker, cands, res.spot)
         menus[item.ticker] = {
             _legs_key([(leg.occ_symbol, leg.side.value) for leg in c.structure.legs]): c
             for c in cands
@@ -3324,6 +3350,7 @@ def _quant_menus(ctx: JobContext, env: PipelineEnv, items: list[ResearchRankedIt
                     m.rank_keys.get(id(c)),
                     m.be_atr.get(id(c)),
                     sleeve=sleeve_of_c.get(id(c)),
+                    levels=lv.get(id(c)),
                 )
                 for c in cands
             ],
@@ -4899,6 +4926,7 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
                 sleeve_window=(
                     f"{sleeve.dte_min}\u2013{sleeve.dte_max} DTE" if sleeve is not None else None
                 ),
+                strike_levels=ctx.routines.strike_levels.enabled,  # E23.3 (D98)
             )
         except ValueError as exc:  # no spot: the card renders without analytics
             log.warning("pipeline.analytics_failed", ticker=t, error=str(exc))

@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Any
 
 from arc.approvals.trail import DecisionTrail
 from arc.gate.token import BandToken, TokenError, parse_any
+from arc.journal.analytics import levels_text
 from arc.models import StructureKind
 from arc.slack import blocks as B
 from arc.slack.blocks import CardView
@@ -584,6 +585,9 @@ def _body(
     sleeve = _sleeve(p, a)
     if sleeve:  # E22.2 (D97): sleeved profiles only; single-window cards unchanged
         pairs.append(("Sleeve", sleeve))
+    levels = levels_text(a.levels) if a is not None and a.levels else ""
+    if levels:  # E23.3 (D98): strike_levels on and a level known; else card unchanged
+        pairs.append(("Levels", levels))
     blocks.extend(B.facts(pairs))
     blocks.append(B.divider())
     blocks.extend(_net_ev_section(p, em))
