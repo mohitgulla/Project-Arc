@@ -161,7 +161,7 @@ def test_enumerates_every_violation_without_short_circuit() -> None:
     p = make_proposal(expires_at=NOW - dt.timedelta(seconds=1))
     a = acct(halted=True, equity=D("96000"), as_of=NOW - dt.timedelta(hours=1))
     pf = Portfolio(
-        positions=[Position(underlying="SPY", max_loss=D("4500"))] * 8,
+        positions=[Position(underlying="SPY", max_loss=D("4500"))] * 10,
         closed_lots=[
             ClosedLot(underlying="SPY", closed_at=NOW - dt.timedelta(days=3), realized_pnl=D("-1"))
         ],
@@ -799,7 +799,7 @@ def test_earnings_exemptions() -> None:
 def test_max_open_positions(n: int) -> None:
     pf = Portfolio(positions=[Position(underlying="QQQ", max_loss=D("1"))] * n)
     out = R.check_max_open_positions(pf, cfg())
-    assert (out == []) == (n + 1 <= 8)
+    assert (out == []) == (n + 1 <= 10)  # D97: max_open_positions 10 (was 8)
 
 
 # ---------------------------------------------------------------------------

@@ -925,7 +925,9 @@ class TestDebitStrategies:
             ScanStrategy.BEAR_PUT_DEBIT,
             ScanStrategy.LONG_PUT,
         ]
-        assert (p.dte_min, p.dte_max) == (30, 60)
+        # E22.4 (D97): envelope of the short 10-29 + swing 30-60 sleeves
+        assert (p.dte_min, p.dte_max) == (10, 60)
+        assert p.dte_windows == [(10, 29), (30, 60)]
 
     def test_cli_debit_table(self, capsys, tmp_path) -> None:  # noqa: ANN001
         from arc.cli import main

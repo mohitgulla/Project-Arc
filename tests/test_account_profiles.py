@@ -180,11 +180,19 @@ class TestProfilesConfig:
         assert set(cd.allowed_kinds) == {MK.VERTICAL_DEBIT, MK.LONG_CALL, MK.LONG_PUT}
         assert cd.require_net_debit and cd.buying_power is BuyingPower.CASH_SETTLED
         assert cd.allow_short_legs is ShortLegPolicy.COVERED_ONLY
-        assert (cd.dte_min, cd.dte_max) == (30, 60)
+        # D97 (E22.4): two entry-DTE sleeves replace the single 30-60 window
+        assert (cd.dte_min, cd.dte_max) == (None, None)
+        assert cd.sleeves is not None
+        rows = [(x.name, x.dte_min, x.dte_max, x.max_positions, x.exit_policy) for x in cd.sleeves]
+        assert rows == [
+            ("short", 10, 29, 5, "short"),
+            ("swing", 30, 60, 5, None),
+        ]
         assert cd.strategies_for("bullish") == ["bull_call_debit", "long_call"]
         assert cd.strategies_for("bearish") == ["bear_put_debit", "long_put"]
         assert cd.strategies_for("neutral") == []
         lo = p.get("cash_long_only")
+        assert lo.sleeves == cd.sleeves
         assert lo.allow_short_legs is ShortLegPolicy.NONE
         assert set(lo.allowed_kinds) == {MK.LONG_CALL, MK.LONG_PUT}
         m = p.get("margin")
@@ -201,7 +209,7 @@ class TestProfilesConfig:
         assert DEFAULT_ACCOUNT_PROFILE == "cash_debit"
         assert s.account_profile == "cash_debit"
         assert s.profile.name == "cash_debit"
-        assert s.entry_dte_window == (30, 60)
+        assert s.entry_dte_window == (10, 60)  # D97: union of short 10-29 + swing 30-60
 
     def test_env_switch_needs_no_code_change(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("ARC_ACCOUNT_PROFILE", "margin")

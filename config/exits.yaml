@@ -160,8 +160,41 @@ kinds:
 # (config/account_profiles.yaml) names one with `exit_policy: <name>`; a position
 # whose entry DTE falls in that sleeve uses `sleeves.<name>.kinds.<kind>`, else the
 # `kinds:` policy above, else `default:`. Same ExitPolicy schema and stop-direction
-# rules as `kinds:`. No block = byte-identical behaviour. E22.4 adds the short block:
-# sleeves:
-#   short:
-#     kinds:
-#       long_call: {take_profit_pct_of_max_gain: null, take_profit_pct_of_debit: 0.40, ...}
+# rules as `kinds:`. No block = byte-identical behaviour.
+#
+# D97 (owner, 2026-10-11; D44/D86 waived, ships on; E22.4): the short sleeve
+# (entry DTE 10-29) of the cash profiles. A 10-29 DTE debit has steeper theta and
+# gamma, so it takes profit faster (0.40 vs 0.60 of the debit), stops tighter and
+# intraday on the 10-min marks (0.50 vs 0.75, not EOD-only), locks profit earlier
+# (arm 0.30 / floor 0.10) and exits before the last-week decay (close_at_dte 3 vs
+# 7). expiry_guard (flat_by_dte 1) and the fill-day guard still apply. The swing
+# sleeve (30-60) has no block and keeps the D23/D78 `kinds:` rules above.
+# Rollback (Slack, no PR): `profiles.cash_debit.sleeves.short.max_positions 0`
+# closes the sleeve to new opens.
+sleeves:
+  short:
+    kinds:
+      vertical_debit:
+        take_profit_pct_of_max_gain: null
+        take_profit_pct_of_debit: 0.40
+        stop: {basis: pct_debit, value: 0.50}
+        stop_eod_only: false
+        close_at_dte: 3
+        time_adjusted_targets: []
+        profit_lock: {arm_pct: 0.30, floor_pct: 0.10, eod_only: false}
+      long_call:
+        take_profit_pct_of_max_gain: null
+        take_profit_pct_of_debit: 0.40
+        stop: {basis: pct_debit, value: 0.50}
+        stop_eod_only: false
+        close_at_dte: 3
+        time_adjusted_targets: []
+        profit_lock: {arm_pct: 0.30, floor_pct: 0.10, eod_only: false}
+      long_put:
+        take_profit_pct_of_max_gain: null
+        take_profit_pct_of_debit: 0.40
+        stop: {basis: pct_debit, value: 0.50}
+        stop_eod_only: false
+        close_at_dte: 3
+        time_adjusted_targets: []
+        profit_lock: {arm_pct: 0.30, floor_pct: 0.10, eod_only: false}
