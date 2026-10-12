@@ -4656,6 +4656,14 @@
             "title": "Area",
             "type": "string"
           },
+          "arm_verdicts": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Treatment arm -> its Control-vs-arm verdict",
+            "title": "Arm Verdicts",
+            "type": "object"
+          },
           "as_of_day": {
             "anyOf": [
               {
@@ -4695,6 +4703,18 @@
           "experiment_id": {
             "title": "Experiment Id",
             "type": "string"
+          },
+          "headline_arm": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Arm the headline numbers compare with Control (v2: best-ranked)",
+            "title": "Headline Arm"
           },
           "kind": {
             "$ref": "#/components/schemas/ExperimentKind"
@@ -4871,6 +4891,12 @@
           "title": {
             "title": "Title",
             "type": "string"
+          },
+          "variants": {
+            "default": 1,
+            "description": "Treatment arms in the spec (K)",
+            "title": "Variants",
+            "type": "integer"
           },
           "verdict": {
             "anyOf": [

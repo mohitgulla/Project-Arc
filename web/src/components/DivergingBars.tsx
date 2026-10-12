@@ -41,19 +41,24 @@ export function DivergingBars({
   height = 200,
   format = (v: number) => formatMoney(v, "pnl"),
   overlays = [],
+  axisFormat = formatAxisMoney,
+  testid = "diverging-bars",
 }: {
   data: BarPoint[];
   nowLabel?: string;
   height?: number;
   format?: (v: number) => string;
   overlays?: OverlayLine[];
+  /** Y tick text (default `$71K`); percent charts pass their own. */
+  axisFormat?: (v: number) => string;
+  testid?: string;
 }) {
   const vals = data.map((d) => d.v ?? 0);
   const max = Math.max(0, ...vals);
   const min = Math.min(0, ...vals);
   const ticks = [min < 0 ? min : 0, max > 0 ? max : 0].filter((v, i, a) => a.indexOf(v) === i);
   return (
-    <div style={{ height }} className="w-full" data-testid="diverging-bars">
+    <div style={{ height }} className="w-full" data-testid={testid}>
       <ResponsiveContainer width="100%" height="100%">
         <ComposedChart data={data} margin={{ top: 22, right: 8, bottom: 0, left: 0 }} barCategoryGap="18%">
           <CartesianGrid yAxisId="bars" vertical={false} stroke="var(--border)" strokeDasharray="2 4" />
@@ -70,7 +75,7 @@ export function DivergingBars({
             width={48}
             tickLine={false}
             axisLine={false}
-            tickFormatter={(v: number) => formatAxisMoney(v)}
+            tickFormatter={(v: number) => axisFormat(v)}
             tick={{ fill: "var(--text-muted)", fontSize: 11 }}
           />
           {overlays.length > 0 && <YAxis yAxisId="overlay" hide orientation="right" domain={["auto", "auto"]} />}
