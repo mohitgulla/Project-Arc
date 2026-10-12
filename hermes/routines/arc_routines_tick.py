@@ -75,8 +75,11 @@ def _env(tick_id: str) -> dict[str, str]:
     env = dict(os.environ)
     env["ARC_TICK_ID"] = tick_id
     env["ARC_CRON_JOB"] = CRON_JOB
+    # ~/.hermes/.env wins over the inherited environment: the gateway process keeps the
+    # values it started with, so a key rotated in .env (D80 account swap) would otherwise
+    # stay stale until a gateway restart and every Alpaca call 401s.
     for key, value in _dotenv(HERMES_ENV).items():
-        if (key in PASS_THROUGH or key.startswith(PASS_PREFIXES)) and not env.get(key):
+        if (key in PASS_THROUGH or key.startswith(PASS_PREFIXES)) and value:
             env[key] = value
     env.setdefault("ARC_ENV", "paper")
     local_bin = str(Path.home() / ".local" / "bin")  # `hermes` for the persona LLM calls

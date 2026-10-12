@@ -833,6 +833,25 @@ class TestTickScript:
         assert "exit=0" in log
         assert "['routines', 'tick'] xoxb-test bar None paper" in log
 
+    def test_dotenv_beats_stale_inherited_keys(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The gateway keeps the env it started with; a key rotated in ~/.hermes/.env
+        # (D80 account swap) must still reach `arc`, or every Alpaca call 401s.
+        home = tmp_path / "home"
+        (home / ".hermes").mkdir(parents=True)
+        (home / ".hermes" / ".env").write_text(
+            "ALPACA_API_KEY=new-key\nALPACA_SECRET_KEY=new-secret\nSLACK_BOT_TOKEN=\n"
+        )
+        monkeypatch.setenv("ALPACA_API_KEY", "old-key")
+        monkeypatch.setenv("ALPACA_SECRET_KEY", "old-secret")
+        monkeypatch.setenv("SLACK_BOT_TOKEN", "inherited-token")
+        mod = _load_tick_script(tmp_path, monkeypatch, home)
+        env = mod._env("tick-x")
+        assert env["ALPACA_API_KEY"] == "new-key"
+        assert env["ALPACA_SECRET_KEY"] == "new-secret"
+        assert env["SLACK_BOT_TOKEN"] == "inherited-token"  # an empty .env value never blanks one
+
     @pytest.mark.parametrize(("code", "rc", "loud"), [(1, 0, False), (2, 2, True)])
     def test_exit_codes(
         self,
