@@ -60,7 +60,7 @@ from arc.execution.resolve import (
     is_transport_error,
     resolve_unknown_submit,
 )
-from arc.execution.submission import SubmitRefused, attempt_order_id, submit
+from arc.execution.submission import SubmitRefused, attempt_order_id, broker_arm_code, submit
 from arc.gate.band import PriceBand
 from arc.gate.rules import proposal_hash as hash_proposal
 from arc.gate.ticks import TickGrid, legs_grid
@@ -323,7 +323,7 @@ def _attempt(c: _Ctx, step: int, price: Decimal) -> tuple[AttemptRecord, str]:
     c.beat()
     token = c.decision.token or ""
     try:
-        coid = attempt_order_id(token, step)
+        coid = attempt_order_id(token, step, arm_code=broker_arm_code(c.broker))
     except TokenError:
         coid = f"invalid-token.{c.phash[:16]}.s{step}"
     order_id = c.orders.create(

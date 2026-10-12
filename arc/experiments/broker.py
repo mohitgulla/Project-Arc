@@ -139,4 +139,8 @@ def virtual_broker(
         cash_settlement=s.profile.buying_power is BuyingPower.CASH_SETTLED,
         now=now or now_et,
         control=_control_opener(ident),
+        account_mode=ident.account_mode,
+        arm_code=ident.arm_code,
+        account_sha256=ident.account_sha256,
+        keys_env=ident.keys_env,
     )

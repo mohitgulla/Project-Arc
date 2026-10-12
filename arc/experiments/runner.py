@@ -65,7 +65,7 @@ from arc.experiments.arms import (
 
 if TYPE_CHECKING:
     import sqlite3
-    from collections.abc import Callable, Iterable, Mapping
+    from collections.abc import Callable, Iterable, Mapping, Sequence
 
     from arc.config import ArcSettings
     from arc.experiments.config import ArmRunner, RunnerConfig
@@ -199,6 +199,7 @@ class ArmAccount:
     equity: Decimal
     positions: int
     open_orders: int
+    cash: Decimal | None = None  # E15.2: the shared account's cash at t0
 
     @property
     def flat(self) -> bool:
@@ -648,6 +649,7 @@ def start_arms(
         runner, arms, live, experiment_id=experiment_id, t0_equity=t0_equity, probe=probe
     )
     plans = plans_at_start(control, st, runner, routines_path=routines_path)
+    codes = _allocate_codes(control, runner, arms)
     created: list[Path] = []
     state = RoutineStateRepo(control)
     try:
@@ -677,6 +679,8 @@ def start_arms(
                         account_mode=runner.account_mode,
                         account_sha256=sha,
                         account_last4=last4,
+                        arm_code=codes.get(name),
+                        account_cash_t0=acct.cash if acct is not None else None,
                     ),
                 )
                 open_account(conn, aid, t0_equity=t0_equity, legacy=legacy, at=now)
@@ -717,6 +721,32 @@ def start_arms(
     return out
 
 
+def _allocate_codes(
+    control: sqlite3.Connection, runner: RunnerConfig, arms: Mapping[str, ArmRunner]
+) -> dict[str, str]:
+    """E15.2: one base62 arm code per shared-mode arm (``{}`` in dedicated mode).
+
+    Codes held by an arm on the same account that is running, or stopped but not flat,
+    are skipped; a stopped flat arm's code is reused. Fails closed (no free code).
+    """
+    if runner.account_mode != "shared":
+        return {}
+    from arc.experiments.attribution import CodeAllocationError, account_windows, free_codes
+    from arc.experiments.attribution import held_codes as _held
+
+    by_keys: dict[str, list[str]] = {}
+    for name, arm in arms.items():
+        by_keys.setdefault(arm.keys_env, []).append(name)
+    out: dict[str, str] = {}
+    for keys_env, names in by_keys.items():
+        taken = _held(account_windows(control, account_sha256=None, keys_env=keys_env))
+        try:
+            out.update(zip(names, free_codes(taken, len(names)), strict=True))
+        except CodeAllocationError as exc:
+            raise ArmStartError(str(exc)) from exc
+    return out
+
+
 def _arm_broker(keys_env: str, environ: Mapping[str, str] | None = None) -> Any:
     from arc.broker.alpaca_paper import AlpacaPaperBroker
     from arc.broker.registry import resolve_broker
@@ -747,6 +777,7 @@ def live_account_probe(environ: Mapping[str, str] | None = None) -> Callable[[st
             equity=info.equity,
             positions=len(broker.positions()),
             open_orders=len(open_orders or []),
+            cash=info.cash,
         )
 
     return probe
@@ -1333,6 +1364,7 @@ def arms_tick(
     spawner: Any = None,
     account_number: Callable[[str], str] | None = None,
     notifier: Any = None,
+    book_reader: Callable[[str], Any] | None = None,
 ) -> dict[str, Any]:
     """Pair recent control loop chains, then run each arm's own jobs (see the module doc).
 
@@ -1340,6 +1372,10 @@ def arms_tick(
     arm id (``XP-<n>:<arm>``). *account_number* ``(keys_env) -> account number`` (live)
     is read once per keys per tick: an arm whose recorded t0 account differs runs
     nothing and is halted ``account_changed`` (:func:`check_arm_account`).
+
+    E15.2: *book_reader* ``(keys_env) -> AccountBook`` reads each shared account once
+    per tick, before any arm runs; the book invariant halts the arms it reaches
+    (:func:`arc.experiments.attribution.enforce_book`). ``report["books"]``.
 
     Never raises for one arm's failure; the report says what each arm did.
     """
@@ -1366,6 +1402,9 @@ def arms_tick(
                 accounts[keys_env] = exc
         return accounts[keys_env]
 
+    if book_reader is not None:
+        report["books"] = _check_books(control, running, book_reader, now=now, notifier=notifier)
+
     for st in running:
         for name, path in arm_stores(control, st.experiment_id).items():
             out: dict[str, Any] = {"store": str(path)}
@@ -1388,6 +1427,60 @@ def arms_tick(
             )
     log.info("experiments.arms_tick", **{k: v for k, v in report.items() if k != "arms"})
     return report
+
+
+def _check_books(
+    control: sqlite3.Connection,
+    running: Sequence[ExperimentState],
+    book_reader: Callable[[str], Any],
+    *,
+    now: _dt.datetime,
+    notifier: Any,
+) -> dict[str, Any]:
+    """E15.2: the book invariant once per shared account (keys) per arms tick."""
+    from arc.experiments.attribution import account_violations, enforce_book
+
+    keys: set[str] = set()
+    for st in running:
+        for path in arm_stores(control, st.experiment_id).values():
+            conn = _ro(path)
+            if conn is None:
+                continue
+            try:
+                ident = read_identity(conn)
+            finally:
+                conn.close()
+            if ident is not None and ident.account_mode == "shared" and ident.arm_code:
+                keys.add(ident.keys_env)
+    out: dict[str, Any] = {}
+    for k in sorted(keys):
+        try:
+            book = book_reader(k)
+            vs = account_violations(book)
+            halted = enforce_book(book, now=now, notifier=notifier, violations=vs)
+            out[k] = {
+                "violations": [v.model_dump(mode="json") for v in vs],
+                "halted": sorted(halted),
+                "totals": book.totals(),
+            }
+        except Exception as exc:  # noqa: BLE001 - reported; each arm's reconcile re-checks
+            out[k] = {"error": f"{type(exc).__name__}: {exc}"}
+            log.exception("experiments.book_check_failed", keys_env=k)
+    return out
+
+
+def live_book_reader(
+    control: sqlite3.Connection, environ: Mapping[str, str] | None = None
+) -> Callable[[str], Any]:
+    """The live ``book_reader`` for :func:`arms_tick` (read-only broker calls)."""
+    from arc.experiments.attribution import account_book
+
+    def read(keys_env: str) -> Any:
+        broker = _arm_broker(keys_env, environ)
+        sha, _ = account_fingerprint(str(broker.account().account_id))
+        return account_book(broker, control, account_sha256=sha, keys_env=keys_env)
+
+    return read
 
 
 def _tick_one_arm(
