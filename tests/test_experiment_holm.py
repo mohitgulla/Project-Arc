@@ -291,3 +291,27 @@ def test_k1_spec_with_t1_name_stays_v1() -> None:
     rep = _report(c, "XP-2", days)
     assert rep.report_version == 1 and rep.pairwise is None
     assert json.loads(rep.canonical_json()).get("pairwise", "absent") == "absent"
+
+
+def test_k3_list_item_carries_variants_headline_and_arm_verdicts() -> None:
+    """D95: the Tower list row shows K, the headline arm and per-arm verdict counts."""
+    from arc.experiments.store import ExperimentStore
+    from arc.tower.data_experiments import _item
+
+    c = _conn()
+    rng = np.random.default_rng(7)
+    n = 30
+    ctrl = list(rng.normal(20, 300, n))
+    noise = rng.normal(0, 100, (3, n))
+    treats = {
+        "t1": [x + 400 + e for x, e in zip(ctrl, noise[0], strict=True)],
+        "t2": [x - 400 + e for x, e in zip(ctrl, noise[1], strict=True)],
+        "t3": [x + e for x, e in zip(ctrl, noise[2], strict=True)],
+    }
+    fx.start(c, _spec(3, max_sessions=40))
+    rep = _report(c, "XP-2", _curves(c, "XP-2", ctrl, treats))
+    item = _item(ExperimentStore(c).get("XP-2"), rep)
+    assert item.variants == 3
+    assert item.headline_arm == "t1"
+    assert item.arm_verdicts == {"t1": "win", "t2": "loss", "t3": "continue"}
+    assert _item(ExperimentStore(c).get("XP-2"), None).variants == 3

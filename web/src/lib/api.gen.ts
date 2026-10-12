@@ -2477,6 +2477,13 @@ export interface components {
         ExperimentListItem: {
             /** Area */
             area: string;
+            /**
+             * Arm Verdicts
+             * @description Treatment arm -> its Control-vs-arm verdict
+             */
+            arm_verdicts?: {
+                [key: string]: string;
+            };
             /** As Of Day */
             as_of_day?: string | null;
             /**
@@ -2488,6 +2495,11 @@ export interface components {
             evaluated_at?: string | null;
             /** Experiment Id */
             experiment_id: string;
+            /**
+             * Headline Arm
+             * @description Arm the headline numbers compare with Control (v2: best-ranked)
+             */
+            headline_arm?: string | null;
             kind: components["schemas"]["ExperimentKind"];
             /**
              * Line
@@ -2540,6 +2552,12 @@ export interface components {
             status: components["schemas"]["ExperimentStatus"];
             /** Title */
             title: string;
+            /**
+             * Variants
+             * @description Treatment arms in the spec (K)
+             * @default 1
+             */
+            variants: number;
             /**
              * Verdict
              * @description Latest verdict: continue|win|futility|invalid
