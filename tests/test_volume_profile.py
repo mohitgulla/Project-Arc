@@ -199,7 +199,7 @@ def test_session_ohlc_aggregates_per_day() -> None:
 _bar = st.tuples(
     st.floats(1.0, 500.0, allow_nan=False),
     st.floats(0.0, 20.0, allow_nan=False),
-    st.floats(0.0, 1e6, allow_nan=False),
+    st.integers(0, 10_000_000).map(float),  # share counts (no subnormal volumes)
 )
 
 
