@@ -2216,10 +2216,18 @@ def _realized_vol(snapshot: ContextSnapshot, ticker: str) -> float | None:
 
 
 def _exit_model(
-    c: ScanCandidate, spot: float, exits: ExitConfig, r: float, realized_vol: float | None
+    c: ScanCandidate,
+    spot: float,
+    exits: ExitConfig,
+    r: float,
+    realized_vol: float | None,
+    exit_block: str | None = None,
 ) -> ExitModelResult | None:
-    """E2.4 static vs managed numbers for a scanner candidate (None without an IV)."""
-    return candidate_model(c, spot, exits, r, realized_vol)
+    """E2.4 static vs managed numbers for a scanner candidate (None without an IV).
+
+    *exit_block* (E22.1): the candidate's sleeve exit block; ``None`` = kind policy.
+    """
+    return candidate_model(c, spot, exits, r, realized_vol, exit_block=exit_block)
 
 
 def _menu_rank_key(summary: ExitSummary | None, by: str) -> float:
@@ -2475,7 +2483,7 @@ def _quant_menus(ctx: JobContext, env: PipelineEnv, items: list[ResearchRankedIt
         r = settings.scanner_risk_free_rate
         models: dict[int, ExitModelResult] = {}
         for c in cands:
-            model = _exit_model(c, res.spot, exits, r, rv)
+            model = _exit_model(c, res.spot, exits, r, rv, settings.exit_block_for_dte(c.dte))
             if model is not None:
                 models[id(c)] = model
         if full:
@@ -2491,6 +2499,7 @@ def _quant_menus(ctx: JobContext, env: PipelineEnv, items: list[ResearchRankedIt
                 exits=exits,
                 r=r,
                 realized_vol=rv,
+                exit_block_for=settings.exit_block_for_dte,
             )
             m.rank_keys.update({id(c): keys[id(c)] for c in cands})
             log.info(
@@ -3392,20 +3401,23 @@ def _with_position(
     n: int,
     spot: Decimal | None = None,
     beta: Decimal | None = None,
+    entry_dte: int | None = None,
 ) -> Portfolio:
     """The in-memory book with a gate-passed proposal added, so the next proposal in the
     same run sees it. D57: its dollar delta (Δ × n × spot) is carried forward too; a
     passed proposal always had a spot (the gate fails closed without one). D62: so is
-    its beta-weighted dollar delta (Δ × n × spot × β used; β floored at 1.0)."""
+    its beta-weighted dollar delta (Δ × n × spot × β used; β floored at 1.0). E22.1:
+    its entry DTE too, so the gate's per-sleeve slot cap counts it (None: every sleeve)."""
     from arc.gate.inputs import Position
     from arc.models import Greeks
 
     pg = portfolio.greeks
     added = Decimal(str(g.delta)) * n * spot if spot is not None else Decimal(0)
     beta_used = max(beta if beta is not None else Decimal(1), Decimal(1))
+    new = Position(underlying=underlying, max_loss=max_loss, entry_dte=entry_dte)
     return portfolio.model_copy(
         update={
-            "positions": [*portfolio.positions, Position(underlying=underlying, max_loss=max_loss)],
+            "positions": [*portfolio.positions, new],
             "dollar_delta": portfolio.dollar_delta + added,
             "beta_dollar_delta": portfolio.beta_dollar_delta + added * beta_used,
             "greeks": Greeks(
@@ -3424,15 +3436,19 @@ def _proposal_exit_model(
     r: float,
     realized_vol: float | None,
     cost: CostModel | None = None,
+    exit_block: str | None = None,
 ) -> ExitModelResult | None:
-    """E2.4 model for the re-priced proposal structure (None without spot/IV)."""
+    """E2.4 model for the re-priced proposal structure (None without spot/IV).
+
+    *exit_block* (E22.1): the structure's sleeve exit block; ``None`` = kind policy.
+    """
     st = priced.structure
     if priced.spot is None or priced.atm_iv is None or st.dte < 1:
         return None
     try:
         return model_exits(
             st,
-            exits.policy_for(st.kind),
+            exits.policy_for(st.kind, exit_block),
             spot=priced.spot,
             iv=priced.atm_iv,
             r=r,
@@ -3465,7 +3481,14 @@ def _realloc_source(
     EV and PoP come from the E2.4 model at the re-priced mids, after all costs.
     """
     st = priced.structure
-    model = _proposal_exit_model(priced, exits, settings.scanner_risk_free_rate, realized_vol, cost)
+    model = _proposal_exit_model(
+        priced,
+        exits,
+        settings.scanner_risk_free_rate,
+        realized_vol,
+        cost,
+        settings.exit_block_for_dte(st.dte),
+    )
     bp = st.buying_power if st.buying_power is not None else st.max_loss
     return {
         "candidate_id": candidate_id,
@@ -3498,7 +3521,14 @@ def _restrictive_check(
     from arc.budget.orders import RestrictiveConfig, restrictive_floors
 
     st = priced.structure
-    model = _proposal_exit_model(priced, exits, settings.scanner_risk_free_rate, realized_vol, cost)
+    model = _proposal_exit_model(
+        priced,
+        exits,
+        settings.scanner_risk_free_rate,
+        realized_vol,
+        cost,
+        settings.exit_block_for_dte(st.dte),
+    )
     floors = restrictive_floors(
         RestrictiveConfig(
             min_net_ev_multiplier=settings.order_budget_restrictive_min_net_ev_multiplier,
@@ -3805,6 +3835,7 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
             settings.scanner_risk_free_rate,
             _realized_vol(ctx.snapshot, t),
             cost_model,
+            settings.exit_block_for_dte(st.dte),
         )
         # E6.4a (D41): live Net EV floor. A structure whose managed Net EV after all
         # costs is <= ranking.filters.min_managed_net_ev never becomes a proposal.
@@ -3870,6 +3901,9 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
         }
         if live_cap is not None:
             sizing_payload["live_cap"] = live_cap
+        if settings.profile.has_sleeves:  # E22.1 (D97): the open's entry-DTE sleeve
+            sleeve = settings.sleeve_for_dte(st.dte)
+            sizing_payload["sleeve"] = sleeve.name if sleeve is not None else None
         if not size.trade:
             skipped["sizing"] += 1
             if size.code == "budget_exhausted":
@@ -4073,6 +4107,7 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
                 size.contracts,
                 market.underlying_spot.get(t),
                 market.underlying_beta.get(t),
+                st.dte,
             )
     return JobResult(
         summary="; ".join(lines) or f"no proposals ({dict(skipped)})",
@@ -4196,6 +4231,7 @@ def quant_exit(ctx: JobContext, env: PipelineEnv) -> JobResult:
         ).items()
     }
     pending: list[ExitCase] = []
+    exit_blocks: dict[str, str] = {}  # E22.1: structure_id -> sleeve exit block
     fill_day_holds: list[tuple[str, str, str | None, list[ExitTrigger]]] = []
     for r in eligible:
         w = watch.get(r.structure_id)
@@ -4211,8 +4247,11 @@ def quant_exit(ctx: JobContext, env: PipelineEnv) -> JobResult:
             skip[r.structure_id] = "no_trigger"
             continue
         kind = rows[r.structure_id].get("kind") or r.kind
+        block = _exit_block_of_row(settings, rows[r.structure_id])
+        if block is not None:
+            exit_blocks[r.structure_id] = block
         try:
-            policy = exits.policy_for(StructureKind(kind)) if kind else exits.policy_for(None)
+            policy = exits.policy_for(StructureKind(kind) if kind else None, block)
         except ValueError:
             policy = exits.policy_for(None)
         case = ExitCasePayload(
@@ -4289,7 +4328,12 @@ def quant_exit(ctx: JobContext, env: PipelineEnv) -> JobResult:
     inputs = {
         "cases_block": "\n".join(_case_block(c, cap) for c in cases),
         "policy_summary": "\n".join(
-            sorted({exits.policy_for(None).summary(), *(_policy_line(exits, c) for c in cases)})
+            sorted(
+                {
+                    exits.policy_for(None).summary(),
+                    *(_policy_line(exits, c, exit_blocks.get(c.structure_id)) for c in cases),
+                }
+            )
         ),
         "scan_date": day,
         "rules": [
@@ -4365,12 +4409,30 @@ def quant_exit(ctx: JobContext, env: PipelineEnv) -> JobResult:
     )
 
 
-def _policy_line(exits: ExitConfig, case: ExitCase) -> str:
+def _exit_block_of_row(settings: ArcSettings, row: Mapping[str, Any]) -> str | None:
+    """E22.1 (D97): the sleeve exit block of an ``open_structures`` row (entry DTE).
+
+    ``None`` (kind policy) for a single-window profile, a sleeve without
+    ``exit_policy``, an entry DTE outside every current sleeve or an unreadable row.
+    """
+    if not settings.profile.has_sleeves:
+        return None
+    try:
+        st = Structure.model_validate_json(row["structure_json"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return settings.exit_block_of(st, row.get("opened_at"))
+
+
+def _policy_line(exits: ExitConfig, case: ExitCase, block: str | None = None) -> str:
     try:
         kind = StructureKind(case.kind) if case.kind else None
     except ValueError:
         kind = None
-    return f"{case.kind or 'default'}: {exits.policy_for(kind).summary()}"
+    label = case.kind or "default"
+    if block is not None:
+        label = f"{label} ({block} sleeve)"
+    return f"{label}: {exits.policy_for(kind, block).summary()}"
 
 
 # ---------------------------------------------------------------------------

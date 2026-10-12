@@ -137,6 +137,11 @@ class ScanParams(BaseModel):
 
     dte_min: int = Field(30, ge=1)
     dte_max: int = Field(45, ge=1)
+    dte_windows: list[tuple[int, int]] | None = Field(
+        None,
+        description="E22.1 (D97): the profile's sleeve windows; an expiry must fall inside "
+        "one (None = every expiry in [dte_min, dte_max], the single-window case)",
+    )
     target_delta: float = Field(0.20, gt=0.0, lt=1.0)
     delta_min: float = Field(0.16, gt=0.0, lt=1.0)
     delta_max: float = Field(0.30, gt=0.0, lt=1.0)
@@ -207,7 +212,8 @@ class ScanParams(BaseModel):
         """Defaults from :class:`arc.config.ArcSettings`, then *overrides*.
 
         The DTE window is the account profile's entry window (D25) and the default
-        strategies are every strategy the profile maps a stance to.
+        strategies are every strategy the profile maps a stance to. E22.1: a profile
+        with sleeves scans the envelope and keeps expiries inside some sleeve.
         """
         dte_min, dte_max = settings.entry_dte_window
         profile_strategies = profile_strategy_set(settings)
@@ -233,6 +239,8 @@ class ScanParams(BaseModel):
         }
         if profile_strategies:
             base["strategies"] = profile_strategies
+        if settings.profile.has_sleeves:
+            base["dte_windows"] = [(w.dte_min, w.dte_max) for w in settings.entry_sleeves]
         base.update({k: v for k, v in overrides.items() if v is not None})
         return cls.model_validate(base)
 
@@ -656,6 +664,12 @@ def scan(
         if exp_start <= c.expiration <= exp_end
     ]
     expirations = sorted({c.expiration for c in chain})
+    if params.dte_windows is not None:  # E22.1: the gap between two sleeves is out
+        expirations = [
+            e
+            for e in expirations
+            if any(lo <= dte_calendar(as_of, e) <= hi for lo, hi in params.dte_windows)
+        ]
 
     # IV context from the full (unfiltered) chain of the expiry nearest 30 DTE.
     iv_exp = min(

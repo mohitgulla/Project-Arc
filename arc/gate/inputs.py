@@ -90,6 +90,12 @@ class Position(_Frozen):
 
     underlying: str
     max_loss: Decimal = Field(..., ge=0, description="Total max loss of the position, dollars")
+    entry_dte: int | None = Field(
+        None,
+        ge=0,
+        description="E22.1 (D97): calendar DTE at the open (its sleeve); None = unknown, "
+        "counted toward every sleeve by rule sleeve_max_positions (fail closed)",
+    )
 
 
 class ClosedLot(_Frozen):

@@ -64,6 +64,7 @@ __all__ = [
     "check_max_open_positions",
     "check_max_gain",
     "check_per_underlying",
+    "check_sleeve_positions",
     "check_spread_tick",
     "check_structure_whitelist",
     "check_wash_sale",
@@ -120,6 +121,8 @@ class RuleCode(StrEnum):
     DAY_TRADES = "account_profile_day_trades"
     # D70 (E11.3): live opens capped until the live scorecard gate is met
     LIVE_SIZE_CAP = "live_size_cap"
+    # E22.1 (D97): open positions per entry-DTE sleeve
+    SLEEVE_POSITIONS = "sleeve_max_positions"
     RULE_ERROR = "rule_error"
 
 
@@ -746,11 +749,48 @@ def check_dte_window(d: Derived, config: ArcSettings, now: dt.datetime) -> list[
 
     The window is the account profile's ``dte_min/dte_max`` override when it sets
     one (D25), else ``dte_min/dte_max`` (:attr:`ArcSettings.entry_dte_window`).
+    E22.1 (D97): a profile with named sleeves needs the DTE inside **some** sleeve
+    (the gap between two sleeves is outside); the message names every sleeve.
     """
-    lo, hi = config.entry_dte_window
     dte = (d.expiration - now.astimezone(ET).date()).days
+    if config.profile.has_sleeves:
+        sleeves = config.entry_sleeves
+        if dte < 1 or config.sleeve_for_dte(dte) is None:
+            names = ", ".join(s.label for s in sleeves)
+            return _v(RuleCode.DTE_WINDOW, f"DTE {dte} outside sleeves {names}")
+        return []
+    lo, hi = config.entry_dte_window
     if dte < 1 or not lo <= dte <= hi:
         return _v(RuleCode.DTE_WINDOW, f"DTE {dte} outside [{max(lo, 1)}, {hi}]")
+    return []
+
+
+def check_sleeve_positions(
+    portfolio: Portfolio, d: Derived, config: ArcSettings, now: dt.datetime
+) -> list[Violation]:
+    """E22.1 (D97): open positions in the proposal's sleeve + 1 ≤ the sleeve's ``max_positions``.
+
+    The proposal's sleeve is the one containing its DTE as of ``now`` (none: rule
+    ``dte_window`` reports it, this rule passes). A sleeve without ``max_positions``
+    is uncapped (every single-window profile). A held position belongs to the sleeve
+    containing its *entry* DTE; one with an unknown entry DTE counts toward every
+    sleeve (fail closed). The global ``max_open_positions`` still applies on top.
+    """
+    dte = (d.expiration - now.astimezone(ET).date()).days
+    sleeve = config.sleeve_for_dte(dte)
+    if sleeve is None or sleeve.max_positions is None:
+        return []
+    held = sum(
+        1
+        for p in portfolio.positions
+        if p.entry_dte is None or config.sleeve_for_dte(p.entry_dte) == sleeve
+    )
+    n = held + 1
+    if n > sleeve.max_positions:
+        return _v(
+            RuleCode.SLEEVE_POSITIONS,
+            f"{n} positions in sleeve {sleeve.label} > max {sleeve.max_positions}",
+        )
     return []
 
 
@@ -930,7 +970,8 @@ def evaluate(
     ``closing``: the proposal closes an open position (E6.2 exits). Every leg must
     reduce a held leg (:func:`check_closing`); rules that only limit *opening*
     risk are skipped — daily-loss entry block, max open positions, Greek caps,
-    per-underlying cap, structure whitelist, account profile (D25), wash sale, entry DTE window and
+    per-underlying cap, structure whitelist, account profile (D25), wash sale, entry DTE window,
+    DTE-sleeve slots (E22.1) and
     earnings blackout. The halt, TTL, data freshness, spread/NBBO/tick and band
     checks still run (fail closed). An opens-only halt (E11.4, D73) blocks opens
     only.
@@ -988,6 +1029,7 @@ def evaluate(
             violations += _run("account_profile", lambda: check_account_profile(p, risk_d, a, c))
             violations += _run("wash_sale", lambda: check_wash_sale(dd, pf, c, now))
             violations += _run("dte_window", lambda: check_dte_window(dd, c, now))
+            violations += _run("sleeve_positions", lambda: check_sleeve_positions(pf, dd, c, now))
             violations += _run("earnings", lambda: check_earnings_blackout(p, dd, m, c, now))
 
     return GateDecision(

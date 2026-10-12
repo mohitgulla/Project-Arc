@@ -12,6 +12,13 @@
 #                      margin: broker margin buying power (per-underlying cap still binds)
 #   allow_short_legs   none | covered_only (same type + expiry, long worth >= short) | any
 #   dte_min/dte_max    optional entry DTE window override (else ARC_DTE_MIN/ARC_DTE_MAX)
+#   sleeves            E22.1 (D97), optional, instead of dte_min/dte_max: named entry-DTE
+#                      sleeves `name: {dte_min, dte_max, max_positions, exit_policy}`.
+#                      Windows never overlap; max_positions caps open positions by entry
+#                      DTE (gate rule sleeve_max_positions; 0 closes the sleeve, null = no
+#                      cap); exit_policy names a config/exits.yaml `sleeves:` block (null
+#                      = the kind policy). A dte_min/dte_max profile is one implicit
+#                      sleeve `default`. Switched on for the cash profiles by E22.4.
 #   stance_strategies  scanner strategies per Research stance; [] = no trade (journaled)
 
 profiles:

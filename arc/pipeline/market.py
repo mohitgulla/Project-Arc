@@ -260,6 +260,30 @@ def _group_legs(
     return groups
 
 
+def _entry_dtes(conn: sqlite3.Connection | None) -> dict[str, int]:
+    """E22.1 (D97): ``open_structures.id -> entry DTE`` of every open structure.
+
+    Derived (no column): the stored structure's ``dte`` as priced at the open, else
+    expiry minus the ``opened_at`` ET date (:func:`arc.account_profiles.entry_dte_of`).
+    A row whose structure cannot be read is left out (its legs count as unknown).
+    """
+    from arc.account_profiles import entry_dte_of
+    from arc.models import Structure as _Structure
+
+    if conn is None:
+        return {}
+    out: dict[str, int] = {}
+    rows = conn.execute(
+        "SELECT id, structure_json, opened_at FROM open_structures WHERE status = 'open'"
+    ).fetchall()
+    for sid, sj, opened_at in rows:
+        try:
+            out[str(sid)] = entry_dte_of(_Structure.model_validate_json(sj), opened_at)
+        except ValueError:
+            log.warning("portfolio.entry_dte_unreadable", structure_id=str(sid))
+    return out
+
+
 def build_portfolio(
     conn: sqlite3.Connection,
     positions: Sequence[BrokerPosition],
@@ -289,6 +313,7 @@ def build_portfolio(
     dollar_delta = Decimal(0)
     beta_dollar_delta = Decimal(0)
     groups = _group_legs(conn, positions)
+    entry_dtes = _entry_dtes(conn)
     betas = betas_used(conn, sorted({root for root, _, _ in groups}), today)
     for root, label, legs in groups:
         try:
@@ -299,7 +324,11 @@ def build_portfolio(
         if max_loss is None:
             msg = f"open {root} position ({label}) has unbounded risk"
             raise PortfolioError(msg)
-        open_positions.append(Position(underlying=root, max_loss=max_loss))
+        open_positions.append(
+            # E22.1: legs no open structure accounts for have no entry DTE (None: the
+            # gate's sleeve_max_positions counts them toward every sleeve).
+            Position(underlying=root, max_loss=max_loss, entry_dte=entry_dtes.get(label))
+        )
         exps = sorted({parse_occ(leg.occ_symbol).expiration for leg in legs})
         try:
             found = market_spot(market, root, today, max_spread_pct=spot_max_spread_pct)

@@ -287,6 +287,7 @@ def _computed_review(
             cost=cost_model(settings),
             exit_pending=bool(row.get("exit_proposal_hash")),
             peak_pnl=None if peak is None else float(peak),
+            exit_block=settings.exit_block_of(st, row.get("opened_at")),
         )
     except (LookupError, ValueError) as exc:
         log.warning("portfolio_context.review_failed", structure_id=row["id"], error=str(exc))

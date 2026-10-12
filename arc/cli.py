@@ -481,7 +481,9 @@ def _measure_menu(
     pool = list(res.candidates)
     models = {}
     for c in pool:
-        m = candidate_model(c, res.spot, exits, r, rv)
+        m = candidate_model(
+            c, res.spot, exits, r, rv, exit_block=settings.exit_block_for_dte(c.dte)
+        )
         if m is not None:
             models[id(c)] = m
     kept, keys = rank_menu(
@@ -495,6 +497,7 @@ def _measure_menu(
         exits=exits,
         r=r,
         realized_vol=rv,
+        exit_block_for=settings.exit_block_for_dte,
     )
     out = [c.model_copy(update={"rank": i}) for i, c in enumerate(kept, start=1)]
     vals = {(res.ticker, i): keys[id(c)].value for i, c in enumerate(kept, start=1)}
