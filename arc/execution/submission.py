@@ -20,14 +20,23 @@
 The client order id is unique per attempt, so the broker rejects any re-use.
 The ladder that steps the price and waits for each cancel is
 :mod:`arc.execution.ladder`.
+
+D69 / E15.2 arm tag: an experiment arm on a *shared* paper account sends
+``arc2.<code>.<token rest>.s<k>``, where ``<code>`` is the arm's 1-char base62 code
+(:data:`ARM_CODES`, allocated at t0, stored on ``arm_identity``). The broker's
+FILL activities carry the order id only, so the tag is how a fill is attributed to
+an arm. The gate token and its verification are unchanged: :func:`parse_order_id`
+strips the code and the gate verifies the bare ``arc2.<token>.s<k>``. Control's
+ids carry no code. This module is the only place the tag is built or parsed.
 """
 
 from __future__ import annotations
 
 import hmac
+import string
 from decimal import Decimal
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import structlog
 
@@ -37,6 +46,7 @@ from arc.execution.guard import TradingHaltedError, require_trading_allowed
 from arc.gate.rules import proposal_hash
 from arc.gate.ticks import legs_grid, max_decimal_places_ok
 from arc.gate.token import (
+    BAND_TOKEN_VERSION,
     BandToken,
     OrderPayload,
     TokenError,
@@ -57,9 +67,47 @@ if TYPE_CHECKING:
     from arc.gate.halt import HaltSwitch
     from arc.models import ApprovalRecord, GateDecision, Proposal
 
-__all__ = ["RefusalCode", "SubmitRefused", "attempt_order_id", "build_order", "submit"]
+__all__ = [
+    "ARM_CODES",
+    "MAX_CLIENT_ORDER_ID",
+    "OrderTag",
+    "RefusalCode",
+    "SubmitRefused",
+    "attempt_order_id",
+    "broker_arm_code",
+    "build_order",
+    "parse_order_id",
+    "submit",
+]
 
 log = structlog.get_logger()
+
+#: D69 arm codes, in allocation order: 62 one-char codes (hard arm ceiling is 16).
+ARM_CODES = string.digits + string.ascii_uppercase + string.ascii_lowercase
+#: Alpaca's ``client_order_id`` limit.
+MAX_CLIENT_ORDER_ID = 128
+_BAND_PREFIX = f"{BAND_TOKEN_VERSION}."
+
+
+class OrderTag(NamedTuple):
+    """A broker ``client_order_id`` split into its arm code and the gate's id."""
+
+    arm_code: str | None
+    gate_id: str
+
+
+def parse_order_id(client_order_id: str | None) -> OrderTag:
+    """``arc2.<code>.<rest>`` -> ``(code, arc2.<rest>)``; any other id -> ``(None, id)``.
+
+    The code segment is exactly one base62 char; a gate token's first segment after
+    ``arc2.`` is 22 chars, so the two never collide. Pure, no verification.
+    """
+    coid = client_order_id or ""
+    if coid.startswith(_BAND_PREFIX):
+        code, sep, rest = coid[len(_BAND_PREFIX) :].partition(".")
+        if sep and len(code) == 1 and code in ARM_CODES:
+            return OrderTag(code, f"{_BAND_PREFIX}{rest}")
+    return OrderTag(None, coid)
 
 
 class RefusalCode(StrEnum):
@@ -93,10 +141,24 @@ def _same(a: str, b: str) -> bool:
     return hmac.compare_digest(a.encode(), b.encode())
 
 
-def attempt_order_id(token: str, step: int) -> str:
-    """Broker ``client_order_id`` for attempt ``step``: ``<arc2>.s<k>``, or the bare arc1 token."""
+def attempt_order_id(token: str, step: int, *, arm_code: str | None = None) -> str:
+    """Broker ``client_order_id`` for attempt ``step``: ``<arc2>.s<k>``, or the bare arc1 token.
+
+    *arm_code* (D69, a shared-account arm): ``arc2.<code>.<token rest>.s<k>``. Only an
+    ``arc2`` token can carry it; an arc1 token or a malformed code is refused.
+    """
     if isinstance(parse_any(token), BandToken):
-        return client_order_id(token, step)
+        coid = client_order_id(token, step)
+        if arm_code is None:
+            return coid
+        if len(arm_code) != 1 or arm_code not in ARM_CODES:
+            raise TokenError(TokenErrorCode.MALFORMED, f"arm code {arm_code!r} is not base62")
+        tagged = f"{_BAND_PREFIX}{arm_code}.{coid[len(_BAND_PREFIX) :]}"
+        if len(tagged) > MAX_CLIENT_ORDER_ID:  # unreachable at the gate's price cap
+            raise TokenError(TokenErrorCode.MALFORMED, f"order id is {len(tagged)} chars")
+        return tagged
+    if arm_code is not None:
+        raise TokenError(TokenErrorCode.MALFORMED, "an arm order needs an arc2 token")
     if step != 0:
         raise TokenError(TokenErrorCode.BAD_STEP, "an arc1 token authorises one attempt only")
     return token
@@ -110,7 +172,12 @@ def _payload_at(proposal: Proposal, limit_price: Decimal | None) -> OrderPayload
 
 
 def build_order(
-    proposal: Proposal, token: str, *, step: int = 0, limit_price: Decimal | None = None
+    proposal: Proposal,
+    token: str,
+    *,
+    step: int = 0,
+    limit_price: Decimal | None = None,
+    arm_code: str | None = None,
 ) -> MlegOrder:
     """Broker order for attempt ``step`` of ``proposal`` at ``limit_price`` (default: its limit)."""
     payload = _payload_at(proposal, limit_price)
@@ -120,8 +187,14 @@ def build_order(
         qty=payload.qty,
         limit_price=payload.limit_price,
         time_in_force=payload.time_in_force,
-        client_order_id=attempt_order_id(token, step),
+        client_order_id=attempt_order_id(token, step, arm_code=arm_code),
     )
+
+
+def broker_arm_code(broker: object) -> str | None:
+    """The arm code a broker tags its orders with (a shared-mode arm broker), else None."""
+    code = getattr(broker, "arm_code", None)
+    return code if isinstance(code, str) else None
 
 
 def _check(
@@ -136,6 +209,7 @@ def _check(
     limit_price: Decimal | None,
     supports_mleg: bool = True,
     closing: bool = False,
+    arm_code: str | None = None,
 ) -> MlegOrder:
     if now.tzinfo is None or now.utcoffset() is None:
         raise SubmitRefused(RefusalCode.BAD_TIME, "`now` must be timezone-aware")
@@ -166,9 +240,10 @@ def _check(
     try:
         if token is None:
             raise TokenError(TokenErrorCode.MISSING, "gate decision carries no token")
-        order = build_order(proposal, token, step=step, limit_price=limit_price)
+        order = build_order(proposal, token, step=step, limit_price=limit_price, arm_code=arm_code)
+        # D69: the gate verifies its own id; an arm's code is stripped first.
         verify_client_order_id(
-            order.client_order_id,
+            parse_order_id(order.client_order_id).gate_id,
             secret=gate_secret(config),
             now=now,
             proposal_hash=ph,
@@ -236,6 +311,7 @@ def submit(
             limit_price=limit_price,
             supports_mleg=getattr(broker, "supports_mleg", True) is not False,
             closing=closing,
+            arm_code=broker_arm_code(broker),
         )
     except SubmitRefused as exc:
         log.warning("execution.submit_refused", code=str(exc.code), detail=exc.detail, step=step)

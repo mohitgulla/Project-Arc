@@ -1655,6 +1655,30 @@ The treatment arm is the same trading loop on its own paper account
   `--arm-db` defaults to the stores control recorded at t0. Rehearse on
   `.backup` copies first (repoint `routine_state experiment_arm:<arm>` in the
   control copy, or pass `--arm-db`); a live run needs the owner's ok.
+- Shared account (E15.2, D69; `experiments.runner.account_mode: shared`): every
+  treatment arm trades on the one `ALPACA_EXP_*` account. At t0 each arm gets a
+  1-char base62 arm code (`arm_identity.arm_code`, migration 037), unique among
+  the account's running arms and stopped arms that still hold contracts; a
+  stopped, flat arm's code is reused, and t0 fails when none is free (62 codes).
+  Arm orders go out as `arc2.<code>.<token>.s<k>` (`arc.execution.submission`;
+  the gate verifies the id with the code stripped; control's ids carry none).
+- The arm's ledger is booked from the account's activities, not `fills()`:
+  FILL (an mleg leg's id maps to its parent order's tag) → `act:<id>`; FEE →
+  `fee:<id>`, joined to its fill when Alpaca links one, else split over the ET
+  day's contracts per arm to the cent; OPEXP/OPASN/OPEXC → `evt:<id>`, split by
+  the arms holding the contract, with the paired OPTRD share leg. Positions and
+  equity are the arm's own ledger marked at the broker's prices.
+- Book invariant (each arms tick, once per account, before any arm runs, and in
+  each arm's `broker.reconcile`): the arms' net contracts per symbol equal the
+  broker's; broker cash − cash at the first arm's t0 equals the arms' flows
+  within the fees Alpaca has accrued but not posted (≤ $0.05/contract on days
+  with no FEE row yet) + 1¢ per fee row; every order since t0 carries a live arm
+  tag (smoke ids `arc-…`/`test.` are exempt). A one-arm qty drift halts that
+  arm; anything account-wide (untagged order/fill, cash, a symbol no single arm
+  explains) halts every running arm on the account. Halt reason
+  `book_invariant: …`, journal `reconcile:book_invariant`, one `[Ops]` notice
+  per arm; after fixing the cause, the owner resumes the arm with
+  `ARC_DB_PATH=<arm store> arc resume --actor <owner>`.
 
 ### 5.20 Strategy-lane CI check: locked leaves + XP advisory (E21.1, D86; was E10.7 / D44)
 

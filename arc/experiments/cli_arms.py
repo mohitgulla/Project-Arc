@@ -339,7 +339,7 @@ def _arms_tick(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
     now = _parse_now(args.now)
     lock_dir = Path(args.lock_dir)
     report: dict[str, Any]
-    from arc.experiments.runner import live_account_number
+    from arc.experiments.runner import live_account_number, live_book_reader
     from arc.monitoring.alerts import LogOpsNotifier, OpsNotifier, SlackOpsNotifier
     from arc.routines.config import load_routines
 
@@ -360,6 +360,7 @@ def _arms_tick(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
                 spawner=spawn_detached,
                 account_number=live_account_number(),
                 notifier=notifier,
+                book_reader=live_book_reader(conn),
             )
     except LockBusyError as exc:
         report = {"skipped": f"another arms-tick is running ({exc})"}

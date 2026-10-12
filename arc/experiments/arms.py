@@ -16,6 +16,7 @@ import datetime as _dt  # noqa: TC003 - pydantic resolves ArmIdentity's annotati
 import json
 import os
 import sqlite3
+from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -76,6 +77,13 @@ class ArmIdentity(BaseModel):
         description="sha256 of the broker account_number at t0 (never the raw number)",
     )
     account_last4: str | None = Field(default=None, description="last 4 of the account_number")
+    # E15.2 (migration 037): the shared-mode arm tag and the account's cash at t0.
+    arm_code: str | None = Field(
+        default=None, description="1-char base62 arm code (shared mode); None = untagged"
+    )
+    account_cash_t0: Decimal | None = Field(
+        default=None, description="broker cash at this arm's t0 (book invariant baseline)"
+    )
 
 
 def read_identity(conn: sqlite3.Connection) -> ArmIdentity | None:
@@ -99,6 +107,12 @@ def read_identity(conn: sqlite3.Connection) -> ArmIdentity | None:
         ).fetchone()
     except sqlite3.OperationalError:
         a = None
+    try:  # E15.2 (migration 037)
+        c = conn.execute(
+            "SELECT arm_code, account_cash_t0 FROM arm_identity WHERE id = 1"
+        ).fetchone()
+    except sqlite3.OperationalError:
+        c = None
     return ArmIdentity(
         arm_id=r[0],
         experiment_id=r[1],
@@ -112,6 +126,8 @@ def read_identity(conn: sqlite3.Connection) -> ArmIdentity | None:
         account_mode=(a[0] if a is not None and a[0] else "dedicated"),
         account_sha256=a[1] if a is not None else None,
         account_last4=a[2] if a is not None else None,
+        arm_code=c[0] if c is not None and c[0] else None,
+        account_cash_t0=Decimal(str(c[1])) if c is not None and c[1] else None,
     )
 
 
@@ -124,8 +140,9 @@ def write_identity(conn: sqlite3.Connection, ident: ArmIdentity) -> None:
         conn.execute(
             """INSERT INTO arm_identity
                (id, arm_id, experiment_id, arm, spec_arm, keys_env, control_db, overlay,
-                created_at, plan, account_mode, account_sha256, account_last4)
-               VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                created_at, plan, account_mode, account_sha256, account_last4,
+                arm_code, account_cash_t0)
+               VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 ident.arm_id,
                 ident.experiment_id,
@@ -139,6 +156,8 @@ def write_identity(conn: sqlite3.Connection, ident: ArmIdentity) -> None:
                 ident.account_mode,
                 ident.account_sha256,
                 ident.account_last4,
+                ident.arm_code,
+                None if ident.account_cash_t0 is None else str(ident.account_cash_t0),
             ),
         )
 

@@ -17,8 +17,13 @@ into :class:`VirtualState`:
 * ``adjust``: a compensating row ``arc experiment repair-ledger`` appends for a
   fill booked twice before E10.2c (:mod:`arc.experiments.repair`).
 
-Virtual equity = virtual cash + the market value of the arm's broker positions
-(the account was flat at t0, so every position is the arm's own); it moves only
+Virtual equity = virtual cash + the market value of the arm's positions. In
+**dedicated** mode the account was flat at t0, so every broker position is the
+arm's own; in **shared** mode (D69, E15.2) the positions are the arm's own fill
+ledger netted per contract and marked at the broker's price, never another arm's
+legs, and the ledger is booked from the account's FILL / FEE / option-event
+activities by :mod:`arc.experiments.attribution` (``act:`` / ``fee:`` / ``evt:``
+refs). Equity moves only
 with the arm's own P&L and is never re-synced to control. The excess broker
 equity (paper $100k vs a $10k control) is never usable: every buying-power
 figure handed to the trading code is ``min(broker, virtual - reserved)``.
@@ -46,16 +51,18 @@ from arc.utils.calendar import ET, next_session
 
 if TYPE_CHECKING:
     import sqlite3
-    from collections.abc import Callable, Iterable, Sequence
+    from collections.abc import Callable, Iterable, Mapping, Sequence
 
     from arc.broker.base import BrokerAdapter
 
 __all__ = [
     "MULTIPLIER",
     "LedgerRow",
+    "SharedAccountError",
     "VirtualBroker",
     "VirtualState",
     "append_row",
+    "arm_positions",
     "booked",
     "fill_amount",
     "fill_ref",
@@ -71,7 +78,9 @@ __all__ = [
 log = structlog.get_logger(__name__)
 
 MULTIPLIER = Decimal(100)
-LedgerKind = Literal["open", "legacy_hold", "legacy_release", "fill", "adjust"]
+LedgerKind = Literal["open", "legacy_hold", "legacy_release", "fill", "adjust", "fee", "event"]
+#: rows that move cash and/or held contracts (E15.2 adds shared-mode fee + event)
+_FLOW_KINDS = ("fill", "adjust", "fee", "event")
 
 
 class LedgerRow(BaseModel):
@@ -326,16 +335,18 @@ def replay(ledger: Sequence[LedgerRow], *, as_of: _dt.date) -> VirtualState:
             holds[r.ref] = r.amount
         elif r.kind == "legacy_release":
             released.add(r.ref)
-        elif r.kind in ("fill", "adjust"):
+        elif r.kind in _FLOW_KINDS:
             day = r.at.astimezone(ET).date()
             if day > as_of:
                 continue
             cash += r.amount
             sym, qty = str(r.detail.get("symbol", "")), Decimal(str(r.detail.get("qty", "0")))
-            held[sym] += qty
+            if sym:
+                held[sym] += qty
             if day < as_of:
                 cash_sod += r.amount
-                held_sod[sym] += qty
+                if sym:
+                    held_sod[sym] += qty
             pending = r.settles_on is not None and r.settles_on > as_of
             if pending and (r.amount > 0 or r.kind == "adjust"):
                 # an adjust nets out the unsettled proceeds of the fill it compensates
@@ -461,6 +472,46 @@ def virtual_account(
     )
 
 
+def arm_positions(
+    held: Mapping[str, Decimal], broker: Sequence[BrokerPosition]
+) -> list[BrokerPosition]:
+    """Shared mode: the arm's net qty per contract, marked at the broker's price.
+
+    Never another arm's legs: the qty is the arm's own; ``current_price`` /
+    ``lastday_price`` / ``change_today`` come from the broker's netted position of
+    the contract, and the value fields are rescaled to the arm's qty.
+    """
+    by_symbol = {p.symbol: p for p in broker}
+    out: list[BrokerPosition] = []
+    for sym, qty in sorted(held.items()):
+        if not qty:
+            continue
+        p = by_symbol.get(sym)
+        px = p.current_price if p is not None else None
+        side = "short" if qty < 0 else "long"
+        option = len(sym) > 15  # an OCC symbol; else shares from an exercise/assignment
+        mv = None if px is None else (qty * px * (MULTIPLIER if option else 1))
+        out.append(
+            BrokerPosition(
+                symbol=sym,
+                qty=abs(qty),
+                side=side,
+                market_value=mv,
+                asset_class=(
+                    p.asset_class if p is not None else ("us_option" if option else "us_equity")
+                ),
+                current_price=px,
+                lastday_price=p.lastday_price if p is not None else None,
+                change_today=p.change_today if p is not None else None,
+            )
+        )
+    return out
+
+
+class SharedAccountError(RuntimeError):
+    """A shared-mode arm tried to act on another arm's order or contract."""
+
+
 class VirtualBroker:
     """The arm's broker: the real paper broker, with ``account()`` made virtual.
 
@@ -483,6 +534,10 @@ class VirtualBroker:
         now: Callable[[], _dt.datetime],
         control: Callable[[], sqlite3.Connection | None] | None = None,
         fee_per_contract: Decimal = Decimal(0),
+        account_mode: str = "dedicated",
+        arm_code: str | None = None,
+        account_sha256: str | None = None,
+        keys_env: str = "",
     ) -> None:
         self.inner = inner
         self.conn = conn
@@ -492,15 +547,45 @@ class VirtualBroker:
         self._now = now
         self._control = control
         self.fee_per_contract = fee_per_contract
+        self.account_mode = account_mode
+        #: D69 arm tag; ``submit``/the ladder read it (``broker_arm_code``)
+        self.arm_code = arm_code if account_mode == "shared" else None
+        self.account_sha256 = account_sha256
+        self.keys_env = keys_env
+        self._book: Any = None  # last shared-mode pass (attribution.AccountBook)
+
+    @property
+    def shared(self) -> bool:
+        """Shared mode with an arm code: attribution by tag (pre-E15.2 arms stay legacy)."""
+        return self.arm_code is not None
+
+    def book(self, *, refresh: bool = False) -> Any:
+        """Shared mode: the account-wide attribution pass (cached per instance)."""
+        from arc.experiments.attribution import account_book
+
+        if self._book is None or refresh:
+            self._book = account_book(
+                self.inner,
+                self._control,
+                account_sha256=self.account_sha256,
+                keys_env=self.keys_env,
+            )
+        return self._book
 
     def sync(self) -> VirtualState:
         now = self._now()
-        record_fills(
-            self.conn,
-            self.arm_id,
-            self.inner.fills(self.t0),
-            fee_per_contract=self.fee_per_contract,
-        )
+        if self.shared:
+            book = self.book(refresh=True)
+            with self.conn:
+                for r in book.attribution.rows.get(self.arm_id, []):
+                    _insert(self.conn, r)
+        else:
+            record_fills(
+                self.conn,
+                self.arm_id,
+                self.inner.fills(self.t0),
+                fee_per_contract=self.fee_per_contract,
+            )
         state = replay(rows(self.conn, self.arm_id), as_of=now.astimezone(ET).date())
         if state.legacy_open and self._control is not None:
             ctl = self._control()
@@ -521,7 +606,7 @@ class VirtualBroker:
         info = virtual_account(
             state,
             self.inner.account(),
-            self.inner.positions(),
+            self.positions(),
             cash_settlement=self.cash_settlement,
         )
         log.info(
@@ -533,6 +618,97 @@ class VirtualBroker:
             legacy_reserved=str(state.legacy_reserved),
         )
         return info
+
+    def positions(self) -> list[BrokerPosition]:
+        """Dedicated: the broker's positions. Shared: the arm's own ledger, broker-marked."""
+        broker = self.inner.positions()
+        if not self.shared:
+            return broker
+        state = replay(rows(self.conn, self.arm_id), as_of=self._now().astimezone(ET).date())
+        return arm_positions(state.held, broker)
+
+    def fills(self, since: _dt.datetime) -> list[Fill]:
+        """Shared mode: only fills of orders carrying this arm's tag."""
+        out = self.inner.fills(since)
+        if not self.shared:
+            return out
+        from arc.execution.submission import parse_order_id
+
+        return [f for f in out if parse_order_id(f.client_order_id).arm_code == self.arm_code]
+
+    # -- shared mode: account-wide write calls stay inside the arm ----------------------
+
+    def _own_order(self, client_order_id: str | None) -> None:
+        from arc.execution.submission import parse_order_id
+
+        code = parse_order_id(client_order_id).arm_code
+        if code != self.arm_code:
+            raise SharedAccountError(
+                f"arm {self.arm_id} (code {self.arm_code}) may not touch order "
+                f"{client_order_id!r} (code {code}) on the shared account"
+            )
+
+    def cancel(self, broker_order_id: str) -> None:
+        """Shared mode: only an order carrying this arm's tag (fail closed otherwise)."""
+        if self.shared:
+            self._own_order(self.inner.order_status(broker_order_id).client_order_id)
+        self.inner.cancel(broker_order_id)
+
+    def cancel_by_client_id(self, client_order_id: str) -> None:
+        if self.shared:
+            self._own_order(client_order_id)
+        self.inner.cancel_by_client_id(client_order_id)
+
+    def do_not_exercise(self, occ: str) -> None:
+        """Shared mode: a DNE covers the whole account's contract, so only when this
+        arm is the sole holder (refused when another arm holds it too, or none)."""
+        if self.shared:
+            holders = sorted(
+                arm
+                for arm, held in self.book(refresh=True).attribution.held.items()
+                if held.get(occ, Decimal(0)) != 0
+            )
+            if holders != [self.arm_id]:
+                raise SharedAccountError(
+                    f"do-not-exercise {occ}: holders on the shared account are "
+                    f"{holders or 'none'}, not {self.arm_id} alone"
+                )
+        self.inner.do_not_exercise(occ)
+
+    def activities(self, since: _dt.date, **kw: Any) -> list[Any]:
+        """Shared mode: only the option events attributed to this arm."""
+        out = self.inner.activities(since, **kw)
+        if not self.shared:
+            return list(out)
+        mine = {
+            r.ref.removeprefix("evt:").rsplit(":", 1)[0]  # evt:<activity id>:<symbol>
+            for r in self.book(refresh=True).attribution.rows.get(self.arm_id, [])
+            if r.kind == "event"
+        }
+        return [a for a in out if str(getattr(a, "id", "")) in mine]
+
+    def book_violations(self) -> list[Any]:
+        """Shared mode: the account's book invariant (``[]`` in dedicated mode)."""
+        if not self.shared:
+            return []
+        from arc.experiments.attribution import account_violations
+
+        return account_violations(self.book())
+
+    def book_check(self, *, now: _dt.datetime, notifier: Any = None) -> list[Any]:
+        """Reconcile's hook: check the account, halt every arm reached, return this arm's.
+
+        Account-scope violations reach every arm (this one included); arm-scope ones
+        only their arm. Fresh read of the account (``book(refresh=True)``).
+        """
+        if not self.shared:
+            return []
+        from arc.experiments.attribution import account_violations, enforce_book
+
+        book = self.book(refresh=True)
+        vs = account_violations(book)
+        enforce_book(book, now=now, notifier=notifier, violations=vs)
+        return [v for v in vs if v.scope == "account" or v.arm_id == self.arm_id]
 
     def __getattr__(self, name: str) -> Any:
         # positions, submit_mleg, cancel, order_status, fills, orders, ...

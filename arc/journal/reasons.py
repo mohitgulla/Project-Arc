@@ -305,6 +305,8 @@ class ReasonCode(StrEnum):
     RECONCILE_WASH_SALE = "reconcile:wash_sale"
     RECONCILE_LOT_PRICE = "reconcile:lot_price"
     RECONCILE_TEST_FILL = "reconcile:test_fill"
+    # E15.2 (D69): the shared experiment account's book invariant failed (arms vs broker)
+    RECONCILE_BOOK_INVARIANT = "reconcile:book_invariant"
     # E6.2g: a stored fill whose sign disagreed with its signed band, repaired by
     # `arc journal repair-fill-signs`; the payload carries the realised P&L delta
     RECONCILE_FILL_SIGN = "reconcile:fill_sign_corrected"
@@ -557,6 +559,7 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.RECONCILE_ASSIGNMENT: "Short leg assigned at the broker (booked)",
     ReasonCode.RECONCILE_EXERCISE: "Long leg exercised at the broker (booked)",
     ReasonCode.RECONCILE_TEST_FILL: "Integration-test fill seen at reconcile",
+    ReasonCode.RECONCILE_BOOK_INVARIANT: "Shared-account book invariant failed (arm halted)",
     ReasonCode.EXPERIMENT_DRAFTED: "Experiment drafted",
     ReasonCode.EXPERIMENT_REGISTERED: "Experiment pre-registered (spec locked)",
     ReasonCode.EXPERIMENT_QUEUED: "Experiment queued behind another in its area",
