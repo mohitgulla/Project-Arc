@@ -1020,6 +1020,10 @@ class TestFixtureDryRun:
         )
         ChannelBriefRepo(conn).store(res, proc, now=now)
         conn.close()
+        # The setup above logs `db.connected` through structlog's default (stdout) config
+        # when no earlier test on this worker routed logs to stderr; drop it so only the
+        # CLI's own stdout is parsed (order-dependent under xdist otherwise).
+        capsys.readouterr()
 
         assert main(["brief", "show", "--channel", "stockedup", "--db", str(path)]) == 0
         shown = json.loads(capsys.readouterr().out)
