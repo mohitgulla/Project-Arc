@@ -59,6 +59,7 @@ from pydantic import BaseModel, ValidationError
 
 from arc.context.kinds import (
     NOTE_SECTION_MAX,
+    CandidatePayload,
     Evidence,
     ExitCasePayload,
     ExitWatchlistPayload,
@@ -66,6 +67,7 @@ from arc.context.kinds import (
     NoteSection,
     NoteTopic,
     ProposalPayload,
+    PullbackWatchPayload,
     RegimePayload,
     RiskExitReviewPayload,
     RiskReviewPayload,
@@ -256,6 +258,8 @@ RESEARCH_READS = [
     # E23.0 (D98): the pre-market volume profile + OI walls, merged into the day's
     # regime technicals (volume_profile / oi_walls on)
     "levels",
+    # E23.2 (D98): anti-chase drops on watch for a pullback (pullback_watch on)
+    "pullback_watch",
 ]  # == routines.yaml research.reads (D30 adds the options-data kinds)
 # E5.9 drop reasons (Research stage; deterministic). Values == ReasonCode values.
 DROP_CONCENTRATION = ReasonCode.DROP_CONCENTRATION.value
@@ -1519,6 +1523,299 @@ def _journal_range_edges(
         )
 
 
+# ---------------------------------------------------------------------------
+# E23.2 (D98): the pullback watch for anti-chase drops
+# ---------------------------------------------------------------------------
+
+#: ``pullback_watch`` context entries carry this prefix on candidate ``sources``.
+PULLBACK_SOURCE_PREFIX = "pullback_watch:"
+
+
+def _pullback_subject(ticker: str, stance: str) -> str:
+    return f"{ticker}:{stance}"
+
+
+def _live_watches(snap: ContextSnapshot) -> list[PullbackWatchPayload]:
+    """The ``pullback_watch`` entries still on watch (closed successors are skipped)."""
+    out: list[PullbackWatchPayload] = []
+    for e in snap.of_kind("pullback_watch"):
+        if snap.latest("pullback_watch", e.subject) is not e:
+            continue  # superseded inside the snapshot
+        w = PullbackWatchPayload.model_validate(e.payload)
+        if w.status == "watching":
+            out.append(w)
+    return sorted(out, key=lambda w: (w.ticker, w.stance))
+
+
+def _pending_tickers(conn: sqlite3.Connection) -> set[str]:
+    """Tickers with an approval request still pending (a proposal in flight)."""
+    rows = conn.execute("SELECT DISTINCT ticker FROM approval_requests WHERE status = 'pending'")
+    return {str(r[0]) for r in rows}
+
+
+@dataclasses.dataclass
+class _Pullback:
+    """E23.2 (D98): what the pullback-watch review did in one Research run."""
+
+    ready: list[tuple[PullbackWatchPayload, Any]] = dataclasses.field(default_factory=list)
+    waiting: int = 0
+    added_candidates: list[str] = dataclasses.field(default_factory=list)
+    # (ticker, stance) of the watches still open after this review
+    live: set[tuple[str, str]] = dataclasses.field(default_factory=set)
+
+    def metrics(self) -> dict[str, int]:
+        return {
+            "pullback_ready": len(self.ready),
+            "pullback_waiting": self.waiting,
+            "pullback_candidates": len(self.added_candidates),
+        }
+
+    def facts(self) -> list[str]:
+        """Loop digest keys (D31): the rendered section is a Research input, so a ready
+        watch or a change in the waiting count is a changed input."""
+        out = sorted(f"pullback:{w.ticker}:{w.stance}:ready" for w, _ in self.ready)
+        return [*out, f"pullback:waiting:{self.waiting}"] if self.waiting else out
+
+    def lines(self, max_ready: int) -> str:
+        """The code-built prompt lines (\"\" = no section; the prompt is unchanged)."""
+        ready = sorted(self.ready, key=lambda r: (-r[0].confidence, r[0].ticker))[:max_ready]
+        out = [_pullback_ready_line(w, v) for w, v in ready]
+        if self.waiting:
+            out.append(f"Pullback watch: {self.waiting} waiting")
+        return "\n".join(out)
+
+
+def _pullback_ready_line(w: PullbackWatchPayload, v: Any) -> str:
+    """``Pullback watch (ready): NVDA bullish · dropped Tue at +2.8 ATR / RSI 79 · now …``."""
+    day = _dt.datetime.fromisoformat(w.dropped_at).astimezone(ET).strftime("%a")
+    at: list[str] = []
+    if w.stretch_atr_at_drop is not None:
+        at.append(f"{w.stretch_atr_at_drop:+.1f} ATR")
+    if w.rsi14_at_drop is not None:
+        at.append(f"RSI {w.rsi14_at_drop:.0f}")
+    if w.vwap_stretch_at_drop is not None:
+        at.append(f"{w.vwap_stretch_at_drop:+.1f} ATR vs VWAP")
+    dropped = f"dropped {day}" + (" at " + " / ".join(at) if at else "")
+    thesis = " ".join(w.thesis.split())
+    return f"Pullback watch (ready): {w.ticker} {w.stance} · {dropped} · {v.now_text()}" + (
+        f" · thesis: {thesis}" if thesis else ""
+    )
+
+
+def _pullback_review(
+    ctx: JobContext,
+    env: PipelineEnv,
+    snap: ContextSnapshot,
+    watches: list[PullbackWatchPayload],
+    cands: Mapping[str, Stance],
+) -> _Pullback:
+    """E23.2 (D98): re-check every live watch; close, re-arm or count it.
+
+    Closed (expired / invalidated / retired by dedupe) and first-time-ready watches
+    get a successor entry and one journal record. A ready watch whose ticker is not in
+    today's candidates gets a ``candidate`` row + entry (origin ``pullback_watch``) so
+    Research may rank it and ``proposals.candidate_id`` resolves. Spot is
+    :func:`arc.data.base.reference_price` (never a one-sided quote mid).
+    """
+    from arc.data.base import reference_price
+    from arc.features.technicals import TechnicalFeatures
+    from arc.pipeline.pullback import WatchView, rearm_verdict
+
+    cfg = ctx.routines.pullback_watch
+    vwap_on = ctx.routines.anti_chase.enabled and ctx.routines.anti_chase.vwap
+    rule = cfg.rule(vwap=vwap_on)
+    today = _today(ctx)
+    take = _alpaca_take(ctx, env) if vwap_on else None
+    busy = _held_tickers(ctx.conn) | _pending_tickers(ctx.conn)
+    j = _journal(ctx, snap.id)
+    res = _Pullback()
+    now_iso = ctx.now.isoformat()
+    for w in watches:
+        subject = _pullback_subject(w.ticker, w.stance)
+        if w.ticker in busy:
+            why = "open position or pending proposal on the ticker"
+            ctx.write(
+                "pullback_watch",
+                subject,
+                w.model_copy(update={"status": "retired", "closed_reason": why}),
+            )
+            j.add(
+                JournalPersona.RESEARCH,
+                Stage.SHORTLIST,
+                w.ticker,
+                Choice.NOTED,
+                ReasonCode.PULLBACK_RETIRED,
+                reason_text=f"{w.stance}: {why}",
+                payload={"watch": w.model_dump(mode="json")},
+            )
+            continue
+        entry = snap.latest("regime", w.ticker)
+        payload = entry.payload if entry is not None else {}
+        raw = payload.get("technicals")
+        tech = TechnicalFeatures.model_validate(raw) if raw else None
+        label = (payload.get("regime") or {}).get("current")
+        try:
+            spot = reference_price(env.market, w.ticker, today=today)
+        except Exception as exc:  # noqa: BLE001 - no spot = waiting (fail closed)
+            log.warning("pipeline.pullback_spot_failed", ticker=w.ticker, error=str(exc)[:200])
+            spot = None
+        ctx.record_input(f"pullback_spot:{w.ticker}", _source(env), spot, as_of=ctx.now)
+        atr = (tech.atr14 if tech is not None else None) or w.atr14
+        vwap_stretch: float | None = None
+        if vwap_on:
+            vwap_stretch, why, _feed = _session_vwap_stretch(ctx, env, w.ticker, atr, take)
+            if vwap_stretch is None:
+                j.add(
+                    JournalPersona.RESEARCH,
+                    Stage.SHORTLIST,
+                    w.ticker,
+                    Choice.NOTED,
+                    ReasonCode.VWAP_MISSING,
+                    reason_text=f"pullback watch: {why}; waiting",
+                )
+        view = WatchView(
+            ticker=w.ticker,
+            stance=w.stance,
+            expires_session=_dt.date.fromisoformat(w.expires_session),
+            price_at_drop=w.price_at_drop,
+            sma20=w.sma20,
+            atr14=w.atr14,
+        )
+        v = rearm_verdict(view, spot, tech, vwap_stretch, rule, today=today, regime=label)
+        verdict = v.model_dump(mode="json")
+        if v.status in ("expired", "invalidated"):
+            code = (
+                ReasonCode.PULLBACK_EXPIRED
+                if v.status == "expired"
+                else ReasonCode.PULLBACK_INVALIDATED
+            )
+            ctx.write(
+                "pullback_watch",
+                subject,
+                w.model_copy(update={"status": v.status, "closed_reason": v.reason[:240]}),
+            )
+            j.add(
+                JournalPersona.RESEARCH,
+                Stage.SHORTLIST,
+                w.ticker,
+                Choice.NOTED,
+                code,
+                reason_text=f"{w.stance}: {v.text()}",
+                payload={"watch": w.model_dump(mode="json"), "pullback": verdict},
+            )
+            continue
+        if v.vp_missing:
+            j.add(
+                JournalPersona.RESEARCH,
+                Stage.SHORTLIST,
+                w.ticker,
+                Choice.NOTED,
+                ReasonCode.VP_MISSING,
+                reason_text="pullback watch: no volume-profile levels; SMA20 target used",
+            )
+        res.live.add((w.ticker, w.stance))
+        if not v.ready:
+            res.waiting += 1
+            continue
+        res.ready.append((w, v))
+        if w.rearmed_at is None:
+            ctx.write("pullback_watch", subject, w.model_copy(update={"rearmed_at": now_iso}))
+            j.add(
+                JournalPersona.RESEARCH,
+                Stage.SHORTLIST,
+                w.ticker,
+                Choice.SELECTED,
+                ReasonCode.PULLBACK_REARMED,
+                reason_text=f"{w.stance}: {v.text()}",
+                confidence=w.confidence,
+                payload={"watch": w.model_dump(mode="json"), "pullback": verdict},
+            )
+        if w.ticker not in cands:
+            _pullback_candidate(ctx, w)
+            res.added_candidates.append(w.ticker)
+    return res
+
+
+def _pullback_candidate(ctx: JobContext, w: PullbackWatchPayload) -> None:
+    """Upsert today's ``candidates`` row + a ``candidate`` entry for a re-armed watch."""
+    from arc.ingest.scalp import store_candidate
+    from arc.models import Candidate, CatalystType
+    from arc.store.repos import CandidateRepo
+
+    cand = Candidate(
+        ticker=w.ticker,
+        stance=Stance(w.stance),
+        catalyst_type=CatalystType.TECHNICAL,
+        catalyst_date=None,
+        confidence=w.confidence,
+        sources=[f"{PULLBACK_SOURCE_PREFIX}{w.drop_session}"],
+        corroboration=None,
+        created_at=ctx.now,
+    )
+    stored = store_candidate(
+        CandidateRepo(ctx.conn), cand, day=_today(ctx).isoformat(), run_id=ctx.run_id
+    )
+    payload = CandidatePayload.model_validate({**stored.model_dump(), "origin": "pullback_watch"})
+    ctx.write("candidate", w.ticker, payload)
+
+
+def _pullback_add(
+    ctx: JobContext,
+    j: Recorder,
+    snap: ContextSnapshot,
+    chase: _AntiChase,
+    call_id: str | None,
+    live: set[tuple[str, str]],
+) -> int:
+    """E23.2: put each ``stretched_entry`` drop on watch (never re-extends a live watch).
+
+    *live*: the (ticker, stance) watches still open after this run's review.
+    """
+    from arc.utils.calendar import add_sessions
+
+    cfg = ctx.routines.pullback_watch
+    drop_session = add_sessions(_today(ctx), 0)
+    added = 0
+    for item, _ in chase.rejected:
+        stance = item.stance.strip().lower()
+        if stance not in ("bullish", "bearish") or (item.ticker, stance) in live:
+            continue
+        v = chase.verdicts[item.ticker]
+        entry = snap.latest("regime", item.ticker)
+        raw = (entry.payload.get("technicals") if entry is not None else None) or {}
+        w = PullbackWatchPayload(
+            ticker=item.ticker,
+            stance=stance,  # type: ignore[arg-type]
+            dropped_at=ctx.now.isoformat(),
+            drop_session=drop_session.isoformat(),
+            expires_session=add_sessions(drop_session, cfg.ttl_sessions).isoformat(),
+            research_call_id=call_id,
+            confidence=item.confidence,
+            price_at_drop=raw.get("close"),
+            stretch_atr_at_drop=v.stretch_atr,
+            vwap_stretch_at_drop=v.vwap_stretch_atr,
+            rsi14_at_drop=v.rsi14,
+            sma20=raw.get("sma20"),
+            atr14=raw.get("atr14"),
+            thesis=" ".join(item.thesis.split())[:400],
+        )
+        ctx.write("pullback_watch", _pullback_subject(item.ticker, stance), w)
+        j.add(
+            JournalPersona.RESEARCH,
+            Stage.SHORTLIST,
+            item.ticker,
+            Choice.NOTED,
+            ReasonCode.PULLBACK_WATCH_ADDED,
+            reason_text=f"{stance}: watched through {w.expires_session} "
+            f"({cfg.ttl_sessions} sessions, target {cfg.target})",
+            confidence=item.confidence,
+            persona_call_id=call_id,
+            payload={"watch": w.model_dump(mode="json")},
+        )
+        added += 1
+    return added
+
+
 def _no_trade_reason(out: ResearchOutput, kept: list[ResearchRankedItem]) -> str | None:
     """The explicit no-trade outcome (E5.9): only meaningful with an empty shortlist."""
     if kept:
@@ -2090,7 +2387,10 @@ def _no_candidates(ctx: JobContext) -> JobResult:
 def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
     settings = ctx.settings
     all_entries = ctx.snapshot.of_kind("candidate")
-    if not all_entries:
+    # E23.2 (D98): live pullback watches are re-checked even on a day with no feed ideas
+    # (a ready one becomes today's candidate); none are read with the flag off.
+    watching = _live_watches(ctx.snapshot) if ctx.routines.pullback_watch.enabled else []
+    if not all_entries and not watching:
         return _no_candidates(ctx)
     # E13.8 (D56/D53): the idea pool = Scalp + Scout candidates merged by ticker.
     pool = build_idea_pool(
@@ -2102,7 +2402,7 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
     pool_set = set(pool.tickers)
     cand_entries = [e for e in all_entries if e.subject in pool_set]
     cands = {e.subject: Stance(e.payload["stance"]) for e in cand_entries}
-    if not cands:
+    if not cands and not watching:
         return _no_candidates(ctx)
 
     # D32: the day's order budget decides how much the entry chain may do.
@@ -2146,12 +2446,31 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
             | set(market_reference(settings))
             # E13.17: IV rank for every open position's exit-watch facts
             | _held_tickers(ctx.conn)
+            # E23.2: today's technicals for every watched name
+            | {w.ticker for w in watching}
         ),
     )
     # Re-read (and record) the context now that today's regime entries exist.
     snap = ContextStore(ctx.conn).snapshot(ctx.now, kinds=RESEARCH_READS, run_id=ctx.run_id)
     RoutineRunRepo(ctx.conn).set_inputs(ctx.run_id, [ctx.snapshot.id, snap.id])
-
+    pullback: _Pullback | None = None
+    if ctx.routines.pullback_watch.enabled:
+        pullback = _pullback_review(ctx, env, snap, watching, cands)
+        if pullback.added_candidates:
+            # a re-armed watch name joined today's candidates: rebuild the pool from them
+            snap = ContextStore(ctx.conn).snapshot(ctx.now, kinds=RESEARCH_READS, run_id=ctx.run_id)
+            RoutineRunRepo(ctx.conn).set_inputs(ctx.run_id, [ctx.snapshot.id, snap.id])
+            pool = build_idea_pool(
+                snap,
+                merged=True,
+                max_scout_only=ctx.routines.funnel.research.max_scout_only_ideas,
+                tiers=_pool_tiers(ctx),
+            )
+            pool_set = set(pool.tickers)
+            cand_entries = [e for e in snap.of_kind("candidate") if e.subject in pool_set]
+            cands = {e.subject: Stance(e.payload["stance"]) for e in cand_entries}
+        if not cands:  # only watches, none ready: nothing to rank
+            return _no_candidates(ctx)
     # E5.9 (D33): market-conditions guard, before any LLM spend. Missing VIX fails
     # closed for new opens; exits (the positions chain) never come through here.
     guard = market_guard(snap, settings, now=ctx.now, vix_quote=env.vix_quote)
@@ -2181,7 +2500,11 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
         priors,
         budget,
         facts_tickers=_research_facts_tickers(ctx, cand_entries),
-        extra_facts=sentiment_keys,
+        extra_facts=(
+            [*(sentiment_keys or []), *pullback.facts()]
+            if pullback is not None and pullback.facts()
+            else sentiment_keys
+        ),
         slots=slots,
     )
     if skip is not None:
@@ -2219,6 +2542,8 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
         inputs["levels"] = True
     if r.range_edges.enabled and r.research_technicals.enabled:  # E23.1: absent when off
         inputs["range_edges"] = True
+    if pullback is not None and (pb_lines := pullback.lines(r.pullback_watch.max_ready_in_prompt)):
+        inputs["pullback_watch"] = pb_lines  # E23.2: absent when off / nothing on watch
     # E13.8: the merged idea pool, recorded with the compact prompt's inputs
     inputs["idea_pool"] = [i.model_dump(mode="json") for i in pool.items]
     inputs["candidate_tickers"] = sorted(cands)
@@ -2332,6 +2657,9 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
     if edges is not None:
         noted = {i.ticker for i in chase.tech_missing} if chase is not None else set()
         _journal_range_edges(j, edges, call_id, noted)
+    pb_added = 0
+    if pullback is not None and chase is not None:  # E23.2: stretched drops go on watch
+        pb_added = _pullback_add(ctx, j, snap, chase, call_id, pullback.live)
     for ex in excluded:
         j.add(
             JournalPersona.RESEARCH,
@@ -2478,6 +2806,7 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
             "loop_digest": _loop_digest_of(ctx),
             **({"min_ranked_asked": asked} if "min_ranked" in inputs else {}),
             **({"under_ranked": 1} if under_ranked else {}),
+            **({**pullback.metrics(), "pullback_added": pb_added} if pullback is not None else {}),
             **dropped,
             **budget.metrics(),
         },

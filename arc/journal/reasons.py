@@ -170,6 +170,12 @@ class ReasonCode(StrEnum):
     MID_RANGE_ENTRY = "mid_range_entry"  # sideways regime, long premium from mid-range
     RANGE_TOO_NARROW = "range_too_narrow"  # range < min_range_atr x ATR14: rule skipped, kept
     VP_MISSING = "vp_missing"  # levels value_area, no value area: 20d high/low used
+    # E23.2 (D98): the pullback watch for anti-chase drops (personas.pullback_watch)
+    PULLBACK_WATCH_ADDED = "pullback_watch_added"  # a stretched drop is put on watch
+    PULLBACK_REARMED = "pullback_rearmed"  # the stretch reset: re-surfaced to Research
+    PULLBACK_EXPIRED = "pullback_expired"  # watched ttl_sessions with no reset
+    PULLBACK_INVALIDATED = "pullback_invalidated"  # reversal / regime flip: not bought
+    PULLBACK_RETIRED = "pullback_retired"  # an open position / pending proposal on it
     # E16.5 (D76): scanner.max_be_atr dropped debit structures needing an unrealistic move
     BE_UNREALISTIC = "be_unrealistic"
     DEDUPE_EXECUTED = "dedupe_executed"  # same idea is open / closed within the cooldown
@@ -427,6 +433,11 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.MID_RANGE_ENTRY: "Skipped: mid-range entry in a sideways market",
     ReasonCode.RANGE_TOO_NARROW: "Range check skipped: range too narrow",
     ReasonCode.VP_MISSING: "Range check used the 20-day high/low: no value area",
+    ReasonCode.PULLBACK_WATCH_ADDED: "Stretched idea put on pullback watch",
+    ReasonCode.PULLBACK_REARMED: "Pullback reached: idea re-surfaced",
+    ReasonCode.PULLBACK_EXPIRED: "Pullback watch expired",
+    ReasonCode.PULLBACK_INVALIDATED: "Pullback watch dropped: move reversed",
+    ReasonCode.PULLBACK_RETIRED: "Pullback watch closed: already held or proposed",
     ReasonCode.BE_UNREALISTIC: "Dropped: breakeven needs an unrealistic move",
     ReasonCode.DEDUPE_EXECUTED: "Same idea already traded recently",
     ReasonCode.DEDUPE_PROPOSED: "Same idea already proposed recently",

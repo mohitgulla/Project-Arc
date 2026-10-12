@@ -998,7 +998,7 @@ class TestTwoStage:
 
     def test_story_payload_is_a_registered_kind(self) -> None:
         assert KINDS["story"].model is StoryPayload
-        assert KINDS["candidate"].schema_version == 3
+        assert KINDS["candidate"].schema_version == 4  # E23.2: origin
 
 
 def test_story_payload_keeps_code_fields_over_llm(conn) -> None:

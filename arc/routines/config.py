@@ -1141,6 +1141,59 @@ class RangeEdgesSettings(BaseModel):
         )
 
 
+class PullbackWatchSettings(BaseModel):
+    """E23.2 (D98): watch anti-chase drops and re-surface them once the stretch resets.
+
+    A ``stretched_entry`` drop is kept as a ``pullback_watch`` context entry for the
+    ``ttl_sessions`` sessions after the drop session. Each Research run re-checks every
+    live entry against the current spot (:func:`arc.data.base.reference_price`) and
+    today's ``regime`` technicals with :func:`arc.pipeline.pullback.rearm_verdict`:
+    ``ready`` names get a code-built line in Research's prompt (Research may rank them;
+    anti-chase and range edges still apply), ``waiting`` ones one count line, and
+    expired / invalidated / dedupe-retired entries are closed and journaled.
+
+    ``target: value`` (default) is ready once spot is within ``rearm_level_atr`` ATR14
+    above the nearest support level (bullish: POC, VAH, the HVN below; bears mirror with
+    POC, VAL, the HVN above), or below it; missing levels fall back to ``sma20``
+    (journaled ``vp_missing``). ``target: sma20``: stance-signed ``(spot - SMA20) /
+    ATR14 <= rearm_stretch_atr``. With ``anti_chase.vwap`` on, both also need the
+    stance-signed session VWAP stretch ``<= rearm_vwap_atr`` (a failed fetch waits).
+    ``invalidate_below_sma20_atr``: the stance-signed SMA20 stretch below this, or a
+    regime label flipped against the stance, invalidates the watch. Shipped **on**
+    (D86); ``enabled: off`` is the rollback (no writes; prompt byte-identical).
+    Deterministic, never a gate input.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    enabled: bool = False
+    target: Literal["value", "sma20"] = "value"
+    ttl_sessions: Annotated[int, Field(ge=1, le=5)] = 3
+    rearm_stretch_atr: Annotated[float, Field(ge=0.0, le=2.5)] = 1.0
+    rearm_level_atr: Annotated[float, Field(ge=0.0, le=2.0)] = 0.5
+    rearm_vwap_atr: Annotated[float, Field(ge=0.0, le=1.0)] = 0.25
+    invalidate_below_sma20_atr: Annotated[float, Field(ge=-5.0, le=0.0)] = -1.0
+    max_ready_in_prompt: Annotated[int, Field(ge=0, le=10)] = 5
+
+    @field_validator("enabled", mode="before")
+    @classmethod
+    def _enabled(cls, v: Any) -> bool:
+        return parse_on_off(v, where="pullback_watch.enabled")
+
+    def rule(self, *, vwap: bool) -> Any:
+        """The pure rule (:class:`arc.pipeline.pullback.PullbackRule`); *vwap* = anti_chase.vwap."""
+        from arc.pipeline.pullback import PullbackRule
+
+        return PullbackRule(
+            target=self.target,
+            rearm_stretch_atr=self.rearm_stretch_atr,
+            rearm_level_atr=self.rearm_level_atr,
+            rearm_vwap_atr=self.rearm_vwap_atr,
+            invalidate_below_sma20_atr=self.invalidate_below_sma20_atr,
+            vwap=vwap,
+        )
+
+
 class RoutinesConfig(BaseModel):
     """Top-level ``config/routines.yaml``."""
 
@@ -1201,6 +1254,8 @@ class RoutinesConfig(BaseModel):
     oi_walls: OiWallsSettings = Field(default_factory=OiWallsSettings)
     # E23.1 (D98): the range-edge entry filter (strategy.yaml `range_edges:`)
     range_edges: RangeEdgesSettings = Field(default_factory=RangeEdgesSettings)
+    # E23.2 (D98): the pullback watch for anti-chase drops (strategy.yaml `pullback_watch:`)
+    pullback_watch: PullbackWatchSettings = Field(default_factory=PullbackWatchSettings)
 
     @model_validator(mode="before")
     @classmethod

@@ -24,7 +24,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "Candidate entry (E4.2 Scalp; v3, E13.7: also the Scout).\n\nv3 (D53/D56, text-free additions, both defaulted so v2 rows still validate):\n``feed`` names the persona that raised it; ``origins`` are the Scout's YouTube\nchannel ids (``youtube:<slug>``), validated by code against that run's briefs.",
+  "description": "Candidate entry (E4.2 Scalp; v3, E13.7: also the Scout; v4, E23.2: pullback watch).\n\nv3 (D53/D56, text-free additions, both defaulted so v2 rows still validate):\n``feed`` names the persona that raised it; ``origins`` are the Scout's YouTube\nchannel ids (``youtube:<slug>``), validated by code against that run's briefs.\nv4 (E23.2, D98): ``origin`` (defaulted ``feed``, so v3 rows still validate) is\n``pullback_watch`` when the Research step re-raised an anti-chase drop whose\nstretch reset (the ticker was not in the day's candidates).",
   "properties": {
     "catalyst_date": {
       "anyOf": [
@@ -89,6 +89,15 @@
       "default": null,
       "description": "Audit-store row id once persisted",
       "title": "Id"
+    },
+    "origin": {
+      "default": "feed",
+      "enum": [
+        "feed",
+        "pullback_watch"
+      ],
+      "title": "Origin",
+      "type": "string"
     },
     "origins": {
       "items": {

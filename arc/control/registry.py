@@ -2946,6 +2946,119 @@ _RANGE_EDGES_TUNABLES: tuple[Tunable, ...] = (
     ),
 )
 
+# E23.2 (D98): the pullback watch for anti-chase drops (strategy.yaml `pullback_watch:`).
+# Shipped on (D86); off = rollback. A longer watch, a looser re-arm bar or a deeper
+# invalidation line re-surfaces more chased ideas: riskier.
+_PULLBACK_TUNABLES: tuple[Tunable, ...] = (
+    Tunable(
+        key="personas.pullback_watch",
+        group=Group.ROUTINES,
+        type=ValueType.CHOICE,
+        description="E23.2: keep each stretched_entry drop on watch and re-surface it to "
+        "Research (one code-built line) once price pulls back to its level "
+        "(pullback_watch.* thresholds); anti-chase and range edges still apply. "
+        "Deterministic, never a gate input. off = rollback (no writes, prompt as before).",
+        target=Target.STRATEGY,
+        risk=Risk.ORDER,
+        path=("pullback_watch", "enabled"),
+        choices=("on", "off"),
+        aliases=("pullback_watch",),
+    ),
+    Tunable(
+        key="pullback_watch.target",
+        group=Group.ROUTINES,
+        type=ValueType.CHOICE,
+        description="E23.2: what 'pulled back' means: value = within rearm_level_atr of the "
+        "nearest volume-profile support (POC/VAH/HVN; bears mirror; SMA20 when missing), "
+        "sma20 = SMA20 stretch <= rearm_stretch_atr.",
+        target=Target.STRATEGY,
+        risk=Risk.ANY,
+        path=("pullback_watch", "target"),
+        choices=("value", "sma20"),
+    ),
+    Tunable(
+        key="pullback_watch.ttl_sessions",
+        group=Group.ROUTINES,
+        type=_I,
+        description="E23.2: trading sessions after the drop session a dropped idea is watched.",
+        target=Target.STRATEGY,
+        risk=Risk.UP,
+        path=("pullback_watch", "ttl_sessions"),
+        unit="sessions",
+        min=1,
+        max=5,
+        hard_ceiling=5,
+    ),
+    Tunable(
+        key="pullback_watch.rearm_stretch_atr",
+        group=Group.ROUTINES,
+        type=_F,
+        description="E23.2 (target sma20): ready when the stance-signed (spot - SMA20) / "
+        "ATR14 is at or below this.",
+        target=Target.STRATEGY,
+        risk=Risk.UP,
+        path=("pullback_watch", "rearm_stretch_atr"),
+        unit="ATR",
+        min=0.0,
+        max=2.5,
+        hard_ceiling=2.5,
+    ),
+    Tunable(
+        key="pullback_watch.rearm_level_atr",
+        group=Group.ROUTINES,
+        type=_F,
+        description="E23.2 (target value): ready when spot is within this many ATR14 of "
+        "the nearest support level (or past it).",
+        target=Target.STRATEGY,
+        risk=Risk.UP,
+        path=("pullback_watch", "rearm_level_atr"),
+        unit="ATR",
+        min=0.0,
+        max=2.0,
+        hard_ceiling=2.0,
+    ),
+    Tunable(
+        key="pullback_watch.rearm_vwap_atr",
+        group=Group.ROUTINES,
+        type=_F,
+        description="E23.2 (anti_chase.vwap on): also need the stance-signed session VWAP "
+        "stretch at or below this.",
+        target=Target.STRATEGY,
+        risk=Risk.UP,
+        path=("pullback_watch", "rearm_vwap_atr"),
+        unit="ATR",
+        min=0.0,
+        max=1.0,
+        hard_ceiling=1.0,
+    ),
+    Tunable(
+        key="pullback_watch.invalidate_below_sma20_atr",
+        group=Group.ROUTINES,
+        type=_F,
+        description="E23.2: the stance-signed (spot - SMA20) / ATR14 below this ends the "
+        "watch (a pullback that became a reversal is not bought).",
+        target=Target.STRATEGY,
+        risk=Risk.DOWN,
+        path=("pullback_watch", "invalidate_below_sma20_atr"),
+        unit="ATR",
+        min=-5.0,
+        max=0.0,
+        hard_ceiling=-5.0,
+    ),
+    Tunable(
+        key="pullback_watch.max_ready_in_prompt",
+        group=Group.ROUTINES,
+        type=_I,
+        description="E23.2: ready pullback lines shown to Research (highest confidence first).",
+        target=Target.STRATEGY,
+        risk=Risk.UP,
+        path=("pullback_watch", "max_ready_in_prompt"),
+        min=0,
+        max=10,
+        hard_ceiling=10,
+    ),
+)
+
 REGISTRY: dict[str, Tunable] = {
     t.key: t
     for t in (
@@ -2961,6 +3074,7 @@ REGISTRY: dict[str, Tunable] = {
         *_ANTI_CHASE_TUNABLES,
         *_LEVELS_TUNABLES,
         *_RANGE_EDGES_TUNABLES,
+        *_PULLBACK_TUNABLES,
         *_MARKET_HEALTH_TUNABLES,
         *_OPTIONS_FAST_TUNABLES,
         *_CARRYOVER_TUNABLES,
@@ -3405,6 +3519,7 @@ _STRATEGY_SWITCHES = frozenset(
         ("volume_profile", "enabled"),  # E23.0 (D98)
         ("oi_walls", "enabled"),  # E23.0 (D98)
         ("range_edges", "enabled"),  # E23.1 (D98)
+        ("pullback_watch", "enabled"),  # E23.2 (D98)
     }
 )
 # E20.3: choice switches in strategy.yaml (E12.5) -> the control value when absent.
