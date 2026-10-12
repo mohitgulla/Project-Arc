@@ -1,0 +1,291 @@
+{
+  "$defs": {
+    "OiWalls": {
+      "additionalProperties": false,
+      "description": "The OI walls of one underlying (strikes in the contracts' currency).",
+      "properties": {
+        "call_wall": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Max call-OI strike above spot",
+          "title": "Call Wall"
+        },
+        "call_wall_oi": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Call Wall Oi"
+        },
+        "contracts_with_oi": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Contracts With Oi",
+          "type": "integer"
+        },
+        "expiries": {
+          "description": "Expiries summed",
+          "items": {
+            "format": "date",
+            "type": "string"
+          },
+          "title": "Expiries",
+          "type": "array"
+        },
+        "max_oi": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Oi"
+        },
+        "max_oi_strike": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Max total-OI strike (any side)",
+          "title": "Max Oi Strike"
+        },
+        "put_wall": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Max put-OI strike below spot",
+          "title": "Put Wall"
+        },
+        "put_wall_oi": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Put Wall Oi"
+        },
+        "spot": {
+          "exclusiveMinimum": 0.0,
+          "title": "Spot",
+          "type": "number"
+        }
+      },
+      "required": [
+        "spot"
+      ],
+      "title": "OiWalls",
+      "type": "object"
+    },
+    "VolumeProfileLevels": {
+      "additionalProperties": false,
+      "description": "A :class:`VolumeProfile` plus the window and feed it was built from.",
+      "properties": {
+        "atr14": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "ATR14 from the bars' sessions (bin width)",
+          "title": "Atr14"
+        },
+        "bar": {
+          "description": "Bar timeframe, e.g. 15Min",
+          "title": "Bar",
+          "type": "string"
+        },
+        "bars": {
+          "description": "RTH bars used",
+          "minimum": 0,
+          "title": "Bars",
+          "type": "integer"
+        },
+        "bin_width": {
+          "exclusiveMinimum": 0.0,
+          "title": "Bin Width",
+          "type": "number"
+        },
+        "bins": {
+          "description": "Histogram bins from the lowest low to the top",
+          "minimum": 1,
+          "title": "Bins",
+          "type": "integer"
+        },
+        "feed": {
+          "anyOf": [
+            {
+              "enum": [
+                "sip",
+                "iex"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Feed"
+        },
+        "first_session": {
+          "format": "date",
+          "title": "First Session",
+          "type": "string"
+        },
+        "hvns": {
+          "description": "High-volume nodes, ascending",
+          "items": {
+            "type": "number"
+          },
+          "title": "Hvns",
+          "type": "array"
+        },
+        "last_session": {
+          "format": "date",
+          "title": "Last Session",
+          "type": "string"
+        },
+        "lvns": {
+          "description": "Low-volume nodes, ascending",
+          "items": {
+            "type": "number"
+          },
+          "title": "Lvns",
+          "type": "array"
+        },
+        "poc": {
+          "description": "Point of control: centre of the heaviest bin",
+          "title": "Poc",
+          "type": "number"
+        },
+        "sessions": {
+          "description": "Completed sessions in the profile",
+          "minimum": 1,
+          "title": "Sessions",
+          "type": "integer"
+        },
+        "total_volume": {
+          "exclusiveMinimum": 0.0,
+          "title": "Total Volume",
+          "type": "number"
+        },
+        "va_share": {
+          "description": "Volume share inside VA",
+          "maximum": 1.000000001,
+          "minimum": 0.0,
+          "title": "Va Share",
+          "type": "number"
+        },
+        "vah": {
+          "description": "Value area high (upper edge)",
+          "title": "Vah",
+          "type": "number"
+        },
+        "val": {
+          "description": "Value area low (lower edge)",
+          "title": "Val",
+          "type": "number"
+        }
+      },
+      "required": [
+        "bin_width",
+        "bins",
+        "total_volume",
+        "poc",
+        "val",
+        "vah",
+        "va_share",
+        "sessions",
+        "first_session",
+        "last_session",
+        "bar",
+        "bars"
+      ],
+      "title": "VolumeProfileLevels",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "One ticker's pre-market levels (``levels`` kind, subject = ticker).",
+  "properties": {
+    "as_of": {
+      "description": "Trading day the levels are for (ET)",
+      "format": "date",
+      "title": "As Of",
+      "type": "string"
+    },
+    "missing": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Missing",
+      "type": "array"
+    },
+    "oi_walls": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/OiWalls"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "ticker": {
+      "title": "Ticker",
+      "type": "string"
+    },
+    "volume_profile": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/VolumeProfileLevels"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "ticker",
+    "as_of"
+  ],
+  "title": "LevelsPayload",
+  "type": "object"
+}

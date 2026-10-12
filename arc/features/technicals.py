@@ -125,6 +125,23 @@ class TechnicalFeatures(BaseModel):
     prev_close: float | None = None
     gap_pct: float | None = Field(None, description="Today's open / previous close - 1")
     close_vs_prev_range: RangePosition | None = None
+    # E23.0 (D98): levels from the pre-market `levels` entry (20-session SIP volume
+    # profile + options OI walls), merged by the regime step. None = the feature is
+    # off, no levels entry, or no profile / wall. Context only, never a gate input.
+    vp_poc: float | None = Field(None, description="Volume-profile point of control")
+    vp_vah: float | None = Field(None, description="Value area high (70% of volume)")
+    vp_val: float | None = Field(None, description="Value area low")
+    vp_hvn_above: float | None = Field(None, description="Nearest high-volume node above close")
+    vp_hvn_below: float | None = Field(None, description="Nearest high-volume node below close")
+    vp_pos: float | None = Field(None, description="(close - VAL) / (VAH - VAL), unclipped")
+    dist_poc_atr: float | None = Field(None, description="(close - POC) / ATR14")
+    dist_vah_atr: float | None = Field(None, description="(close - VAH) / ATR14")
+    dist_val_atr: float | None = Field(None, description="(close - VAL) / ATR14")
+    oi_call_wall: float | None = Field(None, description="Max call-OI strike above spot")
+    oi_put_wall: float | None = Field(None, description="Max put-OI strike below spot")
+    oi_max_strike: float | None = Field(None, description="Max total-OI strike")
+    dist_call_wall_atr: float | None = Field(None, description="(call wall - close) / ATR14")
+    dist_put_wall_atr: float | None = Field(None, description="(close - put wall) / ATR14")
     missing: list[str] = Field(default_factory=list)
 
 

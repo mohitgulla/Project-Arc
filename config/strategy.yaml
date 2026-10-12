@@ -57,6 +57,21 @@ anti_chase:
   vwap: "off"                   # off | on: also drop when (spot - session VWAP) / ATR14 >= max_vwap_stretch_atr (5-min bars, shared Alpaca data budget)
   max_vwap_stretch_atr: 0.75
 
+# E23.0 (D98): support/resistance levels on `regime` technicals, built pre-market by the
+# `levels` job (config/routines.yaml) and appended to Research's `tech` segment. Shipped
+# on (D86); `enabled: off` is each part's rollback (nothing computed, prompt unchanged).
+# Context only, never a gate input.
+volume_profile:                 # 20-session composite profile from SIP intraday bars
+  enabled: on                   # key volume_profile.enabled
+  sessions: 20                  # completed sessions before today
+  bar: 15Min                    # 5Min | 15Min | 1Hour (regular hours only)
+  value_area: 0.70              # share of volume around the POC
+  bin_atr: 0.1                  # bin width = max($0.01, ATR14 x this)
+  hvn_min_share: 0.03           # a high-volume node holds >= this share (3-bin smoothed)
+oi_walls:                       # max call OI above / put OI below spot, swing-sleeve expiries
+  enabled: on                   # key oi_walls.enabled
+  min_oi: 500                   # a strike below this summed OI is never a wall
+
 # E16.4 (D76/D83): one code-rendered `Market health (…)` line in Research's market block.
 # The market_health job writes its daily read whatever this says. The thresholds only
 # label that line (never a gate or pipeline input). Percentiles are 1-year (252 prior

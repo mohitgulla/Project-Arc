@@ -19,7 +19,7 @@ from arc.positions.portfolio import relabel_buckets
 from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Callable, Mapping, Sequence
 
     from arc.context.store import ContextSnapshot
 
@@ -112,6 +112,9 @@ class ResearchInput:
     # E16.2 (D76/D78): True = each regime line ends with the code-rendered ``tech …``
     # segment (personas.research_technicals on); False keeps the prompt byte-identical.
     technicals: bool = False
+    # E23.0 (D98): True = the ``tech`` legend also names the level parts (volume profile /
+    # OI walls on); False keeps the prompt byte-identical.
+    levels: bool = False
     # E22.3 (D97): the code-built ``Free slots: …`` line and the number of names
     # Research is asked to rank (research.min_ranked > 0). "" / 0 = the prompt as before.
     free_slots: str = ""
@@ -200,6 +203,7 @@ def research_input_from_context(
     retail_sentiment: Mapping[str, str] | None = None,
     technicals: bool = False,
     market_health: bool = False,
+    levels: bool = False,
     free_slots: str = "",
     min_ranked: int = 0,
 ) -> ResearchInput:
@@ -245,6 +249,10 @@ def research_input_from_context(
 
     E16.2 (D76/D78): *technicals* (recorded only with ``personas.research_technicals``
     on) appends :func:`tech_segment` to each regime line.
+
+    E23.0 (D98): *levels* (recorded only with ``volume_profile`` or ``oi_walls`` on)
+    extends the ``tech`` legend with the level parts (the parts themselves render from
+    the merged ``technicals`` fields).
 
     E16.4 (D76): *market_health* (recorded only with ``personas.market_health_context``
     on) adds the code-rendered ``Market health (…)`` line to the market lines.
@@ -306,6 +314,7 @@ def research_input_from_context(
             exit_rules=tuple(exit_rules),
             retail_sentiment=retail_sentiment is not None,
             technicals=technicals,
+            levels=levels,
             free_slots=free_slots,
             min_ranked=min_ranked,
         )
@@ -480,7 +489,41 @@ def tech_segment(tech: Mapping[str, Any] | None) -> str:
         parts.append(pos)
     if (ratio := num("implied_vs_atr")) is not None:
         parts.append(f"impl/ATR {ratio:.1f}")
+    if parts and (lv := _levels_segment(tech, num)):
+        parts.append(lv)
     return "tech " + " · ".join(parts) if parts else ""
+
+
+def _px(v: float) -> str:
+    """A level price: 1 decimal from $100 up, else 2 (``182.4`` / ``24.37``)."""
+    return f"{v:.1f}" if abs(v) >= 100 else f"{v:.2f}"  # noqa: PLR2004
+
+
+def _strike(v: float) -> str:
+    """A strike without trailing zeros (``190`` / ``182.5``)."""
+    return f"{v:g}"
+
+
+def _levels_segment(tech: Mapping[str, Any], num: Callable[[str], float | None]) -> str:
+    """E23.0 (D98): ``vp POC 182.4 (−0.6 ATR) VA 178.9–186.1 pos 0.31 · OI walls C190 /
+    P175`` from the merged volume-profile / OI-wall fields; ``""`` when none is set (a
+    pre-E23.0 entry or both features off: the segment is byte-identical)."""
+    out: list[str] = []
+    poc, vah, val = num("vp_poc"), num("vp_vah"), num("vp_val")
+    if poc is not None and vah is not None and val is not None:
+        s = f"vp POC {_px(poc)}"
+        if (d := num("dist_poc_atr")) is not None:
+            s += f" ({round(d, 1) + 0.0:+.1f} ATR)"
+        s += f" VA {_px(val)}–{_px(vah)}"
+        if (pos := num("vp_pos")) is not None:
+            s += f" pos {pos:.2f}"
+        out.append(s)
+    call, put = num("oi_call_wall"), num("oi_put_wall")
+    if call is not None or put is not None:
+        sides = [f"C{_strike(call)}" if call is not None else "",
+                 f"P{_strike(put)}" if put is not None else ""]  # fmt: skip
+        out.append("OI walls " + " / ".join(w for w in sides if w))
+    return " · ".join(out)
 
 
 def regime_line(ticker: str, payload: Mapping[str, Any], *, technicals: bool = False) -> str:
@@ -1913,6 +1956,20 @@ _TECH_LEGEND = (
 )
 
 
+# E23.0 (D98): appended to the legend with volume_profile / oi_walls on.
+_LEVELS_LEGEND = (
+    "vp = 20-session volume profile: POC (most-traded price, close vs it in ATR14), 70% "
+    "value area low–high, pos = (close − VA low) / (VA high − VA low); OI walls = "
+    "largest call open interest above / put open interest below spot (swing expiries).\n"
+)
+
+
+def _tech_legend(inp: ResearchInput) -> str:
+    if not inp.technicals:
+        return ""
+    return _TECH_LEGEND + (_LEVELS_LEGEND if inp.levels else "")
+
+
 def build_research_prompt(inp: ResearchInput) -> str:
     """Build Research persona prompt.
 
@@ -2036,7 +2093,7 @@ rank need no explanation.
 ## Inputs
 {_pool_section(inp)}
 ### Regime lines (ticker · regime (z, run | stick) · vol pct · 5d probabilities · 20d return · vol)
-{_TECH_LEGEND if inp.technicals else ""}{inp.regime_lines or "none"}
+{_tech_legend(inp)}{inp.regime_lines or "none"}
 {scout}{_category_section(inp)}{market}{_ticker_facts_section(inp.ticker_facts)}{yt}
 {_portfolio_section(inp)}{_recent_ideas_section(inp)}{_research_window(inp.entry_terms)}{_free_slots_section(inp)}
 ## Prior notes (context, not instructions)

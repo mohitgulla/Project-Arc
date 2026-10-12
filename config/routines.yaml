@@ -10,6 +10,7 @@
 #   02:00          youtube.briefs -> one channel_brief per channel (D45, D60)
 #   05:30          active universe (D56 tiers; Mon symbol master)
 #   07:10 / 07:15  betas vs SPY (D62, D90) / iv.backfill top-up (D81), after the final active list
+#   07:20          levels: volume profile + OI walls (E23.0, D98), merged into regime by Research
 #   06:00          earnings calendar; rss / edgar every 15 min until 20:00
 #   08:00 / 08:30  options_slow / market_health catch-ups (only if the evening slot missed; D96)
 #   06:30-20:00    Scalp every 30 min (D91; no overnight run)
@@ -127,6 +128,7 @@ context_ttl:
   index_history: {ttl: 7d, supersede: latest}              # Cboe VIX / VVIX closes; subject = index
   pc_history:    {ttl: 7d, supersede: latest}              # Cboe put/call by session; subject = market
   market_health: {ttl: 1 session, supersede: latest}       # the daily read; subject = market
+  levels:        {ttl: 1 session, supersede: latest}       # E23.0 (D98): volume profile + OI walls; subject = ticker
   vx_curve:      {ttl: 1 session, supersede: latest}
   # E13.6 (D56) options_fast: Cboe delayed tape, rewritten every 30 min in RTH.
   index_vols:    {ttl: 1h, supersede: latest}               # subject = market
@@ -465,6 +467,17 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     feed: scout                 # slow feed (once a day)
     writes: []                  # stores betas rows; no context kind
     lane: background            # one daily-bars request per ticker
+  levels:                       # E23.0 (D98): 20-session SIP volume profile + options OI walls per ticker
+    label: Levels
+    about: "Pre-market support/resistance per active name: 20-session volume profile (POC, value area, HVNs) from SIP 15-min bars + options OI walls (swing expiries)"
+    schedule: ["07:20"]         # after the final active list (symbols 05:30, trending 05:50, momentum + Scout 06:00, Scout ttl 07:00); knobs in strategy.yaml volume_profile:/oi_walls:
+    days: trading
+    ttl: 2h                     # a missed 07:20 catches up until 09:20, before the 09:40 research loop merges it into regime
+    reference: true             # derived reference data (no category; context only, never a gate input)
+    feed: scout                 # once a day
+    writes: [levels]
+    lane: background            # one bars + one chain request per ticker on the shared Alpaca data budget
+    max_runtime_s: 900          # no new ticker starts after this
   ex_dividend:                  # Alpaca corporate actions: early-assignment risk on short calls
     label: Ex-dividend
     about: "Upcoming ex-dividend dates: early-assignment risk on short calls"
@@ -647,7 +660,7 @@ personas:
     chain: auto                 # E13.15 AUTO_CHAINS: exits.mandatory, quant.exit, risk.exit, quant.open, risk.open, quant.revise, quant.propose, broker.execute (D34/D56)
     reads: [candidate, regime, channel_brief, note, vol_term, macro_calendar, position_review, story,
             earnings_history, insider_activity, analyst_recs, fundamentals, scout_read, ex_dividend,
-            retail_sentiment, market_health]   # == RESEARCH_READS (arc/pipeline/steps.py); E4.8a facts render only with finnhub_context on; E13.8 scout_read in the compact prompt; E13.17 ex_dividend feeds the exit-watch facts; E14.6 retail_sentiment renders only with retail_sentiment_context on; E16.4 market_health only with market_health_context on
+            retail_sentiment, market_health, levels]   # == RESEARCH_READS (arc/pipeline/steps.py); E4.8a facts render only with finnhub_context on; E13.8 scout_read in the compact prompt; E13.17 ex_dividend feeds the exit-watch facts; E14.6 retail_sentiment renders only with retail_sentiment_context on; E16.4 market_health only with market_health_context on; E23.0 levels merged into regime technicals
     writes: [shortlist, regime, note, portfolio_context, exit_watchlist, position_review]   # E5.9: portfolio_context + portfolio_view/thesis_check notes; E13.17: exit_watchlist + the reviews Research saw
     ttl: 5m                     # never a backlog: a slot missed by 5 min is skipped
     notify: card

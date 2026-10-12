@@ -2779,6 +2779,101 @@ _EXPERIMENT_TUNABLES += (
 )
 
 
+# E23.0 (D98): levels on regime technicals (strategy.yaml `volume_profile:` / `oi_walls:`).
+# Context only, never a gate input: no risk direction. Shipped on (D86); off = rollback.
+_LEVELS_TUNABLES: tuple[Tunable, ...] = (
+    Tunable(
+        key="volume_profile.enabled",
+        group=Group.ROUTINES,
+        type=ValueType.CHOICE,
+        description="E23.0: the pre-market 20-session SIP volume profile (POC, value area, "
+        "HVNs, vp_pos) on regime technicals and Research's tech segment. Context only. "
+        "off = rollback (nothing computed, prompt as before).",
+        target=Target.STRATEGY,
+        risk=Risk.NONE,
+        path=("volume_profile", "enabled"),
+        choices=("on", "off"),
+    ),
+    Tunable(
+        key="volume_profile.sessions",
+        group=Group.ROUTINES,
+        type=_I,
+        description="E23.0: completed sessions in the composite volume profile.",
+        target=Target.STRATEGY,
+        risk=Risk.NONE,
+        path=("volume_profile", "sessions"),
+        min=5,
+        max=60,
+    ),
+    Tunable(
+        key="volume_profile.bar",
+        group=Group.ROUTINES,
+        type=ValueType.CHOICE,
+        description="E23.0: intraday bar of the volume profile (regular hours only).",
+        target=Target.STRATEGY,
+        risk=Risk.NONE,
+        path=("volume_profile", "bar"),
+        choices=("5Min", "15Min", "1Hour"),
+    ),
+    Tunable(
+        key="volume_profile.value_area",
+        group=Group.ROUTINES,
+        type=_F,
+        description="E23.0: share of the profile's volume inside the value area.",
+        target=Target.STRATEGY,
+        risk=Risk.NONE,
+        path=("volume_profile", "value_area"),
+        min=0.5,
+        max=0.95,
+    ),
+    Tunable(
+        key="volume_profile.bin_atr",
+        group=Group.ROUTINES,
+        type=_F,
+        description="E23.0: profile bin width in ATR14 units (floor $0.01).",
+        target=Target.STRATEGY,
+        risk=Risk.NONE,
+        path=("volume_profile", "bin_atr"),
+        unit="ATR",
+        min=0.01,
+        max=1.0,
+    ),
+    Tunable(
+        key="volume_profile.hvn_min_share",
+        group=Group.ROUTINES,
+        type=_F,
+        description="E23.0: smallest smoothed volume share of a high-volume node.",
+        target=Target.STRATEGY,
+        risk=Risk.NONE,
+        path=("volume_profile", "hvn_min_share"),
+        min=0.005,
+        max=0.5,
+    ),
+    Tunable(
+        key="oi_walls.enabled",
+        group=Group.ROUTINES,
+        type=ValueType.CHOICE,
+        description="E23.0: options OI walls (max call OI above / put OI below spot, "
+        "swing-sleeve expiries) on regime technicals and Research's tech segment. Context "
+        "only. off = rollback (no chain call, prompt as before).",
+        target=Target.STRATEGY,
+        risk=Risk.NONE,
+        path=("oi_walls", "enabled"),
+        choices=("on", "off"),
+    ),
+    Tunable(
+        key="oi_walls.min_oi",
+        group=Group.ROUTINES,
+        type=_I,
+        description="E23.0: a strike whose summed open interest is below this is never a wall.",
+        target=Target.STRATEGY,
+        risk=Risk.NONE,
+        path=("oi_walls", "min_oi"),
+        min=0,
+        max=100_000,
+    ),
+)
+
 REGISTRY: dict[str, Tunable] = {
     t.key: t
     for t in (
@@ -2792,6 +2887,7 @@ REGISTRY: dict[str, Tunable] = {
         *_OPTIONS_SLOW_TUNABLES,
         *_IV_BACKFILL_TUNABLES,
         *_ANTI_CHASE_TUNABLES,
+        *_LEVELS_TUNABLES,
         *_MARKET_HEALTH_TUNABLES,
         *_OPTIONS_FAST_TUNABLES,
         *_CARRYOVER_TUNABLES,
@@ -3233,6 +3329,8 @@ _STRATEGY_SWITCHES = frozenset(
         ("research_technicals", "enabled"),  # E16.2
         ("anti_chase", "enabled"),  # E16.3
         ("market_health_context", "enabled"),  # E16.4
+        ("volume_profile", "enabled"),  # E23.0 (D98)
+        ("oi_walls", "enabled"),  # E23.0 (D98)
     }
 )
 # E20.3: choice switches in strategy.yaml (E12.5) -> the control value when absent.
