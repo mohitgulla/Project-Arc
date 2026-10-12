@@ -255,9 +255,7 @@ def test_shipped_routines_use_new_names(shipped: RoutinesConfig) -> None:
     )
     assert p["scorecard"].options["persona"] == "ops"
     ev = p["positions.evaluate"]
-    assert (
-        ev.options["label"] == "Position marks" and "persona" not in ev.options and not ev.llm
-    )
+    assert ev.options["label"] == "Position marks" and "persona" not in ev.options and not ev.llm
     assert ev.chain == ["exits.mandatory", "broker.execute"]
     assert p["research"].chain[-1] == "broker.execute"
     assert {"exits.mandatory", "broker.execute"} <= set(shipped.steps)
