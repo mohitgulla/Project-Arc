@@ -68,9 +68,14 @@ class EntryTerms(BaseModel):
     dte_min: int = Field(..., ge=0)
     dte_max: int = Field(..., ge=0)
     bands: list[DeltaBand] = Field(default_factory=list)
+    sleeves: list[tuple[str, int, int]] | None = Field(
+        None, description="E22.1 (D97): (name, dte_min, dte_max) per sleeve; None = one window"
+    )
 
     @property
     def window(self) -> str:
+        if self.sleeves:
+            return " / ".join(f"{lo}-{hi} DTE ({name})" for name, lo, hi in self.sleeves)
         return f"{self.dte_min}-{self.dte_max} DTE"
 
     def bands_text(self) -> str:
@@ -130,7 +135,18 @@ def entry_terms(settings: ArcSettings) -> EntryTerms:
                 kind="long", lo=settings.scanner_long_delta_min, hi=settings.scanner_long_delta_max
             )
         )
-    return EntryTerms(account_profile=settings.account_profile, dte_min=lo, dte_max=hi, bands=bands)
+    sleeves = (
+        [(s.name, s.dte_min, s.dte_max) for s in settings.entry_sleeves]
+        if settings.profile.has_sleeves
+        else None
+    )
+    return EntryTerms(
+        account_profile=settings.account_profile,
+        dte_min=lo,
+        dte_max=hi,
+        bands=bands,
+        sleeves=sleeves,
+    )
 
 
 _DTE_TEXT = re.compile(r"\bDTE\b|days?[ -]to[ -]expir", re.IGNORECASE)

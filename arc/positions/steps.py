@@ -257,6 +257,7 @@ def evaluate(ctx: JobContext, env: PipelineEnv, *, exit_cfg: ExitConfig | None =
                 peak_pnl=_peak(
                     stored_peak_pnl(ctx.conn, str(row["id"]), opened_at=row.get("opened_at"))
                 ),
+                exit_block=settings.exit_block_of(st, row.get("opened_at")),
             )
         except (LookupError, ValueError) as exc:
             errors.append(f"{t}: cannot review ({exc})")

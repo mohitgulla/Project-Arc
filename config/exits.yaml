@@ -155,3 +155,13 @@ kinds:
     close_at_dte: 7
     time_adjusted_targets: []
     profit_lock: {arm_pct: 0.50, floor_pct: 0.20, eod_only: false}
+
+# E22.1 (D97): optional per-sleeve exit blocks. An account-profile sleeve
+# (config/account_profiles.yaml) names one with `exit_policy: <name>`; a position
+# whose entry DTE falls in that sleeve uses `sleeves.<name>.kinds.<kind>`, else the
+# `kinds:` policy above, else `default:`. Same ExitPolicy schema and stop-direction
+# rules as `kinds:`. No block = byte-identical behaviour. E22.4 adds the short block:
+# sleeves:
+#   short:
+#     kinds:
+#       long_call: {take_profit_pct_of_max_gain: null, take_profit_pct_of_debit: 0.40, ...}

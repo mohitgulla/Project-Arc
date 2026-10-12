@@ -319,6 +319,11 @@ _USER_RE = re.compile(r"^[UW][A-Z0-9]{6,20}$")
 # `tick.after_sources_wait` are process topology, edited in routines.yaml only.
 _ROUTINE_KEY_RE = re.compile(r"^routines\.(?P<job>[a-z0-9_.]+)\.(?P<attr>enabled|cadence)$")
 _PROFILE_KEY_RE = re.compile(r"^profiles\.(?P<name>[a-z0-9_]+)\.(?P<attr>dte_min|dte_max)$")
+# E22.1 (D97): one named entry-DTE sleeve of a profile (config/account_profiles.yaml).
+_SLEEVE_KEY_RE = re.compile(
+    r"^profiles\.(?P<name>[a-z0-9_]+)\.sleeves\.(?P<sleeve>[a-z][a-z0-9_]*)"
+    r"\.(?P<attr>dte_min|dte_max|max_positions)$"
+)
 
 
 def _s(key: str, group: Group, typ: ValueType, desc: str, risk: Risk, **kw: Any) -> Tunable:
@@ -2793,6 +2798,37 @@ def _pattern_tunable(key: str) -> Tunable | None:
             target=Target.PROFILES,
             risk=Risk.DOWN if attr == "dte_min" else Risk.NONE,
             path=("profiles", name, attr),
+            min=7,
+            max=120,
+            hard_ceiling=7 if attr == "dte_min" else None,
+        )
+    m = _SLEEVE_KEY_RE.match(key)
+    if m:
+        name, sleeve, attr = m.group("name"), m.group("sleeve"), m.group("attr")
+        path = ("profiles", name, "sleeves", sleeve, attr)
+        if attr == "max_positions":
+            return Tunable(
+                key=key,
+                group=Group.ENTRIES,
+                type=_I,
+                description=(
+                    f"Account profile {name}, DTE sleeve {sleeve}: max open positions "
+                    "(by entry DTE; gate rule sleeve_max_positions; 0 closes the sleeve)."
+                ),
+                target=Target.PROFILES,
+                risk=Risk.UP,
+                path=path,
+                min=0,
+                max=20,
+            )
+        return Tunable(
+            key=key,
+            group=Group.ENTRIES,
+            type=_I,
+            description=f"Account profile {name}, DTE sleeve {sleeve}: entry DTE {attr[4:]} bound.",
+            target=Target.PROFILES,
+            risk=Risk.DOWN if attr == "dte_min" else Risk.NONE,
+            path=path,
             min=7,
             max=120,
             hard_ceiling=7 if attr == "dte_min" else None,

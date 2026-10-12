@@ -492,7 +492,7 @@ def propose_exits(
                     leg_spreads=priced.leg_spreads(),
                     end_of_day=_eod(now, eod_from),
                 ),
-                cfg.policy_for(st.kind),
+                cfg.policy_for(st.kind, settings.exit_block_of(st, row.get("opened_at"))),
                 peak_pnl=(
                     None
                     if (pk := stored_peak_pnl(conn, str(row["id"]), opened_at=row.get("opened_at")))

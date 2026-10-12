@@ -346,3 +346,33 @@ def test_propose_skips_reprice_failed_on_missing_iv(monkeypatch: pytest.MonkeyPa
     ).fetchall()
     assert len(rows) == 1
     assert leg in rows[0]["reason_text"]
+
+
+def test_build_portfolio_carries_entry_dte() -> None:
+    """E22.1 (D97): an attributed structure's position carries its entry DTE; legs no
+    open structure accounts for carry None (the sleeve rule counts them everywhere)."""
+    from arc.store.execution import OpenStructureRepo
+    from arc.structures import credit_vertical
+
+    conn = open_db(":memory:", copy=False)
+    conn.execute("PRAGMA foreign_keys = OFF")
+    st = credit_vertical(
+        "put", "SPY", EXP, short_strike=570, short_premium="2.10", long_strike=565,
+        long_premium="1.25", as_of=EXP - dt.timedelta(days=22),
+    )  # fmt: skip
+    assert st.dte == 22
+    mk = FakeMarket({LP: 0.2, SP: 0.19})
+    pf = build_portfolio(conn, positions(), mk, now=NOW, wash_sale_days=30, r=0.04)
+    assert [p.entry_dte for p in pf.positions] == [None]
+    OpenStructureRepo(conn).open(
+        ticker="SPY", open_proposal_hash="h1", candidate_id="c1",
+        structure_json=st.model_dump_json(), contracts=1, entry_net=D("-0.85"), now=NOW,
+    )  # fmt: skip
+    pf = build_portfolio(conn, positions(), mk, now=NOW, wash_sale_days=30, r=0.04)
+    assert [p.entry_dte for p in pf.positions] == [22]
+    # an unreadable stored structure: its legs fall back to unknown (fail closed)
+    conn.execute("UPDATE open_structures SET structure_json = '{bad'")
+    from arc.pipeline.market import _entry_dtes
+
+    assert _entry_dtes(conn) == {}
+    assert _entry_dtes(None) == {}

@@ -22,10 +22,20 @@ from pydantic import (
 )
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-from arc.account_profiles import DEFAULT_ACCOUNT_PROFILE, AccountProfile, load_account_profiles
+from arc.account_profiles import (
+    DEFAULT_ACCOUNT_PROFILE,
+    AccountProfile,
+    DteSleeve,
+    load_account_profiles,
+    sleeve_for_dte,
+    sleeve_of,
+)
 
 if TYPE_CHECKING:
+    import datetime as dt
     from collections.abc import Mapping
+
+    from arc.models import Structure
 
 log = structlog.get_logger()
 
@@ -1291,9 +1301,49 @@ class ArcSettings(BaseSettings):
         )
 
     @property
+    def entry_sleeves(self) -> list[DteSleeve]:
+        """E22.1 (D97): the entry-DTE sleeves of the active profile, ordered by window.
+
+        A profile with named ``sleeves`` returns them; a single-window profile (its
+        ``dte_min/dte_max``, else the global ``dte_min/dte_max``) is one implicit
+        ``default`` sleeve with no slot cap and the kind exit policy.
+        """
+        return self.profile.entry_sleeves((self.dte_min, self.dte_max))
+
+    def sleeve_for_dte(self, dte: int | None) -> DteSleeve | None:
+        """The active profile's sleeve containing entry DTE *dte*, else ``None``."""
+        return sleeve_for_dte(self.entry_sleeves, dte)
+
+    def exit_block_for_dte(self, dte: int | None) -> str | None:
+        """The ``config/exits.yaml`` ``sleeves:`` block for entry DTE *dte*, else ``None``.
+
+        ``None`` (no sleeve, or a sleeve without ``exit_policy``, e.g. every
+        single-window profile) means the kind policy: ``ExitConfig.policy_for(kind)``.
+        """
+        sleeve = self.sleeve_for_dte(dte)
+        return sleeve.exit_policy if sleeve is not None else None
+
+    def exit_block_of(
+        self, structure: Structure, opened_at: dt.date | dt.datetime | str | None = None
+    ) -> str | None:
+        """:meth:`exit_block_for_dte` of a structure's entry DTE (stored ``dte`` first)."""
+        sleeve = sleeve_of(self.entry_sleeves, structure, opened_at)
+        return sleeve.exit_policy if sleeve is not None else None
+
+    @property
     def entry_dte_window(self) -> tuple[int, int]:
-        """Entry DTE window: the profile's override when set, else ``dte_min/dte_max``."""
+        """Entry DTE window: the profile's override when set, else ``dte_min/dte_max``.
+
+        E22.1 (D97): for a profile with named sleeves this is the **union envelope**
+        ``(min of the sleeves' dte_min, max of their dte_max)``. Consumers that only
+        need "an expiry somewhere in range" read it unchanged (universe guard/screen,
+        cboe_fast snapshots, chain fetches). Per-sleeve consumers (the gate's
+        ``dte_window`` and ``sleeve_max_positions`` rules) read :attr:`entry_sleeves`.
+        A single-window profile's envelope is its window, so nothing changes there.
+        """
         p = self.profile
+        if p.sleeves:
+            return min(s.dte_min for s in p.sleeves), max(s.dte_max for s in p.sleeves)
         if p.dte_min is not None and p.dte_max is not None:
             return p.dte_min, p.dte_max
         return self.dte_min, self.dte_max

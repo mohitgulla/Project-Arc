@@ -98,6 +98,7 @@ __all__ = [
     "PipelineExitConfig",
     "ProfitLock",
     "ResolvedRules",
+    "SleeveExits",
     "StopBasis",
     "StopRule",
     "TimeAdjustedTarget",
@@ -389,6 +390,26 @@ class PositionsConfig(BaseModel):
         return self.remaining_ev_floor_per_bp
 
 
+class SleeveExits(BaseModel):
+    """E22.1 (D97): one ``sleeves:`` block of exits.yaml: per-kind policies for a DTE sleeve."""
+
+    model_config = _FORBID
+
+    kinds: dict[StructureKind, ExitPolicy] = Field(default_factory=dict)
+
+
+def _check_stop_direction(kinds: Mapping[StructureKind, ExitPolicy], where: str) -> None:
+    for kind, pol in kinds.items():
+        if pol.stop is None:
+            continue
+        if pol.stop.basis is StopBasis.CREDIT_MULTIPLE and kind not in CREDIT_KINDS:
+            msg = f"{where}{kind.value}: credit_multiple stop applies to credit structures only"
+            raise ValueError(msg)
+        if pol.stop.basis is StopBasis.PCT_DEBIT and kind not in DEBIT_KINDS:
+            msg = f"{where}{kind.value}: pct_debit stop applies to debit structures only"
+            raise ValueError(msg)
+
+
 class ExitConfig(BaseModel):
     """Validated ``config/exits.yaml``."""
 
@@ -399,22 +420,29 @@ class ExitConfig(BaseModel):
     positions: PositionsConfig = Field(default_factory=PositionsConfig)
     default: ExitPolicy = Field(default_factory=ExitPolicy)
     kinds: dict[StructureKind, ExitPolicy] = Field(default_factory=dict)
+    sleeves: dict[str, SleeveExits] = Field(
+        default_factory=dict,
+        description="E22.1 (D97): per-sleeve kind policies, named by a profile sleeve's "
+        "`exit_policy`; a kind missing here falls back to `kinds`, then `default`",
+    )
 
     @model_validator(mode="after")
     def _stops_match_direction(self) -> ExitConfig:
-        for kind, pol in self.kinds.items():
-            if pol.stop is None:
-                continue
-            if pol.stop.basis is StopBasis.CREDIT_MULTIPLE and kind not in CREDIT_KINDS:
-                msg = f"{kind.value}: credit_multiple stop applies to credit structures only"
-                raise ValueError(msg)
-            if pol.stop.basis is StopBasis.PCT_DEBIT and kind not in DEBIT_KINDS:
-                msg = f"{kind.value}: pct_debit stop applies to debit structures only"
-                raise ValueError(msg)
+        _check_stop_direction(self.kinds, "")
+        for name, block in self.sleeves.items():
+            _check_stop_direction(block.kinds, f"sleeves.{name}.")
         return self
 
-    def policy_for(self, kind: StructureKind | None) -> ExitPolicy:
-        """The policy for *kind*, else ``default``."""
+    def policy_for(self, kind: StructureKind | None, sleeve: str | None = None) -> ExitPolicy:
+        """The policy for *kind* in exit block *sleeve*, else *kind*'s, else ``default``.
+
+        *sleeve* is a profile sleeve's ``exit_policy`` name (``None``: no sleeve block,
+        the pre-E22.1 behaviour). An unknown block name falls back like ``None``.
+        """
+        if sleeve is not None and kind is not None:
+            block = self.sleeves.get(sleeve)
+            if block is not None and kind in block.kinds:
+                return block.kinds[kind]
         if kind is not None and kind in self.kinds:
             return self.kinds[kind]
         return self.default
