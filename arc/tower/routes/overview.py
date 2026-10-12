@@ -17,18 +17,25 @@ from arc.tower.data_overview import (
     load_positions,
 )
 from arc.tower.data_sleeves import named_sleeves
-from arc.tower.routes.deps import Conn, Tower, effective
+from arc.tower.routes.deps import Conn, Scope, Tower, effective
 from arc.tower.schemas import ErrorResponse
+from arc.tower.scope import scoped, wrap
 
 __all__ = ["router"]
 
-router = APIRouter(tags=["overview"], responses={503: {"model": ErrorResponse}})
+router = APIRouter(
+    tags=["overview"], responses={503: {"model": ErrorResponse}, 404: {"model": ErrorResponse}}
+)
+
+OverviewOut = scoped(OverviewResponse)
+PositionsOut = scoped(PositionsResponse)
 
 
-@router.get("/overview", response_model=OverviewResponse)
-def overview(
+@router.get("/overview", response_model=OverviewOut)
+def overview(  # noqa: PLR0913 - one query parameter per control
     cfg: Tower,
     conn: Conn,
+    scope: Scope,
     range: Annotated[OverviewRange, Query()] = "1D",  # noqa: A002 - the URL parameter name
     activity_hours: Annotated[
         int | None,
@@ -41,10 +48,12 @@ def overview(
     ] = None,
 ) -> OverviewResponse:
     """Status strip, equity (by range), day P&L, positions, Greeks vs caps, proposals,
-    movers and recent activity (rolling window), read in one pass (SELECT only)."""
+    movers and recent activity (rolling window), read in one pass (SELECT only).
+
+    ``?arm=``: the arm's store, so equity / P&L are its virtual account (E15.2)."""
     settings, routines = effective(cfg)
     hours = activity_hours if activity_hours is not None else routines.tower.overview.activity_hours
-    return load_overview(
+    out = load_overview(
         conn,
         now=cfg.clock(),
         rng=range,
@@ -57,20 +66,23 @@ def overview(
         greek_advisory=routines.tower.overview.greek_advisory,
         sleeves=named_sleeves(settings),
     )
+    return wrap(OverviewOut, out, scope)
 
 
-@router.get("/positions", response_model=PositionsResponse)
+@router.get("/positions", response_model=PositionsOut)
 def positions(
     cfg: Tower,
     conn: Conn,
+    scope: Scope,
     status: Annotated[PositionStatus, Query()] = "open",
 ) -> PositionsResponse:
     """Open, closed or all structures with the latest broker marks; open rows carry the
     E13.14 exit path (D56: always Research-managed since E13.15)."""
     effective(cfg)  # an invalid config still 503s like every page
-    return load_positions(
+    out = load_positions(
         conn,
         now=cfg.clock(),
         status=status,
         stale_after=monitor_stale_after(conn),
     )
+    return wrap(PositionsOut, out, scope)

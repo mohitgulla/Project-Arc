@@ -24,13 +24,12 @@ from arc.tower.api import create_app
 from arc.tower.data import connect_ro
 from arc.tower.data_overview import (
     RANGES,
-    OverviewResponse,
-    PositionsResponse,
     equity_intraday,
     load_overview,
     load_positions,
     range_start,
 )
+from arc.tower.routes.overview import OverviewOut, PositionsOut
 from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
@@ -446,7 +445,7 @@ def client(fx_db: Path, tmp_path: Path) -> TestClient:
 def test_api_overview_contract(client: TestClient, rng: str) -> None:
     r = client.get("/api/overview", params={"range": rng})
     assert r.status_code == 200
-    o = OverviewResponse.model_validate(r.json())
+    o = OverviewOut.model_validate(r.json())
     assert o.range == rng and o.as_of == NOW and o.stale_after_s == 1800  # 3 x 10-min monitor (D52)
     assert len(o.positions) == 3 and o.status.halted and o.equity.value is not None
 
@@ -494,7 +493,7 @@ def test_api_positions(client: TestClient) -> None:
     for status, n in (("open", 3), ("closed", 1), ("all", 4)):
         r = client.get("/api/positions", params={"status": status})
         assert r.status_code == 200
-        body = PositionsResponse.model_validate(r.json())
+        body = PositionsOut.model_validate(r.json())
         assert body.status == status and len(body.items) == n
     assert len(client.get("/api/positions").json()["items"]) == 3
 

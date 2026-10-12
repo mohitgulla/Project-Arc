@@ -317,6 +317,16 @@
           "open": {
             "title": "Open",
             "type": "integer"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Arc Investor's (control's) data",
+            "title": "Shared From Control",
+            "type": "boolean"
           }
         },
         "required": [
@@ -522,6 +532,63 @@
           }
         },
         "title": "Arm",
+        "type": "object"
+      },
+      "ArmMeta": {
+        "additionalProperties": false,
+        "description": "One experiment arm the tower can be scoped to (``/api/meta`` ``arms``).",
+        "properties": {
+          "arm": {
+            "description": "Runner arm name (treatment, t1, t2, ...)",
+            "title": "Arm",
+            "type": "string"
+          },
+          "experiment_id": {
+            "title": "Experiment Id",
+            "type": "string"
+          },
+          "id": {
+            "description": "The ?arm= value, '<experiment id>:<arm>'",
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "description": "Display name, e.g. 'XP-12 \u00b7 T1'",
+            "title": "Label",
+            "type": "string"
+          },
+          "status": {
+            "description": "The experiment's status (running, stopped, ...)",
+            "title": "Status",
+            "type": "string"
+          },
+          "store_age_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Seconds since the arm store was last written (null: missing)",
+            "title": "Store Age S"
+          },
+          "viewable": {
+            "description": "True when ?arm=<id> is served (running, store present)",
+            "title": "Viewable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "experiment_id",
+          "arm",
+          "label",
+          "status",
+          "viewable"
+        ],
+        "title": "ArmMeta",
         "type": "object"
       },
       "ArmPlan": {
@@ -1025,6 +1092,16 @@
             "title": "Rows",
             "type": "array"
           },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Arc Investor's (control's) data",
+            "title": "Shared From Control",
+            "type": "boolean"
+          },
           "sleeve": {
             "anyOf": [
               {
@@ -1246,6 +1323,16 @@
           "restrict_at": {
             "title": "Restrict At",
             "type": "integer"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Arc Investor's (control's) data",
+            "title": "Shared From Control",
+            "type": "boolean"
           },
           "tier": {
             "title": "Tier",
@@ -2057,6 +2144,10 @@
             ],
             "title": "Note"
           },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
           "scorecard_gate": {
             "anyOf": [
               {
@@ -2068,6 +2159,12 @@
             ],
             "description": "E6.6a: scorecard gate line, e.g. 'scorecard gate: OFF (opt-out) \u2014 3 closed trades < 30 required; \u2026' (null when the store has no trade tables)",
             "title": "Scorecard Gate"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Arc Investor's (control's) data",
+            "title": "Shared From Control",
+            "type": "boolean"
           }
         },
         "required": [
@@ -2201,6 +2298,16 @@
           "schema_version": {
             "title": "Schema Version",
             "type": "integer"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Arc Investor's (control's) data",
+            "title": "Shared From Control",
+            "type": "boolean"
           },
           "status": {
             "title": "Status",
@@ -2496,6 +2603,16 @@
             },
             "title": "Kinds",
             "type": "array"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Arc Investor's (control's) data",
+            "title": "Shared From Control",
+            "type": "boolean"
           },
           "total_active": {
             "title": "Total Active",
@@ -4574,6 +4691,16 @@
               }
             ]
           },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Arc Investor's (control's) data",
+            "title": "Shared From Control",
+            "type": "boolean"
+          },
           "spec": {
             "$ref": "#/components/schemas/ExperimentSpec"
           },
@@ -5393,6 +5520,16 @@
             },
             "title": "Items",
             "type": "array"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Arc Investor's (control's) data",
+            "title": "Shared From Control",
+            "type": "boolean"
           }
         },
         "required": [
@@ -5699,10 +5836,20 @@
             "title": "Discovery Fill",
             "type": "object"
           },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
           "sessions": {
             "description": "Trading sessions in the range",
             "title": "Sessions",
             "type": "integer"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Arc Investor's (control's) data",
+            "title": "Shared From Control",
+            "type": "boolean"
           },
           "since": {
             "title": "Since",
@@ -6487,6 +6634,16 @@
             },
             "title": "Halts",
             "type": "array"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Arc Investor's (control's) data",
+            "title": "Shared From Control",
+            "type": "boolean"
           }
         },
         "required": [
@@ -6592,6 +6749,15 @@
             "title": "Db",
             "type": "string"
           },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "title": "Shared From Control",
+            "type": "boolean"
+          },
           "status": {
             "const": "ok",
             "title": "Status",
@@ -6631,6 +6797,16 @@
             },
             "title": "Items",
             "type": "array"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Arc Investor's (control's) data",
+            "title": "Shared From Control",
+            "type": "boolean"
           }
         },
         "required": [
@@ -7416,12 +7592,22 @@
             "title": "Personas",
             "type": "array"
           },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
           "series": {
             "items": {
               "$ref": "#/components/schemas/LlmDay"
             },
             "title": "Series",
             "type": "array"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Arc Investor's (control's) data",
+            "title": "Shared From Control",
+            "type": "boolean"
           },
           "today": {
             "items": {
@@ -7912,6 +8098,14 @@
           "app": {
             "$ref": "#/components/schemas/AppInfo"
           },
+          "arms": {
+            "description": "E15.6 (D69): experiment arms the tower can be scoped to with ?arm=<id>, running first (the default view is Arc Investor, never listed here)",
+            "items": {
+              "$ref": "#/components/schemas/ArmMeta"
+            },
+            "title": "Arms",
+            "type": "array"
+          },
           "as_of": {
             "format": "date-time",
             "title": "As Of",
@@ -7969,6 +8163,15 @@
             "description": "Default client poll interval",
             "title": "Refresh Interval S",
             "type": "integer"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "title": "Shared From Control",
+            "type": "boolean"
           },
           "sleeves": {
             "description": "E22.5 (D97): the profile's entry-DTE sleeves (window, slots, exit policy per kind); [] for a single-window profile",
@@ -9134,6 +9337,16 @@
             "title": "Range",
             "type": "string"
           },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Arc Investor's (control's) data",
+            "title": "Shared From Control",
+            "type": "boolean"
+          },
           "sleeves": {
             "description": "E22.5 (D97): open positions per entry-DTE sleeve vs its slots",
             "items": {
@@ -9700,6 +9913,16 @@
             ],
             "title": "Preset",
             "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Arc Investor's (control's) data",
+            "title": "Shared From Control",
+            "type": "boolean"
           },
           "sleeve": {
             "anyOf": [
@@ -10829,6 +11052,16 @@
               }
             ],
             "title": "Marks At"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Arc Investor's (control's) data",
+            "title": "Shared From Control",
+            "type": "boolean"
           },
           "stale_after_s": {
             "title": "Stale After S",
@@ -12082,6 +12315,16 @@
             "title": "Run Id",
             "type": "string"
           },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Arc Investor's (control's) data",
+            "title": "Shared From Control",
+            "type": "boolean"
+          },
           "step": {
             "$ref": "#/components/schemas/StepView",
             "description": "The requested run"
@@ -12144,6 +12387,16 @@
             },
             "title": "Rows",
             "type": "array"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Arc Investor's (control's) data",
+            "title": "Shared From Control",
+            "type": "boolean"
           },
           "size": {
             "title": "Size",
@@ -12359,6 +12612,26 @@
         "title": "RunningDetail",
         "type": "object"
       },
+      "ScopeInfo": {
+        "additionalProperties": false,
+        "description": "Which store a response was read from.",
+        "properties": {
+          "arm_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "'<experiment id>:<arm>' for an arm; null = Arc Investor",
+            "title": "Arm Id"
+          }
+        },
+        "title": "ScopeInfo",
+        "type": "object"
+      },
       "SearchMatch": {
         "additionalProperties": false,
         "properties": {
@@ -12413,6 +12686,16 @@
           "q": {
             "title": "Q",
             "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Arc Investor's (control's) data",
+            "title": "Shared From Control",
+            "type": "boolean"
           }
         },
         "required": [
@@ -12566,6 +12849,16 @@
             },
             "title": "Rows",
             "type": "array"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Arc Investor's (control's) data",
+            "title": "Shared From Control",
+            "type": "boolean"
           },
           "start": {
             "description": "Window start (inclusive, ET)",
@@ -13368,6 +13661,16 @@
             },
             "title": "Categories",
             "type": "array"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Arc Investor's (control's) data",
+            "title": "Shared From Control",
+            "type": "boolean"
           },
           "sources": {
             "items": {
@@ -14207,6 +14510,16 @@
             "title": "Proposals",
             "type": "array"
           },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Arc Investor's (control's) data",
+            "title": "Shared From Control",
+            "type": "boolean"
+          },
           "structures": {
             "items": {
               "$ref": "#/components/schemas/StructureView"
@@ -14332,6 +14645,16 @@
           },
           "quant": {
             "$ref": "#/components/schemas/QuantSection"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Arc Investor's (control's) data",
+            "title": "Shared From Control",
+            "type": "boolean"
           }
         },
         "required": [
@@ -14398,6 +14721,16 @@
             },
             "title": "Reason Codes",
             "type": "array"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Arc Investor's (control's) data",
+            "title": "Shared From Control",
+            "type": "boolean"
           },
           "sleeves": {
             "description": "E22.5 (D97): the profile's sleeves + `other`",
@@ -14766,6 +15099,16 @@
           "page": {
             "title": "Page",
             "type": "integer"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Arc Investor's (control's) data",
+            "title": "Shared From Control",
+            "type": "boolean"
           },
           "size": {
             "title": "Size",
@@ -15952,6 +16295,16 @@
             "description": "The stored resolve's as_of day",
             "title": "Resolved For"
           },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Arc Investor's (control's) data",
+            "title": "Shared From Control",
+            "type": "boolean"
+          },
           "state": {
             "description": "today = resolved today; stale = latest resolve is older (consumers use the core list until the next one); none = never resolved (core list shown)",
             "enum": [
@@ -16361,6 +16714,27 @@
       "get": {
         "description": "Every forward experiment with the latest stored evaluation's numbers.",
         "operationId": "experiments_api_experiments_get",
+        "parameters": [
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+              "title": "Arm"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -16371,6 +16745,26 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           },
           "503": {
             "content": {
@@ -16401,6 +16795,25 @@
             "schema": {
               "title": "Experiment Id",
               "type": "string"
+            }
+          },
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+              "title": "Arm"
             }
           }
         ],
@@ -16454,8 +16867,29 @@
     },
     "/api/health": {
       "get": {
-        "description": "200 when the audit store opens read-only and answers a query.",
+        "description": "200 when the (scoped) audit store opens read-only and answers a query.",
         "operationId": "health_api_health_get",
+        "parameters": [
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+              "title": "Arm"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -16466,6 +16900,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           },
           "503": {
             "content": {
@@ -16486,8 +16930,29 @@
     },
     "/api/meta": {
       "get": {
-        "description": "App/env info, cadences with stale thresholds, gate caps, client defaults and the\npersona / category catalogue (E13.14: every Tower label comes from here).",
+        "description": "App/env info, cadences with stale thresholds, gate caps, client defaults and the\npersona / category catalogue (E13.14: every Tower label comes from here), plus the\nexperiment arms the tower can be scoped to (E15.6). With ``?arm=`` the settings\nare the arm's (control's overrides + its overlay); ``arms`` always come from control.",
         "operationId": "meta_api_meta_get",
+        "parameters": [
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+              "title": "Arm"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -16498,6 +16963,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           },
           "503": {
             "content": {
@@ -16520,6 +16995,27 @@
       "get": {
         "description": "``ops_alerts``: open first, then resolved in the last 7 days.",
         "operationId": "alerts_api_ops_alerts_get",
+        "parameters": [
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+              "title": "Arm"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -16530,6 +17026,26 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           },
           "503": {
             "content": {
@@ -16550,8 +17066,29 @@
     },
     "/api/ops/budget": {
       "get": {
-        "description": "Today's D32 options-order budget from the local store (``null`` without E6.5).",
+        "description": "Today's D32 options-order budget from the local store (``null`` without E6.5);\nan arm's own orders with ``?arm=``.",
         "operationId": "budget_api_ops_budget_get",
+        "parameters": [
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+              "title": "Arm"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -16570,6 +17107,26 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           },
           "503": {
             "content": {
@@ -16590,8 +17147,29 @@
     },
     "/api/ops/config": {
       "get": {
-        "description": "The D26 effective config and override log (read-only).",
+        "description": "The D26 effective config and override log (read-only). Control's: an arm runs\ncontrol's overrides plus its spec overlay (shown on the Experiments page).",
         "operationId": "config_api_ops_config_get",
+        "parameters": [
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+              "title": "Arm"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -16602,6 +17180,26 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           },
           "503": {
             "content": {
@@ -16622,8 +17220,29 @@
     },
     "/api/ops/context": {
       "get": {
-        "description": "Active ``context_entries`` per kind, TTL left, latest entry, expired in 24 h.",
+        "description": "Active ``context_entries`` per kind, TTL left, latest entry, expired in 24 h (with\n``?arm=``: the arm store's entries, i.e. what its chains read and wrote).",
         "operationId": "context_api_ops_context_get",
+        "parameters": [
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+              "title": "Arm"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -16634,6 +17253,26 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           },
           "503": {
             "content": {
@@ -16664,6 +17303,25 @@
             "schema": {
               "title": "Entry Id",
               "type": "string"
+            }
+          },
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+              "title": "Arm"
             }
           }
         ],
@@ -16717,8 +17375,29 @@
     },
     "/api/ops/halts": {
       "get": {
-        "description": "Halts, active first, with the trades raised in each halt's window.",
+        "description": "Halts, active first, with the trades raised in each halt's window (an arm's own\nwith ``?arm=``, e.g. a D69 ``book_invariant`` one).",
         "operationId": "halts_api_ops_halts_get",
+        "parameters": [
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+              "title": "Arm"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -16729,6 +17408,26 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           },
           "503": {
             "content": {
@@ -16751,6 +17450,27 @@
       "get": {
         "description": "Tick / health heartbeat ages, gateway and remote access, log size, with thresholds.",
         "operationId": "health_api_ops_health_get",
+        "parameters": [
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+              "title": "Arm"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -16761,6 +17481,26 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           },
           "503": {
             "content": {
@@ -16781,7 +17521,7 @@
     },
     "/api/ops/llm": {
       "get": {
-        "description": "LLM calls, tokens and cost per day / persona / model.",
+        "description": "LLM calls, tokens and cost per day / persona / model (control's spend).",
         "operationId": "llm_api_ops_llm_get",
         "parameters": [
           {
@@ -16795,6 +17535,25 @@
               "title": "Days",
               "type": "integer"
             }
+          },
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+              "title": "Arm"
+            }
           }
         ],
         "responses": {
@@ -16807,6 +17566,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
           },
           "422": {
             "content": {
@@ -16934,6 +17703,25 @@
               "title": "Size",
               "type": "integer"
             }
+          },
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+              "title": "Arm"
+            }
           }
         ],
         "responses": {
@@ -16946,6 +17734,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
           },
           "422": {
             "content": {
@@ -16986,6 +17784,25 @@
             "schema": {
               "title": "Run Id",
               "type": "string"
+            }
+          },
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+              "title": "Arm"
             }
           }
         ],
@@ -17071,6 +17888,25 @@
               "title": "Window",
               "type": "string"
             }
+          },
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+              "title": "Arm"
+            }
           }
         ],
         "responses": {
@@ -17083,6 +17919,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
           },
           "422": {
             "content": {
@@ -17113,8 +17959,29 @@
     },
     "/api/ops/sources": {
       "get": {
-        "description": "Per registry source: last fetch, docs today, budget skips, backoff, error rate.",
+        "description": "Per registry source: last fetch, docs today, budget skips, backoff, error rate.\nSources run once, in control (shared by every arm).",
         "operationId": "sources_api_ops_sources_get",
+        "parameters": [
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+              "title": "Arm"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -17125,6 +17992,26 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           },
           "503": {
             "content": {
@@ -17145,8 +18032,29 @@
     },
     "/api/ops/universe": {
       "get": {
-        "description": "E12.6 (D51): the stored active list by tier, tier feeds, drops, ignored override.",
+        "description": "E12.6 (D51): the stored active list by tier, tier feeds, drops, ignored override.\n\nControl's list, unless the arm runs the Scout / Trending itself (then its own).",
         "operationId": "universe_api_ops_universe_get",
+        "parameters": [
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+              "title": "Arm"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -17157,6 +18065,26 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           },
           "503": {
             "content": {
@@ -17177,7 +18105,7 @@
     },
     "/api/overview": {
       "get": {
-        "description": "Status strip, equity (by range), day P&L, positions, Greeks vs caps, proposals,\nmovers and recent activity (rolling window), read in one pass (SELECT only).",
+        "description": "Status strip, equity (by range), day P&L, positions, Greeks vs caps, proposals,\nmovers and recent activity (rolling window), read in one pass (SELECT only).\n\n``?arm=``: the arm's store, so equity / P&L are its virtual account (E15.2).",
         "operationId": "overview_api_overview_get",
         "parameters": [
           {
@@ -17217,6 +18145,25 @@
               "description": "Recent Activity window in hours (default: config `tower.overview.activity_hours`, 24)",
               "title": "Activity Hours"
             }
+          },
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+              "title": "Arm"
+            }
           }
         ],
         "responses": {
@@ -17229,6 +18176,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
           },
           "422": {
             "content": {
@@ -17359,6 +18316,25 @@
               ],
               "title": "Sleeve"
             }
+          },
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+              "title": "Arm"
+            }
           }
         ],
         "responses": {
@@ -17371,6 +18347,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
           },
           "422": {
             "content": {
@@ -17505,6 +18491,25 @@
               ],
               "title": "Sleeve"
             }
+          },
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+              "title": "Arm"
+            }
           }
         ],
         "responses": {
@@ -17517,6 +18522,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
           },
           "422": {
             "content": {
@@ -17599,6 +18614,25 @@
               ],
               "title": "To"
             }
+          },
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+              "title": "Arm"
+            }
           }
         ],
         "responses": {
@@ -17611,6 +18645,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
           },
           "422": {
             "content": {
@@ -17658,6 +18702,25 @@
               "title": "Status",
               "type": "string"
             }
+          },
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+              "title": "Arm"
+            }
           }
         ],
         "responses": {
@@ -17670,6 +18733,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
           },
           "422": {
             "content": {
@@ -17713,6 +18786,25 @@
               "title": "Q",
               "type": "string"
             }
+          },
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+              "title": "Arm"
+            }
           }
         ],
         "responses": {
@@ -17725,6 +18817,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
           },
           "422": {
             "content": {
@@ -17775,6 +18877,25 @@
               ],
               "title": "Lookback Days"
             }
+          },
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+              "title": "Arm"
+            }
           }
         ],
         "responses": {
@@ -17787,6 +18908,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
           },
           "422": {
             "content": {
@@ -18132,6 +19263,25 @@
               "title": "Dir",
               "type": "string"
             }
+          },
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+              "title": "Arm"
+            }
           }
         ],
         "responses": {
@@ -18144,6 +19294,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
           },
           "422": {
             "content": {
@@ -18176,6 +19336,27 @@
       "get": {
         "description": "Distinct values for the Trades filter dropdowns.",
         "operationId": "trade_filters_api_trades_filters_get",
+        "parameters": [
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+              "title": "Arm"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -18186,6 +19367,26 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           },
           "503": {
             "content": {
@@ -18218,6 +19419,25 @@
               "minLength": 4,
               "title": "Proposal Hash",
               "type": "string"
+            }
+          },
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor.",
+              "title": "Arm"
             }
           }
         ],

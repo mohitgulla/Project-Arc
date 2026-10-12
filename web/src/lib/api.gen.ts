@@ -53,7 +53,7 @@ export interface paths {
         };
         /**
          * Health
-         * @description 200 when the audit store opens read-only and answers a query.
+         * @description 200 when the (scoped) audit store opens read-only and answers a query.
          */
         get: operations["health_api_health_get"];
         put?: never;
@@ -74,7 +74,9 @@ export interface paths {
         /**
          * Meta
          * @description App/env info, cadences with stale thresholds, gate caps, client defaults and the
-         *     persona / category catalogue (E13.14: every Tower label comes from here).
+         *     persona / category catalogue (E13.14: every Tower label comes from here), plus the
+         *     experiment arms the tower can be scoped to (E15.6). With ``?arm=`` the settings
+         *     are the arm's (control's overrides + its overlay); ``arms`` always come from control.
          */
         get: operations["meta_api_meta_get"];
         put?: never;
@@ -114,7 +116,8 @@ export interface paths {
         };
         /**
          * Budget
-         * @description Today's D32 options-order budget from the local store (``null`` without E6.5).
+         * @description Today's D32 options-order budget from the local store (``null`` without E6.5);
+         *     an arm's own orders with ``?arm=``.
          */
         get: operations["budget_api_ops_budget_get"];
         put?: never;
@@ -134,7 +137,8 @@ export interface paths {
         };
         /**
          * Config
-         * @description The D26 effective config and override log (read-only).
+         * @description The D26 effective config and override log (read-only). Control's: an arm runs
+         *     control's overrides plus its spec overlay (shown on the Experiments page).
          */
         get: operations["config_api_ops_config_get"];
         put?: never;
@@ -154,7 +158,8 @@ export interface paths {
         };
         /**
          * Context
-         * @description Active ``context_entries`` per kind, TTL left, latest entry, expired in 24 h.
+         * @description Active ``context_entries`` per kind, TTL left, latest entry, expired in 24 h (with
+         *     ``?arm=``: the arm store's entries, i.e. what its chains read and wrote).
          */
         get: operations["context_api_ops_context_get"];
         put?: never;
@@ -194,7 +199,8 @@ export interface paths {
         };
         /**
          * Halts
-         * @description Halts, active first, with the trades raised in each halt's window.
+         * @description Halts, active first, with the trades raised in each halt's window (an arm's own
+         *     with ``?arm=``, e.g. a D69 ``book_invariant`` one).
          */
         get: operations["halts_api_ops_halts_get"];
         put?: never;
@@ -234,7 +240,7 @@ export interface paths {
         };
         /**
          * Llm
-         * @description LLM calls, tokens and cost per day / persona / model.
+         * @description LLM calls, tokens and cost per day / persona / model (control's spend).
          */
         get: operations["llm_api_ops_llm_get"];
         put?: never;
@@ -316,6 +322,7 @@ export interface paths {
         /**
          * Sources
          * @description Per registry source: last fetch, docs today, budget skips, backoff, error rate.
+         *     Sources run once, in control (shared by every arm).
          */
         get: operations["sources_api_ops_sources_get"];
         put?: never;
@@ -336,6 +343,8 @@ export interface paths {
         /**
          * Universe
          * @description E12.6 (D51): the stored active list by tier, tier feeds, drops, ignored override.
+         *
+         *     Control's list, unless the arm runs the Scout / Trending itself (then its own).
          */
         get: operations["universe_api_ops_universe_get"];
         put?: never;
@@ -357,6 +366,8 @@ export interface paths {
          * Overview
          * @description Status strip, equity (by range), day P&L, positions, Greeks vs caps, proposals,
          *     movers and recent activity (rolling window), read in one pass (SELECT only).
+         *
+         *     ``?arm=``: the arm's store, so equity / P&L are its virtual account (E15.2).
          */
         get: operations["overview_api_overview_get"];
         put?: never;
@@ -701,6 +712,14 @@ export interface components {
             as_of: string;
             /** Open */
             open: number;
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Arc Investor's (control's) data
+             * @default false
+             */
+            shared_from_control: boolean;
         };
         /** AppInfo */
         AppInfo: {
@@ -771,6 +790,44 @@ export interface components {
                     [key: string]: unknown;
                 };
             };
+        };
+        /**
+         * ArmMeta
+         * @description One experiment arm the tower can be scoped to (``/api/meta`` ``arms``).
+         */
+        ArmMeta: {
+            /**
+             * Arm
+             * @description Runner arm name (treatment, t1, t2, ...)
+             */
+            arm: string;
+            /** Experiment Id */
+            experiment_id: string;
+            /**
+             * Id
+             * @description The ?arm= value, '<experiment id>:<arm>'
+             */
+            id: string;
+            /**
+             * Label
+             * @description Display name, e.g. 'XP-12 · T1'
+             */
+            label: string;
+            /**
+             * Status
+             * @description The experiment's status (running, stopped, ...)
+             */
+            status: string;
+            /**
+             * Store Age S
+             * @description Seconds since the arm store was last written (null: missing)
+             */
+            store_age_s?: number | null;
+            /**
+             * Viewable
+             * @description True when ?arm=<id> is served (running, store present)
+             */
+            viewable: boolean;
         };
         /**
          * ArmPlan
@@ -1008,6 +1065,14 @@ export interface components {
             period: components["schemas"]["PeriodView"];
             /** Rows */
             rows: components["schemas"]["BreakdownItem"][];
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Arc Investor's (control's) data
+             * @default false
+             */
+            shared_from_control: boolean;
             /** Sleeve */
             sleeve?: string | null;
         };
@@ -1105,6 +1170,14 @@ export interface components {
             reserved: number;
             /** Restrict At */
             restrict_at: number;
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Arc Investor's (control's) data
+             * @default false
+             */
+            shared_from_control: boolean;
             /** Tier */
             tier: string;
             /** Used */
@@ -1466,11 +1539,19 @@ export interface components {
             keys: components["schemas"]["ConfigKeyRow"][];
             /** Note */
             note?: string | null;
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
             /**
              * Scorecard Gate
              * @description E6.6a: scorecard gate line, e.g. 'scorecard gate: OFF (opt-out) — 3 closed trades < 30 required; …' (null when the store has no trade tables)
              */
             scorecard_gate?: string | null;
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Arc Investor's (control's) data
+             * @default false
+             */
+            shared_from_control: boolean;
         };
         /** ContextEntryRef */
         ContextEntryRef: {
@@ -1508,6 +1589,14 @@ export interface components {
             run_id: string | null;
             /** Schema Version */
             schema_version: number;
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Arc Investor's (control's) data
+             * @default false
+             */
+            shared_from_control: boolean;
             /** Status */
             status: string;
             /** Subject */
@@ -1616,6 +1705,14 @@ export interface components {
             groups?: components["schemas"]["ContextGroup"][];
             /** Kinds */
             kinds: components["schemas"]["ContextKindRow"][];
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Arc Investor's (control's) data
+             * @default false
+             */
+            shared_from_control: boolean;
             /** Total Active */
             total_active: number;
         };
@@ -2448,6 +2545,14 @@ export interface components {
             /** Revision */
             revision: number;
             running: components["schemas"]["RunningDetail"] | null;
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Arc Investor's (control's) data
+             * @default false
+             */
+            shared_from_control: boolean;
             spec: components["schemas"]["ExperimentSpec"];
             /** Spec Hash */
             spec_hash: string;
@@ -2760,6 +2865,14 @@ export interface components {
             as_of: string;
             /** Items */
             items: components["schemas"]["ExperimentListItem"][];
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Arc Investor's (control's) data
+             * @default false
+             */
+            shared_from_control: boolean;
         };
         /**
          * FeeBreakdown
@@ -2881,11 +2994,19 @@ export interface components {
             discovery_fill?: {
                 [key: string]: number;
             };
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
             /**
              * Sessions
              * @description Trading sessions in the range
              */
             sessions: number;
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Arc Investor's (control's) data
+             * @default false
+             */
+            shared_from_control: boolean;
             /** Since */
             since: string;
             /** Stages */
@@ -3175,6 +3296,14 @@ export interface components {
             as_of: string;
             /** Halts */
             halts: components["schemas"]["HaltRow"][];
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Arc Investor's (control's) data
+             * @default false
+             */
+            shared_from_control: boolean;
         };
         /** HealthItem */
         HealthItem: {
@@ -3229,6 +3358,13 @@ export interface components {
              * @description Audit store path, opened read-only
              */
             db: string;
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @default false
+             */
+            shared_from_control: boolean;
             /**
              * Status
              * @constant
@@ -3253,6 +3389,14 @@ export interface components {
             };
             /** Items */
             items: components["schemas"]["HealthItem"][];
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Arc Investor's (control's) data
+             * @default false
+             */
+            shared_from_control: boolean;
         };
         /**
          * Interval
@@ -3562,8 +3706,16 @@ export interface components {
             period: components["schemas"]["LlmGroup"][];
             /** Personas */
             personas: string[];
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
             /** Series */
             series: components["schemas"]["LlmDay"][];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Arc Investor's (control's) data
+             * @default false
+             */
+            shared_from_control: boolean;
             /** Today */
             today: components["schemas"]["LlmGroup"][];
             /** Today Cost */
@@ -3699,6 +3851,11 @@ export interface components {
             account_profile: string;
             app: components["schemas"]["AppInfo"];
             /**
+             * Arms
+             * @description E15.6 (D69): experiment arms the tower can be scoped to with ?arm=<id>, running first (the default view is Arc Investor, never listed here)
+             */
+            arms?: components["schemas"]["ArmMeta"][];
+            /**
              * As Of
              * Format: date-time
              */
@@ -3740,6 +3897,13 @@ export interface components {
              * @description Default client poll interval
              */
             refresh_interval_s: number;
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @default false
+             */
+            shared_from_control: boolean;
             /**
              * Sleeves
              * @description E22.5 (D97): the profile's entry-DTE sleeves (window, slots, exit policy per kind); [] for a single-window profile
@@ -4151,6 +4315,14 @@ export interface components {
              * @enum {string}
              */
             range: "1D" | "1W" | "1M" | "3M" | "YTD" | "ALL";
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Arc Investor's (control's) data
+             * @default false
+             */
+            shared_from_control: boolean;
             /**
              * Sleeves
              * @description E22.5 (D97): open positions per entry-DTE sleeve vs its slots
@@ -4354,6 +4526,14 @@ export interface components {
              * @enum {string}
              */
             preset: "1d" | "7d" | "week" | "mtd" | "qtd" | "ytd" | "30d" | "90d" | "all" | "custom";
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Arc Investor's (control's) data
+             * @default false
+             */
+            shared_from_control: boolean;
             /**
              * Sleeve
              * @description E22.5 (D97): entry-DTE sleeve filter; trade cards (Net P&L from realised, costs, win/loss, model, breakdowns, calibration) cover that sleeve only, Equity and the funnel stay account-wide
@@ -4698,6 +4878,14 @@ export interface components {
             items: components["schemas"]["PositionRow"][];
             /** Marks At */
             marks_at?: string | null;
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Arc Investor's (control's) data
+             * @default false
+             */
+            shared_from_control: boolean;
             /** Stale After S */
             stale_after_s: number;
             /**
@@ -5048,6 +5236,14 @@ export interface components {
             log_available: boolean;
             /** Run Id */
             run_id: string;
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Arc Investor's (control's) data
+             * @default false
+             */
+            shared_from_control: boolean;
             /** @description The requested run */
             step: components["schemas"]["StepView"];
         };
@@ -5070,6 +5266,14 @@ export interface components {
             page: number;
             /** Rows */
             rows: components["schemas"]["RunRow"][];
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Arc Investor's (control's) data
+             * @default false
+             */
+            shared_from_control: boolean;
             /** Size */
             size: number;
             /** Total */
@@ -5150,6 +5354,17 @@ export interface components {
             /** T0 Equity */
             t0_equity: number;
         };
+        /**
+         * ScopeInfo
+         * @description Which store a response was read from.
+         */
+        ScopeInfo: {
+            /**
+             * Arm Id
+             * @description '<experiment id>:<arm>' for an arm; null = Arc Investor
+             */
+            arm_id?: string | null;
+        };
         /** SearchMatch */
         SearchMatch: {
             /** Id */
@@ -5175,6 +5390,14 @@ export interface components {
             matches: components["schemas"]["SearchMatch"][];
             /** Q */
             q: string;
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Arc Investor's (control's) data
+             * @default false
+             */
+            shared_from_control: boolean;
         };
         /** Secondary */
         Secondary: {
@@ -5245,6 +5468,14 @@ export interface components {
             loop_job: string;
             /** Rows */
             rows: components["schemas"]["TimelineRow"][];
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Arc Investor's (control's) data
+             * @default false
+             */
+            shared_from_control: boolean;
             /**
              * Start
              * Format: date-time
@@ -5618,6 +5849,14 @@ export interface components {
              * @description E8.8d: D47 categories in display order
              */
             categories?: components["schemas"]["SourceCategoryRow"][];
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Arc Investor's (control's) data
+             * @default false
+             */
+            shared_from_control: boolean;
             /** Sources */
             sources: components["schemas"]["SourceRow"][];
         };
@@ -5950,6 +6189,14 @@ export interface components {
             pnl: components["schemas"]["PnlView"];
             /** Proposals */
             proposals: components["schemas"]["ProposalView"][];
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Arc Investor's (control's) data
+             * @default false
+             */
+            shared_from_control: boolean;
             /** Structures */
             structures: components["schemas"]["StructureView"][];
             /** Violation Counts */
@@ -5984,6 +6231,14 @@ export interface components {
             payoff: components["schemas"]["PayoffSection"];
             position: components["schemas"]["PositionSection"] | null;
             quant: components["schemas"]["QuantSection"];
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Arc Investor's (control's) data
+             * @default false
+             */
+            shared_from_control: boolean;
         };
         /**
          * TradeFilterOptions
@@ -6010,6 +6265,14 @@ export interface components {
             reason_codes: {
                 [key: string]: string;
             }[];
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Arc Investor's (control's) data
+             * @default false
+             */
+            shared_from_control: boolean;
             /**
              * Sleeves
              * @description E22.5 (D97): the profile's sleeves + `other`
@@ -6143,6 +6406,14 @@ export interface components {
             items: components["schemas"]["TradeRow"][];
             /** Page */
             page: number;
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Arc Investor's (control's) data
+             * @default false
+             */
+            shared_from_control: boolean;
             /** Size */
             size: number;
             /**
@@ -6596,6 +6867,14 @@ export interface components {
              * @description The stored resolve's as_of day
              */
             resolved_for: string | null;
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Arc Investor's (control's) data
+             * @default false
+             */
+            shared_from_control: boolean;
             /**
              * State
              * @description today = resolved today; stale = latest resolve is older (consumers use the core list until the next one); none = never resolved (core list shown)
@@ -6753,7 +7032,10 @@ export type $defs = Record<string, never>;
 export interface operations {
     experiments_api_experiments_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                arm?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -6769,6 +7051,24 @@ export interface operations {
                     "application/json": components["schemas"]["ExperimentsResponse"];
                 };
             };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
             /** @description Service Unavailable */
             503: {
                 headers: {
@@ -6782,7 +7082,10 @@ export interface operations {
     };
     experiment_api_experiments__experiment_id__get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                arm?: string | null;
+            };
             header?: never;
             path: {
                 experiment_id: string;
@@ -6831,7 +7134,10 @@ export interface operations {
     };
     health_api_health_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                arm?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -6847,6 +7153,15 @@ export interface operations {
                     "application/json": components["schemas"]["HealthResponse"];
                 };
             };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
             /** @description Service Unavailable */
             503: {
                 headers: {
@@ -6860,7 +7175,10 @@ export interface operations {
     };
     meta_api_meta_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                arm?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -6876,6 +7194,15 @@ export interface operations {
                     "application/json": components["schemas"]["MetaResponse"];
                 };
             };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
             /** @description Service Unavailable */
             503: {
                 headers: {
@@ -6889,7 +7216,10 @@ export interface operations {
     };
     alerts_api_ops_alerts_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                arm?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -6905,6 +7235,24 @@ export interface operations {
                     "application/json": components["schemas"]["AlertsResponse"];
                 };
             };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
             /** @description Service Unavailable */
             503: {
                 headers: {
@@ -6918,7 +7266,10 @@ export interface operations {
     };
     budget_api_ops_budget_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                arm?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -6934,6 +7285,24 @@ export interface operations {
                     "application/json": components["schemas"]["BudgetResponse"] | null;
                 };
             };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
             /** @description Service Unavailable */
             503: {
                 headers: {
@@ -6947,7 +7316,10 @@ export interface operations {
     };
     config_api_ops_config_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                arm?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -6963,6 +7335,24 @@ export interface operations {
                     "application/json": components["schemas"]["ConfigResponse"];
                 };
             };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
             /** @description Service Unavailable */
             503: {
                 headers: {
@@ -6976,7 +7366,10 @@ export interface operations {
     };
     context_api_ops_context_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                arm?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -6992,6 +7385,24 @@ export interface operations {
                     "application/json": components["schemas"]["ContextResponse"];
                 };
             };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
             /** @description Service Unavailable */
             503: {
                 headers: {
@@ -7005,7 +7416,10 @@ export interface operations {
     };
     context_entry_api_ops_context__entry_id__get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                arm?: string | null;
+            };
             header?: never;
             path: {
                 entry_id: string;
@@ -7054,7 +7468,10 @@ export interface operations {
     };
     halts_api_ops_halts_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                arm?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -7070,6 +7487,24 @@ export interface operations {
                     "application/json": components["schemas"]["HaltsResponse"];
                 };
             };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
             /** @description Service Unavailable */
             503: {
                 headers: {
@@ -7083,7 +7518,10 @@ export interface operations {
     };
     health_api_ops_health_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                arm?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -7097,6 +7535,24 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HealthStripResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
             /** @description Service Unavailable */
@@ -7114,6 +7570,8 @@ export interface operations {
         parameters: {
             query?: {
                 days?: number;
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                arm?: string | null;
             };
             header?: never;
             path?: never;
@@ -7128,6 +7586,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LlmResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Validation Error */
@@ -7163,6 +7630,8 @@ export interface operations {
                 chain?: string | null;
                 page?: number;
                 size?: number;
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                arm?: string | null;
             };
             header?: never;
             path?: never;
@@ -7177,6 +7646,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunListResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Unprocessable Entity */
@@ -7201,7 +7679,10 @@ export interface operations {
     };
     run_detail_api_ops_runs__run_id__get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                arm?: string | null;
+            };
             header?: never;
             path: {
                 run_id: string;
@@ -7253,6 +7734,8 @@ export interface operations {
             query?: {
                 day?: string | null;
                 window?: "day" | "rolling";
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                arm?: string | null;
             };
             header?: never;
             path?: never;
@@ -7267,6 +7750,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SessionResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Unprocessable Entity */
@@ -7291,7 +7783,10 @@ export interface operations {
     };
     sources_api_ops_sources_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                arm?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -7307,6 +7802,24 @@ export interface operations {
                     "application/json": components["schemas"]["SourcesResponse"];
                 };
             };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
             /** @description Service Unavailable */
             503: {
                 headers: {
@@ -7320,7 +7833,10 @@ export interface operations {
     };
     universe_api_ops_universe_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                arm?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -7334,6 +7850,24 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UniverseResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
             /** @description Service Unavailable */
@@ -7353,6 +7887,8 @@ export interface operations {
                 range?: "1D" | "1W" | "1M" | "3M" | "YTD" | "ALL";
                 /** @description Recent Activity window in hours (default: config `tower.overview.activity_hours`, 24) */
                 activity_hours?: number | null;
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                arm?: string | null;
             };
             header?: never;
             path?: never;
@@ -7367,6 +7903,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OverviewResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Validation Error */
@@ -7398,6 +7943,8 @@ export interface operations {
                 from?: string | null;
                 to?: string | null;
                 sleeve?: string | null;
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                arm?: string | null;
             };
             header?: never;
             path?: never;
@@ -7412,6 +7959,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PerformanceResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Unprocessable Entity */
@@ -7443,6 +7999,8 @@ export interface operations {
                 from?: string | null;
                 to?: string | null;
                 sleeve?: string | null;
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                arm?: string | null;
             };
             header?: never;
             path?: never;
@@ -7457,6 +8015,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BreakdownResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Unprocessable Entity */
@@ -7485,6 +8052,8 @@ export interface operations {
                 range?: "1D" | "1W" | "1M" | "3M";
                 from?: string | null;
                 to?: string | null;
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                arm?: string | null;
             };
             header?: never;
             path?: never;
@@ -7499,6 +8068,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FunnelReport"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Unprocessable Entity */
@@ -7525,6 +8103,8 @@ export interface operations {
         parameters: {
             query?: {
                 status?: "open" | "closed" | "all";
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                arm?: string | null;
             };
             header?: never;
             path?: never;
@@ -7539,6 +8119,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PositionsResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Validation Error */
@@ -7565,6 +8154,8 @@ export interface operations {
         parameters: {
             query?: {
                 q?: string;
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                arm?: string | null;
             };
             header?: never;
             path?: never;
@@ -7579,6 +8170,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SearchResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Validation Error */
@@ -7605,6 +8205,8 @@ export interface operations {
         parameters: {
             query?: {
                 lookback_days?: number | null;
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                arm?: string | null;
             };
             header?: never;
             path?: never;
@@ -7619,6 +8221,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TowerSnapshot"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Validation Error */
@@ -7662,6 +8273,8 @@ export interface operations {
                 size?: number;
                 sort?: "time" | "ticker" | "contracts" | "limit" | "net_ev" | "pop" | "slippage_bps" | "realized_pnl";
                 dir?: "asc" | "desc";
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                arm?: string | null;
             };
             header?: never;
             path?: never;
@@ -7676,6 +8289,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TradeListResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Validation Error */
@@ -7700,7 +8322,10 @@ export interface operations {
     };
     trade_filters_api_trades_filters_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                arm?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -7716,6 +8341,24 @@ export interface operations {
                     "application/json": components["schemas"]["TradeFilterOptions"];
                 };
             };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
             /** @description Service Unavailable */
             503: {
                 headers: {
@@ -7729,7 +8372,10 @@ export interface operations {
     };
     trade_api_trades__proposal_hash__get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                arm?: string | null;
+            };
             header?: never;
             path: {
                 proposal_hash: string;

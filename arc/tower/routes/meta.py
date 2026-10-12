@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import functools
 import importlib.metadata
+import sqlite3
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -12,8 +13,9 @@ from fastapi import APIRouter
 
 from arc.tower.api import TowerError
 from arc.tower.catalogue import category_catalogue, persona_catalogue
+from arc.tower.data import connect_ro
 from arc.tower.data_sleeves import sleeve_meta
-from arc.tower.routes.deps import Conn, Tower, effective
+from arc.tower.routes.deps import Conn, ControlTower, Scope, Tower, effective
 from arc.tower.schemas import (
     STALE_FACTOR,
     AppInfo,
@@ -23,6 +25,7 @@ from arc.tower.schemas import (
     HealthResponse,
     MetaResponse,
 )
+from arc.tower.scope import ArmMeta, list_arms
 
 if TYPE_CHECKING:
     import datetime as _dt
@@ -115,19 +118,35 @@ def _now(cfg: Tower) -> _dt.datetime:
 
 
 @router.get("/health", response_model=HealthResponse)
-def health(cfg: Tower, conn: Conn) -> HealthResponse:
-    """200 when the audit store opens read-only and answers a query."""
+def health(cfg: Tower, conn: Conn, scope: Scope) -> HealthResponse:
+    """200 when the (scoped) audit store opens read-only and answers a query."""
     try:
         conn.execute("SELECT 1").fetchone()
     except Exception as exc:  # pragma: no cover - db_conn already maps open failures
         raise TowerError(503, "db_error", str(exc)) from exc
-    return HealthResponse(status="ok", db=str(cfg.db_path), as_of=_now(cfg))
+    return HealthResponse(status="ok", db=str(cfg.db_path), as_of=_now(cfg), scope=scope.info())
+
+
+def _arms(control: ControlTower) -> list[ArmMeta]:
+    """E15.6: the arms recorded in control's store (read-only), running first."""
+    try:
+        conn = connect_ro(control.db_path)
+    except (FileNotFoundError, sqlite3.Error) as exc:
+        raise TowerError(503, "db_unavailable", f"{type(exc).__name__}: {exc}") from exc
+    try:
+        return list_arms(conn, now=control.clock())
+    except sqlite3.Error as exc:
+        raise TowerError(503, "db_error", f"{type(exc).__name__}: {exc}") from exc
+    finally:
+        conn.close()
 
 
 @router.get("/meta", response_model=MetaResponse)
-def meta(cfg: Tower) -> MetaResponse:
+def meta(cfg: Tower, control: ControlTower, scope: Scope) -> MetaResponse:
     """App/env info, cadences with stale thresholds, gate caps, client defaults and the
-    persona / category catalogue (E13.14: every Tower label comes from here)."""
+    persona / category catalogue (E13.14: every Tower label comes from here), plus the
+    experiment arms the tower can be scoped to (E15.6). With ``?arm=`` the settings
+    are the arm's (control's overrides + its overlay); ``arms`` always come from control."""
     if not cfg.db_path.is_file():
         raise TowerError(503, "db_unavailable", f"audit store not found: {cfg.db_path}")
     settings, routines = effective(cfg)
@@ -148,4 +167,6 @@ def meta(cfg: Tower) -> MetaResponse:
         personas=persona_catalogue(routines),
         categories=category_catalogue(routines),
         sleeves=sleeve_meta(settings),
+        arms=_arms(control),
+        scope=scope.info(),
     )

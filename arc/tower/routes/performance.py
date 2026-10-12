@@ -28,8 +28,9 @@ from arc.tower.data_performance import (
     load_performance,
 )
 from arc.tower.data_sleeves import OTHER, named_sleeves
-from arc.tower.routes.deps import Conn, Tower, effective
+from arc.tower.routes.deps import Conn, ControlConn, ControlTower, Scope, Tower, effective
 from arc.tower.schemas import ErrorResponse
+from arc.tower.scope import scoped, wrap
 from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
@@ -46,7 +47,16 @@ _SLEEVE_RE = r"^[a-z][a-z0-9_]*$"
 CACHE_TTL_S = 60.0
 _MAX_ENTRIES = 64
 
-router = APIRouter(tags=["performance"], responses={503: {"model": ErrorResponse}})
+router = APIRouter(
+    tags=["performance"], responses={503: {"model": ErrorResponse}, 404: {"model": ErrorResponse}}
+)
+
+# E15.6: Performance and its breakdown read the scoped store (an arm's virtual-account
+# equity and its own closed trades); the funnel counts control's shared inputs (docs,
+# Scout/Scalp candidates), so an arm view gets control's, flagged shared_from_control.
+PerformanceOut = scoped(PerformanceResponse)
+BreakdownOut = scoped(BreakdownResponse)
+FunnelOut = scoped(FunnelReport)
 
 
 @dataclass
@@ -120,13 +130,14 @@ def _sleeves(cfg: TowerConfig, sleeve: str | None) -> list[DteSleeve]:
 
 @router.get(
     "/performance",
-    response_model=PerformanceResponse,
+    response_model=PerformanceOut,
     responses={422: {"model": ErrorResponse}},
 )
 def performance(  # noqa: PLR0913 - one query parameter per control
     cfg: Tower,
     conn: Conn,
     cache: Cache,
+    scope: Scope,
     preset: Annotated[Preset, Query()] = "90d",
     # TODO(cleanup PR): the SPA stopped sending ``compare`` in E8.8c; drop the parameter and
     # the compare_* response fields once no caller sends it. Default ``none`` skips the work.
@@ -146,7 +157,7 @@ def performance(  # noqa: PLR0913 - one query parameter per control
     windows = tuple((s.name, s.dte_min, s.dte_max, s.max_positions) for s in sleeves)
     key = (
         "perf", preset, compare, include_tests, date_from, date_to, sleeve, windows,
-        now.date(), stamp,
+        now.date(), str(cfg.db_path), stamp,
     )  # fmt: skip
 
     def build() -> PerformanceResponse:
@@ -166,18 +177,19 @@ def performance(  # noqa: PLR0913 - one query parameter per control
             raise TowerError(422, "invalid_request", str(exc)) from exc
 
     result: PerformanceResponse = cache.get_or_build(key, build)
-    return result
+    return wrap(PerformanceOut, result, scope)
 
 
 @router.get(
     "/performance/breakdown",
-    response_model=BreakdownResponse,
+    response_model=BreakdownOut,
     responses={422: {"model": ErrorResponse}},
 )
 def performance_breakdown(  # noqa: PLR0913 - one query parameter per control
     cfg: Tower,
     conn: Conn,
     cache: Cache,
+    scope: Scope,
     by: Annotated[BreakdownBy, Query()] = "ticker",
     preset: Annotated[Preset, Query()] = "90d",
     include_tests: Annotated[bool, Query()] = False,
@@ -191,7 +203,7 @@ def performance_breakdown(  # noqa: PLR0913 - one query parameter per control
     windows = tuple((s.name, s.dte_min, s.dte_max) for s in sleeves)
     key = (
         "bd", by, preset, include_tests, date_from, date_to, sleeve, windows, now.date(),
-        _stamp(cfg.db_path),
+        str(cfg.db_path), _stamp(cfg.db_path),
     )  # fmt: skip
 
     def build() -> BreakdownResponse:
@@ -211,18 +223,19 @@ def performance_breakdown(  # noqa: PLR0913 - one query parameter per control
             raise TowerError(422, "invalid_request", str(exc)) from exc
 
     result: BreakdownResponse = cache.get_or_build(key, build)
-    return result
+    return wrap(BreakdownOut, result, scope)
 
 
 @router.get(
     "/performance/funnel",
-    response_model=FunnelReport,
+    response_model=FunnelOut,
     responses={422: {"model": ErrorResponse}},
 )
 def performance_funnel(  # noqa: PLR0913 - one query parameter per control
-    cfg: Tower,
-    conn: Conn,
+    cfg: ControlTower,
+    conn: ControlConn,
     cache: Cache,
+    scope: Scope,
     range: Annotated[FunnelRange, Query()] = "1W",  # noqa: A002 - the URL parameter name
     date_from: Annotated[_dt.date | None, Query(alias="from")] = None,
     date_to: Annotated[_dt.date | None, Query(alias="to")] = None,
@@ -242,4 +255,4 @@ def performance_funnel(  # noqa: PLR0913 - one query parameter per control
         return load_funnel_report(conn, since=first, until=last, routines=routines)
 
     result: FunnelReport = cache.get_or_build(key, build)
-    return result
+    return wrap(FunnelOut, result, scope, shared=True)

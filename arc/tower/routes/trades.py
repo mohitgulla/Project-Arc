@@ -23,12 +23,22 @@ from arc.tower.data_trades import (
     load_trades,
     search,
 )
-from arc.tower.routes.deps import Conn, Tower, effective
+from arc.tower.routes.deps import Conn, Scope, Tower, effective
 from arc.tower.schemas import ErrorResponse
+from arc.tower.scope import scoped, wrap
 
 __all__ = ["router"]
 
-router = APIRouter(tags=["trades"], responses={503: {"model": ErrorResponse}})
+router = APIRouter(
+    tags=["trades"], responses={503: {"model": ErrorResponse}, 404: {"model": ErrorResponse}}
+)
+
+# E15.6: with ?arm= every trades route reads the arm's store (its own proposals,
+# executions and attributed fills).
+TradeListOut = scoped(TradeListResponse)
+TradeFilterOptionsOut = scoped(TradeFilterOptions)
+TradeDetailOut = scoped(TradeDetail)
+SearchOut = scoped(SearchResponse)
 
 Multi = Annotated[list[str] | None, Query()]
 
@@ -41,10 +51,11 @@ def _split(values: list[str] | None) -> list[str]:
     return out
 
 
-@router.get("/trades", response_model=TradeListResponse)
+@router.get("/trades", response_model=TradeListOut)
 def trades(  # noqa: PLR0913 - one query parameter per filter
     cfg: Tower,
     conn: Conn,
+    scope: Scope,
     date: Annotated[DatePreset, Query()] = "all",
     date_from: Annotated[_dt.date | None, Query()] = None,
     date_to: Annotated[_dt.date | None, Query()] = None,
@@ -95,7 +106,7 @@ def trades(  # noqa: PLR0913 - one query parameter per filter
         )
     except ValueError as exc:
         raise TowerError(422, "invalid_request", str(exc)) from exc
-    return load_trades(
+    out = load_trades(
         conn,
         filters,
         now=cfg.clock(),
@@ -105,36 +116,39 @@ def trades(  # noqa: PLR0913 - one query parameter per filter
         direction=dir,
         sleeves=sleeves,
     )
+    return wrap(TradeListOut, out, scope)
 
 
-@router.get("/trades/filters", response_model=TradeFilterOptions)
-def trade_filters(cfg: Tower, conn: Conn) -> TradeFilterOptions:
+@router.get("/trades/filters", response_model=TradeFilterOptionsOut)
+def trade_filters(cfg: Tower, conn: Conn, scope: Scope) -> TradeFilterOptions:
     """Distinct values for the Trades filter dropdowns."""
-    return load_filter_options(conn, now=cfg.clock(), sleeves=named_sleeves(effective(cfg)[0]))
+    out = load_filter_options(conn, now=cfg.clock(), sleeves=named_sleeves(effective(cfg)[0]))
+    return wrap(TradeFilterOptionsOut, out, scope)
 
 
 @router.get(
     "/trades/{proposal_hash}",
-    response_model=TradeDetail,
-    responses={404: {"model": ErrorResponse}},
+    response_model=TradeDetailOut,
 )
 def trade(
     cfg: Tower,
     conn: Conn,
+    scope: Scope,
     proposal_hash: Annotated[str, Path(min_length=4, max_length=128)],
 ) -> TradeDetail:
     """The full drill-down for one proposal (every section in one round trip)."""
     detail = load_trade(conn, proposal_hash, now=cfg.clock())
     if detail is None:
         raise TowerError(404, "not_found", f"no trade {proposal_hash!r}")
-    return detail
+    return wrap(TradeDetailOut, detail, scope)
 
 
-@router.get("/search", response_model=SearchResponse)
+@router.get("/search", response_model=SearchOut)
 def global_search(
     cfg: Tower,
     conn: Conn,
+    scope: Scope,
     q: Annotated[str, Query(max_length=200)] = "",
 ) -> SearchResponse:
     """Resolve a ticker / hash prefix / run id / chain id / structure id to routes."""
-    return search(conn, q, now=cfg.clock())
+    return wrap(SearchOut, search(conn, q, now=cfg.clock()), scope)
