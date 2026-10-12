@@ -12,6 +12,7 @@ import { EmptyState } from "../components/EmptyState";
 import { InfoTip } from "../components/InfoTip";
 import { KeyValueList } from "../components/KeyValueList";
 import { Section } from "../components/Section";
+import { SegmentedControl } from "../components/SegmentedControl";
 import { StackedBars } from "../components/StackedBars";
 import { formatAge, formatNumber, titleCase } from "../lib/format";
 import { useLayout } from "../lib/layout";
@@ -20,34 +21,30 @@ import {
   SLOT_CLASS,
   SLOT_LABEL,
   SOURCE_STATUS_TONE,
-  bandHasProblem,
-  bandRollup,
+  TIMELINE_WINDOWS,
   bandRows,
   contextGroups,
   dayParam,
   formatDuration,
   formatSeconds,
   groupRepeats,
-  hourTicks,
   isSourceProblem,
   kindLabel,
   llmBars,
   llmCost,
   loopSplit,
-  rowFacts,
-  rowSummary,
   runApiQuery,
   runQuery,
+  sessionQuery,
   sharePct,
   shortList,
   slotCounts,
-  slotTitle,
   sourceGroups,
   timeLeft,
-  timelinePct,
+  windowCaption,
+  windowParam,
   type Alerts,
   type AutoApprove,
-  type BandView,
   type ContextGroupView,
   type ContextKind,
   type ContextStore,
@@ -62,268 +59,66 @@ import {
   type SourceCategory,
   type SourceRow,
   type Sources,
-  type TimelineRow,
+  type TimelineWindow,
 } from "../lib/ops";
 import { personaName, useCatalogue } from "../lib/personas";
 import { useContextEntry, useOps } from "../lib/useApi";
-import { CONTROL, Loading, PersonaChip, Pill, RunStatus, et, shortId, type PillTone } from "./opsShared";
+import { SessionTimeline } from "./SessionTimeline";
+import { CONTROL, Loading, Pill, RunStatus, et, shortId, type PillTone } from "./opsShared";
 
 // ---------------------------------------------------------------------------
-// 1. Session timeline (E8.8d: bands from routines.yaml, persona chips, ⓘ per job)
+// 1. Session timeline (D93: one fixed-scale timeline, Rolling / Day; SessionTimeline.tsx)
 // ---------------------------------------------------------------------------
 
-function JobInfo({ row }: { row: TimelineRow }) {
-  return (
-    <InfoTip label={`About ${titleCase(row.label)}`} testid="job-info" formula={rowFacts(row).join(" · ")}>
-      {row.about ?? `${row.job} (no about line in routines.yaml)`}
-    </InfoTip>
-  );
-}
-
-function JobLabel({ row, strong }: { row: TimelineRow; strong?: boolean }) {
-  return (
-    <span className="flex min-w-0 items-center gap-1">
-      <span className={`min-w-0 truncate text-caption ${strong ? "font-semibold text-primary" : "text-secondary"}`} title={`${row.job} · ${row.cadence}`} data-testid="job-label">
-        {titleCase(row.label)}
-      </span>
-      <PersonaChip persona={row.persona} />
-      <JobInfo row={row} />
-    </span>
-  );
-}
-
-function SlotTicks({ row, s }: { row: TimelineRow; s: Session }) {
-  const navigate = useNavigate();
-  return (
-    <div className="relative h-6 min-w-0 flex-1 rounded-control bg-control/40">
-      {row.slots.map((slot) => {
-        const left = timelinePct(slot.at, s.start, s.end);
-        const cls = SLOT_CLASS[slot.status];
-        const title = slotTitle(slot);
-        const run = slot.run;
-        return (
-          <button
-            key={slot.at}
-            type="button"
-            data-status={slot.status}
-            data-testid="slot"
-            aria-label={title}
-            title={title}
-            disabled={!run}
-            onClick={() => run && navigate(`/ops/runs/${run.run_id}`)}
-            className={`absolute top-1 h-4 w-[5px] -translate-x-1/2 rounded-[2px] ${cls} ${run ? "cursor-pointer hover:scale-y-125" : "cursor-default"}`}
-            style={{ left: `${left}%` }}
-          />
-        );
-      })}
-    </div>
-  );
-}
-
-const LABEL_W = 196;
-
-/** Desktop / tablet: the Gantt with band header rows. */
-function TimelineGantt({ s, bands }: { s: Session; bands: BandView[] }) {
-  const ticks = hourTicks(s.start, s.end);
-  const nowPct = timelinePct(s.as_of, s.start, s.end);
-  const showNow = s.as_of >= s.start && s.as_of <= s.end;
-  return (
-    <div data-testid="session-timeline" data-layout="gantt" data-scroll-x className="arc-scroll-x">
-      <div className="min-w-[720px]">
-        <div className="relative mb-1 h-4 text-micro text-muted" style={{ marginLeft: LABEL_W + 8 }}>
-          {ticks.map((t) => (
-            <span key={t.label} className="absolute -translate-x-1/2 tabular-nums" style={{ left: `${t.pct}%` }}>
-              {t.label}
-            </span>
-          ))}
-        </div>
-        <div className="relative">
-          {showNow && (
-            <span
-              aria-hidden="true"
-              className="pointer-events-none absolute bottom-0 top-0 z-10 w-px bg-accent"
-              style={{ left: `calc(${LABEL_W + 8}px + (100% - ${LABEL_W + 8}px) * ${nowPct / 100})` }}
-            />
-          )}
-          {bands.map(({ band, rows, sub, firstOfGroup }) => (
-            <div key={band.key} data-testid="band" data-band={band.key}>
-              {sub && firstOfGroup && (
-                <div className="pt-2 text-micro font-semibold uppercase tracking-wide text-muted">{titleCase(band.group_label)}</div>
-              )}
-              <div className="flex items-baseline gap-2 border-b border-line pb-0.5 pt-2" data-testid="band-header">
-                <span className={`text-caption font-semibold text-title ${sub ? "pl-2" : ""}`}>{titleCase(band.label)}</span>
-                <span className="text-micro text-muted tabular-nums">{bandRollup(rows)}</span>
-              </div>
-              {rows.map((row) => (
-                <div
-                  key={row.job}
-                  className="flex items-center gap-2 py-0.5"
-                  data-testid={row.job === s.loop_job ? "loop-row" : "timeline-row"}
-                  data-job={row.job}
-                >
-                  <span className={`shrink-0 ${sub ? "pl-2" : ""}`} style={{ width: LABEL_W }}>
-                    <JobLabel row={row} strong={row.job === s.loop_job} />
-                  </span>
-                  <SlotTicks row={row} s={s} />
-                </div>
-              ))}
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function SlotDots({ row }: { row: TimelineRow }) {
-  const navigate = useNavigate();
-  return (
-    <div data-scroll-x className="arc-scroll-x -mx-1 px-1" data-testid="slot-strip">
-      <div className="flex w-max items-center gap-1 py-1">
-        {row.slots.map((slot) => {
-          const title = slotTitle(slot);
-          const run = slot.run;
-          return (
-            <button
-              key={slot.at}
-              type="button"
-              data-status={slot.status}
-              data-testid="slot"
-              aria-label={title}
-              title={title}
-              disabled={!run}
-              onClick={(e) => {
-                e.stopPropagation();
-                if (run) navigate(`/ops/runs/${run.run_id}`);
-              }}
-              className="arc-hit relative inline-flex h-3 w-3 shrink-0 items-center justify-center"
-            >
-              <span className={`h-2.5 w-2.5 rounded-full ${SLOT_CLASS[slot.status]}`} />
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function MobileJobRow({ row, s }: { row: TimelineRow; s: Session }) {
-  const [open, setOpen] = useState(false);
-  const id = useId();
-  return (
-    <li className="py-2" data-testid={row.job === s.loop_job ? "loop-row" : "timeline-row"} data-job={row.job}>
-      <div className="flex items-center gap-1">
-        <button
-          type="button"
-          aria-expanded={open}
-          aria-controls={id}
-          onClick={() => setOpen(!open)}
-          className="flex min-h-[44px] min-w-0 flex-1 flex-col items-start justify-center text-left"
-        >
-          <span className="flex w-full min-w-0 items-center gap-1.5">
-            <span className={`min-w-0 truncate text-caption ${row.job === s.loop_job ? "font-semibold text-primary" : "text-primary"}`} data-testid="job-label">{titleCase(row.label)}</span>
-            <PersonaChip persona={row.persona} />
-          </span>
-          <span className="text-micro text-muted tabular-nums" data-testid="row-summary">
-            {rowSummary(row)}
-          </span>
-        </button>
-        <JobInfo row={row} />
-      </div>
-      <SlotDots row={row} />
-      <ul id={id} hidden={!open} className="mt-1 divide-y divide-line rounded-control bg-control/40 px-2 text-micro" data-testid="slot-details">
-        {row.slots.map((slot) => (
-          <li key={slot.at} className="flex min-h-[32px] items-center gap-2 tabular-nums">
-            <span className={`h-2 w-2 shrink-0 rounded-full ${SLOT_CLASS[slot.status].replace("animate-pulse", "")}`} />
-            <span className="w-11 shrink-0">{slot.at.slice(11, 16)}</span>
-            <span className="w-16 shrink-0 text-secondary">{SLOT_LABEL[slot.status]}</span>
-            {slot.run ? (
-              <Link to={`/ops/runs/${slot.run.run_id}`} className="arc-action min-w-0 truncate">
-                {shortId(slot.run.run_id, 22)}
-              </Link>
-            ) : (
-              <span className="text-muted">—</span>
-            )}
-          </li>
-        ))}
-      </ul>
-    </li>
-  );
-}
-
-function MobileBand({ view, s }: { view: BandView; s: Session }) {
-  const { band, rows, sub, firstOfGroup } = view;
-  const [open, setOpen] = useState(() => bandHasProblem(rows));
-  const id = useId();
-  return (
-    <div data-testid="band" data-band={band.key} data-open={open}>
-      {sub && firstOfGroup && <div className="pt-2 text-micro font-semibold uppercase tracking-wide text-muted">{titleCase(band.group_label)}</div>}
-      <button
-        type="button"
-        aria-expanded={open}
-        aria-controls={id}
-        onClick={() => setOpen(!open)}
-        data-testid="band-header"
-        className="flex min-h-[44px] w-full items-center gap-2 border-b border-line text-left"
-      >
-        <span className="w-3 text-caption text-muted" aria-hidden="true">
-          {open ? "▼" : "▶"}
-        </span>
-        <span className="text-caption font-semibold text-title">{titleCase(band.label)}</span>
-        <span className="min-w-0 truncate text-micro text-muted tabular-nums">· {bandRollup(rows)}</span>
-      </button>
-      <ul id={id} hidden={!open} className="divide-y divide-line pl-5">
-        {rows.map((row) => (
-          <MobileJobRow key={row.job} row={row} s={s} />
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-/** Mobile (≤ 768): the grouped list; no min-width Gantt. */
-function TimelineList({ s, bands }: { s: Session; bands: BandView[] }) {
-  return (
-    <div data-testid="session-timeline" data-layout="list">
-      {bands.map((v) => (
-        <MobileBand key={v.band.key} view={v} s={s} />
-      ))}
-    </div>
-  );
-}
-
-function SessionCard({ s, day, setDay }: { s?: Session; day: string; setDay: (d: string) => void }) {
-  const layout = useLayout();
+function SessionCard({
+  s,
+  day,
+  setDay,
+  win,
+  setWin,
+  now,
+}: {
+  s?: Session;
+  day: string;
+  setDay: (d: string) => void;
+  win: TimelineWindow;
+  setWin: (w: TimelineWindow) => void;
+  now: number;
+}) {
   const split = loopSplit(s?.loop);
   const bands = useMemo(() => (s ? bandRows(s) : []), [s]);
   return (
     <Card title="Session Timeline" freshness={{ at: s?.as_of, label: "loaded" }}>
       <div className="mb-3 flex flex-wrap items-center gap-2" data-testid="day-control">
-        {DAY_PRESETS.map((p) => (
-          <button
-            key={p.value}
-            type="button"
-            aria-pressed={day === p.value}
-            onClick={() => setDay(p.value)}
-            className={`arc-press rounded-pill px-2.5 py-1 text-caption font-semibold max-tablet:min-h-[44px] ${day === p.value ? "bg-range-active text-[color:var(--range-active-text)]" : "text-secondary hover:bg-hover"}`}
-          >
-            {p.label}
-          </button>
-        ))}
-        <input
-          type="date"
-          aria-label="Pick a day"
-          className={CONTROL}
-          value={/^\d{4}-/.test(day) ? day : ""}
-          onChange={(e) => setDay(e.target.value || "today")}
-        />
+        <SegmentedControl options={TIMELINE_WINDOWS} value={win} onChange={setWin} size="sm" label="Timeline window" testid="timeline-window" />
+        {win === "day" &&
+          DAY_PRESETS.map((p) => (
+            <button
+              key={p.value}
+              type="button"
+              aria-pressed={day === p.value}
+              onClick={() => setDay(p.value)}
+              className={`arc-press rounded-pill px-2.5 py-1 text-caption font-semibold max-tablet:min-h-[44px] ${day === p.value ? "bg-range-active text-[color:var(--range-active-text)]" : "text-secondary hover:bg-hover"}`}
+            >
+              {p.label}
+            </button>
+          ))}
+        {win === "day" && (
+          <input
+            type="date"
+            aria-label="Pick a day"
+            className={CONTROL}
+            value={/^\d{4}-/.test(day) ? day : ""}
+            onChange={(e) => setDay(e.target.value || "today")}
+          />
+        )}
         {s && (
-          <span className="text-caption text-muted tabular-nums">
-            {s.day} · {s.start.slice(11, 16)}–{s.end.slice(11, 16)} ET
+          <span className="text-caption text-muted tabular-nums" data-testid="window-caption">
+            {windowCaption(s)}
           </span>
         )}
       </div>
-      {!s ? <Loading what="the session" /> : layout === "mobile" ? <TimelineList s={s} bands={bands} /> : <TimelineGantt s={s} bands={bands} />}
+      {!s ? <Loading what="the session" /> : <SessionTimeline s={s} bands={bands} now={now} />}
       {s && (
         <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-caption text-secondary tabular-nums" data-testid="slot-legend">
           {slotCounts(s.counts).map(({ status, n }) => (
@@ -1033,8 +828,11 @@ function ConfigLink({ c }: { c?: OpsConfig }) {
 export function OpsPage() {
   const [params, setParams] = useSearchParams();
   const day = dayParam(params.get("day"));
+  const win = windowParam(params.get("tl"), params.get("day"));
   const now = useNow();
-  const session = useOps("/api/ops/session", { day });
+  // D93: the now-line moves every minute without a reload (the payload polls on its own).
+  const tlNow = useNow(60_000);
+  const session = useOps("/api/ops/session", sessionQuery(win, day));
   const health = useOps("/api/ops/health");
   const alerts = useOps("/api/ops/alerts");
   const halts = useOps("/api/ops/halts");
@@ -1052,13 +850,22 @@ export function OpsPage() {
     const next = new URLSearchParams(params);
     if (d === "today") next.delete("day");
     else next.set("day", d);
+    next.set("tl", "day");
+    setParams(next, { replace: true });
+  };
+  const setWin = (w: TimelineWindow) => {
+    const next = new URLSearchParams(params);
+    if (w === "rolling") {
+      next.delete("tl");
+      next.delete("day");
+    } else next.set("tl", "day");
     setParams(next, { replace: true });
   };
   const cfg = config.data as OpsConfig | undefined;
   // Owner order (D48, D89: Health under Config; OPS_WIDGETS): the same on phone and desktop, one column.
   return (
     <div className="grid gap-6 desktop:gap-10" data-testid="ops">
-      <SessionCard s={session.data as Session | undefined} day={day} setDay={setDay} />
+      <SessionCard s={session.data as Session | undefined} day={day} setDay={setDay} win={win} setWin={setWin} now={tlNow} />
       <SourcesCard s={sources.data as Sources | undefined} now={now} />
       <LlmCard l={llm.data as Llm | undefined} />
       <ContextCard c={context.data as ContextStore | undefined} now={now} />

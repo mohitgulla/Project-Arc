@@ -161,9 +161,13 @@ Charts: Recharts, wrapped so no page imports Recharts directly. Tooltips share o
 - Loaders in `arc/tower/data_ops.py`, routes `GET /api/ops/{session,health,alerts,halts,
   runs,runs/{run_id},budget,context,context/{entry_id},sources,llm,config}`.
 - Session timeline slots are `config/routines.yaml` slots (`arc.routines.schedule
-  .slots_between`, 05:00–22:00 ET) joined to root `routine_runs` on `(job, scheduled_for)`.
-  Colours: done `--accent`, running pulsing `--accent`, failed `--neg`, skipped / no_change
-  muted, missed `--warn`, future `--track`. The D31 trading loop (`loop.job`) is its own row.
+  .slots_between`) in the requested window, joined to root `routine_runs` on
+  `(job, scheduled_for)`. D93: `GET /api/ops/session?window=rolling` is the last 8 h and the
+  next 4 h around the current ET hour (`[hour − 8 h, hour + 5 h)`, may span midnight, `day`
+  ignored); `window=day&day=…` (the API default) is the full ET day `[00:00, 24:00)`, so the
+  23:00 jobs show (the old 02:00–22:00 span cut them off). Colours: done `--accent`, running
+  pulsing `--accent`, failed `--neg`, skipped / no_change muted, missed `--warn`, upcoming
+  (`future`) `--track`. The D31 trading loop (`loop.job`) is its own row.
 - Run detail renders the stored D27 manifest (`run_manifests.payload`) and the trace from
   `arc.context.trace.trace_runs`, the same serializer `arc context trace` prints. A read or
   write of a kind outside the job's declared contract is highlighted `--neg`.
@@ -285,10 +289,23 @@ they are never dropped.
   `persona` (chip; sources declare none) and `about` (one line ≤ 160 chars, the ⓘ text).
   A typo fails config load. Sources band by their D47 category (`sources.<category>`, labels
   from the category registry, so a rename needs no UI change); anything else falls under
-  Other. The band header rolls up settled slots (`14/16 ok · 1 missed`).
-- **≤ 768 px** the Gantt becomes a grouped list: band header → job rows (label, persona chip,
-  `9/12 done · 1 missed · next 10:30`, ⓘ) with a dot strip that scrolls inside the row; tap a
-  row for per-slot details. A band starts open only when it has a failed or missed slot.
+  Other. The group row rolls up settled slots (`14/16 ok · 1 missed`).
+- **Session Timeline (D93)** is one fixed-scale, interactive cron timeline at **every** width
+  (it replaced the desktop Gantt and the ≤ 768 px section list; `pages/SessionTimeline.tsx`):
+  - Window control `Rolling | Day` (`?tl=day`; Rolling is the default and drops `?day=`).
+    Rolling opens scrolled to now (now ≈ ⅔ across the visible track); Day shows
+    `Today · Yesterday · date` and covers 00:00–24:00 ET.
+  - Fixed scale: 96 px per hour (120 on a phone), hour labels in ET, faint ticks every 10 min
+    (the routines tick). A vertical `--accent` now-line re-renders every 60 s without a reload
+    (`useNow(60_000)`; the payload still polls on its own cadence).
+  - Job names (Title Case label, persona chip, ⓘ with persona · cadence · window · LLM · writes ·
+    `9/12 done · next 10:30`) sit in a pinned left column **outside** the horizontal scroller (no
+    `position: sticky`); both columns render one item list with fixed row heights so a name and
+    its marks share a line. On a phone the chip moves into the ⓘ.
+  - Each `TIMELINE_GROUPS` group is a collapsible label row on the same scale (name + rollup,
+    warn-coloured when a slot failed or was missed); Sources keeps its D47 category sub-labels.
+  - Each scheduled run is a mark coloured by state; clicking or tapping a mark with a run opens
+    `/ops/runs/<run_id>` (upcoming and missed slots have no run and are disabled).
 - **Sources** group by D47 category: share, `max_age`, newest doc, worst-wins status
   (`ok < idle < pending < backoff < late < failed`). Category and in-category shares are read
   from `SourceRegistry`, never recomputed. Rows add `skipped (stale)` (E4.7) and, for YouTube

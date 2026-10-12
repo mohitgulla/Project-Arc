@@ -54,8 +54,8 @@ if TYPE_CHECKING:
 __all__ = [
     "ALERT_LOOKBACK",
     "RUN_STATUSES",
-    "TIMELINE_END",
-    "TIMELINE_START",
+    "ROLLING_AHEAD",
+    "ROLLING_BACK",
     "AlertsResponse",
     "BudgetResponse",
     "ConfigResponse",
@@ -84,9 +84,12 @@ __all__ = [
 
 _STRICT = ConfigDict(extra="forbid", frozen=True)
 
-#: The session timeline's visible span (ET), per the card.
-TIMELINE_START = _dt.time(2, 0)  # E8.8d: the pre-market jobs (YouTube briefs 02:00) show
-TIMELINE_END = _dt.time(22, 0)
+#: D93: the Session Timeline's two windows. ``day`` is the full ET day (00:00-24:00, so the
+#: 23:00 jobs show); ``rolling`` (the Tower's default) is the last 8 h and the next 4 h around
+#: the current ET hour, so it can span midnight.
+ROLLING_BACK = _dt.timedelta(hours=8)
+ROLLING_AHEAD = _dt.timedelta(hours=4)
+TimelineWindow = Literal["day", "rolling"]
 ALERT_LOOKBACK = _dt.timedelta(days=7)
 EXPIRED_LOOKBACK = _dt.timedelta(hours=24)
 #: A source is late once it has not fetched within this many cadences.
@@ -229,9 +232,12 @@ class SessionResponse(BaseModel):
     model_config = _STRICT
 
     as_of: _dt.datetime
-    day: _dt.date
-    start: _dt.datetime
-    end: _dt.datetime
+    day: _dt.date = Field(description="The ET day (rolling: the day of `as_of`)")
+    window: TimelineWindow = Field(
+        default="day", description="D93: `day` (00:00-24:00 ET) or `rolling` (-8 h .. +4 h)"
+    )
+    start: _dt.datetime = Field(description="Window start (inclusive, ET)")
+    end: _dt.datetime = Field(description="Window end (exclusive, ET)")
     loop_job: str = Field(description="The D31 trading loop's job (second row)")
     loop: TimelineRow | None
     rows: list[TimelineRow]
@@ -256,14 +262,35 @@ def _slot_status(run: RunRow | None, at: _dt.datetime, now: _dt.datetime) -> Slo
     return "skipped"
 
 
+def session_window(
+    window: TimelineWindow, *, now: _dt.datetime, day: _dt.date
+) -> tuple[_dt.date, _dt.datetime, _dt.datetime]:
+    """D93: ``(day, start, end)`` of a Session Timeline window; ``end`` is exclusive.
+
+    ``rolling`` ignores *day*: it runs from 8 h before the top of the current ET hour to
+    4 h after the end of that hour (so ``now`` is 8-9 h in and at least 4 h stay ahead);
+    it may span midnight, so its runs come from two ET days.
+    """
+    if window == "rolling":
+        local = now.astimezone(ET)
+        hour = local.replace(minute=0, second=0, microsecond=0)
+        return local.date(), hour - ROLLING_BACK, hour + _dt.timedelta(hours=1) + ROLLING_AHEAD
+    start, end = _day_bounds(day)
+    return day, start, end
+
+
 def load_session(
-    conn: sqlite3.Connection, routines: RoutinesConfig, *, now: _dt.datetime, day: _dt.date
+    conn: sqlite3.Connection,
+    routines: RoutinesConfig,
+    *,
+    now: _dt.datetime,
+    day: _dt.date,
+    window: TimelineWindow = "day",
 ) -> SessionResponse:
     from arc.routines.schedule import slots_between
 
-    start = _dt.datetime.combine(day, TIMELINE_START, tzinfo=ET)
-    end = _dt.datetime.combine(day, TIMELINE_END, tzinfo=ET)
-    lo, hi = _day_bounds(day)
+    day, start, end = session_window(window, now=now, day=day)
+    lo, hi = start, end
     rows = conn.execute(
         "SELECT * FROM routine_runs WHERE scheduled_for >= ? AND scheduled_for < ?"
         " ORDER BY scheduled_for, step_index, rowid",
@@ -288,7 +315,8 @@ def load_session(
     used: set[tuple[str, str]] = set()
     for name, (kind, spec) in routines.jobs().items():
         slots: list[Slot] = []
-        for at in slots_between(spec, start - _dt.timedelta(microseconds=1), end):
+        tiny = _dt.timedelta(microseconds=1)
+        for at in slots_between(spec, start - tiny, end - tiny):  # [start, end)
             key = (name, to_db(at))
             run = roots.get(key)
             if run is not None:
@@ -324,6 +352,7 @@ def load_session(
     return SessionResponse(
         as_of=now,
         day=day,
+        window=window,
         start=start,
         end=end,
         loop_job=loop_job,

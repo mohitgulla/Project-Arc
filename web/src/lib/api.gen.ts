@@ -294,7 +294,8 @@ export interface paths {
         };
         /**
          * Session
-         * @description The ET day's scheduled slots (05:00-22:00) with each one's run, plus the loop row.
+         * @description Scheduled slots with each one's run, plus the loop row (D93): ``window=day`` is the
+         *     ET day 00:00-24:00, ``window=rolling`` the last 8 h and the next 4 h (``day`` ignored).
          */
         get: operations["session_api_ops_session_get"];
         put?: never;
@@ -5106,11 +5107,13 @@ export interface components {
             /**
              * Day
              * Format: date
+             * @description The ET day (rolling: the day of `as_of`)
              */
             day: string;
             /**
              * End
              * Format: date-time
+             * @description Window end (exclusive, ET)
              */
             end: string;
             loop: components["schemas"]["TimelineRow"] | null;
@@ -5124,6 +5127,7 @@ export interface components {
             /**
              * Start
              * Format: date-time
+             * @description Window start (inclusive, ET)
              */
             start: string;
             /**
@@ -5131,6 +5135,13 @@ export interface components {
              * @description Root runs on the day with no slot (manual / event)
              */
             unscheduled?: components["schemas"]["RunRow"][];
+            /**
+             * Window
+             * @description D93: `day` (00:00-24:00 ET) or `rolling` (-8 h .. +4 h)
+             * @default day
+             * @enum {string}
+             */
+            window: "day" | "rolling";
         };
         /** SessionRow */
         SessionRow: {
@@ -6941,6 +6952,7 @@ export interface operations {
         parameters: {
             query?: {
                 day?: string | null;
+                window?: "day" | "rolling";
             };
             header?: never;
             path?: never;
