@@ -17,11 +17,14 @@ from pydantic import BaseModel, ConfigDict
 
 from arc.routines.manifest import digest as _digest
 from arc.routines.runs import RoutineStateRepo
-from arc.slack.loop import LoopRoot, slot_stamp
+from arc.slack.loop import LoopRoot, SleeveAllocation, slot_stamp
 
 if TYPE_CHECKING:
     import datetime as _dt
     import sqlite3
+    from collections.abc import Sequence
+
+    from arc.account_profiles import DteSleeve
 
 log = structlog.get_logger(__name__)
 
@@ -182,8 +185,12 @@ def loop_root_from_db(
     timeout: bool = False,
     skipped: str | None = None,
     fallback: LoopRoot | None = None,
+    sleeves: Sequence[DteSleeve] | None = None,
 ) -> LoopRoot:
     """Build the :class:`LoopRoot` for *chain_run_id* from what the chain wrote.
+
+    D100: *sleeves* (default: the effective profile's) give the ``Sleeves`` totals
+    over every open position, see :func:`sleeve_allocation`.
 
     *fallback* fills equity / day P&L / the order budget when the chain recorded
     none (D38: the position manager writes no ``portfolio_context``).
@@ -229,7 +236,7 @@ def loop_root_from_db(
            WHERE r.chain_run_id = ? ORDER BY p.rowid""",
         (chain_run_id,),
     ).fetchall()
-    sleeves: dict[str, int] = {}
+    shown_sleeves: dict[str, int] = {}
     for r in rows:
         ticker, kind = str(r["ticker"]), str(r["kind"])
         execution, approval = r["execution"], r["approval"]
@@ -243,7 +250,7 @@ def loop_root_from_db(
         else:
             shown = False
         if shown and kind != "close" and r["sleeve"]:  # E22.2 (D97)
-            sleeves[str(r["sleeve"])] = sleeves.get(str(r["sleeve"]), 0) + 1
+            shown_sleeves[str(r["sleeve"])] = shown_sleeves.get(str(r["sleeve"]), 0) + 1
     if fallback is not None:
         if equity is None:
             equity, day_pnl = fallback.equity, fallback.day_pnl
@@ -271,8 +278,50 @@ def loop_root_from_db(
         timeout=timeout,
         skipped=skipped,
         headline=headline,
-        sleeves=dict(sorted(sleeves.items())),
+        sleeves=dict(sorted(shown_sleeves.items())),
+        allocated=sleeve_allocation(conn, chain_run_id, sleeves) if shown_sleeves else [],
     )
+
+
+def _effective_sleeves(conn: sqlite3.Connection) -> list[DteSleeve]:
+    from arc.control.effective import effective_settings
+
+    return list(effective_settings(conn).entry_sleeves)
+
+
+def sleeve_allocation(
+    conn: sqlite3.Connection, chain_run_id: str, sleeves: Sequence[DteSleeve] | None = None
+) -> list[SleeveAllocation]:
+    """D100: every open position per named DTE sleeve (by entry DTE) against its cap.
+
+    Totals over all ``open_structures`` rows with ``status = 'open'`` at render time,
+    not just this loop's opens. Empty for a single-window profile. Presentation only:
+    any failure returns ``[]`` (logged).
+    """
+    from arc.account_profiles import DEFAULT_SLEEVE, sleeve_for_dte
+    from arc.journal.sleeves import entry_dtes
+
+    try:
+        named = [
+            s
+            for s in (sleeves if sleeves is not None else _effective_sleeves(conn))
+            if s.name != DEFAULT_SLEEVE
+        ]
+        if not named:
+            return []
+        held: dict[str, int] = {s.name: 0 for s in named}
+        dtes = entry_dtes(conn)  # unreadable structures are skipped
+        for (sid,) in conn.execute("SELECT id FROM open_structures WHERE status = 'open'"):
+            s = sleeve_for_dte(named, dtes.get(str(sid)))
+            if s is not None:
+                held[s.name] += 1
+        return [
+            SleeveAllocation(name=s.name, held=held[s.name], cap=s.max_positions)
+            for s in sorted(named, key=lambda s: s.dte_min)
+        ]
+    except Exception as exc:  # noqa: BLE001 - presentation; never fail the root
+        log.warning("routines.sleeve_allocation_failed", chain_run_id=chain_run_id, err=str(exc))
+        return []
 
 
 def latest_account_facts(conn: sqlite3.Connection, slot: _dt.datetime) -> LoopRoot:
@@ -358,6 +407,7 @@ __all__ = [
     "RootEditor",
     "latest_account_facts",
     "loop_root_from_db",
+    "sleeve_allocation",
     "pnl_bucket",
     "refresh_loop_root",
     "slot_stamp",

@@ -13,6 +13,7 @@ import json
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from arc.account_profiles import DteSleeve
 from arc.pipeline.runner import open_db
 from arc.routines.headline import (
     HEADLINE_CHARS,
@@ -180,6 +181,22 @@ def _close_review(conn: sqlite3.Connection, sid: str, code: str, reason: str) ->
     _dec(conn, "risk", "exit", sid, "noted", "exit:research_review", {"verdict": verdict})
 
 
+SLEEVES = [
+    DteSleeve(name="short", dte_min=10, dte_max=29, max_positions=5),
+    DteSleeve(name="swing", dte_min=30, dte_max=60, max_positions=5),
+]
+
+
+def _held(conn: sqlite3.Connection, ticker: str, *, dte: int, status: str = "open") -> None:
+    structure = {"kind": "vertical_debit", "dte": dte, "legs": [], "net_debit_credit": "1.00"}
+    conn.execute(
+        """INSERT INTO open_structures (id, ticker, open_proposal_hash, candidate_id,
+               structure_json, contracts, entry_net, opened_at, status)
+           VALUES (?, ?, ?, 'c', ?, 1, '1.00', ?, ?)""",
+        (uuid.uuid4().hex, ticker, uuid.uuid4().hex, json.dumps(structure), STAMP, status),
+    )
+
+
 class TestLoopSleeves:
     """E22.2 (D97): the loop root counts the opens it shows, per DTE sleeve."""
 
@@ -195,9 +212,26 @@ class TestLoopSleeves:
             conn, qp, "PLTR", "open", execution=None, approval="rejected", sleeve="short", **kw
         )  # type: ignore[arg-type]
         _proposal(conn, qp, "AAPL", "close", execution="filled", sleeve="short", **kw)  # type: ignore[arg-type]
-        root = loop_root_from_db(conn, CHAIN, SLOT)
+        # D100: totals over every open position, not this loop's opens
+        _held(conn, "HOOD", dte=11)
+        _held(conn, "NVDA", dte=25)
+        _held(conn, "IREN", dte=18)
+        _held(conn, "XOM", dte=45, status="closed")
+        root = loop_root_from_db(conn, CHAIN, SLOT, sleeves=SLEEVES)
         assert root.sleeves == {"short": 1, "swing": 2}
-        assert "Sleeves: short 1, swing 2" in root.text().split("\n")[0]
+        line = root.text().split("\n")[0]
+        assert line.endswith("• Sleeves: Short 3/5 · Swing 0/5")
+
+    def test_single_window_profile_shows_no_allocation(self) -> None:
+        conn = _conn()
+        runs = _full_chain(conn)
+        kw = {"struct": "vertical_debit", "occ": "HOOD261120P00110000"}
+        qp = runs["quant.propose"]
+        _proposal(conn, qp, "HOOD", "open", execution="filled", sleeve="short", **kw)  # type: ignore[arg-type]
+        _held(conn, "HOOD", dte=11)
+        single = [DteSleeve(name="default", dte_min=30, dte_max=45)]
+        root = loop_root_from_db(conn, CHAIN, SLOT, sleeves=single)
+        assert root.allocated == [] and "Sleeves" not in root.text()
 
     def test_no_sleeve_no_counts(self) -> None:
         conn = _conn()
