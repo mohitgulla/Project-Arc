@@ -98,6 +98,8 @@ class RegimePayload(FeatureSnapshot):
     v4 (E16.2, D76): ``technicals`` (defaulted ``None``), so v3 rows still validate.
     v5 (E23.0, D98): ``technicals`` gains the volume-profile / OI-wall fields (all
     defaulted ``None``), so v4 rows still validate.
+    v6 (E23.1, D98): ``technicals.range_pos_20d`` (defaulted ``None``), so v5 rows
+    still validate.
     """
 
     model_config = _FORBID
@@ -962,7 +964,7 @@ KINDS: Mapping[str, KindSpec] = _registry(
     KindSpec("raw_doc_ref", RawDocRefPayload),
     KindSpec("channel_brief", ChannelBriefPayload),
     KindSpec("candidate", CandidatePayload, schema_version=3),  # E13.7: feed, origins
-    KindSpec("regime", RegimePayload, schema_version=5),  # E23.0 (D98): technicals vp_*/oi_*
+    KindSpec("regime", RegimePayload, schema_version=6),  # E23.1 (D98): range_pos_20d
     KindSpec("shortlist", ShortlistPayload, schema_version=6),  # E17.2: market_guard run/margin z
     KindSpec("structures", StructuresPayload, schema_version=4),  # E18.1: profit_lock
     KindSpec("risk_review", RiskReviewPayload, schema_version=2),  # E13.9: verdicts

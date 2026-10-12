@@ -115,6 +115,9 @@ class ResearchInput:
     # E23.0 (D98): True = the ``tech`` legend also names the level parts (volume profile /
     # OI walls on); False keeps the prompt byte-identical.
     levels: bool = False
+    # E23.1 (D98): True = the ``tech`` segment also shows ``rng`` (the 20-day range
+    # position) and the legend names it (range_edges on); False keeps it byte-identical.
+    range_edges: bool = False
     # E22.3 (D97): the code-built ``Free slots: …`` line and the number of names
     # Research is asked to rank (research.min_ranked > 0). "" / 0 = the prompt as before.
     free_slots: str = ""
@@ -204,6 +207,7 @@ def research_input_from_context(
     technicals: bool = False,
     market_health: bool = False,
     levels: bool = False,
+    range_edges: bool = False,
     free_slots: str = "",
     min_ranked: int = 0,
 ) -> ResearchInput:
@@ -253,6 +257,9 @@ def research_input_from_context(
     E23.0 (D98): *levels* (recorded only with ``volume_profile`` or ``oi_walls`` on)
     extends the ``tech`` legend with the level parts (the parts themselves render from
     the merged ``technicals`` fields).
+
+    E23.1 (D98): *range_edges* (recorded only with ``personas.range_edges`` on) adds
+    ``rng`` (the 20-day range position) to each ``tech`` segment and its legend.
 
     E16.4 (D76): *market_health* (recorded only with ``personas.market_health_context``
     on) adds the code-rendered ``Market health (…)`` line to the market lines.
@@ -304,7 +311,8 @@ def research_input_from_context(
             compact=True,
             scout_read=scout_read_block(snapshot),
             regime_lines="\n".join(
-                regime_line(t, regime[t], technicals=technicals) for t in sorted(regime)
+                regime_line(t, regime[t], technicals=technicals, rng=range_edges)
+                for t in sorted(regime)
             ),
             market_lines=market_lines(
                 market_data_from_context(snapshot, market_health=market_health)
@@ -315,6 +323,7 @@ def research_input_from_context(
             retail_sentiment=retail_sentiment is not None,
             technicals=technicals,
             levels=levels,
+            range_edges=range_edges,
             free_slots=free_slots,
             min_ranked=min_ranked,
         )
@@ -454,13 +463,16 @@ def _regime_head(reg: Mapping[str, Any]) -> list[str]:
 _RANGE_LABEL = {"above": "> y-hi", "below": "< y-lo", "inside": "in y-range"}
 
 
-def tech_segment(tech: Mapping[str, Any] | None) -> str:
+def tech_segment(tech: Mapping[str, Any] | None, *, rng: bool = False) -> str:
     """``tech rsi 71 · +2.3 ATR vs 20d · 50>200 · 1.1% off 20d hi · RS20 +4.1% vs SPY ·
     squeeze 6d · > y-hi · impl/ATR 1.3`` from a stored ``TechnicalFeatures`` dump.
 
     E16.2 (D76): code-rendered, so Research never computes any of it. A part whose
     field is ``None`` is dropped; ``""`` when nothing is available (no entry, or a
     pre-E16.2 one). The squeeze part shows only while it is on.
+
+    E23.1 (D98): *rng* (``personas.range_edges`` on) adds ``rng 0.42``, the close's
+    position in the 20-session low..high range, after the 20-day-high part.
     """
     if not tech:
         return ""
@@ -480,6 +492,8 @@ def tech_segment(tech: Mapping[str, Any] | None) -> str:
     if close is not None and high20 is not None and high20 > 0:
         off = 1.0 - close / high20
         parts.append("at 20d hi" if off <= 0 else f"{off:.1%} off 20d hi")
+    if rng and (rp := num("range_pos_20d")) is not None:
+        parts.append(f"rng {rp:.2f}")
     if (rs := num("rs_spy_20d")) is not None:
         parts.append(f"RS20 {round(rs, 3) + 0.0:+.1%} vs SPY")
     days = tech.get("squeeze_days")
@@ -526,7 +540,9 @@ def _levels_segment(tech: Mapping[str, Any], num: Callable[[str], float | None])
     return " · ".join(out)
 
 
-def regime_line(ticker: str, payload: Mapping[str, Any], *, technicals: bool = False) -> str:
+def regime_line(
+    ticker: str, payload: Mapping[str, Any], *, technicals: bool = False, rng: bool = False
+) -> str:
     """``AVGO · sideways (stick 0.70) · 5d bull 0.23/side 0.47/bear 0.29 · ret20 +2.7% ·
     iv 0.37 hv20 0.36 iv/hv20 1.04 · ivr n/a · close 378.68`` (one regime entry).
 
@@ -557,7 +573,7 @@ def regime_line(ticker: str, payload: Mapping[str, Any], *, technicals: bool = F
     parts.append(f"ivr {_num(ivr * 100 if isinstance(ivr, int | float) else None, '.0f')}")
     if payload.get("last_close") is not None:
         parts.append(f"close {_num(payload.get('last_close'))}")
-    if technicals and (seg := tech_segment(payload.get("technicals"))):
+    if technicals and (seg := tech_segment(payload.get("technicals"), rng=rng)):
         parts.append(seg)
     return " · ".join(parts)
 
@@ -1964,10 +1980,22 @@ _LEVELS_LEGEND = (
 )
 
 
+# E23.1 (D98): appended to the legend with range_edges on.
+_RNG_LEGEND = (
+    "rng = close's position in its 20-day low–high range (0 = at the low, 1 = at the "
+    "high). In a sideways regime code keeps a bullish debit idea only near the bottom of "
+    "its range and a bearish one only near the top.\n"
+)
+
+
 def _tech_legend(inp: ResearchInput) -> str:
     if not inp.technicals:
         return ""
-    return _TECH_LEGEND + (_LEVELS_LEGEND if inp.levels else "")
+    return (
+        _TECH_LEGEND
+        + (_LEVELS_LEGEND if inp.levels else "")
+        + (_RNG_LEGEND if inp.range_edges else "")
+    )
 
 
 def build_research_prompt(inp: ResearchInput) -> str:

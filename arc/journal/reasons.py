@@ -166,6 +166,10 @@ class ReasonCode(StrEnum):
     STRETCHED_ENTRY = "stretched_entry"  # directional long premium on a stretched move
     TECHNICALS_MISSING = "technicals_missing"  # a technical filter on, no technicals: kept (noted)
     VWAP_MISSING = "vwap_missing"  # anti_chase.vwap on, intraday fetch failed: daily rule only
+    # E23.1 (D98): the deterministic range-edge entry filter (personas.range_edges)
+    MID_RANGE_ENTRY = "mid_range_entry"  # sideways regime, long premium from mid-range
+    RANGE_TOO_NARROW = "range_too_narrow"  # range < min_range_atr x ATR14: rule skipped, kept
+    VP_MISSING = "vp_missing"  # levels value_area, no value area: 20d high/low used
     # E16.5 (D76): scanner.max_be_atr dropped debit structures needing an unrealistic move
     BE_UNREALISTIC = "be_unrealistic"
     DEDUPE_EXECUTED = "dedupe_executed"  # same idea is open / closed within the cooldown
@@ -420,6 +424,9 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.STRETCHED_ENTRY: "Skipped: move already stretched",
     ReasonCode.TECHNICALS_MISSING: "Technical filter skipped: no technicals",
     ReasonCode.VWAP_MISSING: "VWAP check skipped: no intraday bars",
+    ReasonCode.MID_RANGE_ENTRY: "Skipped: mid-range entry in a sideways market",
+    ReasonCode.RANGE_TOO_NARROW: "Range check skipped: range too narrow",
+    ReasonCode.VP_MISSING: "Range check used the 20-day high/low: no value area",
     ReasonCode.BE_UNREALISTIC: "Dropped: breakeven needs an unrealistic move",
     ReasonCode.DEDUPE_EXECUTED: "Same idea already traded recently",
     ReasonCode.DEDUPE_PROPOSED: "Same idea already proposed recently",

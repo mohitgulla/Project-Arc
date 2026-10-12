@@ -1397,6 +1397,128 @@ def _journal_anti_chase(j: Recorder, chase: _AntiChase, call_id: str | None) -> 
         )
 
 
+@dataclasses.dataclass
+class _RangeEdges:
+    """E23.1 (D98): what the range-edge filter did in one Research run."""
+
+    kept: list[ResearchRankedItem]
+    dropped: Counter[str] = dataclasses.field(default_factory=Counter)
+    rejected: list[tuple[ResearchRankedItem, str]] = dataclasses.field(default_factory=list)
+    # ticker -> the verdict (every directional long-premium idea in a ranged regime)
+    verdicts: dict[str, Any] = dataclasses.field(default_factory=dict)
+    # kept without a decision: no technicals / position; range too narrow; VA missing
+    tech_missing: list[ResearchRankedItem] = dataclasses.field(default_factory=list)
+    too_narrow: list[ResearchRankedItem] = dataclasses.field(default_factory=list)
+    vp_missing: list[ResearchRankedItem] = dataclasses.field(default_factory=list)
+
+
+def _range_edge_filter(
+    ctx: JobContext,
+    snap: ContextSnapshot,
+    kept: list[ResearchRankedItem],
+) -> _RangeEdges:
+    """E23.1 (D98): drop directional long-premium ideas from the middle of a sideways range.
+
+    Runs after the anti-chase filter (an idea it dropped never reaches here). Only a
+    bullish/bearish idea the account profile structures as long premium only, whose
+    ``regime`` entry's ``regime.current`` is in ``range_edges.regimes``, is checked; the
+    rule is :func:`arc.features.technicals.is_mid_range` on that entry's technicals.
+    Missing data or a too-narrow range keeps the idea (a filter, not a gate).
+    Survivors are re-ranked 1..n. Deterministic: no LLM, no network, never a gate input.
+    """
+    from arc.features.technicals import TechnicalFeatures, is_mid_range
+
+    rule = ctx.routines.range_edges.rule()
+    res = _RangeEdges(kept=[])
+    for item in kept:
+        stance = item.stance.strip().lower()
+        entry = snap.latest("regime", item.ticker)
+        label = ((entry.payload.get("regime") or {}).get("current")) if entry else None
+        if (
+            stance not in ("bullish", "bearish")
+            or not _long_premium_only(stance, ctx.settings)
+            or not isinstance(label, str)
+            or label.strip().lower() not in rule.regimes
+        ):
+            res.kept.append(item.model_copy(update={"rank": len(res.kept) + 1}))
+            continue
+        raw = (entry.payload.get("technicals") if entry is not None else None) or None
+        tech = TechnicalFeatures.model_validate(raw) if raw is not None else None
+        verdict = is_mid_range(tech, label, stance, rule)
+        res.verdicts[item.ticker] = verdict
+        if verdict.mid_range:
+            res.dropped[ReasonCode.MID_RANGE_ENTRY.value] += 1
+            res.rejected.append((item, ReasonCode.MID_RANGE_ENTRY.value))
+            continue
+        if verdict.status == "missing":
+            res.tech_missing.append(item)
+        elif verdict.status == "too_narrow":
+            res.too_narrow.append(item)
+        if verdict.vp_missing:
+            res.vp_missing.append(item)
+        res.kept.append(item.model_copy(update={"rank": len(res.kept) + 1}))
+    return res
+
+
+def _journal_range_edges(
+    j: Recorder, edges: _RangeEdges, call_id: str | None, already_noted: set[str]
+) -> None:
+    """E23.1: one record per mid-range drop (with the numbers) and per kept-without-rule idea.
+
+    *already_noted*: tickers anti-chase already journaled ``technicals_missing`` for
+    (never noted twice).
+    """
+    for item, _ in edges.rejected:
+        v = edges.verdicts[item.ticker]
+        j.add(
+            JournalPersona.RESEARCH,
+            Stage.SHORTLIST,
+            item.ticker,
+            Choice.REJECTED,
+            ReasonCode.MID_RANGE_ENTRY,
+            reason_text=f"{item.stance} in {v.regime}: {v.text()}",
+            confidence=item.confidence,
+            persona_call_id=call_id,
+            payload={
+                "idea": item.model_dump(mode="json"),
+                "range_edges": v.model_dump(mode="json"),
+            },
+        )
+    for item in edges.tech_missing:
+        if item.ticker in already_noted:
+            continue
+        j.add(
+            JournalPersona.RESEARCH,
+            Stage.SHORTLIST,
+            item.ticker,
+            Choice.NOTED,
+            ReasonCode.TECHNICALS_MISSING,
+            reason_text=f"range edges: {edges.verdicts[item.ticker].text()}: idea kept",
+            persona_call_id=call_id,
+        )
+    for item in edges.too_narrow:
+        j.add(
+            JournalPersona.RESEARCH,
+            Stage.SHORTLIST,
+            item.ticker,
+            Choice.NOTED,
+            ReasonCode.RANGE_TOO_NARROW,
+            reason_text=edges.verdicts[item.ticker].text(),
+            persona_call_id=call_id,
+            payload={"range_edges": edges.verdicts[item.ticker].model_dump(mode="json")},
+        )
+    for item in edges.vp_missing:
+        j.add(
+            JournalPersona.RESEARCH,
+            Stage.SHORTLIST,
+            item.ticker,
+            Choice.NOTED,
+            ReasonCode.VP_MISSING,
+            reason_text="no value area on the regime entry: 20-day high/low range used",
+            persona_call_id=call_id,
+        )
+
+
 def _no_trade_reason(out: ResearchOutput, kept: list[ResearchRankedItem]) -> str | None:
     """The explicit no-trade outcome (E5.9): only meaningful with an empty shortlist."""
     if kept:
@@ -2095,6 +2217,8 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
     r = ctx.routines
     if r.volume_profile.enabled or r.oi_walls.enabled:  # E23.0: absent when both off
         inputs["levels"] = True
+    if r.range_edges.enabled and r.research_technicals.enabled:  # E23.1: absent when off
+        inputs["range_edges"] = True
     # E13.8: the merged idea pool, recorded with the compact prompt's inputs
     inputs["idea_pool"] = [i.model_dump(mode="json") for i in pool.items]
     inputs["candidate_tickers"] = sorted(cands)
@@ -2130,6 +2254,11 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
         chase = _anti_chase_filter(ctx, env, snap, kept)
         kept = chase.kept
         dropped.update(chase.dropped)
+    edges: _RangeEdges | None = None
+    if ctx.routines.range_edges.enabled:  # E23.1 (D98 on): off = pipeline as before E23.1
+        edges = _range_edge_filter(ctx, snap, kept)
+        kept = edges.kept
+        dropped.update(edges.dropped)
     ranked = {i.ticker for i in kept}
     excluded = _filter_excluded(out, cands, ranked)
     call_id = _record_ok(ctx, "research", reply, snap.id, dropped)
@@ -2200,6 +2329,9 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
         )
     if chase is not None:
         _journal_anti_chase(j, chase, call_id)
+    if edges is not None:
+        noted = {i.ticker for i in chase.tech_missing} if chase is not None else set()
+        _journal_range_edges(j, edges, call_id, noted)
     for ex in excluded:
         j.add(
             JournalPersona.RESEARCH,
@@ -2213,6 +2345,8 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
     accounted = ranked | {e.ticker for e in excluded}
     if chase is not None:  # E16.3: a stretched drop was ranked; it has its own record
         accounted |= {i.ticker for i, _ in chase.rejected}
+    if edges is not None:  # E23.1: a mid-range drop was ranked; it has its own record
+        accounted |= {i.ticker for i, _ in edges.rejected}
     not_ranked = sorted(set(cands) - accounted)
     for t in not_ranked:
         j.add(
@@ -2312,6 +2446,8 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
     drop_items = [(i.ticker.strip().upper() or "?", reason) for i, reason in rejected]
     if chase is not None:
         drop_items += [(i.ticker, reason) for i, reason in chase.rejected]
+    if edges is not None:
+        drop_items += [(i.ticker, reason) for i, reason in edges.rejected]
     funnel = [
         *[(e.ticker, FUNNEL_EXCLUDED, e.reason) for e in excluded],
         *[(t, FUNNEL_NOT_RANKED, "") for t in not_ranked],

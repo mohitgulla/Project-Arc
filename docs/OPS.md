@@ -2651,3 +2651,36 @@ byte-identical. With both off the job skips without making any request.
 
 Check: `arc routines run levels --db <scratch copy> --no-slack`, then
 `arc context show --kind levels --latest`.
+
+## E23.1 range-edge entry filter for sideways regimes (D98)
+
+**What it does.** After Research ranks (and after anti-chase), each bullish/bearish idea
+whose account profile structures it as **long premium only** (`cash_debit`; not `margin`,
+whose credit spreads already sell the range) is checked when its `regime.current` is in
+`range_edges.regimes` (default `[sideways]`). A bullish idea is kept only from the bottom
+of its range (position ≤ `bull_max_pos` 0.35), a bearish one only from the top (≥
+`bear_min_pos` 0.65). Anything else, the wrong edge included, is dropped as
+`mid_range_entry` with the numbers on the journal payload; survivors are re-ranked 1..n.
+
+**Which range.** `levels: value_area` (default) reads the E23.0 `vp_pos`
+(`(close − VAL)/(VAH − VAL)`, unclipped, so a close below VAL counts as the low edge).
+With no value area on the entry it falls back to the 20-session high/low and notes
+`vp_missing`. `levels: high_low` reads `range_pos_20d = (close − low20)/(high20 − low20)`
+(clipped to [0, 1], regime schema v6). Example: low20 210.96, high20 230.36, close 225.07
+→ 0.73; bullish → dropped (keep ≤ 0.35).
+
+**Kept without a decision.** Neutral ideas, non-sideways regimes, credit-capable profiles;
+missing technicals (`technicals_missing`, never twice for one idea when anti-chase already
+noted it); a range narrower than `min_range_atr` × ATR14 (1.5; `range_too_narrow`).
+
+**Prompt.** With the switch on, Research's `tech` segment shows `rng 0.73` after the
+20-day-high part, and the legend gains one line. Off = prompt and journal byte-identical
+to before E23.1.
+
+**Switches** (`config/strategy.yaml range_edges:`, registry): `personas.range_edges`
+(on, D86/D98), `range_edges.levels`, `range_edges.bull_max_pos` (0.1–0.5),
+`range_edges.bear_min_pos` (0.5–0.9), `range_edges.min_range_atr` (0.5–5). Rollback:
+`!arc config set personas.range_edges off`. Deterministic, no network, never a gate input.
+
+Check: `arc journal show --reason mid_range_entry` (or `decisions where
+reason_code='mid_range_entry'`) after a Research run on a sideways day.
