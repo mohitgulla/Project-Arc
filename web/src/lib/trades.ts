@@ -23,6 +23,7 @@ export const MULTI_KEYS = [
   "exit_reason",
   "reason_code",
   "account_profile",
+  "sleeve",
 ] as const;
 /** Single-value filters. */
 export const SINGLE_KEYS = ["date", "date_from", "date_to", "min_net_ev", "min_pop", "q"] as const;

@@ -38,6 +38,7 @@ export const BREAKDOWN_TABS: ReadonlyArray<{
   { value: "reason_code", label: "Reason code" },
   { value: "profile", label: "Account profile" },
   { value: "regime", label: "Regime at entry" },
+  { value: "sleeve", label: "Sleeve" },
 ];
 
 /**
@@ -77,6 +78,10 @@ export const EXPLAIN = {
     sub: "Stated confidence vs actual hit rate",
     tip: "Trades bucketed by stated confidence; a hit rate below the bucket = over-confident.",
   },
+  sleeves: {
+    sub: "Per entry-DTE sleeve · report only",
+    tip: "Read at 30 closed or 6 weeks: keep if mean net P&L ≥ 0; shrink to 2 slots if its 90% CI is below 0. Else collect.",
+  },
   breakdowns: {
     tip: "Bar = row P&L relative to the largest row. Reason codes count a trade under every persona code on its open and close.",
   },
@@ -86,6 +91,8 @@ export interface PerfQuery {
   range: PerfRange;
   by: BreakdownBy;
   shadow: boolean;
+  /** E22.5 (D97): entry-DTE sleeve filter (`short`, `swing`, `other`); null = All. */
+  sleeve: string | null;
 }
 
 function pick<T extends string>(raw: string | null, allowed: ReadonlyArray<{ value: T }>, fallback: T): T {
@@ -102,6 +109,7 @@ export function perfQuery(params: URLSearchParams): PerfQuery {
     range: parsePerfRange(params.get("range")),
     by: pick(params.get("by"), BREAKDOWN_TABS, "ticker"),
     shadow: params.get("shadow") === "true",
+    sleeve: /^[a-z][a-z0-9_]*$/.test(params.get("sleeve") ?? "") ? params.get("sleeve") : null,
   };
 }
 
@@ -110,7 +118,7 @@ export function perfQuery(params: URLSearchParams): PerfQuery {
  * (the server's default), and no period-over-period figures are requested.
  */
 export function apiQuery(q: PerfQuery): Record<string, string> {
-  return { preset: RANGE_PRESET[q.range] };
+  return q.sleeve ? { preset: RANGE_PRESET[q.range], sleeve: q.sleeve } : { preset: RANGE_PRESET[q.range] };
 }
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -182,9 +190,25 @@ export function costBars(p: Performance): Array<Record<string, number | string>>
 }
 
 /** Trades list URL for a breakdown row (row click -> Trades pre-filtered). */
-export function tradesLink(item: Breakdown, period: PeriodView): string | null {
+export type SleeveStats = Schemas["SleeveStats"];
+
+/** Title Case keep/shrink/collect (D97 verdict). */
+export const VERDICT_LABEL: Record<NonNullable<SleeveStats["verdict"]>, string> = {
+  keep: "Keep",
+  shrink: "Shrink To 2 Slots",
+  collect: "Keep Collecting",
+};
+
+/** "Short 10–29 DTE" / "Other" (entry DTE in no sleeve). */
+export function sleeveTitle(s: SleeveStats): string {
+  const name = s.sleeve.charAt(0).toUpperCase() + s.sleeve.slice(1);
+  return s.dte_min == null || s.dte_max == null ? name : `${name} ${s.dte_min}–${s.dte_max} DTE`;
+}
+
+export function tradesLink(item: Breakdown, period: PeriodView, sleeve: string | null = null): string | null {
   if (!item.filter) return null;
   const q = new URLSearchParams(item.filter);
+  if (sleeve && !q.has("sleeve")) q.set("sleeve", sleeve);
   q.set("date", "custom");
   q.set("date_from", period.first);
   q.set("date_to", period.last);

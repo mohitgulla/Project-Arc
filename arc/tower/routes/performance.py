@@ -27,6 +27,7 @@ from arc.tower.data_performance import (
     load_breakdown,
     load_performance,
 )
+from arc.tower.data_sleeves import OTHER, named_sleeves
 from arc.tower.routes.deps import Conn, Tower, effective
 from arc.tower.schemas import ErrorResponse
 from arc.utils.calendar import ET
@@ -35,7 +36,12 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
+    from arc.account_profiles import DteSleeve
+    from arc.tower.api import TowerConfig
+
 __all__ = ["CACHE_TTL_S", "ResponseCache", "router"]
+
+_SLEEVE_RE = r"^[a-z][a-z0-9_]*$"
 
 CACHE_TTL_S = 60.0
 _MAX_ENTRIES = 64
@@ -102,6 +108,16 @@ def _stamp(path: Path) -> tuple[int, int, int, int]:
     return (main[0], main[1], frames[0], frames[1])
 
 
+def _sleeves(cfg: TowerConfig, sleeve: str | None) -> list[DteSleeve]:
+    """E22.5: the profile's named sleeves; 422 for a *sleeve* filter that names none."""
+    sleeves = named_sleeves(effective(cfg)[0])
+    if sleeve is not None and sleeve != OTHER and sleeve not in {s.name for s in sleeves}:
+        names = ", ".join([*(s.name for s in sleeves), OTHER])
+        msg = f"unknown sleeve {sleeve!r} (profile sleeves: {names})"
+        raise TowerError(422, "invalid_request", msg)
+    return sleeves
+
+
 @router.get(
     "/performance",
     response_model=PerformanceResponse,
@@ -118,11 +134,20 @@ def performance(  # noqa: PLR0913 - one query parameter per control
     include_tests: Annotated[bool, Query()] = False,
     date_from: Annotated[_dt.date | None, Query(alias="from")] = None,
     date_to: Annotated[_dt.date | None, Query(alias="to")] = None,
+    sleeve: Annotated[str | None, Query(pattern=_SLEEVE_RE)] = None,
 ) -> PerformanceResponse:
-    """Every Performance card for the period, with the comparison computed server-side."""
+    """Every Performance card for the period, with the comparison computed server-side.
+
+    ``sleeve`` (E22.5, D97) filters the trade cards to one entry-DTE sleeve (or ``other``).
+    """
     now = cfg.clock()
+    sleeves = _sleeves(cfg, sleeve)
     stamp = _stamp(cfg.db_path)
-    key = ("perf", preset, compare, include_tests, date_from, date_to, now.date(), stamp)
+    windows = tuple((s.name, s.dte_min, s.dte_max, s.max_positions) for s in sleeves)
+    key = (
+        "perf", preset, compare, include_tests, date_from, date_to, sleeve, windows,
+        now.date(), stamp,
+    )  # fmt: skip
 
     def build() -> PerformanceResponse:
         try:
@@ -134,6 +159,8 @@ def performance(  # noqa: PLR0913 - one query parameter per control
                 include_tests=include_tests,
                 date_from=date_from,
                 date_to=date_to,
+                sleeve=sleeve,
+                sleeves=sleeves,
             )
         except PeriodError as exc:
             raise TowerError(422, "invalid_request", str(exc)) from exc
@@ -156,10 +183,16 @@ def performance_breakdown(  # noqa: PLR0913 - one query parameter per control
     include_tests: Annotated[bool, Query()] = False,
     date_from: Annotated[_dt.date | None, Query(alias="from")] = None,
     date_to: Annotated[_dt.date | None, Query(alias="to")] = None,
+    sleeve: Annotated[str | None, Query(pattern=_SLEEVE_RE)] = None,
 ) -> BreakdownResponse:
     """One breakdown tab: closed trades grouped by *by*, ranked by P&L."""
     now = cfg.clock()
-    key = ("bd", by, preset, include_tests, date_from, date_to, now.date(), _stamp(cfg.db_path))
+    sleeves = _sleeves(cfg, sleeve)
+    windows = tuple((s.name, s.dte_min, s.dte_max) for s in sleeves)
+    key = (
+        "bd", by, preset, include_tests, date_from, date_to, sleeve, windows, now.date(),
+        _stamp(cfg.db_path),
+    )  # fmt: skip
 
     def build() -> BreakdownResponse:
         try:
@@ -171,6 +204,8 @@ def performance_breakdown(  # noqa: PLR0913 - one query parameter per control
                 include_tests=include_tests,
                 date_from=date_from,
                 date_to=date_to,
+                sleeve=sleeve,
+                sleeves=sleeves,
             )
         except PeriodError as exc:
             raise TowerError(422, "invalid_request", str(exc)) from exc

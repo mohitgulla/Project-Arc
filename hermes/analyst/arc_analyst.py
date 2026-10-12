@@ -17,7 +17,8 @@ Cron pre-run gate (no args):
   3. Otherwise snapshot ``config/*.yaml``, run the read-only ``arc`` views on the
      copy (attribution, weekly scorecard, gaps, counterfactual, ``journal show``
      per trade closed this week, config diff/history/show), build the
-     realised-vs-model table by structure kind x regime, list this week's halts,
+     realised-vs-model table by structure kind x regime x DTE sleeve (E22.5: plus the
+     D97 per-sleeve report, ``arc scorecard sleeves``), list this week's halts,
      the forward experiments (D44, E10.6: status, hash lock, latest stored
      ``ExperimentReport`` with arm / regime / structure breakdowns, queue per
      area), the newest ``docs/RESEARCH/*.md`` and the A-id ledger, and print the
@@ -472,8 +473,27 @@ def wake_decision(
     }
 
 
-def realised_vs_model(conn: sqlite3.Connection, since: dt.datetime | None) -> list[dict]:
-    """Latest outcome row per proposal, closed only, bucketed by structure kind x regime."""
+def sleeve_case(sleeves: list | None) -> str:
+    """E22.5 (D97): SQL for a closed trade's sleeve from its open proposal's entry DTE.
+
+    *sleeves* is ``[(name, dte_min, dte_max), ...]`` (the ``arc scorecard sleeves`` view's
+    windows); an entry DTE in no window is ``other``. Names are ``[a-z][a-z0-9_]*``
+    (``DteSleeve``), ints are ints: nothing user-controlled is spliced in.
+    """
+    dte = "CAST(json_extract(p.structure_json, '$.dte') AS INTEGER)"
+    whens = " ".join(
+        f"WHEN {dte} BETWEEN {int(lo)} AND {int(hi)} THEN '{name}'"
+        for name, lo, hi in sleeves or []
+        if re.fullmatch(r"[a-z][a-z0-9_]*", str(name))
+    )
+    return f"CASE {whens} ELSE 'other' END" if whens else "'other'"
+
+
+def realised_vs_model(
+    conn: sqlite3.Connection, since: dt.datetime | None, sleeves: list | None = None
+) -> list[dict]:
+    """Latest outcome row per proposal, closed only, bucketed by structure kind x regime x
+    DTE sleeve (E22.5, D97: derived from the open's entry DTE, so pre-D97 trades map too)."""
     where = "AND l.at >= ?" if since else ""
     args = (to_db(since),) if since else ()
     rows = conn.execute(
@@ -483,6 +503,7 @@ def realised_vs_model(conn: sqlite3.Connection, since: dt.datetime | None) -> li
                                  WHERE o2.proposal_hash = o.proposal_hash))
             SELECT COALESCE(json_extract(p.structure_json, '$.kind'), 'unknown') AS kind,
                    COALESCE(p.regime, 'unknown') AS regime,
+                   {sleeve_case(sleeves)} AS sleeve,
                    COUNT(*) AS n,
                    SUM(CAST(l.realised_pnl AS REAL)) AS pnl,
                    SUM(CAST(l.ev_total AS REAL)) AS ev,
@@ -492,11 +513,60 @@ def realised_vs_model(conn: sqlite3.Connection, since: dt.datetime | None) -> li
                    SUM(CASE WHEN CAST(l.realised_pnl AS REAL) > 0 THEN 1 ELSE 0 END) AS wins
             FROM latest l LEFT JOIN proposals p ON p.proposal_hash = l.proposal_hash
             WHERE {closed_filter("l")} AND l.realised_pnl IS NOT NULL {where}
-            GROUP BY 1, 2 ORDER BY n DESC, kind, regime""",
+            GROUP BY 1, 2, 3 ORDER BY n DESC, kind, regime, sleeve""",
         args,
     ).fetchall()
-    cols = ("kind", "regime", "n", "pnl", "ev", "avg_vs_ev", "slip_bps", "cost_bps", "wins")
+    cols = (
+        "kind", "regime", "sleeve", "n", "pnl", "ev", "avg_vs_ev", "slip_bps", "cost_bps", "wins"
+    )  # fmt: skip
     return [dict(zip(cols, r)) for r in rows]
+
+
+def sleeve_windows(view_json: str) -> list:
+    """``[(name, dte_min, dte_max)]`` from ``arc scorecard sleeves --json`` (E22.5); [] if
+    the view failed (the table then shows every trade as ``other``)."""
+    try:
+        doc = json.loads(view_json)
+    except ValueError:
+        return []
+    return [
+        (s["sleeve"], s["dte_min"], s["dte_max"])
+        for s in doc.get("sleeves") or []
+        if s.get("dte_min") is not None and s.get("dte_max") is not None
+    ]
+
+
+def sleeve_lines(view_json: str) -> list[str]:
+    """The D97 per-sleeve report (verdict, n, CI) from ``arc scorecard sleeves --json``."""
+    try:
+        doc = json.loads(view_json)
+    except ValueError:
+        return [clip(view_json, 800)]
+    weeks = doc.get("weeks")
+    out = [
+        f"- rule (D97, fixed in advance, report only): {doc.get('rule', '')}",
+        f"- measurement start {str(doc.get('measurement_start') or 'n/a')[:10]}, "
+        f"{_num(weeks, '.1f')} of {doc.get('max_weeks')} weeks",
+    ]
+    for s in doc.get("sleeves") or []:
+        window = (
+            f"{s['dte_min']}-{s['dte_max']} DTE" if s.get("dte_min") is not None else "no sleeve"
+        )
+        verdict = s.get("verdict") or "n/a"
+        if s.get("verdict") and not s.get("ready"):
+            verdict += " (not ready)"
+        out.append(
+            f"- {s['sleeve']} ({window}): opens {s['opens']}, closed n={s['closed']}, "
+            f"win {_num(s.get('win_rate'), '.0%')}, mean {_num(s.get('mean_pnl'), '+,.2f')}, "
+            f"median {_num(s.get('median_pnl'), '+,.2f')}, mean net "
+            f"{_num(s.get('mean_net_pnl'), '+,.2f')} (CI {_num(s.get('ci_low'), '+,.2f')}.."
+            f"{_num(s.get('ci_high'), '+,.2f')}), P&L/max loss "
+            f"{_num(s.get('mean_pct_of_max_loss'), '+.0%')}, days held "
+            f"{_num(s.get('mean_days_held'), '.1f')}, MAE {_num(s.get('mean_mae'), '+,.2f')}, "
+            f"MFE {_num(s.get('mean_mfe'), '+,.2f')}, exits {s.get('exit_reasons') or {}}, "
+            f"verdict {verdict}"
+        )
+    return out
 
 
 def _num(v, fmt: str) -> str:
@@ -755,19 +825,20 @@ def experiment_lines(overview: list[dict]) -> list[str]:
 
 def table_lines(rows: list[dict], slippage_frac: str) -> list[str]:
     out = [
-        "| kind | regime | n | realised $ | EV $ | avg realised-EV $ | win | slippage bps "
-        "(entry, realised) | cost bps (Quant, round trip) | sample |",
-        "|---|---|---|---|---|---|---|---|---|---|",
+        "| kind | regime | sleeve | n | realised $ | EV $ | avg realised-EV $ | win | slippage "
+        "bps (entry, realised) | cost bps (Quant, round trip) | sample |",
+        "|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for r in rows:
         out.append(
-            f"| {r['kind']} | {r['regime']} | {r['n']} | {_num(r['pnl'], ',.2f')} | "
+            f"| {r['kind']} | {r['regime']} | {r.get('sleeve', 'other')} | {r['n']} | "
+            f"{_num(r['pnl'], ',.2f')} | "
             f"{_num(r['ev'], ',.2f')} | {_num(r['avg_vs_ev'], '+,.2f')} | "
             f"{r['wins']}/{r['n']} | {_num(r['slip_bps'], '.0f')} | {_num(r['cost_bps'], '.0f')} | "
             f"{f'LOW (n<{MIN_SAMPLE})' if r['n'] < MIN_SAMPLE else 'ok'} |"
         )
     if not rows:
-        out.append("| (none) | | 0 | | | | | | | |")
+        out.append("| (none) | | | 0 | | | | | | | |")
     out.append(f"costs.yaml slippage_frac = {slippage_frac} (fill at mid +/- frac x spread)")
     return out
 
@@ -2872,10 +2943,15 @@ def build_context(
     for y in sorted((p.repo / "config").glob("*.yaml")):
         shutil.copy2(y, cfg_dir / y.name)
 
+    # E22.5 (D97): the sleeve windows of the effective profile, from the arc view
+    sleeves_view = run_arc(
+        p, ["scorecard", "sleeves", "--json", *db], run_dir, "sleeves-all"
+    )
+    windows = sleeve_windows(sleeves_view)
     conn = sqlite3.connect(f"{copy.resolve().as_uri()}?mode=ro", uri=True)
     try:
-        week_rows = realised_vs_model(conn, since)
-        all_rows = realised_vs_model(conn, None)
+        week_rows = realised_vs_model(conn, since, windows)
+        all_rows = realised_vs_model(conn, None, windows)
         closed = closed_this_week(conn, since)
         halts = conn.execute(
             "SELECT at, kind, reason, cleared_at FROM halts WHERE at >= ? OR cleared_at IS NULL "
@@ -2978,11 +3054,15 @@ def build_context(
         f"(MIN-SAMPLE n>={MIN_SAMPLE} per bucket)",
         f"WAKE: {'; '.join(decision['reasons'])}",
         "",
-        "## Realised vs model, this week (kind x regime)",
+        "## Realised vs model, this week (kind x regime x DTE sleeve)",
         *table_lines(week_rows, frac),
         "",
-        "## Realised vs model, all time (kind x regime)",
+        "## Realised vs model, all time (kind x regime x DTE sleeve)",
         *table_lines(all_rows, frac),
+        "",
+        "## DTE sleeves, all time (E22.5, D97: short vs swing; sleeve derived from entry DTE, "
+        f"full: {run_dir}/sleeves-all.log)",
+        *sleeve_lines(sleeves_view),
         "",
         "## Backtest <-> live drift (E7.14 reconciliation: simulator vs real fills; a persistent "
         "drift is a cost-model theme line or a -> Sentinel flaw, not a strategy change)",

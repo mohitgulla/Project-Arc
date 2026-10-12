@@ -63,6 +63,7 @@ import {
   universeHref,
   type Universe,
 } from "../lib/universe";
+import { sleeveUsageLine } from "../lib/sleeves";
 import { useMeta, useOps, useOverview } from "../lib/useApi";
 import { PositionsTable } from "./PositionsTable";
 
@@ -943,6 +944,7 @@ export function OverviewPage() {
           <div className="order-4 min-w-0 desktop:order-none">
             <Card
               title="Positions"
+              subtitle={sleeveUsageLine(o.sleeves) ?? undefined}
               action={{ label: "VIEW ALL", to: "/positions" }}
               freshness={{ at: o.marks_at, cadenceS: cad.monitor, label: "monitor mark" }}
             >

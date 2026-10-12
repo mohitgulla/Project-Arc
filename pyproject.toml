@@ -153,6 +153,7 @@ source_modules = [
     "arc.journal.scorecard",
     "arc.journal.views",
     "arc.journal.floor_exit",
+    "arc.journal.sleeves",
 ]
 forbidden_modules = [
     "anthropic",

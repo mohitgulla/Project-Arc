@@ -7,10 +7,12 @@ import { EmptyState } from "../components/EmptyState";
 import { IconClose, IconFilter } from "../components/icons";
 import { Money } from "../components/Money";
 import { StatusStepper } from "../components/StatusStepper";
+import { SleeveFilter } from "../components/SleeveFilter";
 import { StructureLabel } from "../components/StructureLabel";
 import { num } from "../lib/api";
 import { formatEt, formatLeg, formatNumber, formatPercent } from "../lib/format";
 import { useLayout } from "../lib/layout";
+import { sleeveName } from "../lib/sleeves";
 import { structureLabel } from "../lib/overview";
 import {
   activeFilterCount,
@@ -220,6 +222,7 @@ function FilterControls({ opts, params, update }: { opts: TradeFilterOptions | u
         params={params}
         update={update}
       />
+      <SleeveFilter params={params} update={update} testid="trades-sleeve-filter" />
       {(opts?.account_profiles.length ?? 0) > 0 && (
         <Select label="Profile" name="account_profile" options={o(opts?.account_profiles, (x) => x)} params={params} update={update} />
       )}
@@ -364,6 +367,12 @@ const COLS: Col[] = [
   { id: "net_ev", header: "Net EV", sort: "net_ev", cell: (r) => moneyCell(r.net_ev, "pnl", true) },
   { id: "pop", header: "PoP", sort: "pop", cell: (r) => (pop(r) == null ? <span className="text-muted">—</span> : formatPercent(pop(r) as number)) },
   { id: "stage", header: "Stage", cell: (r) => <Stage row={r} /> },
+  {
+    id: "sleeve",
+    header: "Sleeve",
+    optional: true,
+    cell: (r) => <span className="text-secondary">{r.sleeve ? sleeveName(r.sleeve) : "—"}</span>,
+  },
   { id: "fill", header: "Fill", optional: true, cell: (r) => moneyCell(r.fill_price, "price") },
   { id: "slippage", header: "Slip", sort: "slippage_bps", optional: true, cell: (r) => (r.slippage_bps == null ? <span className="text-muted">—</span> : `${formatNumber(r.slippage_bps, 1)} bps`) },
   { id: "pnl", header: "Realized", sort: "realized_pnl", cell: (r) => moneyCell(r.realized_pnl, "pnl", true) },

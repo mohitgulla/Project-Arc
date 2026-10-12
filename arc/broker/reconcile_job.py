@@ -257,7 +257,24 @@ def _day_recap(ctx: JobContext, report: ReconcileReport) -> CardView | None:
         return None
     title = f":rolled_up_newspaper: *{report.day:%a %b} {report.day.day} · Day Recap*"
     text = title + "\n\n" + "\n".join(bold_italic(line) for line in lines[:1])
+    sleeve_lines = _sleeve_recap_lines(ctx, report)
+    if sleeve_lines:
+        text += "\n" + "\n".join(sleeve_lines)
     return CardView(text=text, blocks=[], broadcast=True)
+
+
+def _sleeve_recap_lines(ctx: JobContext, report: ReconcileReport) -> list[str]:
+    """E22.5 (D97): one Day Recap line per DTE sleeve; [] for a single-window profile.
+
+    Presentation only: any failure (no settings, an older store) drops the lines.
+    """
+    from arc.journal.sleeves import day_sleeve_lines
+
+    try:
+        return day_sleeve_lines(ctx.conn, report.day, ctx.settings.entry_sleeves, now=ctx.now)
+    except Exception as exc:  # noqa: BLE001 - the recap must never block the reconcile
+        log.warning("reconcile.recap_sleeves_failed", error=str(exc))
+        return []
 
 
 def _slots_line(ctx: JobContext) -> str | None:

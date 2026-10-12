@@ -15,6 +15,8 @@
   trades vs hold-to-expiry and no-trade; not-traded proposals EOD-shadowed.
 - ``arc scorecard attribution --since YYYY-MM-DD --by kind,regime,persona_model``
   (E9.3) P&L attribution buckets with a ``low_sample`` flag.
+- ``arc scorecard sleeves [--since YYYY-MM-DD] [--json]``  (E22.5, D97) closed-trade
+  stats per entry-DTE sleeve and the keep/shrink verdict (report only).
 - ``arc journal backfill-outcomes [--dry-run]``  (E7.4b) write the missing
   ``outcomes`` row of every closed structure; idempotent.
 - ``arc journal repair-fill-signs [--dry-run]``  (E6.2g) restate fills stored with
@@ -25,7 +27,7 @@
 - ``arc funnel report --since YYYY-MM-DD --until YYYY-MM-DD``  (E13.14, D56) the
   idea funnel per stage and feed (shares ``arc.tower.data_funnel`` with the Tower).
 
-``explain``, ``counterfactual``, ``arc scorecard attribution`` and ``arc funnel`` open
+``explain``, ``counterfactual``, ``arc scorecard attribution|sleeves`` and ``arc funnel`` open
 the store read-only (``mode=ro``): they never create, migrate or write it.
 """
 
@@ -174,6 +176,15 @@ def add_scorecard_parser(sub: argparse._SubParsersAction) -> None:  # type: igno
     a.add_argument("--json", action="store_true", help="Print the report as JSON")
     a.add_argument("--db", default=None, help="SQLite path (default: data/arc.db)")
 
+    sl = ssub.add_parser(
+        "sleeves",
+        help="Per DTE sleeve closed-trade stats + the D97 keep/shrink verdict (E22.5)",
+    )
+    sl.add_argument("--since", default=None, help="YYYY-MM-DD (ET); default: all time")
+    sl.add_argument("--until", default=None, help="YYYY-MM-DD (ET, exclusive); default: now")
+    sl.add_argument("--json", action="store_true", help="Print the report as JSON")
+    sl.add_argument("--db", default=None, help="SQLite path (default: data/arc.db)")
+
 
 def add_funnel_parser(sub: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
     """``arc funnel report`` (E13.14, D56; folds E5.14's report half)."""
@@ -251,6 +262,8 @@ def run_scorecard(args: argparse.Namespace) -> int:
     except (FileNotFoundError, ValueError) as exc:
         sys.stderr.write(f"arc scorecard {args.scorecard_command}: {exc}\n")
         return 2
+    if args.scorecard_command == "sleeves":
+        return _sleeves(conn, args, since, until)
     try:
         rep = attribution(conn, since=since, until=until, by=args.by, min_sample=args.min_sample)
     except ValueError as exc:
@@ -262,6 +275,30 @@ def run_scorecard(args: argparse.Namespace) -> int:
         sys.stdout.write(rep.model_dump_json(indent=2) + "\n")
     else:
         _out(attribution_lines(rep))
+    return 0
+
+
+def _sleeves(
+    conn: sqlite3.Connection,
+    args: argparse.Namespace,
+    since: _dt.datetime | None,
+    until: _dt.datetime,
+) -> int:
+    """E22.5 (D97): ``arc scorecard sleeves``, sleeves of the effective account profile."""
+    from arc.config import get_settings
+    from arc.control import effective_settings
+    from arc.journal.sleeves import sleeve_report, sleeve_report_lines
+    from arc.utils.calendar import now_et
+
+    try:
+        eff = effective_settings(conn, base=get_settings())
+        rep = sleeve_report(conn, eff.entry_sleeves, since=since, until=until, now=now_et())
+    finally:
+        conn.close()
+    if args.json:
+        sys.stdout.write(rep.model_dump_json(indent=2) + "\n")
+    else:
+        _out(sleeve_report_lines(rep))
     return 0
 
 
