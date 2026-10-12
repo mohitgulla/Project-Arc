@@ -1,5 +1,5 @@
 import type { ColumnDef } from "@tanstack/react-table";
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
@@ -20,31 +20,40 @@ import {
   SLOT_CLASS,
   SLOT_LABEL,
   SOURCE_STATUS_TONE,
-  bandHasProblem,
+  WINDOW_PRESETS,
   bandRollup,
   bandRows,
+  bandStartsOpen,
   contextGroups,
   dayParam,
   formatDuration,
   formatSeconds,
+  etClock,
   groupRepeats,
-  hourTicks,
   isSourceProblem,
   kindLabel,
   llmBars,
   llmCost,
   loopSplit,
+  nowPct,
+  pxPerHour,
   rowFacts,
   rowSummary,
   runApiQuery,
   runQuery,
+  scaleTicks,
+  scrollToNow,
   sharePct,
   shortList,
+  nearestSlot,
   slotCounts,
   slotTitle,
   sourceGroups,
   timeLeft,
   timelinePct,
+  windowHours,
+  windowLabel,
+  windowParam,
   type Alerts,
   type AutoApprove,
   type BandView,
@@ -63,8 +72,10 @@ import {
   type SourceRow,
   type Sources,
   type TimelineRow,
+  type Slot,
+  type TimelineWindow,
 } from "../lib/ops";
-import { personaName, useCatalogue } from "../lib/personas";
+import { personaName, useCatalogue, usePersonaLabel } from "../lib/personas";
 import { useContextEntry, useOps } from "../lib/useApi";
 import { CONTROL, Loading, PersonaChip, Pill, RunStatus, et, shortId, type PillTone } from "./opsShared";
 
@@ -72,33 +83,55 @@ import { CONTROL, Loading, PersonaChip, Pill, RunStatus, et, shortId, type PillT
 // 1. Session timeline (E8.8d: bands from routines.yaml, persona chips, ⓘ per job)
 // ---------------------------------------------------------------------------
 
-function JobInfo({ row }: { row: TimelineRow }) {
+function JobInfo({ row, showPersona }: { row: TimelineRow; showPersona?: boolean }) {
+  const persona = usePersonaLabel();
   return (
     <InfoTip label={`About ${titleCase(row.label)}`} testid="job-info" formula={rowFacts(row).join(" · ")}>
       {row.about ?? `${row.job} (no about line in routines.yaml)`}
+      <span className="mt-1 block text-secondary tabular-nums" data-testid="row-summary">
+        {showPersona && row.persona ? `${persona(row.persona)} · ` : ""}
+        {rowSummary(row)}
+      </span>
     </InfoTip>
   );
 }
 
-function JobLabel({ row, strong }: { row: TimelineRow; strong?: boolean }) {
+function JobLabel({ row, strong, phone }: { row: TimelineRow; strong?: boolean; phone: boolean }) {
   return (
     <span className="flex min-w-0 items-center gap-1">
       <span className={`min-w-0 truncate text-caption ${strong ? "font-semibold text-primary" : "text-secondary"}`} title={`${row.job} · ${row.cadence}`} data-testid="job-label">
         {titleCase(row.label)}
       </span>
-      <PersonaChip persona={row.persona} />
-      <JobInfo row={row} />
+      {/* D93: on a phone the chip moves into the ⓘ (same detail, narrower pinned column). */}
+      {!phone && <PersonaChip persona={row.persona} />}
+      <JobInfo row={row} showPersona={phone} />
     </span>
   );
 }
 
-function SlotTicks({ row, s }: { row: TimelineRow; s: Session }) {
+/** One job's runs on the shared scale: a mark per slot, tap a run to open it. */
+function SlotMarks({ row, s, compact, phone }: { row: TimelineRow; s: Session; compact?: boolean; phone: boolean }) {
   const navigate = useNavigate();
+  if (compact)
+    return (
+      <>
+        {row.slots.map((slot) => (
+          <span key={slot.at} aria-hidden="true" className={`absolute top-1/2 h-2 w-[3px] -translate-x-1/2 -translate-y-1/2 rounded-[1px] ${SLOT_CLASS[slot.status].replace("animate-pulse", "")}`} style={{ left: `${timelinePct(slot.at, s.start, s.end)}%` }} />
+        ))}
+      </>
+    );
+  // Targets are a full 44 px (touch) / 40 px and overlap on dense rows: any tap on the row, on a
+  // mark or between two, opens the run nearest to where it landed (nearestSlot). Keyboard focus
+  // + Enter has no pointer position and opens the focused mark's own run.
+  const hit = phone ? 44 : 40;
+  const openNearest = (e: React.MouseEvent<HTMLElement>, own: Slot) => {
+    const box = (e.currentTarget.closest("[data-testid=slot-row]") as HTMLElement).getBoundingClientRect();
+    const near = e.detail === 0 ? own : nearestSlot(row.slots, ((e.clientX - box.left) / box.width) * 100, s.start, s.end);
+    if (near?.run) navigate(`/ops/runs/${near.run.run_id}`);
+  };
   return (
-    <div className="relative h-6 min-w-0 flex-1 rounded-control bg-control/40">
+    <div className="absolute inset-0" data-testid="slot-row">
       {row.slots.map((slot) => {
-        const left = timelinePct(slot.at, s.start, s.end);
-        const cls = SLOT_CLASS[slot.status];
         const title = slotTitle(slot);
         const run = slot.run;
         return (
@@ -109,10 +142,10 @@ function SlotTicks({ row, s }: { row: TimelineRow; s: Session }) {
             data-testid="slot"
             aria-label={title}
             title={title}
-            disabled={!run}
-            onClick={() => run && navigate(`/ops/runs/${run.run_id}`)}
-            className={`absolute top-1 h-4 w-[5px] -translate-x-1/2 rounded-[2px] ${cls} ${run ? "cursor-pointer hover:scale-y-125" : "cursor-default"}`}
-            style={{ left: `${left}%` }}
+            aria-disabled={!run}
+            onClick={(e) => openNearest(e, slot)}
+            className={`arc-hit-tl absolute top-1/2 h-4 w-[5px] -translate-x-1/2 -translate-y-1/2 rounded-[2px] ${SLOT_CLASS[slot.status]} ${run ? "cursor-pointer hover:scale-y-125" : "cursor-default"}`}
+            style={{ left: `${timelinePct(slot.at, s.start, s.end)}%`, ["--hit-w" as string]: `${hit}px` }}
           />
         );
       })}
@@ -120,210 +153,149 @@ function SlotTicks({ row, s }: { row: TimelineRow; s: Session }) {
   );
 }
 
-const LABEL_W = 196;
+const ROW_H = "h-8";
+const BAND_H = "h-9 max-tablet:h-11";
 
-/** Desktop / tablet: the Gantt with band header rows. */
-function TimelineGantt({ s, bands }: { s: Session; bands: BandView[] }) {
-  const ticks = hourTicks(s.start, s.end);
-  const nowPct = timelinePct(s.as_of, s.start, s.end);
-  const showNow = s.as_of >= s.start && s.as_of <= s.end;
+/**
+ * D93: the interactive Session Timeline, one layout at every width. A fixed time scale (Rolling
+ * -8 h .. +4 h, or the 24 h Day), job names pinned on the left (outside the scroller, never
+ * `sticky`), group rows that collapse on the same scale, a now-bar that moves every minute.
+ */
+function Timeline({ s, bands, phone }: { s: Session; bands: BandView[]; phone: boolean }) {
+  const now = useNow(60_000);
+  const scroller = useRef<HTMLDivElement>(null);
+  const [toggled, setToggled] = useState<Record<string, boolean>>({});
+  const isOpen = (v: BandView) => toggled[v.band.key] ?? bandStartsOpen(v.rows, phone);
+  const toggle = (v: BandView) => setToggled((t) => ({ ...t, [v.band.key]: !isOpen(v) }));
+  const ticks = useMemo(() => scaleTicks(s.start, s.end), [s.start, s.end]);
+  const pph = pxPerHour(phone);
+  const widthPx = Math.round(windowHours(s.start, s.end) * pph);
+  const nowAt = nowPct(now, s.start, s.end);
+  // Bring the now-bar into view once per window (not on every poll, so a manual scroll stays).
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    el.scrollLeft = scrollToNow(nowPct(Date.now(), s.start, s.end), el.scrollWidth, el.clientWidth);
+  }, [s.start, s.end]);
+  const labelW = phone ? 148 : 296;
   return (
-    <div data-testid="session-timeline" data-layout="gantt" data-scroll-x className="arc-scroll-x">
-      <div className="min-w-[720px]">
-        <div className="relative mb-1 h-4 text-micro text-muted" style={{ marginLeft: LABEL_W + 8 }}>
-          {ticks.map((t) => (
-            <span key={t.label} className="absolute -translate-x-1/2 tabular-nums" style={{ left: `${t.pct}%` }}>
-              {t.label}
-            </span>
-          ))}
-        </div>
-        <div className="relative">
-          {showNow && (
-            <span
-              aria-hidden="true"
-              className="pointer-events-none absolute bottom-0 top-0 z-10 w-px bg-accent"
-              style={{ left: `calc(${LABEL_W + 8}px + (100% - ${LABEL_W + 8}px) * ${nowPct / 100})` }}
-            />
-          )}
-          {bands.map(({ band, rows, sub, firstOfGroup }) => (
-            <div key={band.key} data-testid="band" data-band={band.key}>
-              {sub && firstOfGroup && (
-                <div className="pt-2 text-micro font-semibold uppercase tracking-wide text-muted">{titleCase(band.group_label)}</div>
-              )}
-              <div className="flex items-baseline gap-2 border-b border-line pb-0.5 pt-2" data-testid="band-header">
-                <span className={`text-caption font-semibold text-title ${sub ? "pl-2" : ""}`}>{titleCase(band.label)}</span>
-                <span className="text-micro text-muted tabular-nums">{bandRollup(rows)}</span>
-              </div>
-              {rows.map((row) => (
-                <div
-                  key={row.job}
-                  className="flex items-center gap-2 py-0.5"
-                  data-testid={row.job === s.loop_job ? "loop-row" : "timeline-row"}
-                  data-job={row.job}
-                >
-                  <span className={`shrink-0 ${sub ? "pl-2" : ""}`} style={{ width: LABEL_W }}>
-                    <JobLabel row={row} strong={row.job === s.loop_job} />
-                  </span>
-                  <SlotTicks row={row} s={s} />
-                </div>
-              ))}
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function SlotDots({ row }: { row: TimelineRow }) {
-  const navigate = useNavigate();
-  return (
-    <div data-scroll-x className="arc-scroll-x -mx-1 px-1" data-testid="slot-strip">
-      <div className="flex w-max items-center gap-1 py-1">
-        {row.slots.map((slot) => {
-          const title = slotTitle(slot);
-          const run = slot.run;
+    <div data-testid="session-timeline" data-layout="timeline" data-window={s.window} className="flex min-w-0">
+      {/* pinned job names */}
+      <div className="shrink-0 border-r border-line pr-2" style={{ width: labelW }} data-testid="timeline-labels">
+        <div className="h-6" />
+        {bands.map((v) => {
+          const open = isOpen(v);
           return (
-            <button
-              key={slot.at}
-              type="button"
-              data-status={slot.status}
-              data-testid="slot"
-              aria-label={title}
-              title={title}
-              disabled={!run}
-              onClick={(e) => {
-                e.stopPropagation();
-                if (run) navigate(`/ops/runs/${run.run_id}`);
-              }}
-              className="arc-hit relative inline-flex h-3 w-3 shrink-0 items-center justify-center"
-            >
-              <span className={`h-2.5 w-2.5 rounded-full ${SLOT_CLASS[slot.status]}`} />
-            </button>
+            <div key={v.band.key} data-testid="band" data-band={v.band.key} data-open={open}>
+              <button
+                type="button"
+                aria-expanded={open}
+                onClick={() => toggle(v)}
+                data-testid="band-header"
+                title={bandRollup(v.rows)}
+                className={`flex w-full min-w-0 items-center gap-1.5 border-b border-line text-left ${BAND_H}`}
+              >
+                <span className="w-3 shrink-0 text-micro text-muted" aria-hidden="true">
+                  {open ? "▼" : "▶"}
+                </span>
+                <span className="min-w-0 flex-1">
+                  {v.sub && <span className="block truncate text-micro font-semibold uppercase tracking-wide text-muted">{titleCase(v.band.group_label)}</span>}
+                  <span className={`block text-caption font-semibold leading-tight text-primary ${v.sub ? "truncate" : "line-clamp-2"}`}>{titleCase(v.band.label)}</span>
+                </span>
+              </button>
+              {v.rows.map((row) => (
+                  <div key={row.job} hidden={!open} className={`${open ? "flex" : "hidden"} items-center pl-4 ${ROW_H}`} data-testid={row.job === s.loop_job ? "loop-row-label" : "timeline-row-label"} data-job={row.job}>
+                    <JobLabel row={row} strong={row.job === s.loop_job} phone={phone} />
+                  </div>
+                ))}
+            </div>
           );
         })}
       </div>
-    </div>
-  );
-}
-
-function MobileJobRow({ row, s }: { row: TimelineRow; s: Session }) {
-  const [open, setOpen] = useState(false);
-  const id = useId();
-  return (
-    <li className="py-2" data-testid={row.job === s.loop_job ? "loop-row" : "timeline-row"} data-job={row.job}>
-      <div className="flex items-center gap-1">
-        <button
-          type="button"
-          aria-expanded={open}
-          aria-controls={id}
-          onClick={() => setOpen(!open)}
-          className="flex min-h-[44px] min-w-0 flex-1 flex-col items-start justify-center text-left"
-        >
-          <span className="flex w-full min-w-0 items-center gap-1.5">
-            <span className={`min-w-0 truncate text-caption ${row.job === s.loop_job ? "font-semibold text-primary" : "text-primary"}`} data-testid="job-label">{titleCase(row.label)}</span>
-            <PersonaChip persona={row.persona} />
-          </span>
-          <span className="text-micro text-muted tabular-nums" data-testid="row-summary">
-            {rowSummary(row)}
-          </span>
-        </button>
-        <JobInfo row={row} />
+      {/* the scale: one horizontal scroller for every row */}
+      <div ref={scroller} data-scroll-x className="arc-scroll-x min-w-0 flex-1" data-testid="timeline-scroll">
+        <div className="relative" style={{ minWidth: widthPx }} data-testid="timeline-track">
+          <div className="relative h-6 border-b border-line text-micro text-muted" data-testid="timeline-scale">
+            {ticks.map((t) => (
+              <span key={`${t.pct}`} className="absolute top-0 -translate-x-1/2 whitespace-nowrap tabular-nums first:translate-x-0" style={{ left: `${t.pct}%` }} data-testid="scale-tick">
+                {t.day ? <span className="font-semibold text-secondary">{t.day} </span> : null}
+                {t.label}
+              </span>
+            ))}
+          </div>
+          {/* hour gridlines */}
+          <div aria-hidden="true" className="pointer-events-none absolute bottom-0 left-0 right-0 top-6">
+            {ticks.map((t) => (
+              <span key={`g${t.pct}`} className={`absolute bottom-0 top-0 w-px ${t.day ? "bg-line-input" : "bg-line/60"}`} style={{ left: `${t.pct}%` }} />
+            ))}
+          </div>
+          {nowAt != null && (
+            <span aria-hidden="true" data-testid="now-bar" data-at={etClock(now)} className="pointer-events-none absolute bottom-0 top-0 z-[1] w-0.5 -translate-x-1/2 bg-accent" style={{ left: `${nowAt}%` }}>
+              <span className="absolute -top-0.5 left-1/2 -translate-x-1/2 rounded-control bg-accent px-1 text-micro font-semibold text-[color:var(--range-active-text)] tabular-nums">{etClock(now)}</span>
+            </span>
+          )}
+          {bands.map((v) => {
+            const open = isOpen(v);
+            return (
+              <div key={v.band.key} data-band-track={v.band.key}>
+                <div className={`relative border-b border-line ${BAND_H}`} data-testid="band-track">
+                  {/* a closed group keeps its marks, small, on its label row */}
+                  {!open && v.rows.map((row) => <SlotMarks key={row.job} row={row} s={s} compact phone={phone} />)}
+                </div>
+                {v.rows.map((row) => (
+                    <div key={row.job} hidden={!open} className={`${open ? "relative" : "hidden"} ${ROW_H}`} data-testid={row.job === s.loop_job ? "loop-row" : "timeline-row"} data-job={row.job}>
+                      <SlotMarks row={row} s={s} phone={phone} />
+                    </div>
+                  ))}
+              </div>
+            );
+          })}
+        </div>
       </div>
-      <SlotDots row={row} />
-      <ul id={id} hidden={!open} className="mt-1 divide-y divide-line rounded-control bg-control/40 px-2 text-micro" data-testid="slot-details">
-        {row.slots.map((slot) => (
-          <li key={slot.at} className="flex min-h-[32px] items-center gap-2 tabular-nums">
-            <span className={`h-2 w-2 shrink-0 rounded-full ${SLOT_CLASS[slot.status].replace("animate-pulse", "")}`} />
-            <span className="w-11 shrink-0">{slot.at.slice(11, 16)}</span>
-            <span className="w-16 shrink-0 text-secondary">{SLOT_LABEL[slot.status]}</span>
-            {slot.run ? (
-              <Link to={`/ops/runs/${slot.run.run_id}`} className="arc-action min-w-0 truncate">
-                {shortId(slot.run.run_id, 22)}
-              </Link>
-            ) : (
-              <span className="text-muted">—</span>
-            )}
-          </li>
-        ))}
-      </ul>
-    </li>
-  );
-}
-
-function MobileBand({ view, s }: { view: BandView; s: Session }) {
-  const { band, rows, sub, firstOfGroup } = view;
-  const [open, setOpen] = useState(() => bandHasProblem(rows));
-  const id = useId();
-  return (
-    <div data-testid="band" data-band={band.key} data-open={open}>
-      {sub && firstOfGroup && <div className="pt-2 text-micro font-semibold uppercase tracking-wide text-muted">{titleCase(band.group_label)}</div>}
-      <button
-        type="button"
-        aria-expanded={open}
-        aria-controls={id}
-        onClick={() => setOpen(!open)}
-        data-testid="band-header"
-        className="flex min-h-[44px] w-full items-center gap-2 border-b border-line text-left"
-      >
-        <span className="w-3 text-caption text-muted" aria-hidden="true">
-          {open ? "▼" : "▶"}
-        </span>
-        <span className="text-caption font-semibold text-title">{titleCase(band.label)}</span>
-        <span className="min-w-0 truncate text-micro text-muted tabular-nums">· {bandRollup(rows)}</span>
-      </button>
-      <ul id={id} hidden={!open} className="divide-y divide-line pl-5">
-        {rows.map((row) => (
-          <MobileJobRow key={row.job} row={row} s={s} />
-        ))}
-      </ul>
     </div>
   );
 }
 
-/** Mobile (≤ 768): the grouped list; no min-width Gantt. */
-function TimelineList({ s, bands }: { s: Session; bands: BandView[] }) {
-  return (
-    <div data-testid="session-timeline" data-layout="list">
-      {bands.map((v) => (
-        <MobileBand key={v.band.key} view={v} s={s} />
-      ))}
-    </div>
-  );
-}
-
-function SessionCard({ s, day, setDay }: { s?: Session; day: string; setDay: (d: string) => void }) {
+function SessionCard({ s, win, day, setView }: { s?: Session; win: TimelineWindow; day: string; setView: (w: TimelineWindow, d?: string) => void }) {
   const layout = useLayout();
   const split = loopSplit(s?.loop);
   const bands = useMemo(() => (s ? bandRows(s) : []), [s]);
+  const pill = (on: boolean) =>
+    `arc-press rounded-pill px-2.5 py-1 text-caption font-semibold max-tablet:min-h-[44px] ${on ? "bg-range-active text-[color:var(--range-active-text)]" : "text-secondary hover:bg-hover"}`;
   return (
     <Card title="Session Timeline" freshness={{ at: s?.as_of, label: "loaded" }}>
       <div className="mb-3 flex flex-wrap items-center gap-2" data-testid="day-control">
-        {DAY_PRESETS.map((p) => (
-          <button
-            key={p.value}
-            type="button"
-            aria-pressed={day === p.value}
-            onClick={() => setDay(p.value)}
-            className={`arc-press rounded-pill px-2.5 py-1 text-caption font-semibold max-tablet:min-h-[44px] ${day === p.value ? "bg-range-active text-[color:var(--range-active-text)]" : "text-secondary hover:bg-hover"}`}
-          >
-            {p.label}
-          </button>
-        ))}
-        <input
-          type="date"
-          aria-label="Pick a day"
-          className={CONTROL}
-          value={/^\d{4}-/.test(day) ? day : ""}
-          onChange={(e) => setDay(e.target.value || "today")}
-        />
+        <div role="group" aria-label="Timeline window" className="flex gap-1" data-testid="window-control">
+          {WINDOW_PRESETS.map((p) => (
+            <button key={p.value} type="button" aria-pressed={win === p.value} onClick={() => setView(p.value)} className={pill(win === p.value)}>
+              {p.label}
+            </button>
+          ))}
+        </div>
+        {win === "day" && (
+          <>
+            <span className="h-4 w-px bg-line" aria-hidden="true" />
+            {DAY_PRESETS.map((p) => (
+              <button key={p.value} type="button" aria-pressed={day === p.value} onClick={() => setView("day", p.value)} className={pill(day === p.value)}>
+                {p.label}
+              </button>
+            ))}
+            <input
+              type="date"
+              aria-label="Pick a day"
+              className={CONTROL}
+              value={/^\d{4}-/.test(day) ? day : ""}
+              onChange={(e) => setView("day", e.target.value || "today")}
+            />
+          </>
+        )}
         {s && (
-          <span className="text-caption text-muted tabular-nums">
-            {s.day} · {s.start.slice(11, 16)}–{s.end.slice(11, 16)} ET
+          <span className="text-caption text-muted tabular-nums" data-testid="window-label">
+            {windowLabel(s.start, s.end)}
           </span>
         )}
       </div>
-      {!s ? <Loading what="the session" /> : layout === "mobile" ? <TimelineList s={s} bands={bands} /> : <TimelineGantt s={s} bands={bands} />}
+      {!s ? <Loading what="the session" /> : <Timeline key={`${s.window}:${s.day}`} s={s} bands={bands} phone={layout === "mobile"} />}
       {s && (
         <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-caption text-secondary tabular-nums" data-testid="slot-legend">
           {slotCounts(s.counts).map(({ status, n }) => (
@@ -1033,8 +1005,9 @@ function ConfigLink({ c }: { c?: OpsConfig }) {
 export function OpsPage() {
   const [params, setParams] = useSearchParams();
   const day = dayParam(params.get("day"));
+  const win = windowParam(params.get("tl"), params.get("day"));
   const now = useNow();
-  const session = useOps("/api/ops/session", { day });
+  const session = useOps("/api/ops/session", win === "rolling" ? { window: "rolling" } : { window: "day", day });
   const health = useOps("/api/ops/health");
   const alerts = useOps("/api/ops/alerts");
   const halts = useOps("/api/ops/halts");
@@ -1048,17 +1021,25 @@ export function OpsPage() {
   useEffect(() => {
     if (hash === "#alerts" && alertsLoaded) document.getElementById("alerts")?.scrollIntoView({ block: "start" });
   }, [hash, alertsLoaded]);
-  const setDay = (d: string) => {
+  // D93: `?tl=day` (+ `?day=`) is the 24 h Day view; no `tl` is the Rolling default.
+  const setView = (w: TimelineWindow, d?: string) => {
     const next = new URLSearchParams(params);
-    if (d === "today") next.delete("day");
-    else next.set("day", d);
+    if (w === "rolling") {
+      next.delete("tl");
+      next.delete("day");
+    } else {
+      next.set("tl", "day");
+      const nd = d ?? day;
+      if (nd === "today") next.delete("day");
+      else next.set("day", nd);
+    }
     setParams(next, { replace: true });
   };
   const cfg = config.data as OpsConfig | undefined;
   // Owner order (D48, D89: Health under Config; OPS_WIDGETS): the same on phone and desktop, one column.
   return (
     <div className="grid gap-6 desktop:gap-10" data-testid="ops">
-      <SessionCard s={session.data as Session | undefined} day={day} setDay={setDay} />
+      <SessionCard s={session.data as Session | undefined} win={win} day={day} setView={setView} />
       <SourcesCard s={sources.data as Sources | undefined} now={now} />
       <LlmCard l={llm.data as Llm | undefined} />
       <ContextCard c={context.data as ContextStore | undefined} now={now} />

@@ -24,6 +24,7 @@ from arc.tower.data_ops import (
     RunListResponse,
     SessionResponse,
     SourcesResponse,
+    TimelineWindow,
     job_labels,
     load_alerts,
     load_budget,
@@ -75,15 +76,21 @@ def _slack_channel() -> str:
 
 
 @router.get("/session", response_model=SessionResponse, responses={422: {"model": ErrorResponse}})
-def session(cfg: Tower, conn: Conn, day: Annotated[str | None, Query()] = None) -> SessionResponse:
-    """The ET day's scheduled slots (05:00-22:00) with each one's run, plus the loop row."""
+def session(
+    cfg: Tower,
+    conn: Conn,
+    day: Annotated[str | None, Query()] = None,
+    window: Annotated[TimelineWindow, Query()] = "day",
+) -> SessionResponse:
+    """Scheduled slots with each one's run, plus the loop row (D93): ``window=day`` is the
+    ET day 00:00-24:00, ``window=rolling`` the last 8 h and the next 4 h (``day`` ignored)."""
     now = cfg.clock()
     try:
         d = resolve_day(day, now)
     except ValueError as exc:
         raise TowerError(422, "invalid_request", str(exc)) from exc
     _, routines = effective(cfg)
-    return load_session(conn, routines, now=now, day=d)
+    return load_session(conn, routines, now=now, day=d, window=window)
 
 
 @router.get("/health", response_model=HealthStripResponse)

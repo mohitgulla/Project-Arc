@@ -111,6 +111,17 @@
       height: max(100%, 44px);
     }
   }
+  /* D93: Session Timeline slot marks: a 44 px (touch) / 40 px square target (`--hit-w`). On dense
+     rows the targets overlap; the click opens the nearest run (nearestSlot in lib/ops). */
+  .arc-hit-tl::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: var(--hit-w, 40px);
+    height: var(--hit-w, 40px);
+    transform: translate(-50%, -50%);
+  }
   /* §10 press feedback: 0.96, transform + colour only (never `transition: all`). */
   .arc-press {
     transition-property: transform, background-color, color;

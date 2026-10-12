@@ -28,6 +28,13 @@ async function open(page: Page, path: string, theme: (typeof THEMES)[number] = "
   await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
 }
 
+/** Tap a slot mark where it is drawn (its target may sit under a neighbour's on a dense row). */
+async function tapSlot(page: Page, slot: import("@playwright/test").Locator) {
+  await slot.scrollIntoViewIfNeeded();
+  const b = (await slot.boundingBox())!;
+  await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2);
+}
+
 async function undeclaredRun(page: Page): Promise<string> {
   const res = await page.request.get("/api/ops/runs?job=research&status=ok&size=200&day=today");
   const body = (await res.json()) as { rows: Array<{ run_id: string }> };
@@ -52,9 +59,10 @@ for (const vp of VIEWPORTS) {
           await expect(page.getByRole("heading", { level: 2, name: title, exact: true })).toBeVisible();
         await expect(page.getByRole("heading", { level: 2, name: "Order Budget" })).toHaveCount(0);
         await expect(page.getByTestId("order-budget")).toHaveCount(0);
-        const phone = vp.width <= 768;
+        // D93: one interactive timeline at every width (no phone list, no desktop-only Gantt)
         const tl = page.getByTestId("session-timeline");
-        await expect(tl).toHaveAttribute("data-layout", phone ? "list" : "gantt");
+        await expect(tl).toHaveAttribute("data-layout", "timeline");
+        await expect(tl).toHaveAttribute("data-window", "rolling");
         await expect(tl.getByTestId("band").first()).toBeVisible();
         await expect(page.getByTestId("loop-row")).toBeAttached();
         await expect(page.getByTestId("loop-row").locator('[data-status="no_change"]').first()).toBeAttached();
@@ -177,6 +185,8 @@ test.describe("ops behaviour", () => {
 
   test("day control and run filters are URL-synced; a run row opens its detail", async ({ page }) => {
     await open(page, "/ops");
+    await page.getByRole("button", { name: "Day", exact: true }).click();
+    await expect(page).toHaveURL(/tl=day/);
     await page.getByRole("button", { name: "Yesterday", exact: true }).click();
     await expect(page).toHaveURL(/day=yesterday/);
     await expect(page.getByTestId("session-timeline").locator('[data-status="future"]')).toHaveCount(0);
@@ -191,12 +201,62 @@ test.describe("ops behaviour", () => {
 
   test("a timeline slot opens its run; context links open the entry", async ({ page }) => {
     await open(page, "/ops");
-    await page.getByTestId("loop-row").locator('[data-status="done"]').first().click();
+    await tapSlot(page, page.getByTestId("loop-row").locator('[data-status="done"]').first());
     await expect(page).toHaveURL(/\/ops\/runs\/run-ops-research-/);
     await page.locator('[data-testid=kind-count][data-kind="candidate"]').first().click();
     await page.getByRole("link", { name: /^candidate:/ }).first().click();
     await expect(page).toHaveURL(/\/ops\/context\//);
     await expect(page.getByTestId("context-entry")).toContainText("candidate");
+  });
+
+  test("D93 timeline: Rolling by default, 24 h Day, now-bar, pinned names, collapsible groups", async ({ page }) => {
+    await open(page, "/ops");
+    const tl = page.getByTestId("session-timeline");
+    await expect(tl).toHaveAttribute("data-window", "rolling");
+    // Rolling: -8 h .. +4 h around the current ET hour = 13 hourly ticks + the end tick
+    await expect(tl.getByTestId("scale-tick")).toHaveCount(14);
+    await expect(tl.getByTestId("now-bar")).toBeVisible();
+    // the scroller starts with the now-bar in view
+    const [nowBox, scBox] = await Promise.all([tl.getByTestId("now-bar").boundingBox(), tl.getByTestId("timeline-scroll").boundingBox()]);
+    expect(nowBox!.x).toBeGreaterThanOrEqual(scBox!.x);
+    expect(nowBox!.x).toBeLessThanOrEqual(scBox!.x + scBox!.width);
+    // job names are pinned: scrolling the track sideways leaves the label column in place
+    const label = tl.getByTestId("timeline-labels");
+    const before = await label.boundingBox();
+    await tl.getByTestId("timeline-scroll").evaluate((el) => (el.scrollLeft = 0));
+    expect((await label.boundingBox())!.x).toBe(before!.x);
+    // the label and track rows of a job line up on the same y
+    // (a multi-category source such as rss sits in several bands: pair the loop row, which is unique)
+    const [l, t] = await Promise.all([tl.getByTestId("loop-row-label").boundingBox(), tl.getByTestId("loop-row").boundingBox()]);
+    expect(Math.abs(l!.y - t!.y)).toBeLessThanOrEqual(1);
+    // a group collapses to one label row on the same scale; its marks stay, small
+    const band = tl.locator("[data-testid=band][data-band=trading_loop]");
+    await expect(band).toHaveAttribute("data-open", "true");
+    await band.getByTestId("band-header").click();
+    await expect(band).toHaveAttribute("data-open", "false");
+    await expect(tl.getByTestId("loop-row")).toBeHidden();
+    await expect(tl.getByTestId("loop-row-label")).toBeHidden(); // the pinned name hides with its row
+    await band.getByTestId("band-header").click();
+    await expect(tl.getByTestId("loop-row")).toBeVisible();
+    // Day: the full 00:00-24:00 ET day, so the 23:00 jobs are on the scale
+    await page.getByRole("button", { name: "Day", exact: true }).click();
+    await expect(page).toHaveURL(/tl=day/);
+    await expect(tl).toHaveAttribute("data-window", "day");
+    // a tap a little off a mark (dense 5-min row, overlapping targets) opens the nearest run
+    const done = tl.getByTestId("loop-row").locator('[data-status="done"]').first();
+    const want = (await done.getAttribute("title"))!.slice(9, 14);
+    await done.scrollIntoViewIfNeeded();
+    const db = (await done.boundingBox())!;
+    await page.mouse.click(db.x + db.width / 2 + 2, db.y + 2);
+    await expect(page).toHaveURL(/\/ops\/runs\/run-ops-research-/);
+    await expect(page.getByTestId("run-detail")).toContainText(want);
+    await page.goBack();
+    await expect(tl).toHaveAttribute("data-window", "day");
+    await expect(page.getByTestId("window-label")).toContainText("00:00 – 24:00 ET");
+    await expect(tl.getByTestId("scale-tick")).toHaveCount(25);
+    await expect(tl.getByTestId("scale-tick").filter({ hasText: "23:00" })).toHaveCount(1);
+    await page.getByRole("button", { name: "Rolling", exact: true }).click();
+    await expect(page).not.toHaveURL(/tl=/);
   });
 
   test("timeline bands, persona chips and the ⓘ about line come from routines.yaml", async ({ page }) => {
@@ -207,15 +267,15 @@ test.describe("ops behaviour", () => {
     expect(bands[0]).toMatch(/^sources\./);
     expect(bands.indexOf("scalp")).toBeLessThan(bands.indexOf("trading_loop"));
     expect(bands.indexOf("trading_loop")).toBeLessThan(bands.indexOf("position_management"));
-    const loop = page.getByTestId("loop-row");
+    const loop = page.getByTestId("loop-row-label");
     await expect(loop).toContainText("Research → Quant → Risk → Propose → Execute");
     // D59: the loop label is the same size as every other job label (bold only), and
     // band / job labels are Title Case.
     const fs = async (l: import("@playwright/test").Locator) => l.evaluate((el) => getComputedStyle(el).fontSize);
-    expect(await fs(loop.getByTestId("job-label"))).toBe(await fs(tl.getByTestId("timeline-row").first().getByTestId("job-label")));
+    expect(await fs(loop.getByTestId("job-label"))).toBe(await fs(tl.getByTestId("timeline-row-label").first().getByTestId("job-label")));
     await expect(tl.locator("[data-band=trading_loop] [data-testid=band-header]")).toContainText("Trading Loop");
     await expect(loop.getByTestId("persona-chip")).toHaveText("🧠 Research");
-    await expect(tl.locator('[data-job="positions.evaluate"]')).toContainText("Position Marks");
+    await expect(tl.locator('[data-testid=timeline-row-label][data-job="positions.evaluate"]')).toContainText("Position Marks");
     await loop.getByTestId("job-info").click();
     await expect(page.getByRole("dialog").or(page.locator("[role=tooltip]")).first()).toContainText("LLM yes");
   });
@@ -297,7 +357,7 @@ test.describe("ops behaviour", () => {
 
   test("run detail is concise: ids hidden until Show ids, manifest collapsed", async ({ page }) => {
     await open(page, "/ops");
-    await page.getByTestId("loop-row").locator('[data-status="done"]').first().click();
+    await tapSlot(page, page.getByTestId("loop-row").locator('[data-status="done"]').first());
     await expect(page).toHaveURL(/\/ops\/runs\/run-ops-research-/);
     await expect(page.getByTestId("context-id")).toHaveCount(0);
     await expect(page.getByTestId("manifest-group")).toHaveCount(0);
@@ -313,29 +373,30 @@ test.describe("ops behaviour", () => {
 });
 
 test.describe("ops phone-75", { tag: PHONE_75_TAG }, () => {
-  test("timeline is a grouped list; bands and categories collapse; sections start closed", async ({ page }) => {
+  test("the same timeline on a phone: pinned names, groups collapse, sections start closed", async ({ page }) => {
     await open(page, "/ops");
     const tl = page.getByTestId("session-timeline");
-    await expect(tl).toHaveAttribute("data-layout", "list");
-    await expect(page.locator(".min-w-\\[720px\\]")).toHaveCount(0); // no min-width Gantt
-    // a band with a failed / missed slot starts open; a clean one starts closed
+    // D93: no separate phone list; the one timeline with a sideways-scrolling track
+    await expect(tl).toHaveAttribute("data-layout", "timeline");
+    await expect(tl.getByTestId("timeline-scroll")).toHaveAttribute("data-scroll-x");
+    await expect(tl.getByTestId("now-bar")).toBeAttached();
+    // a group with a failed / missed slot starts open; a clean one starts closed
     const bands = tl.getByTestId("band");
     await expect(bands.first()).toBeVisible();
     const states = await bands.evaluateAll((els) => els.map((e) => e.getAttribute("data-open")));
-    expect(states).toContain("true");
-    // expand a closed band, then tap a job row for its slot details
+    expect(states).toContain("false");
     const [closedKey] = await tl.locator('[data-testid=band][data-open="false"]').evaluateAll((els) => els.map((e) => e.getAttribute("data-band")));
-    if (closedKey) {
-      const closed = tl.locator(`[data-testid=band][data-band="${closedKey}"]`);
-      await closed.getByTestId("band-header").click();
-      await expect(closed).toHaveAttribute("data-open", "true");
-    }
-    const row = tl.getByTestId("loop-row");
+    const closed = tl.locator(`[data-testid=band][data-band="${closedKey}"]`);
+    await closed.getByTestId("band-header").click();
+    await expect(closed).toHaveAttribute("data-open", "true");
+    // the loop's ⓘ carries its summary (and the persona, which leaves the phone label row)
     const loopBand = tl.locator("[data-testid=band][data-band=trading_loop]");
     if ((await loopBand.getAttribute("data-open")) === "false") await loopBand.getByTestId("band-header").click();
-    await expect(row.getByTestId("row-summary")).toContainText(/\d+\/\d+ done/);
-    await row.locator("button[aria-controls]").first().click();
-    await expect(row.getByTestId("slot-details")).toBeVisible();
+    const loop = tl.getByTestId("loop-row-label");
+    await expect(loop.getByTestId("persona-chip")).toHaveCount(0);
+    await loop.getByTestId("job-info").click();
+    await expect(page.getByTestId("row-summary").first()).toContainText(/\d+\/\d+ done/);
+    await page.keyboard.press("Escape");
     // Sources: categories show the header only, unless they have a problem
     const cats = page.getByTestId("source-category");
     await expect(cats.first()).toBeVisible();

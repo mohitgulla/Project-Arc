@@ -52,7 +52,7 @@ export const SLOT_LABEL: Record<SlotStatus, string> = {
   skipped: "Skipped",
   no_change: "No change",
   missed: "Missed",
-  future: "Scheduled",
+  future: "Upcoming",
 };
 
 /** Position of *at* on the [start, end] axis as a 0..100 percentage (clamped). */
@@ -62,18 +62,6 @@ export function timelinePct(at: string, start: string, end: string): number {
   const e = Date.parse(end);
   if (!(e > s) || Number.isNaN(a)) return 0;
   return Math.max(0, Math.min(100, ((a - s) / (e - s)) * 100));
-}
-
-/** Hour ticks (ET wall clock) on the timeline: every *step* hours from start to end. */
-export function hourTicks(start: string, end: string, step = 2): Array<{ label: string; pct: number }> {
-  const s = Date.parse(start);
-  const e = Date.parse(end);
-  const out: Array<{ label: string; pct: number }> = [];
-  const startHour = Number(start.slice(11, 13));
-  for (let t = s, h = startHour; t <= e; t += step * 3_600_000, h += step) {
-    out.push({ label: `${String(h % 24).padStart(2, "0")}:00`, pct: ((t - s) / (e - s)) * 100 });
-  }
-  return out;
 }
 
 /** One-line hover text for a slot. */
@@ -120,6 +108,110 @@ export function loopSplit(row: TimelineRow | null | undefined): { full: number; 
     noChange: slots.filter((s) => s.status === "no_change").length,
     failed: slots.filter((s) => s.status === "failed").length,
   };
+}
+
+// -- D93: interactive timeline (Rolling default, 24 h Day) ----------------------------
+
+export type TimelineWindow = "rolling" | "day";
+
+export const WINDOW_PRESETS: ReadonlyArray<{ value: TimelineWindow; label: string }> = [
+  { value: "rolling", label: "Rolling" },
+  { value: "day", label: "Day" },
+];
+
+/**
+ * `?tl=` -> the timeline window. Rolling is the default; `?tl=day` picks the 24 h Day view, and
+ * an old link that only carries `?day=` (yesterday / a date) opens the Day view too.
+ */
+export function windowParam(tl: string | null, day: string | null): TimelineWindow {
+  if (tl === "day" || tl === "rolling") return tl;
+  return dayParam(day) === "today" ? "rolling" : "day";
+}
+
+/** Pixels per hour on the scale (fixed, never squeezed; the track scrolls sideways). */
+export function pxPerHour(phone: boolean): number {
+  return phone ? 120 : 96;
+}
+
+/**
+ * The slot under a tap at *pct* (0..100) of the row: the nearest one. Slot targets are a full
+ * 44 px (touch) / 40 px and overlap on dense rows (the 5-min loop), so a tap is resolved by where
+ * it landed, never by whichever neighbour's target happens to be on top.
+ */
+export function nearestSlot<T extends { at: string }>(slots: readonly T[], pct: number, start: string, end: string): T | null {
+  let best: T | null = null;
+  let d = Infinity;
+  for (const x of slots) {
+    const dx = Math.abs(timelinePct(x.at, start, end) - pct);
+    if (dx < d) [best, d] = [x, dx];
+  }
+  return best;
+}
+
+/** Hours the window spans (DST-safe: from the instants, not the labels). */
+export function windowHours(start: string, end: string): number {
+  const h = (Date.parse(end) - Date.parse(start)) / 3_600_000;
+  return Number.isFinite(h) && h > 0 ? h : 0;
+}
+
+const ET_HOUR = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+const ET_DAY = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short" });
+
+/** `HH:MM` (ET) of an instant. */
+export function etClock(ms: number): string {
+  return ET_HOUR.format(ms);
+}
+
+export interface ScaleTick {
+  /** `HH:00` ET. */
+  label: string;
+  pct: number;
+  /** ET midnight: the tick also carries the weekday (`Wed`), so a window over midnight reads. */
+  day: string | null;
+}
+
+/** One tick per hour boundary in [start, end] (ET wall clock, DST-safe). */
+export function scaleTicks(start: string, end: string): ScaleTick[] {
+  const s = Date.parse(start);
+  const e = Date.parse(end);
+  if (!(e > s)) return [];
+  const out: ScaleTick[] = [];
+  const first = Math.ceil(s / 3_600_000) * 3_600_000; // ET is a whole-hour offset of UTC
+  for (let t = first; t <= e; t += 3_600_000) {
+    const label = etClock(t);
+    out.push({ label, pct: ((t - s) / (e - s)) * 100, day: label === "00:00" ? ET_DAY.format(t) : null });
+  }
+  return out;
+}
+
+/** Now-bar position: `null` when *now* falls outside the window (a past Day view). */
+export function nowPct(now: number, start: string, end: string): number | null {
+  const s = Date.parse(start);
+  const e = Date.parse(end);
+  if (!(e > s) || now < s || now > e) return null;
+  return ((now - s) / (e - s)) * 100;
+}
+
+/** The scroll offset that puts *pct* of a *width* px track at 2/3 of a *view* px viewport. */
+export function scrollToNow(pct: number | null, width: number, view: number): number {
+  if (pct == null || width <= view) return 0;
+  return Math.max(0, Math.min(width - view, (pct / 100) * width - view * (2 / 3)));
+}
+
+/** `Wed 05:00 – 18:00 ET` (rolling may cross midnight: `Tue 18:00 – Wed 07:00 ET`). */
+export function windowLabel(start: string, end: string): string {
+  const s = Date.parse(start);
+  const e = Date.parse(end);
+  if (!(e > s)) return "";
+  const sd = ET_DAY.format(s);
+  const ed = ET_DAY.format(e - 1);
+  const endClock = etClock(e) === "00:00" ? "24:00" : etClock(e);
+  return sd === ed || endClock === "24:00" ? `${sd} ${etClock(s)} – ${endClock} ET` : `${sd} ${etClock(s)} – ${ed} ${endClock} ET`;
+}
+
+/** A group row starts open on desktop / tablet, and on a phone only when it has a problem. */
+export function bandStartsOpen(rows: TimelineRow[], phone: boolean): boolean {
+  return !phone || bandHasProblem(rows);
 }
 
 // -- day control ---------------------------------------------------------------------

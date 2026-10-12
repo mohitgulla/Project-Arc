@@ -11,6 +11,7 @@ import {
   bandHasProblem,
   bandRollup,
   bandRows,
+  bandStartsOpen,
   configGroups,
   contractRows,
   dayParam,
@@ -18,22 +19,29 @@ import {
   filterLog,
   formatDuration,
   groupRepeats,
-  hourTicks,
   llmBars,
   loopSplit,
   manifestGroups,
+  nowPct,
   rowFacts,
   rowSummary,
   runApiQuery,
   runQuery,
   runStatusLabel,
   runStatusTone,
+  pxPerHour,
+  scaleTicks,
+  nearestSlot,
+  scrollToNow,
   sharePct,
   slotCounts,
   slotTitle,
   sourceGroups,
   timeLeft,
   timelinePct,
+  windowHours,
+  windowLabel,
+  windowParam,
   worstStatus,
   type Llm,
   type OpsConfig,
@@ -78,7 +86,7 @@ function slot(status: Slot["status"], at = "2026-09-30T10:00:00-04:00", run: Par
 }
 
 describe("timeline geometry", () => {
-  it("maps times onto 06:00-22:00 and clamps outside it", () => {
+  it("maps times onto the window and clamps outside it", () => {
     expect(timelinePct(START, START, END)).toBe(0);
     expect(timelinePct(END, START, END)).toBe(100);
     expect(timelinePct("2026-09-30T14:00:00-04:00", START, END)).toBe(50);
@@ -87,16 +95,11 @@ describe("timeline geometry", () => {
     expect(timelinePct("nope", START, END)).toBe(0);
   });
 
-  it("labels an hour tick every two hours", () => {
-    const t = hourTicks(START, END);
-    expect(t.map((x) => x.label)).toEqual(["06:00", "08:00", "10:00", "12:00", "14:00", "16:00", "18:00", "20:00", "22:00"]);
-    expect(t[4]?.pct).toBe(50);
-  });
 });
 
 describe("slots", () => {
   it("hover text carries job, time, status, duration and outcome", () => {
-    expect(slotTitle(slot("future"))).toBe("research 10:00 ET · Scheduled");
+    expect(slotTitle(slot("future"))).toBe("research 10:00 ET · Upcoming");
     const s = { ...slot("done", undefined, {}), chain_steps: 4 };
     expect(slotTitle(s)).toBe("research 10:00 ET · Done · 1 min 35 s · 4 chain steps — shortlist 1");
     expect(slotTitle(slot("failed", undefined, { status: "failed", error: "HTTPError: 503" }))).toContain("— HTTPError: 503");
@@ -453,5 +456,76 @@ describe("E8.8d repeat grouping", () => {
     const g = groupRepeats(items, (a) => a.kind);
     expect(g.map((x) => x.text)).toEqual(["missed_window ×12", "stuck"]);
     expect(g[0]!.items).toHaveLength(12);
+  });
+});
+
+describe("D93 interactive timeline", () => {
+  const RS = "2026-09-30T05:00:00-04:00";
+  const RE = "2026-09-30T18:00:00-04:00";
+
+  it("defaults to Rolling; ?tl=day or an old ?day= link opens the Day view", () => {
+    expect(windowParam(null, null)).toBe("rolling");
+    expect(windowParam(null, "today")).toBe("rolling");
+    expect(windowParam(null, "yesterday")).toBe("day");
+    expect(windowParam(null, "2026-09-28")).toBe("day");
+    expect(windowParam("day", null)).toBe("day");
+    expect(windowParam("rolling", "yesterday")).toBe("rolling");
+    expect(windowParam("week", null)).toBe("rolling");
+  });
+
+  it("ticks every hour on the ET wall clock and marks midnight with the weekday", () => {
+    const t = scaleTicks(RS, RE);
+    expect(t).toHaveLength(14);
+    expect(t[0]).toEqual({ label: "05:00", pct: 0, day: null });
+    expect(t.at(-1)!.label).toBe("18:00");
+    const over = scaleTicks("2026-09-29T18:00:00-04:00", "2026-09-30T07:00:00-04:00");
+    const mid = over.find((x) => x.label === "00:00")!;
+    expect(mid.day).toBe("Wed");
+    expect(over.filter((x) => x.day)).toHaveLength(1);
+  });
+
+  it("spans 24 ticks + 1 on a full day and 23 on the spring-forward day", () => {
+    expect(scaleTicks("2026-09-30T00:00:00-04:00", "2026-10-01T00:00:00-04:00")).toHaveLength(25);
+    expect(windowHours("2026-03-08T00:00:00-05:00", "2026-03-09T00:00:00-04:00")).toBe(23);
+  });
+
+  it("places the now-bar only inside the window", () => {
+    expect(nowPct(Date.parse("2026-09-30T13:42:00-04:00"), RS, RE)).toBeCloseTo((8.7 / 13) * 100, 5);
+    expect(nowPct(Date.parse("2026-09-30T19:00:00-04:00"), RS, RE)).toBeNull();
+    expect(nowPct(Date.parse("2026-09-30T04:59:00-04:00"), RS, RE)).toBeNull();
+  });
+
+  it("scrolls the now-bar to two thirds of the viewport, clamped", () => {
+    expect(scrollToNow(50, 1000, 300)).toBe(300);
+    expect(scrollToNow(5, 1000, 300)).toBe(0);
+    expect(scrollToNow(100, 1000, 300)).toBe(700);
+    expect(scrollToNow(null, 1000, 300)).toBe(0);
+    expect(scrollToNow(50, 300, 400)).toBe(0); // fits: no scroll
+  });
+
+  it("labels the window, across midnight too", () => {
+    expect(windowLabel(RS, RE)).toBe("Wed 05:00 – 18:00 ET");
+    expect(windowLabel("2026-09-30T00:00:00-04:00", "2026-10-01T00:00:00-04:00")).toBe("Wed 00:00 – 24:00 ET");
+    expect(windowLabel("2026-09-29T18:00:00-04:00", "2026-09-30T07:00:00-04:00")).toBe("Tue 18:00 – Wed 07:00 ET");
+  });
+
+  it("resolves a tap to the nearest slot, so overlapping targets never open a neighbour", () => {
+    const at = (hm: string) => ({ at: `2026-09-30T${hm}:00-04:00` });
+    const slots = [at("09:40"), at("09:45"), at("09:50")];
+    const pctOf = (hm: string) => timelinePct(`2026-09-30T${hm}-04:00`, RS, RE);
+    expect(nearestSlot(slots, pctOf("09:44:00"), RS, RE)).toBe(slots[1]);
+    expect(nearestSlot(slots, pctOf("09:42:00"), RS, RE)).toBe(slots[0]);
+    expect(nearestSlot(slots, pctOf("12:00:00"), RS, RE)).toBe(slots[2]);
+    expect(nearestSlot([], 50, RS, RE)).toBeNull();
+    expect(pxPerHour(true)).toBe(120);
+    expect(pxPerHour(false)).toBe(96);
+  });
+
+  it("opens every group on desktop; on a phone only the ones with a problem", () => {
+    const bad = [eRow("a", "scalp", { slots: [eSlot("missed", "06:00")] })];
+    const ok = [eRow("b", "scalp", { slots: [eSlot("done", "06:00")] })];
+    expect(bandStartsOpen(ok, false)).toBe(true);
+    expect(bandStartsOpen(ok, true)).toBe(false);
+    expect(bandStartsOpen(bad, true)).toBe(true);
   });
 });

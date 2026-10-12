@@ -161,9 +161,11 @@ Charts: Recharts, wrapped so no page imports Recharts directly. Tooltips share o
 - Loaders in `arc/tower/data_ops.py`, routes `GET /api/ops/{session,health,alerts,halts,
   runs,runs/{run_id},budget,context,context/{entry_id},sources,llm,config}`.
 - Session timeline slots are `config/routines.yaml` slots (`arc.routines.schedule
-  .slots_between`, 05:00–22:00 ET) joined to root `routine_runs` on `(job, scheduled_for)`.
+  .slots_between`) joined to root `routine_runs` on `(job, scheduled_for)`, over one of two
+  windows (D93, `GET /api/ops/session?window=`): `rolling` (default: 8 h before the current
+  ET hour to 4 h after it, may span midnight) or `day` (00:00–24:00 ET, so the 23:00 jobs show).
   Colours: done `--accent`, running pulsing `--accent`, failed `--neg`, skipped / no_change
-  muted, missed `--warn`, future `--track`. The D31 trading loop (`loop.job`) is its own row.
+  muted, missed `--warn`, future (`Upcoming`) `--track`. The D31 trading loop (`loop.job`) is its own row.
 - Run detail renders the stored D27 manifest (`run_manifests.payload`) and the trace from
   `arc.context.trace.trace_runs`, the same serializer `arc context trace` prints. A read or
   write of a kind outside the job's declared contract is highlighted `--neg`.
@@ -286,9 +288,18 @@ they are never dropped.
   A typo fails config load. Sources band by their D47 category (`sources.<category>`, labels
   from the category registry, so a rename needs no UI change); anything else falls under
   Other. The band header rolls up settled slots (`14/16 ok · 1 missed`).
-- **≤ 768 px** the Gantt becomes a grouped list: band header → job rows (label, persona chip,
-  `9/12 done · 1 missed · next 10:30`, ⓘ) with a dot strip that scrolls inside the row; tap a
-  row for per-slot details. A band starts open only when it has a failed or missed slot.
+- **Interactive timeline (D93), one layout at every width** (replaced the E8.8d desktop Gantt +
+  phone list): a fixed time scale (96 px/h desktop, 120 px/h phone; the track scrolls sideways
+  inside the card, `data-scroll-x`) with a `Rolling | Day` toggle (`?tl=day`, plus the
+  Today / Yesterday / date pick for Day). Job names sit in a pinned left column outside the
+  scroller (not `sticky`). Hourly ticks; ET midnight carries the weekday. A vertical now-bar
+  with its `HH:MM` re-renders every minute, and the track scrolls to it on load. Each run is
+  a mark (done / running / failed / skipped / no change / missed / upcoming); tapping one opens
+  `/ops/runs/<id>` (overlapping 44 px hit areas resolve to the nearest slot). Bands are
+  collapsible group rows on the same scale; a closed group shows its rows' marks small on its
+  own row. Desktop starts every group open; a phone opens only groups with a failed or missed
+  slot. On a phone the persona chip moves into the job's ⓘ, which also carries
+  `9/12 done · 1 missed · next 10:30`.
 - **Sources** group by D47 category: share, `max_age`, newest doc, worst-wins status
   (`ok < idle < pending < backoff < late < failed`). Category and in-category shares are read
   from `SourceRegistry`, never recomputed. Rows add `skipped (stale)` (E4.7) and, for YouTube
