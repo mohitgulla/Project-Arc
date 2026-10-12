@@ -134,6 +134,7 @@ class ReasonCode(StrEnum):
     QUANT_SKIPPED = "quant_skipped"  # E5.7: Quant skipped a budgeted ticker, with a reason
     NOT_STRUCTURED = "not_structured"  # E5.7: no structure and no reason from Quant
     OVER_BUDGET = "over_budget"  # E5.7: ranked beyond pipeline_max_shortlist
+    SLEEVE_FULL = "sleeve_full"  # E22.2 (D97): a DTE sleeve with no free slot, no menu
     # account profile (D25): the profile maps the stance to no structure
     PROFILE_NO_NEUTRAL = "profile:no_neutral_structure"
     PROFILE_NO_STRUCTURE = "profile:no_structure"
@@ -463,6 +464,7 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.GATE_DAY_TRADES: "Gate: day-trade limit of the account profile",
     ReasonCode.GATE_LIVE_SIZE_CAP: "Gate: live size cap (live gate not met)",
     ReasonCode.GATE_SLEEVE_POSITIONS: "Gate: DTE sleeve full",
+    ReasonCode.SLEEVE_FULL: "No menu: DTE sleeve full",
     ReasonCode.OWNER_APPROVE: "Owner approved",
     ReasonCode.OWNER_REJECT: "Owner rejected",
     ReasonCode.AUTO_APPROVE: "Auto-approved",

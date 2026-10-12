@@ -105,7 +105,14 @@ class TestScannerAndPrompt:
     def test_sleeved_prompt_text(self, tmp_path: Path) -> None:
         t = entry_terms(cfg(sleeved_file(tmp_path)))
         assert t.window == "10-29 DTE (short) / 30-60 DTE (swing)"
-        assert "10-29 DTE (short) / 30-60 DTE (swing) entry window" in t.quant_lines()
+        # E22.2 (D97): the Quant/Risk lines name each sleeve and the one-per-ticker rule
+        q = t.quant_lines()
+        assert "Entry windows: short 10-29 DTE, swing 30-60 DTE" in q
+        assert "At most one structure per ticker across sleeves" in q
+        assert "do not reject or skip a menu item on DTE alone" in q
+        r = t.risk_line()
+        assert "Entry windows: short 10-29 DTE, swing 30-60 DTE" in r
+        assert "Do not decline or downsize a structure for its DTE alone" in r
 
 
 # ---------------------------------------------------------------------------

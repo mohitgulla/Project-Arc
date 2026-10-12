@@ -220,7 +220,8 @@ def loop_root_from_db(
     pending: list[str] = []
     working: list[str] = []
     rows = conn.execute(
-        """SELECT p.ticker, p.kind, a.status AS approval, e.status AS execution
+        """SELECT p.ticker, p.kind, a.status AS approval, e.status AS execution,
+                  json_extract(p.structure_json, '$.sleeve') AS sleeve
            FROM proposals p
            JOIN routine_runs r ON r.run_id = p.run_id
            LEFT JOIN approval_requests a ON a.proposal_hash = p.proposal_hash
@@ -228,15 +229,21 @@ def loop_root_from_db(
            WHERE r.chain_run_id = ? ORDER BY p.rowid""",
         (chain_run_id,),
     ).fetchall()
+    sleeves: dict[str, int] = {}
     for r in rows:
         ticker, kind = str(r["ticker"]), str(r["kind"])
         execution, approval = r["execution"], r["approval"]
+        shown = True
         if execution in ("filled", "partially_filled"):
             (sells if kind == "close" else buys).append(ticker)
         elif approval == "pending":
             pending.append(ticker)
         elif approval == "approved" and execution in (None, "working", "unconfirmed"):
             working.append(ticker)
+        else:
+            shown = False
+        if shown and kind != "close" and r["sleeve"]:  # E22.2 (D97)
+            sleeves[str(r["sleeve"])] = sleeves.get(str(r["sleeve"]), 0) + 1
     if fallback is not None:
         if equity is None:
             equity, day_pnl = fallback.equity, fallback.day_pnl
@@ -264,6 +271,7 @@ def loop_root_from_db(
         timeout=timeout,
         skipped=skipped,
         headline=headline,
+        sleeves=dict(sorted(sleeves.items())),
     )
 
 

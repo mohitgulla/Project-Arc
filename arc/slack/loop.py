@@ -56,6 +56,8 @@ class LoopRoot(BaseModel):
     timeout: bool = False
     skipped: str | None = None  # the slot never ran (why)
     headline: list[str] = Field(default_factory=list)  # D65: one plain-text sentence
+    # E22.2 (D97): opens shown (BUY / PENDING / WIP) per DTE sleeve, sleeved profiles only
+    sleeves: dict[str, int] = Field(default_factory=dict)
 
     @property
     def outcome(self) -> LoopOutcome:
@@ -115,6 +117,8 @@ def loop_status_line(root: LoopRoot) -> str:
         elif root.no_change:
             hold = "HOLD (skip)"
         action.append(hold)
+    if root.sleeves:
+        action.append("Sleeves: " + ", ".join(f"{k} {v}" for k, v in root.sleeves.items()))
     line = f"{_EMOJI[root.outcome]} " + " • ".join([*facts, *action])
     head = [h for h in (root.headline or _flag_headline(root)) if h.strip()][:1]
     return "\n".join([line, *(bold_italic(h) for h in head)])

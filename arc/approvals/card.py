@@ -275,6 +275,15 @@ def _liquidity(p: Proposal) -> str | None:
     )
 
 
+def _sleeve(p: Proposal, a: ProposalAnalytics | None) -> str | None:
+    """E22.2 (D97): ``short (10–29 DTE)``; ``None`` for a proposal without a sleeve."""
+    name = p.structure.sleeve
+    if not name:
+        return None
+    window = a.sleeve_window if a is not None else None
+    return f"{name} ({window})" if window else name
+
+
 def _gate_short(decision: GateDecision | None) -> str:
     if decision is None:
         return ":grey_question: No gate decision"
@@ -572,6 +581,9 @@ def _body(
     liq = _liquidity(p)
     if liq:
         pairs.append(("Liquidity", liq))
+    sleeve = _sleeve(p, a)
+    if sleeve:  # E22.2 (D97): sleeved profiles only; single-window cards unchanged
+        pairs.append(("Sleeve", sleeve))
     blocks.extend(B.facts(pairs))
     blocks.append(B.divider())
     blocks.extend(_net_ev_section(p, em))

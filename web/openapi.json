@@ -10967,6 +10967,18 @@
             "description": "ATM IV \u00b7 \u221a(DTE/365)",
             "title": "Sigma T"
           },
+          "sleeve_window": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "E22.2 (D97): the proposal's DTE sleeve window, e.g. `10\u201329 DTE`",
+            "title": "Sleeve Window"
+          },
           "spot": {
             "title": "Spot",
             "type": "number"

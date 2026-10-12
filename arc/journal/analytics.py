@@ -200,6 +200,9 @@ class ProposalAnalytics(BaseModel):
     entry_fees: FeeBreakdown = Field(default_factory=FeeBreakdown)
     exit_model: ExitModelResult | None = Field(None, description="E2.4 managed vs static")
     account_profile: str | None = Field(None, description="D25 account profile, when configured")
+    sleeve_window: str | None = Field(
+        None, description="E22.2 (D97): the proposal's DTE sleeve window, e.g. `10–29 DTE`"
+    )
     depth: Literal["top_of_book"] = Field(
         "top_of_book", description="Alpaca gives top-of-book only; no order-book depth"
     )

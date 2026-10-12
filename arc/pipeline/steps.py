@@ -187,6 +187,7 @@ if TYPE_CHECKING:
 
     import pandas as pd
 
+    from arc.account_profiles import DteSleeve, SleeveSlots
     from arc.backtest.costs import CostModel
     from arc.broker.base import AccountInfo, BrokerPosition
     from arc.config import ArcSettings
@@ -2241,12 +2242,17 @@ def _menu_entry(
     exit_summary: ExitSummary | None = None,
     rank_key: MenuRankKey | None = None,
     be_atr: float | None = None,
+    *,
+    sleeve: str | None = None,
 ) -> dict[str, Any]:
     """One Quant menu row. ``rank_key``/``rank_measure`` (E7.5b) appear only under a
     non-control ``pipeline.menu_measure``, so the control menu is byte-identical.
-    ``be_atr`` (E16.5) appears only with ``scanner.max_be_atr`` set and ATR14 known."""
+    ``be_atr`` (E16.5) appears only with ``scanner.max_be_atr`` set and ATR14 known.
+    ``sleeve`` (E22.2) appears only for a profile with DTE sleeves."""
     st = c.structure
     extra: dict[str, Any] = {}
+    if sleeve is not None:
+        extra["sleeve"] = sleeve
     if rank_key is not None:
         extra = {
             "rank_measure": rank_key.measure,
@@ -2311,8 +2317,18 @@ def _to_quant_structure(
     )
 
 
-def _quant_rules(no_chain: list[str], settings: ArcSettings | None = None) -> list[str]:
+def _quant_rules(
+    no_chain: list[str],
+    settings: ArcSettings | None = None,
+    sleeve_slots: Sequence[SleeveSlots] = (),
+) -> list[str]:
     extra = [] if settings is None else [_profile_rule(settings)]
+    if sleeve_slots:  # E22.2 (D97): sleeved profiles only; single-window text unchanged
+        extra.append(
+            "DTE sleeve slots (open positions/max): "
+            + ", ".join(s.text() for s in sleeve_slots)
+            + ". A full sleeve has no menu items."
+        )
     return [
         *extra,
         "Choose ONLY from the per-ticker `menu` above; copy each chosen structure's legs "
@@ -2351,6 +2367,14 @@ class _QuantMenus:
     be_dropped: dict[str, list[dict[str, Any]]] = dataclasses.field(default_factory=dict)
     be_no_atr: list[str] = dataclasses.field(default_factory=list)
     max_be_atr: float | None = None
+    # E22.2 (D97), sleeved profiles only: each sleeve's occupancy, the full ones (no
+    # menu), id(candidate) -> its sleeve, per-ticker menu items per sleeve, and the
+    # journal code of a no_chain ticker when it is not NO_CHAIN (every sleeve full).
+    sleeve_slots: list[SleeveSlots] = dataclasses.field(default_factory=list)
+    sleeves_full: list[SleeveSlots] = dataclasses.field(default_factory=list)
+    sleeve_of: dict[int, str] = dataclasses.field(default_factory=dict)
+    sleeve_counts: dict[str, dict[str, int]] = dataclasses.field(default_factory=dict)
+    no_chain_code: dict[str, ReasonCode] = dataclasses.field(default_factory=dict)
 
 
 def _be_filter(
@@ -2373,12 +2397,13 @@ def _be_filter(
     entry = ctx.snapshot.latest("regime", ticker)
     atr14 = regime_atr14(entry.payload if entry is not None else None)
     if atr14 is None:
-        m.be_no_atr.append(ticker)
+        if ticker not in m.be_no_atr:  # E22.2: called once per DTE sleeve
+            m.be_no_atr.append(ticker)
         return cands
     res = filter_menu(cands, spot=spot, atr14=atr14, max_be_atr=max_be)
     m.be_atr.update({k: v for k, v in res.values.items() if v is not None})
     if res.dropped:
-        m.be_dropped[ticker] = res.dropped_rows()
+        m.be_dropped.setdefault(ticker, []).extend(res.dropped_rows())
         log.info(
             "pipeline.be_unrealistic",
             ticker=ticker,
@@ -2388,6 +2413,31 @@ def _be_filter(
             atr14=atr14,
         )
     return res.kept
+
+
+def _journal_sleeves_full(j: Recorder, m: _QuantMenus, call_id: str | None = None) -> None:
+    """E22.2 (D97): one ``sleeve_full`` row per (menu ticker, full sleeve).
+
+    Only when another sleeve is still open (a ticker with every sleeve full is a
+    ``no_chain`` row with code ``sleeve_full`` instead). Nothing for single-window
+    profiles.
+    """
+    for t in sorted(m.menus):
+        for s in m.sleeves_full:
+            j.add(
+                JournalPersona.QUANT,
+                Stage.STRUCTURE,
+                t,
+                Choice.NO_TRADE,
+                ReasonCode.SLEEVE_FULL,
+                reason_text=f"DTE sleeve {s.sleeve.label} full ({s.text()}): no menu items",
+                persona_call_id=call_id,
+                payload={
+                    "sleeve": s.sleeve.name,
+                    "held": s.held,
+                    "max_positions": s.sleeve.max_positions,
+                },
+            )
 
 
 def _journal_be_filter(j: Recorder, m: _QuantMenus, call_id: str | None = None) -> None:
@@ -2417,8 +2467,35 @@ def _journal_be_filter(j: Recorder, m: _QuantMenus, call_id: str | None = None) 
         )
 
 
+def _sleeve_slots(ctx: JobContext, env: PipelineEnv) -> list[SleeveSlots]:
+    """E22.2 (D97): each sleeve's occupancy (open positions by entry DTE vs its cap).
+
+    Counted like the gate's ``sleeve_max_positions`` (unknown entry DTE counts toward
+    every sleeve). Unreadable broker legs leave every sleeve open (logged): the gate
+    re-checks each proposal against the live book anyway.
+    """
+    from arc.account_profiles import sleeve_slots
+    from arc.pipeline.market import open_entry_dtes
+
+    positions = env.positions()
+    ctx.record_input("positions", _source(env), positions, as_of=ctx.now, count=len(positions))
+    try:
+        dtes = open_entry_dtes(ctx.conn, positions)
+    except PortfolioError as exc:
+        log.warning("pipeline.sleeve_slots_unavailable", error=str(exc))
+        dtes = []
+    return sleeve_slots(ctx.settings.entry_sleeves, dtes)
+
+
 def _quant_menus(ctx: JobContext, env: PipelineEnv, items: list[ResearchRankedItem]) -> _QuantMenus:
-    """Scan each item's chain into a menu (with the E2.4 exit model per structure)."""
+    """Scan each item's chain into a menu (with the E2.4 exit model per structure).
+
+    E22.2 (D97): a profile with DTE sleeves gets one menu per (ticker, open sleeve):
+    the chain is scanned once over the sleeves' envelope, split by each candidate's
+    DTE, and every open sleeve is cut to ``pipeline_scan_top`` on its own (so a
+    two-sleeve menu has <= 2 x top items). A full sleeve contributes nothing and is
+    recorded in ``sleeves_full``. A single-window profile takes the pre-E22.2 path.
+    """
     from arc.scanner import ScanParams, scan
 
     settings = ctx.settings
@@ -2434,6 +2511,63 @@ def _quant_menus(ctx: JobContext, env: PipelineEnv, items: list[ResearchRankedIt
     # E16.5 (D76): breakeven-realism filter; None (default) = off, menu byte-identical
     max_be = m.max_be_atr = scanner_filters(settings).max_be_atr
     pool = max(scan_top, exits.pipeline.menu_pool_max) if full or max_be is not None else scan_top
+    open_sleeves: list[DteSleeve] | None = None
+    if settings.profile.has_sleeves and items:
+        m.sleeve_slots = _sleeve_slots(ctx, env)
+        open_sleeves = [s.sleeve for s in m.sleeve_slots if s.open]
+        m.sleeves_full = [s for s in m.sleeve_slots if not s.open]
+        for s in m.sleeves_full:
+            log.info("pipeline.sleeve_full", sleeve=s.sleeve.name, held=s.held)
+    r = settings.scanner_risk_free_rate
+
+    def cut(
+        ticker: str, stance: str, cands: list[ScanCandidate], spot: float, rv: float | None
+    ) -> list[ScanCandidate]:
+        """The menu of one (ticker, sleeve) pool: E16.5 filter, exit models, rank + cut."""
+        if max_be is not None:  # E16.5: drop unrealistic debits before ranking / the cut
+            cands = _be_filter(ctx, m, ticker, cands, spot, max_be)
+            if not cands:
+                return []
+            if not full:
+                cands = cands[:scan_top]
+        models: dict[int, ExitModelResult] = {}
+        for c in cands:
+            model = _exit_model(c, spot, exits, r, rv, settings.exit_block_for_dte(c.dte))
+            if model is not None:
+                models[id(c)] = model
+        if full:
+            t0 = time.perf_counter()
+            pool_n = len(cands)
+            cands, keys = rank_menu(
+                cands,
+                models,
+                measure=measure,
+                top=scan_top,
+                stance=stance,
+                tilt=exits.pipeline.direction_tilt,
+                spot=spot,
+                exits=exits,
+                r=r,
+                realized_vol=rv,
+                exit_block_for=settings.exit_block_for_dte,
+            )
+            m.rank_keys.update({id(c): keys[id(c)] for c in cands})
+            log.info(
+                "pipeline.menu_measure",
+                ticker=ticker,
+                measure=measure,
+                pool=pool_n,
+                kept=len(cands),
+                rank_ms=round((time.perf_counter() - t0) * 1000),
+            )
+        for c in cands:
+            if id(c) in models:
+                summaries[id(c)] = ExitSummary.from_result(models[id(c)])
+        by = exits.pipeline.rank_menu_by
+        if by != "scanner" and not full:
+            cands.sort(key=lambda c: _menu_rank_key(summaries.get(id(c)), by))
+        return cands
+
     for item in items:
         strategies = _strategies(item.stance, settings)
         if not strategies:
@@ -2446,8 +2580,17 @@ def _quant_menus(ctx: JobContext, env: PipelineEnv, items: list[ResearchRankedIt
                 reason=_profile_reason(item.stance).value,
             )
             continue
+        if open_sleeves is not None and not open_sleeves:
+            no_chain.append(item.ticker)
+            m.no_chain_code[item.ticker] = ReasonCode.SLEEVE_FULL
+            no_chain_why[item.ticker] = (
+                "every DTE sleeve is full (" + ", ".join(s.text() for s in m.sleeve_slots) + ")"
+            )
+            continue
         try:
-            params = ScanParams.from_settings(settings, strategies=strategies, top=pool)
+            # E22.2: a sleeved profile keeps the whole scanner pool, cut per sleeve below.
+            top = None if open_sleeves is not None else pool
+            params = ScanParams.from_settings(settings, strategies=strategies, top=top)
             history = iv_store.series(item.ticker, until=today) if iv_store is not None else {}
             res = scan(env.market, item.ticker, params, as_of=today, iv_history=history)
             ctx.record_input(
@@ -2467,55 +2610,29 @@ def _quant_menus(ctx: JobContext, env: PipelineEnv, items: list[ResearchRankedIt
             no_chain_why[item.ticker] = "scanner found no structure passing its filters"
             continue
         spots[item.ticker] = res.spot
-        cands = list(res.candidates)
-        if max_be is not None:  # E16.5: drop unrealistic debits before ranking / the cut
-            cands = _be_filter(ctx, m, item.ticker, cands, res.spot, max_be)
-            if not cands:
-                no_chain.append(item.ticker)
+        rv = _realized_vol(ctx.snapshot, item.ticker)
+        sleeve_of_c: dict[int, str] = {}
+        if open_sleeves is None:
+            cands = cut(item.ticker, item.stance, list(res.candidates), res.spot, rv)
+        else:
+            cands = []
+            for sl in open_sleeves:
+                mine = [c for c in res.candidates if sl.contains(c.dte)][:pool]
+                kept_s = cut(item.ticker, item.stance, mine, res.spot, rv) if mine else []
+                sleeve_of_c.update({id(c): sl.name for c in kept_s})
+                m.sleeve_counts.setdefault(item.ticker, {})[sl.name] = len(kept_s)
+                cands.extend(kept_s)
+        if not cands:
+            no_chain.append(item.ticker)
+            if max_be is not None and m.be_dropped.get(item.ticker):
                 no_chain_why[item.ticker] = (
                     f"every scanner structure needs a move > {max_be:g} ATR√t to break even "
                     "(scanner.max_be_atr)"
                 )
-                continue
-            if not full:
-                cands = cands[:scan_top]
-        rv = _realized_vol(ctx.snapshot, item.ticker)
-        r = settings.scanner_risk_free_rate
-        models: dict[int, ExitModelResult] = {}
-        for c in cands:
-            model = _exit_model(c, res.spot, exits, r, rv, settings.exit_block_for_dte(c.dte))
-            if model is not None:
-                models[id(c)] = model
-        if full:
-            t0 = time.perf_counter()
-            cands, keys = rank_menu(
-                cands,
-                models,
-                measure=measure,
-                top=scan_top,
-                stance=item.stance,
-                tilt=exits.pipeline.direction_tilt,
-                spot=res.spot,
-                exits=exits,
-                r=r,
-                realized_vol=rv,
-                exit_block_for=settings.exit_block_for_dte,
-            )
-            m.rank_keys.update({id(c): keys[id(c)] for c in cands})
-            log.info(
-                "pipeline.menu_measure",
-                ticker=item.ticker,
-                measure=measure,
-                pool=len(res.candidates),
-                kept=len(cands),
-                rank_ms=round((time.perf_counter() - t0) * 1000),
-            )
-        for c in cands:
-            if id(c) in models:
-                summaries[id(c)] = ExitSummary.from_result(models[id(c)])
-        by = exits.pipeline.rank_menu_by
-        if by != "scanner" and not full:
-            cands.sort(key=lambda c: _menu_rank_key(summaries.get(id(c)), by))
+            else:
+                no_chain_why[item.ticker] = "scanner found no structure in an open DTE sleeve"
+            continue
+        m.sleeve_of.update(sleeve_of_c)
         menus[item.ticker] = {
             _legs_key([(leg.occ_symbol, leg.side.value) for leg in c.structure.legs]): c
             for c in cands
@@ -2528,7 +2645,13 @@ def _quant_menus(ctx: JobContext, env: PipelineEnv, items: list[ResearchRankedIt
             "the realised-vol forecast (path_vol, mean HV20/HV60) and are priced at IV; "
             "vrp = IV − forecast; rorc_day = managed net EV / (max loss × days held).",
             "menu": [
-                _menu_entry(c, summaries.get(id(c)), m.rank_keys.get(id(c)), m.be_atr.get(id(c)))
+                _menu_entry(
+                    c,
+                    summaries.get(id(c)),
+                    m.rank_keys.get(id(c)),
+                    m.be_atr.get(id(c)),
+                    sleeve=sleeve_of_c.get(id(c)),
+                )
                 for c in cands
             ],
         }
@@ -2584,10 +2707,11 @@ def quant_open(ctx: JobContext, env: PipelineEnv) -> JobResult:
                 Stage.STRUCTURE,
                 t,
                 Choice.NO_TRADE,
-                ReasonCode.NO_CHAIN,
+                m.no_chain_code.get(t, ReasonCode.NO_CHAIN),
                 reason_text=no_chain_why.get(t, ""),
                 persona_call_id=call_id,
             )
+        _journal_sleeves_full(j, m, call_id)
 
     def journal_no_profile(call_id: str | None = None) -> None:
         for t, stance in no_profile:
@@ -2653,7 +2777,7 @@ def quant_open(ctx: JobContext, env: PipelineEnv) -> JobResult:
         "underlying_prices_json": json.dumps(spots, sort_keys=True),
         "scan_date": today.isoformat(),
         "entry_terms": entry_terms(settings).model_dump(mode="json"),
-        "rules": _quant_rules(no_chain, settings),
+        "rules": _quant_rules(no_chain, settings, m.sleeve_slots),
     }
     reply, out = _ask(ctx, env, "quant", ctx.snapshot, inputs, QuantOutput)
     dropped: Counter[str] = Counter()
@@ -2738,7 +2862,9 @@ def quant_open(ctx: JobContext, env: PipelineEnv) -> JobResult:
                 persona_call_id=call_id,
             )
         for key, c in menu.items():
-            entry = _menu_entry(c, summaries.get(id(c)), m.rank_keys.get(id(c)))
+            entry = _menu_entry(
+                c, summaries.get(id(c)), m.rank_keys.get(id(c)), sleeve=m.sleeve_of.get(id(c))
+            )
             if chosen.get(t) == key:
                 q = by_ticker[t]
                 j.add(
@@ -2750,7 +2876,9 @@ def quant_open(ctx: JobContext, env: PipelineEnv) -> JobResult:
                     reason_text=q.rationale,
                     confidence=q.confidence,
                     persona_call_id=call_id,
-                    payload=q.model_dump(mode="json") | {"strategy": entry["strategy"]},
+                    payload=q.model_dump(mode="json")
+                    | {"strategy": entry["strategy"]}
+                    | ({"sleeve": entry["sleeve"]} if "sleeve" in entry else {}),
                 )
             else:
                 j.add(
@@ -2891,7 +3019,7 @@ def quant_revise(ctx: JobContext, env: PipelineEnv) -> JobResult:
         "scan_date": today.isoformat(),
         "entry_terms": entry_terms(settings).model_dump(mode="json"),
         "rules": [
-            *_quant_rules(m.no_chain, settings),
+            *_quant_rules(m.no_chain, settings, m.sleeve_slots),
             "REVISION: return structures only for "
             + ", ".join(revise_set)
             + " (at most one each), or list a ticker in `kept` to keep your first structure.",
@@ -3707,6 +3835,7 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
     skipped: Counter[str] = Counter()
     lines: list[str] = []
     passed = proposals = 0
+    by_sleeve: Counter[str] = Counter()  # E22.2 (D97): proposals per DTE sleeve
 
     def skip(t: str, key: str, code: ReasonCode, text: str, **payload: Any) -> None:
         skipped[key] += 1
@@ -3797,6 +3926,10 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
             count=len(priced.contracts),
         )
         st = priced.structure
+        sleeve = settings.sleeve_for_dte(st.dte) if settings.profile.has_sleeves else None
+        if sleeve is not None:  # E22.2 (D97): the open's sleeve rides on the structure
+            st = st.model_copy(update={"sleeve": sleeve.name})
+            priced.structure = st
         # E5.9 (D33): final idea dedupe on the full fingerprint (needs the live spot).
         fp = fingerprint(t, item.stance, st, priced.spot, structure_type=qs.structure_type)
         verdict = check_idea(
@@ -3902,7 +4035,6 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
         if live_cap is not None:
             sizing_payload["live_cap"] = live_cap
         if settings.profile.has_sleeves:  # E22.1 (D97): the open's entry-DTE sleeve
-            sleeve = settings.sleeve_for_dte(st.dte)
             sizing_payload["sleeve"] = sleeve.name if sleeve is not None else None
         if not size.trade:
             skipped["sizing"] += 1
@@ -4062,6 +4194,9 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
                 regime=regime_entry.payload if regime_entry else None,
                 exit_model=exit_model,
                 account_profile=getattr(settings, "account_profile", None),
+                sleeve_window=(
+                    f"{sleeve.dte_min}\u2013{sleeve.dte_max} DTE" if sleeve is not None else None
+                ),
             )
         except ValueError as exc:  # no spot: the card renders without analytics
             log.warning("pipeline.analytics_failed", ticker=t, error=str(exc))
@@ -4081,11 +4216,14 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
         proposals += 1
         strikes = "/".join(f"{parse_occ(leg.occ_symbol).strike.normalize():f}" for leg in st.legs)
         verdict = "PASS" if decision.passed else f"FAIL ({'; '.join(decision.violations)})"
+        if sleeve is not None:
+            by_sleeve[sleeve.name] += 1
         lines.append(
             f"{t} {st.kind.value if st.kind else 'structure'} {strikes} "
             f"{parse_occ(st.legs[0].occ_symbol).expiration} x{size.contracts} "
             f"limit {proposal.limit_price:+} max loss ${size.max_loss_total:,.0f} "
             f"({size.pct_equity:.2%}) gate {verdict}"
+            + (f" sleeve {sleeve.name}" if sleeve is not None else "")
         )
         log.info(
             "pipeline.proposal",
@@ -4109,9 +4247,21 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
                 market.underlying_beta.get(t),
                 st.dte,
             )
+    sleeve_metrics: dict[str, int] = {}
+    if settings.profile.has_sleeves:  # E22.2 (D97): opens per sleeve (0s included)
+        sleeve_metrics = {f"sleeve_{s.name}": by_sleeve[s.name] for s in settings.entry_sleeves}
+        if proposals:
+            per = ", ".join(f"{s.name} {by_sleeve[s.name]}" for s in settings.entry_sleeves)
+            lines.append(f"per sleeve: {per}")
     return JobResult(
         summary="; ".join(lines) or f"no proposals ({dict(skipped)})",
-        metrics={"proposals": proposals, "gate_passed": passed, **skipped, **budget.metrics()},
+        metrics={
+            "proposals": proposals,
+            "gate_passed": passed,
+            **skipped,
+            **budget.metrics(),
+            **sleeve_metrics,
+        },
         notice=notice,
     )
 

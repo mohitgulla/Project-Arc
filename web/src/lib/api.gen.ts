@@ -4729,6 +4729,11 @@ export interface components {
              * @description ATM IV · √(DTE/365)
              */
             sigma_t?: number | null;
+            /**
+             * Sleeve Window
+             * @description E22.2 (D97): the proposal's DTE sleeve window, e.g. `10–29 DTE`
+             */
+            sleeve_window?: string | null;
             /** Spot */
             spot: number;
             /** Spot As Of */

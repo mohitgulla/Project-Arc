@@ -284,6 +284,21 @@ def _entry_dtes(conn: sqlite3.Connection | None) -> dict[str, int]:
     return out
 
 
+def open_entry_dtes(
+    conn: sqlite3.Connection, positions: Sequence[BrokerPosition]
+) -> list[int | None]:
+    """E22.2 (D97): the entry DTE of every open position group, as the gate sees them.
+
+    The same grouping and entry-DTE derivation :func:`build_portfolio` uses for
+    ``Position.entry_dte`` (one row per attributed structure, leftover legs per
+    root/expiry with ``None``), without the spot valuation, so ``quant.open`` can count
+    each sleeve's free slots before it scans. Raises :class:`PortfolioError` on
+    unreadable broker legs.
+    """
+    entry_dtes = _entry_dtes(conn)
+    return [entry_dtes.get(label) for _, label, _ in _group_legs(conn, positions)]
+
+
 def build_portfolio(
     conn: sqlite3.Connection,
     positions: Sequence[BrokerPosition],
