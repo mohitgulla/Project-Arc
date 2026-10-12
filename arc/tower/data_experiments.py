@@ -80,6 +80,14 @@ class ExperimentListItem(BaseModel):
     evaluated_at: _dt.datetime | None = None
     as_of_day: _dt.date | None = None
     line: str | None = Field(None, description="The daily [XP-n] Slack line, verbatim")
+    # D95: list-row visuals (variant count, headline arm, per-arm verdicts).
+    variants: int = Field(1, description="Treatment arms in the spec (K)")
+    headline_arm: str | None = Field(
+        None, description="Arm the headline numbers compare with Control (v2: best-ranked)"
+    )
+    arm_verdicts: dict[str, str] = Field(
+        default_factory=dict, description="Treatment arm -> its Control-vs-arm verdict"
+    )
 
 
 class ExperimentsResponse(BaseModel):
@@ -120,10 +128,22 @@ def _item(st: ExperimentState, rep: ExperimentReport | None) -> ExperimentListIt
         "kind": sp.kind,
         "min_sessions": sp.min_sessions,
         "max_sessions": sp.max_sessions,
+        "variants": max(1, len(sp.arms.treatments)),
     }
     if rep is None:
         return ExperimentListItem(**base)
     ci = rep.primary.ci
+    if rep.pairwise is not None:
+        verdicts = {
+            p.b: p.verdict
+            for p in rep.pairwise
+            if p.kind == "control_vs_treatment" and p.verdict is not None
+        }
+        headline = rep.headline_arm
+    else:
+        t_arm = next((a.arm for a in rep.arms if a.arm != "control"), "treatment")
+        verdicts = {t_arm: rep.verdict}
+        headline = t_arm
     return ExperimentListItem(
         **base,
         sessions=rep.sessions,
@@ -142,6 +162,8 @@ def _item(st: ExperimentState, rep: ExperimentReport | None) -> ExperimentListIt
         evaluated_at=rep.evaluated_at,
         as_of_day=rep.as_of_day,
         line=view.daily_line(rep),
+        headline_arm=headline,
+        arm_verdicts=verdicts,
     )
 
 
