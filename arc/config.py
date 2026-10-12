@@ -1152,6 +1152,15 @@ class ArcSettings(BaseSettings):
             "'Ranked, not structured'."
         ),
     )
+    research_min_ranked: Annotated[int, Field(ge=0, le=10)] = Field(
+        default=4,
+        description=(
+            "E22.3 (D97): Research is asked to rank at least min(this, free slots x 2, "
+            "pool size) names when free slots exist and the pool has names that pass its "
+            "bar; fewer is journaled research_under_ranked. Never forces a trade. "
+            "0 = the pre-E22.3 prompt, byte-identical (rollback)."
+        ),
+    )
     pipeline_max_context_notes: Annotated[int, Field(ge=0, le=100)] = Field(
         default=20,
         description="Max prior D27 notes (regime view/thesis/observation) shown to Research.",

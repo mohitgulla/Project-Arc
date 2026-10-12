@@ -1335,6 +1335,9 @@ up within one slot.
   skipped (no LLM call), `broker.execute` still runs (`on_no_change: run` in `steps:`)
   so pending approvals and ladders carry on. Journal row `loop_no_change`; the
   run manifest carries `loop_inputs` (digest). A manual `arc propose` never skips.
+  E22.3 (D97): while any DTE sleeve has a free slot and some sleeve has had no open
+  today, the bound is `loop.max_idle_with_free_slots` (20m) instead; such a forced
+  full run is journaled `loop_forced_free_slots` with the free-slots line.
   Only a Director run that *completed* its evaluation advances the loop's
   `last_full_run`: a failed LLM call leaves the previous one in place, so the
   next slot evaluates in full again instead of being muted as `no_change`.
@@ -1377,6 +1380,7 @@ off drops the roots of skipped slots; `loop.slack_layout = day_thread` is the
 rollback to the single day thread (cards and heartbeats as before D36).
 
 **Knobs** (`!arc config loop`): `loop.max_idle` (5-240 m, riskier up),
+`loop.max_idle_with_free_slots` (5-240 m, E22.3),
 `loop.max_runtime` (1-8 m, hard ceiling 8; D61), `loop.pnl_bucket_pct`,
 `loop.post_hold_roots`, `loop.slack_layout`. Cadences: `routines.sweep.cadence`,
 `routines.director.cadence` as before.
@@ -2523,3 +2527,19 @@ Commands (rehearse on a scratch `--db`):
     arc market-health backfill-pc [--since D] [--until D] [--pace 0.5] [--db P]   # resumable, saves every 20 sessions
     arc market-health show [--json] [--db P]                                       # read-only
     arc routines run market_health --db P --no-slack
+
+## E22.3 frequency levers (D97)
+
+- **Research free slots.** The Research prompt carries a code-built line, e.g.
+  `Free slots: short 3/5, swing 1/5 · settled cash $18,250 · per-name cap $2,500`
+  (single window: `Free slots: 5/8 · …`), and asks Research to rank at least
+  `min(research.min_ranked, free slots × 2, pool)` names. Ranking fewer is journaled
+  `research_under_ranked` (Research says why in `session_notes`); it never forces a
+  trade. `!arc config set research.min_ranked 0` is the rollback (prompt as before).
+- **Cash-fit sizing.** On `cash_settled` profiles sizing caps contracts at
+  `floor(settled cash left / cash per contract)`, where cash per contract is the
+  gate's own count (worst band price × 100 + fees). Opens in one run share the cash
+  in rank order. Journal `sizing:cash_capped` (fewer contracts) or `sizing:cash_zero`
+  (not even one). The gate's settled-cash rule is unchanged and stays the final check.
+- **Loop.** See `loop.max_idle_with_free_slots` above (`loop_forced_free_slots`).
+

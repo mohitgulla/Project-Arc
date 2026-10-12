@@ -546,12 +546,18 @@ class LoopSettings(BaseModel):
     run. ``max_runtime`` is the chain deadline: a step still running at the
     deadline finishes, but no new step starts after it. ``pnl_bucket_pct`` rounds
     P&L (as % of equity) before it enters the digest.
+
+    ``max_idle_with_free_slots`` (E22.3, D97): while any DTE sleeve has a free slot
+    **and** at least one sleeve has had no open today, an unchanged loop still runs
+    in full once that long has passed since the last full run (journaled
+    ``loop_forced_free_slots``); otherwise ``max_idle`` applies as before.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     job: str = "research"
     max_idle: _dt.timedelta = _dt.timedelta(minutes=30)
+    max_idle_with_free_slots: _dt.timedelta = _dt.timedelta(minutes=20)
     max_runtime: _dt.timedelta = _dt.timedelta(minutes=7)
     pnl_bucket_pct: Annotated[float, Field(gt=0, le=10)] = 0.5
     post_hold_roots: bool = True
@@ -565,15 +571,17 @@ class LoopSettings(BaseModel):
     # RoutinesConfig checks them against the chain and the steps' reads/writes.
     parallel_branches: tuple[tuple[str, ...], ...] = ()
 
-    @field_validator("max_idle", "max_runtime", mode="before")
+    @field_validator("max_idle", "max_idle_with_free_slots", "max_runtime", mode="before")
     @classmethod
     def _dur(cls, v: Any) -> Any:
         return parse_duration(v) if isinstance(v, str) else v
 
     @model_validator(mode="after")
     def _positive(self) -> LoopSettings:
-        if self.max_idle <= _dt.timedelta(0) or self.max_runtime <= _dt.timedelta(0):
-            msg = "loop.max_idle and loop.max_runtime must be positive"
+        if min(self.max_idle, self.max_idle_with_free_slots, self.max_runtime) <= _dt.timedelta(0):
+            msg = (
+                "loop.max_idle, loop.max_idle_with_free_slots and loop.max_runtime must be positive"
+            )
             raise ValueError(msg)
         flat = [s for b in self.parallel_branches for s in b]
         if self.parallel_branches and (

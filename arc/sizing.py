@@ -15,6 +15,14 @@ on the same underlying (``Position.max_loss`` rows of
 left, so a re-entry is sized down instead of being rejected by the gate's
 per-underlying cap. The gate stays the final check; it is never relied on to size.
 
+E22.3 (D97, D25): on a ``cash_settled`` profile the caller passes ``cash_available``
+(settled cash minus what earlier opens in the same run reserved) and
+``cash_per_contract`` (the gate's ``account_profile_settled_cash`` need for one unit:
+worst band price x 100 + fees). Contracts are then also capped at
+``floor(cash_available / cash_per_contract)`` (``cash_capped``; ``cash_zero`` when not
+even one fits), so sizing stops proposing an order the gate's cash rule would reject.
+``cash_available=None`` (margin profiles, backtests) leaves sizing as before.
+
 Pure function: no I/O, no LLM, Decimal arithmetic throughout.
 """
 
@@ -25,7 +33,13 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-__all__ = ["SizingCode", "SizingResult", "apply_live_cap", "size_contracts"]
+__all__ = [
+    "SizingCode",
+    "SizingResult",
+    "apply_live_cap",
+    "cash_after",
+    "size_contracts",
+]
 
 # Stable outcome codes (the decision journal records them as ``sizing:<code>``).
 SizingCode = Literal[
@@ -37,6 +51,8 @@ SizingCode = Literal[
     "unbounded",
     "invalid_input",
     "live_capped",
+    "cash_capped",
+    "cash_zero",
 ]
 
 
@@ -53,6 +69,11 @@ class SizingResult(BaseModel):
     existing_max_loss: Decimal = Field(
         Decimal(0), ge=0, description="Max loss already open on this underlying"
     )
+    cash_contracts: int | None = Field(
+        None,
+        ge=0,
+        description="E22.3: floor(cash available / cash per contract); None = no cash fit",
+    )
     reason: str = Field("", description="Why there is no trade (contracts == 0)")
     code: SizingCode = Field("ok", description="Stable outcome code for the decision journal")
 
@@ -68,13 +89,17 @@ def size_contracts(
     equity: Decimal,
     cap_pct: float | Decimal,
     existing_max_loss: Decimal = Decimal(0),
+    cash_available: Decimal | None = None,
+    cash_per_contract: Decimal | None = None,
 ) -> SizingResult:
     """Apply D18 against the per-underlying budget still free (see module doc).
 
-    ``max_loss_per_contract`` is dollars per one structure unit.
+    ``max_loss_per_contract`` is dollars per one structure unit. ``cash_available`` /
+    ``cash_per_contract`` (E22.3, ``cash_settled`` profiles only) add the cash fit.
     """
     suggestion = max(int(suggestion), 0)
     existing = max(Decimal(existing_max_loss), Decimal(0))
+    cash_cap: int | None = None
 
     def none(code: SizingCode, reason: str, cap: int = 0) -> SizingResult:
         return SizingResult(
@@ -84,6 +109,7 @@ def size_contracts(
             max_loss_total=Decimal(0),
             pct_equity=0.0,
             existing_max_loss=existing,
+            cash_contracts=cash_cap,
             reason=reason,
             code=code,
         )
@@ -115,6 +141,23 @@ def size_contracts(
     if suggestion < 1:
         return none("risk_zero", "Risk suggested 0 contracts", cap)
     contracts = min(suggestion, cap)
+    code: SizingCode = "capped" if contracts < suggestion else "ok"
+    if cash_available is not None:
+        if cash_per_contract is None or cash_per_contract <= 0:
+            return none(
+                "invalid_input", f"cash per contract {cash_per_contract} is not positive", cap
+            )
+        free = max(Decimal(cash_available), Decimal(0))
+        cash_cap = int((free / cash_per_contract).to_integral_value(rounding=ROUND_FLOOR))
+        if cash_cap < 1:
+            return none(
+                "cash_zero",
+                f"settled cash ${free} left does not cover one contract "
+                f"(${cash_per_contract} incl. fees)",
+                cap,
+            )
+        if cash_cap < contracts:
+            contracts, code = cash_cap, "cash_capped"
     total = max_loss_per_contract * contracts
     return SizingResult(
         contracts=contracts,
@@ -123,7 +166,8 @@ def size_contracts(
         max_loss_total=total,
         pct_equity=float(total / equity),
         existing_max_loss=existing,
-        code="capped" if contracts < suggestion else "ok",
+        cash_contracts=cash_cap,
+        code=code,
     )
 
 
@@ -145,3 +189,12 @@ def apply_live_cap(size: SizingResult, cap: int | None, equity: Decimal) -> Sizi
             "code": "live_capped",
         }
     )
+
+
+def cash_after(cash: Decimal, per_contract: Decimal, contracts: int) -> Decimal:
+    """E22.3: settled cash left for the next open in the same run (floored at 0).
+
+    A gate-passed open reserves ``per_contract x contracts``; settled cash is first
+    come within a run, in Research rank order (no per-sleeve split, D97).
+    """
+    return max(cash - per_contract * max(contracts, 0), Decimal(0))
