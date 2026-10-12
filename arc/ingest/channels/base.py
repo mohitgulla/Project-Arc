@@ -48,6 +48,7 @@ from arc.models import (
     MarketBias,
 )
 from arc.utils.calendar import ET, is_session, next_session, session_open
+from arc.utils.llmjson import first_json_object
 
 if TYPE_CHECKING:
     import datetime as _dt
@@ -367,15 +368,14 @@ def video_id_from_url(url: str) -> str:
 
 
 def extract_json_object(text: str) -> dict[str, Any]:
-    """Parse the outermost ``{...}`` in an LLM reply (tolerates fences / chatter)."""
-    start = text.find("{")
-    end = text.rfind("}")
-    if start == -1 or end < start:
-        raise BriefParseError("no JSON object in response")
+    """Parse the first ``{...}`` in an LLM reply (tolerates fences / chatter before and after)."""
     try:
-        return json.loads(text[start : end + 1])
-    except json.JSONDecodeError as exc:
+        payload = first_json_object(text)
+    except ValueError as exc:
         raise BriefParseError(str(exc)) from exc
+    if not isinstance(payload, dict):
+        raise BriefParseError("no JSON object in response")
+    return payload
 
 
 # ---------------------------------------------------------------------------

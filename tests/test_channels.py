@@ -25,6 +25,7 @@ from arc.ingest.channels.base import (
     ChannelProfile,
     VideoDoc,
     applies_to_session,
+    extract_json_object,
     is_grounded,
     normalize_text,
     normalize_ticker,
@@ -840,6 +841,14 @@ class TestProcessor:
             stockedup.process(_video(), FixtureScalpLLM(["no json here"]), universe=[])
         with pytest.raises(BriefParseError):
             stockedup.process(_video(), FixtureScalpLLM(["{bad json}"]), universe=[])
+        with pytest.raises(BriefParseError):
+            stockedup.process(_video(), FixtureScalpLLM(["[1, 2] then {"]), universe=[])
+
+    def test_extract_json_object_ignores_trailing_text(self) -> None:
+        # Warrior Trading 2026-10-12: a second object / note after the brief raised
+        # "Extra data" and the channel's brief was lost for the day.
+        assert extract_json_object('{"a": 1}\n\n{"b": 2}') == {"a": 1}
+        assert extract_json_object('Here:\n{"a": {"c": 1}}\nThanks}') == {"a": {"c": 1}}
 
     def test_llm_error_propagates(self, stockedup: ChannelProcessor) -> None:
         with pytest.raises(ScalpLLMError):

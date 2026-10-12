@@ -83,6 +83,7 @@ from arc.universe.guard import (
 )
 from arc.universe.tiers import watch_tickers
 from arc.utils.calendar import ET, now_et
+from arc.utils.llmjson import first_json_object
 
 if TYPE_CHECKING:
     import sqlite3
@@ -238,11 +239,7 @@ def extract_json_object(text: str) -> Any:
 
     Raises ``ValueError`` if no JSON object can be decoded.
     """
-    start = text.find("{")
-    end = text.rfind("}")
-    if start == -1 or end < start:
-        raise ValueError("no JSON object in response")
-    return json.loads(text[start : end + 1])
+    return first_json_object(text)
 
 
 def parse_catalyst_date(raw: str | None) -> _dt.datetime | None:
