@@ -636,7 +636,7 @@ personas:
     lane: background            # D39: p90 441 s; the tick never waits on the Scalp
   research:                     # D31/D52: the 10-min trading loop (see `loop:` above)
     label: "Trade Loop"         # D94 (owner); the chain is spelled out in `about`
-    about: "10-min trading loop: Research → Quant → Risk → Propose → Execute (pick ideas, price structures, risk review, propose, auto-approve, execute)"
+    about: "Every 10 min: Research → exits (mandatory floor, then Quant + Risk review) → opens (Quant prices, Risk reviews) → Propose → auto-approve → Execute"
     group: trading_loop
     persona: research
     every: 10m                  # D52
@@ -667,10 +667,9 @@ personas:
     eod_marks_from: "15:50"     # D35: marks from here count as end of day (stops EOD-only, D23)
     benchmarks: [SPY, QQQ]      # D87: marked each run for the Tower's equity benchmark lines ([] = off)
   positions.evaluate:           # E6.4 (D19): review open positions -> mandatory exits (D56)
-    label: Position marks         # D56 (E13.2), persona quant
-    about: "Marks open positions (deterministic); mandatory exits (stop, DTE exit, expiry)"
+    label: Position marks         # D56 (E13.2); no persona: deterministic, Quant's LLM work runs in the Trade Loop
+    about: "Marks open positions and closes any at a mandatory exit (stop, DTE exit, expiry). No LLM; discretionary exits run in the Trade Loop"
     group: position_management
-    persona: quant
     every: 30m
     window: "09:50-15:50"       # D52: :20/:50 on the 10-min tick grid; never at the open's first quotes
     days: trading
