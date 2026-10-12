@@ -575,7 +575,7 @@ def test_job_catch_up_writes_with_missing(
 def test_catch_up_slot_dropped_once_written(
     conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """until_written market_health:{day}: the 08:20 slot is skipped once 23:15 wrote."""
+    """until_written market_health:{day}: the 08:30 slot is skipped once 23:30 wrote."""
     import arc.universe.tiers as tiers
     from arc.routines.dispatcher import Dispatcher
 
@@ -686,9 +686,15 @@ def test_job_slot_after_options_daily() -> None:
     r = load_routines()
     _, spec = r.step("market_health")
     _, od = r.step("options_daily")
-    assert spec.schedule == [dt.time(23, 15), dt.time(8, 20)]
-    assert od.schedule == [dt.time(23, 0), dt.time(8, 15)]
+    assert spec.schedule == [dt.time(23, 30), dt.time(8, 30)]  # D96 (was 23:15 / 08:20)
+    assert od.schedule == [dt.time(23, 0), dt.time(8, 0)]  # D96 (catch-up was 08:15)
     assert all(a > b for a, b in zip(spec.schedule, od.schedule, strict=True))
+    # D96: each market_health slot runs after every options_slow input's same-half-day slot
+    # (vol_term 18:30/08:00, options_daily + vix_futures 23:00/08:00).
+    for src in ("vol_term", "options_daily", "vix_futures"):
+        _, s = r.step(src)
+        assert s.schedule[-1] < spec.schedule[-1], src  # morning catch-ups
+        assert s.schedule[0] < spec.schedule[0], src  # evening slots
     assert spec.catch_up is not None and spec.catch_up.until_written == "market_health:{day}"
     assert set(spec.writes) == {"index_history", "pc_history", "market_health"}
 

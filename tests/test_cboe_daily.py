@@ -514,7 +514,7 @@ class TestCatchUpTemplate:
         for job, kind in (("options_daily", "options_daily"), ("vix_futures", "vx_curve")):
             spec = cfg.sources[job]
             # E14.2 (D60): evening slot after the ~21:00-22:50 Cboe publish
-            assert [t.strftime("%H:%M") for t in spec.schedule] == ["23:00", "08:15"]
+            assert [t.strftime("%H:%M") for t in spec.schedule] == ["23:00", "08:00"]  # D96
             assert spec.catch_up is not None
             assert spec.catch_up.until_written == f"{kind}:{{day}}"
             assert spec.options.get("category") == "options_slow"
@@ -526,7 +526,7 @@ class TestCatchUpTemplate:
     def test_repo_config_vol_term(self) -> None:
         # E14.2 (D60): was 09:00 + 16:45, both of which read the previous close
         spec = _routines().sources["vol_term"]
-        assert [t.strftime("%H:%M") for t in spec.schedule] == ["18:30", "08:15"]
+        assert [t.strftime("%H:%M") for t in spec.schedule] == ["18:30", "08:00"]  # D96
         assert spec.catch_up is not None
         assert spec.catch_up.until_written == "vol_term:{day}"
         assert spec.writes == ["vol_term"]

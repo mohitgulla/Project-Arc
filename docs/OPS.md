@@ -1127,7 +1127,7 @@ and `arc context show --kind unusual_options` still lists them until then.
 
   | Job | Source | Kind | Category | When (ET) |
   |---|---|---|---|---|
-  | `vol_term` | Cboe VIX9D/VIX/VIX3M/VVIX daily history | `vol_term` (contango/backwardation) | `options_slow` | 18:30 + 08:15 catch-up (E14.2, D60; was 09:00/16:45, both stored the previous close) |
+  | `vol_term` | Cboe VIX9D/VIX/VIX3M/VVIX daily history | `vol_term` (contango/backwardation) | `options_slow` | 18:30 + 08:00 catch-up (E14.2, D60; was 09:00/16:45, both stored the previous close; catch-up 08:15 → 08:00 per D96) |
   | `macro_calendar` | federalreserve.gov FOMC page + BLS release ICS + BEA release ICS | `macro_calendar` | reference | 05:45 |
   | `ex_dividend` | Alpaca corporate actions | `ex_dividend` per ticker | reference | 06:15 |
 
@@ -2087,15 +2087,15 @@ fixtures: `arc/ingest/fixtures/cboe/` (session 2026-10-05).
 
 - **Session read:** a slot at/after 16:30 ET on a session reads that session; earlier
   slots read the previous session (`arc.utils.calendar.completed_session`).
-- **Schedule:** `["23:00", "08:15"]` trading days (E14.2, D60: was 18:30, which was
+- **Schedule:** `["23:00", "08:00"]` trading days (D96: catch-up was 08:15) (E14.2, D60: was 18:30, which was
   always before the publish), `catch_up: {until_written: "<kind>:{day}"}`. Any slot
   whose session already has an entry (payload `as_of`) is planned `skip-written`
-  (`already written: options_daily for 2026-10-05`), so 08:15 runs only when the
+  (`already written: options_daily for 2026-10-05`), so 08:00 runs only when the
   evening slot did not write. Not published (CDN 403/404, empty body, or a
-  header-only CSV) = `skipped` at 23:00, `failed` at 08:15. The 06:00 Scout reads
-  the previous evening's 23:00 write; an 08:15 catch-up lands after the Scout, so it
+  header-only CSV) = `skipped` at 23:00, `failed` at 08:00. The 06:00 Scout reads
+  the previous evening's 23:00 write; an 08:00 catch-up lands after the Scout, so it
   only serves Research and the Scalp that day. `vol_term` uses the same per-session
-  catch-up at 18:30 / 08:15 (a CSV still ending on an older close = not published).
+  catch-up at 18:30 / 08:00 (a CSV still ending on an older close = not published).
 - **Shape:** `flat` when `|slope_1_2_pct| < options_slow.vx_flat_band` (0.5, tunable
   0-10, Risk none); else `contango` / `backwardation`. Weeklies never set front /
   second / back.
@@ -2487,7 +2487,7 @@ keep/rollback verdict in `docs/RESEARCH/exit-policy-v2.md`.
 
 ### 5.39 Market health line (E16.4, D76, D44)
 
-The `market_health` job (23:15 ET after the 23:00 `options_daily`, catch-up 08:20, only
+The `market_health` job (23:30 ET after the 23:00 `options_daily`, catch-up 08:30 after the 08:00 options_slow catch-ups (D96; was 23:15 / 08:20), only
 when the evening slot did not write that session) writes one `market_health` entry
 (subject `market`, ttl 1 session) for the session it reads. Pure math in
 `arc/features/market_health.py`; fetch/store in `arc/ingest/market_health.py`. Context
