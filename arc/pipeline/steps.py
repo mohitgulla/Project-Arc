@@ -141,6 +141,7 @@ from arc.pipeline.dedupe import (
     next_admissible,
     recent_ideas,
 )
+from arc.pipeline.free_slots import FreeSlots, free_slots
 from arc.pipeline.market import (
     PortfolioError,
     account_baseline,
@@ -176,7 +177,7 @@ from arc.routines.runs import RoutineRunRepo
 from arc.scanner.menu import CONTROL as MENU_CONTROL
 from arc.scanner.menu import MenuRankKey, candidate_model, rank_menu
 from arc.scanner.rank import live_net_ev_check
-from arc.sizing import apply_live_cap, size_contracts
+from arc.sizing import apply_live_cap, cash_after, size_contracts
 from arc.slack.blocks import esc
 from arc.slack.digests import quant_card, research_card, risk_card
 from arc.structures import parse_occ
@@ -1568,6 +1569,60 @@ def _loop_digest_of(ctx: JobContext) -> str | None:
     return None
 
 
+def _opens_today_by_sleeve(ctx: JobContext) -> dict[str, int]:
+    """E22.3 (D97): structures opened today (ET), by the sleeve of their entry DTE."""
+    from arc.account_profiles import entry_dte_of
+    from arc.models import Structure as _Structure
+
+    today = _today(ctx)
+    sleeves = ctx.settings.entry_sleeves
+    out: Counter[str] = Counter()
+    rows = ctx.conn.execute("SELECT structure_json, opened_at FROM open_structures").fetchall()
+    for sj, opened_at in rows:
+        try:
+            when = _dt.datetime.fromisoformat(str(opened_at))
+            aware = when if when.tzinfo is not None else when.replace(tzinfo=_dt.UTC)
+            if aware.astimezone(ET).date() != today:
+                continue
+            dte = entry_dte_of(_Structure.model_validate_json(sj), opened_at)
+        except ValueError:
+            continue
+        for s in sleeves:
+            if s.contains(dte):
+                out[s.name] += 1
+    return dict(out)
+
+
+def _free_slots(ctx: JobContext, env: PipelineEnv) -> FreeSlots | None:
+    """E22.3 (D97): free slots per sleeve, settled cash and the per-name cap, or ``None``.
+
+    ``None`` when the broker legs cannot be grouped (logged); Research then gets no
+    free-slots line and the loop keeps its plain ``max_idle``.
+    """
+    from arc.account_profiles import BuyingPower
+    from arc.pipeline.market import open_entry_dtes, settled_cash
+
+    settings = ctx.settings
+    info, positions = _account_inputs(ctx, env)
+    try:
+        dtes = open_entry_dtes(ctx.conn, positions)
+    except PortfolioError as exc:
+        log.warning("pipeline.free_slots_unavailable", error=str(exc))
+        return None
+    cash = settled_cash(info) if settings.profile.buying_power is BuyingPower.CASH_SETTLED else None
+    slots = free_slots(
+        settings.entry_sleeves,
+        dtes,
+        max_open_positions=settings.max_open_positions,
+        single=not settings.profile.has_sleeves,
+        per_name_cap=Decimal(str(settings.max_alloc_pct)) * info.equity,
+        settled_cash=cash,
+        opens_today=_opens_today_by_sleeve(ctx),
+    )
+    ctx.record_input("free_slots", "db", slots.model_dump(mode="json"))
+    return slots
+
+
 def _loop_no_change(
     ctx: JobContext,
     snap: ContextSnapshot,
@@ -1577,12 +1632,17 @@ def _loop_no_change(
     *,
     facts_tickers: list[str] | None = None,
     extra_facts: list[str] | None = None,
+    slots: FreeSlots | None = None,
 ) -> JobResult | None:
     """D31 change-aware skip: same inputs as the last loop -> no LLM call.
 
     Only the loop persona (``routines.loop.job``) skips; a manual or scheduled
     Research outside the loop always runs in full. The digest is recorded as an
     external input of the run (D27), so the manifest shows what was compared.
+
+    E22.3 (D97): while *slots* has a free slot in any sleeve and a sleeve with no
+    open today, the idle bound is ``min(max_idle, max_idle_with_free_slots)``. A loop
+    that runs in full only because of it is journaled ``loop_forced_free_slots``.
     """
     loop = ctx.routines.loop
     inputs = _loop_inputs(
@@ -1601,10 +1661,30 @@ def _loop_no_change(
     if not ctx.is_loop_run:
         return None
     state = LoopState(ctx.conn)
-    if not state.should_skip(new_digest, ctx.now, loop.max_idle):
+    pressure = slots is not None and slots.pressure()
+    idle = min(loop.max_idle, loop.max_idle_with_free_slots) if pressure else loop.max_idle
+    if not state.should_skip(new_digest, ctx.now, idle):
         # A full run: the digest and ``last_full_run`` are recorded only once the
         # Research's evaluation has completed (see ``_loop_record_full_run``), so a
         # failed LLM call never mutes the next ``max_idle`` of slots as ``no_change``.
+        if pressure and state.should_skip(new_digest, ctx.now, loop.max_idle):
+            assert slots is not None  # noqa: S101 - narrowed by `pressure`
+            last = state.last_full_run()
+            _journal(ctx, snap.id).add(
+                JournalPersona.RESEARCH,
+                Stage.SHORTLIST,
+                SESSION_SUBJECT,
+                Choice.NOTED,
+                ReasonCode.LOOP_FORCED_FREE_SLOTS,
+                reason_text=f"inputs unchanged, full run anyway: {slots.line()} "
+                f"(max_idle_with_free_slots {int(idle.total_seconds() // 60)}m)",
+                payload={
+                    "digest": new_digest,
+                    "last_full_run": last.isoformat() if last else None,
+                    "free_slots": slots.model_dump(mode="json"),
+                },
+            )
+            log.info("pipeline.loop_forced_free_slots", digest=new_digest[:12])
         return None
     state.record_digest(new_digest, ctx.now, full_run=False)
     last = state.last_full_run()
@@ -1877,6 +1957,8 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
     # D31: change-aware skip. Same inputs as the previous loop and a full run not
     # yet due (loop.max_idle) -> no LLM call; the chain runs its deterministic tail.
     sentiment, sentiment_keys = _research_sentiment(ctx, snap, pool.tickers)
+    # E22.3 (D97): free slots per sleeve (the loop's idle bound + Research's line)
+    slots = _free_slots(ctx, env)
     skip = _loop_no_change(
         ctx,
         snap,
@@ -1885,6 +1967,7 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
         budget,
         facts_tickers=_research_facts_tickers(ctx, cand_entries),
         extra_facts=sentiment_keys,
+        slots=slots,
     )
     if skip is not None:
         return skip
@@ -1924,6 +2007,10 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
         inputs["exit_block"] = render_exit_block(pctx, settings)
         inputs["exit_rules"] = _exit_watch_rules(ctx, pctx)
     inputs["compact"] = True
+    min_ranked = settings.research_min_ranked
+    if min_ranked > 0 and slots is not None:  # E22.3: absent at 0 (prompt unchanged)
+        inputs["free_slots"] = slots.line()
+        inputs["min_ranked"] = slots.asked(min_ranked, len(cands))
     inputs, budget_cut = _fit_research_budget(
         snap,
         inputs,
@@ -1933,9 +2020,12 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
     )
     for item in budget_cut:
         cands.pop(item.ticker, None)
+    if budget_cut and "min_ranked" in inputs and slots is not None:
+        inputs["min_ranked"] = slots.asked(min_ranked, len(cands))  # the pool Research sees
     schema: type[ResearchOutput] = ResearchExitOutput if "exit_block" in inputs else ResearchOutput
     reply, out = _ask(ctx, env, "research", snap, inputs, schema)
     kept, dropped, rejected = _filter_shortlist(out, cands)
+    ranked_n = len(kept)  # E22.3: what Research ranked (valid pool names), before code drops
     kept, pdropped, prejected = _portfolio_filter(kept, pctx, held, settings, diversification)
     dropped.update(pdropped)
     rejected.extend(prejected)
@@ -2038,6 +2128,26 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
             reason_text="neither ranked nor excluded by Research (no reason given)",
             persona_call_id=call_id,
         )
+    asked = int(inputs.get("min_ranked", 0))
+    under_ranked = slots is not None and slots.total_free > 0 and ranked_n < asked
+    if under_ranked:  # E22.3 (D97): observability only; never forces a trade
+        j.add(
+            JournalPersona.RESEARCH,
+            Stage.SHORTLIST,
+            SESSION_SUBJECT,
+            Choice.NOTED,
+            ReasonCode.RESEARCH_UNDER_RANKED,
+            reason_text=f"ranked {ranked_n} of {asked} asked ({inputs['free_slots']}): "
+            f"{out.session_notes}".strip(": "),
+            persona_call_id=call_id,
+            payload={
+                "ranked": ranked_n,
+                "asked": asked,
+                "min_ranked": min_ranked,
+                "pool": len(cands),
+                "free_slots": inputs["free_slots"],
+            },
+        )
     if no_trade is not None:
         j.add(
             JournalPersona.RESEARCH,
@@ -2134,6 +2244,8 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
             ),
             "no_change": False,
             "loop_digest": _loop_digest_of(ctx),
+            **({"min_ranked_asked": asked} if "min_ranked" in inputs else {}),
+            **({"under_ranked": 1} if under_ranked else {}),
             **dropped,
             **budget.metrics(),
         },
@@ -3495,6 +3607,24 @@ def worst_loss_per_contract(st: Any, band: PriceBand) -> Decimal | None:
     return max(st.max_loss + (band.hi - st.net_debit_credit) * 100, Decimal(0))
 
 
+def cash_per_contract(st: Any, band: PriceBand, settings: ArcSettings) -> Decimal:
+    """E22.3 (D25/D97): settled cash one structure unit needs, as the gate counts it.
+
+    The gate's ``account_profile_settled_cash`` need for one contract: the band's
+    worst price × 100 plus ``gate_fee_per_leg_contract`` × legs (ratio-weighted).
+    """
+    legs = sum(leg.ratio for leg in st.legs)
+    fee = Decimal(str(settings.gate_fee_per_leg_contract)) * Decimal(legs)
+    return max(band.hi, Decimal(0)) * 100 + fee
+
+
+def cash_fit_enabled(settings: ArcSettings) -> bool:
+    """E22.3: sizing fits contracts to settled cash only on ``cash_settled`` profiles."""
+    from arc.account_profiles import BuyingPower
+
+    return settings.profile.buying_power is BuyingPower.CASH_SETTLED
+
+
 class GateSecretMissingError(RuntimeError):
     """A token-minting (live) propose run has no usable ``ARC_GATE_SECRET``."""
 
@@ -3682,6 +3812,8 @@ _SIZING_REASONS = {
     "risk_zero": ReasonCode.SIZING_RISK_ZERO,
     "unbounded": ReasonCode.SIZING_UNBOUNDED,
     "invalid_input": ReasonCode.SIZING_INVALID_INPUT,
+    "cash_capped": ReasonCode.SIZING_CASH_CAPPED,  # E22.3: fewer contracts to fit cash
+    "cash_zero": ReasonCode.SIZING_CASH_ZERO,  # E22.3: not one contract fits settled cash
 }
 
 
@@ -3836,6 +3968,9 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
     lines: list[str] = []
     passed = proposals = 0
     by_sleeve: Counter[str] = Counter()  # E22.2 (D97): proposals per DTE sleeve
+    # E22.3 (D97/D25): settled cash still free in this run (cash_settled profiles; None =
+    # no cash fit). First come within a run, in Research rank order; no per-sleeve split.
+    cash_left: Decimal | None = account.settled_cash if cash_fit_enabled(settings) else None
 
     def skip(t: str, key: str, code: ReasonCode, text: str, **payload: Any) -> None:
         skipped[key] += 1
@@ -4015,12 +4150,15 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
         limit = limit_price(st.net_debit_credit, grid_for(st.legs, market, settings))
         # D24: the gate checks the whole price band; size at its worst price (D18).
         band = band_for(st, limit, market, settings)
+        per_cash = cash_per_contract(st, band, settings) if cash_left is not None else None
         size = size_contracts(
             suggestion=a.sizing_suggestion,
             max_loss_per_contract=worst_loss_per_contract(st, band),
             equity=info.equity,
             cap_pct=settings.max_alloc_pct,
             existing_max_loss=existing_max_loss(portfolio, t),  # S-7: remaining budget
+            cash_available=cash_left,  # E22.3: settled cash left after this run's opens
+            cash_per_contract=per_cash,
         )
         live_cap = live_size_cap(settings, account)  # D70: None in paper / gate met
         size = apply_live_cap(size, live_cap, info.equity)
@@ -4034,6 +4172,9 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
         }
         if live_cap is not None:
             sizing_payload["live_cap"] = live_cap
+        if cash_left is not None:  # E22.3: the cash fit's inputs
+            sizing_payload["cash_available"] = str(cash_left)
+            sizing_payload["cash_per_contract"] = str(per_cash)
         if settings.profile.has_sleeves:  # E22.1 (D97): the open's entry-DTE sleeve
             sizing_payload["sleeve"] = sleeve.name if sleeve is not None else None
         if not size.trade:
@@ -4158,10 +4299,10 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
             Choice.SIZED,
             _SIZING_REASONS[size.code],
             reason_text=(
-                f"min(Risk {size.suggestion}, cap {size.cap_contracts}) = {size.contracts}"
-                if live_cap is None
-                else f"min(Risk {size.suggestion}, cap {size.cap_contracts}, "
-                f"live cap {live_cap}) = {size.contracts}"
+                f"min(Risk {size.suggestion}, cap {size.cap_contracts}"
+                + (f", cash {size.cash_contracts}" if size.cash_contracts is not None else "")
+                + (f", live cap {live_cap}" if live_cap is not None else "")
+                + f") = {size.contracts}"
             ),
             proposal_hash=phash,
             payload=sizing_payload,
@@ -4247,6 +4388,9 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
                 market.underlying_beta.get(t),
                 st.dte,
             )
+            if cash_left is not None and per_cash is not None:
+                # E22.3: the next open in this run sizes against the cash still free.
+                cash_left = cash_after(cash_left, per_cash, size.contracts)
     sleeve_metrics: dict[str, int] = {}
     if settings.profile.has_sleeves:  # E22.2 (D97): opens per sleeve (0s included)
         sleeve_metrics = {f"sleeve_{s.name}": by_sleeve[s.name] for s in settings.entry_sleeves}

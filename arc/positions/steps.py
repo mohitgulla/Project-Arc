@@ -594,6 +594,8 @@ def _open_leg(
     )
     from arc.pipeline.steps import (
         band_for,
+        cash_fit_enabled,
+        cash_per_contract,
         existing_max_loss,
         worst_loss_per_contract,
     )
@@ -628,12 +630,15 @@ def _open_leg(
     )
     limit = limit_price(st.net_debit_credit, grid_for(st.legs, market, settings))
     band = band_for(st, limit, market, settings)
+    cash_fit = cash_fit_enabled(settings)  # E22.3 (D97): fit a cash-account open to cash
     size = size_contracts(
         suggestion=int(src["suggestion"]),
         max_loss_per_contract=worst_loss_per_contract(st, band),
         equity=info.equity,
         cap_pct=settings.max_alloc_pct,
         existing_max_loss=existing_max_loss(portfolio, t),
+        cash_available=account.settled_cash if cash_fit else None,
+        cash_per_contract=cash_per_contract(st, band, settings) if cash_fit else None,
     )
     # D70: a live swap open is clamped like any live open (closes never are).
     size = apply_live_cap(size, live_size_cap(settings, account), info.equity)

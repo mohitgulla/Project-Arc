@@ -179,6 +179,10 @@ class ReasonCode(StrEnum):
     THESIS_CHECK = "thesis_check"  # Research's check of an open position's thesis
     # E5.8 (D31): the 5-min loop found the same inputs as the last full run
     LOOP_NO_CHANGE = "loop_no_change"
+    # E22.3 (D97): same inputs, but a sleeve has free slots and no opens today: full run
+    LOOP_FORCED_FREE_SLOTS = "loop_forced_free_slots"
+    # E22.3 (D97): Research ranked fewer than research.min_ranked with free slots (noted)
+    RESEARCH_UNDER_RANKED = "research_under_ranked"
     # sizing (D18)
     SIZING_OK = "sizing:ok"
     SIZING_CAPPED = "sizing:capped"
@@ -187,6 +191,8 @@ class ReasonCode(StrEnum):
     SIZING_RISK_ZERO = "sizing:risk_zero"
     SIZING_UNBOUNDED = "sizing:unbounded"
     SIZING_INVALID_INPUT = "sizing:invalid_input"
+    SIZING_CASH_CAPPED = "sizing:cash_capped"  # E22.3: fewer contracts to fit settled cash
+    SIZING_CASH_ZERO = "sizing:cash_zero"  # E22.3: not one contract fits settled cash
     # gate: one code per arc.gate.rules.RuleCode
     GATE_PASS = "gate:pass"
     GATE_STRUCTURE_INVALID = "gate:structure_invalid"
@@ -425,6 +431,8 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.PORTFOLIO_VIEW: "Research's read of the open book",
     ReasonCode.THESIS_CHECK: "Research checked an open position's thesis",
     ReasonCode.LOOP_NO_CHANGE: "Loop skipped: inputs unchanged",
+    ReasonCode.LOOP_FORCED_FREE_SLOTS: "Loop ran in full: free slots, no opens today",
+    ReasonCode.RESEARCH_UNDER_RANKED: "Research ranked fewer names than asked",
     ReasonCode.SIZING_OK: "Sized at Risk's suggestion",
     ReasonCode.SIZING_CAPPED: "Size capped at 5% of equity",
     ReasonCode.SIZING_CAP_ZERO: "Cap allows zero contracts",
@@ -432,6 +440,8 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.SIZING_RISK_ZERO: "Risk suggested zero contracts",
     ReasonCode.SIZING_UNBOUNDED: "Unbounded loss: cannot size",
     ReasonCode.SIZING_INVALID_INPUT: "Invalid sizing input",
+    ReasonCode.SIZING_CASH_CAPPED: "Size cut to fit settled cash",
+    ReasonCode.SIZING_CASH_ZERO: "Not enough settled cash for one contract",
     ReasonCode.GATE_PASS: "Gate passed",
     ReasonCode.GATE_STRUCTURE_INVALID: "Gate: invalid structure",
     ReasonCode.GATE_PER_UNDERLYING: "Gate: over the per-underlying limit",

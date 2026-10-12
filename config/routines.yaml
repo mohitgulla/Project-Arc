@@ -80,6 +80,7 @@ monitoring:
 loop:
   job: research
   max_idle: 15m            # force one full LLM evaluation at least this often (D85)
+  max_idle_with_free_slots: 20m   # E22.3 (D97): full run this often while a sleeve has free slots + no opens today
   max_runtime: 7m          # chain deadline: no new step starts after it (run -> `timeout`); D61
   pnl_bucket_pct: 0.5      # P&L rounding (as % of equity) inside the no-change digest
   post_hold_roots: true    # false = HOLD / no_change loops post no root line
