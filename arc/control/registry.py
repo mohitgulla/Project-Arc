@@ -3059,6 +3059,24 @@ _PULLBACK_TUNABLES: tuple[Tunable, ...] = (
     ),
 )
 
+# E23.3 (D98): strike vs level context (strategy.yaml `strike_levels:`). Context only
+# (no filter, no ranking change, never a gate input): no risk direction.
+_STRIKE_LEVELS_TUNABLES: tuple[Tunable, ...] = (
+    Tunable(
+        key="strike_levels.enabled",
+        group=Group.ROUTINES,
+        type=ValueType.CHOICE,
+        description="E23.3: say on each Quant menu item and trade card whether the short "
+        "strike / breakeven sits before, at or beyond the first volume-profile / OI-wall "
+        "level toward it. Context only. off = rollback (menu and card as before).",
+        target=Target.STRATEGY,
+        risk=Risk.NONE,
+        path=("strike_levels", "enabled"),
+        choices=("on", "off"),
+        aliases=("strike_levels",),
+    ),
+)
+
 REGISTRY: dict[str, Tunable] = {
     t.key: t
     for t in (
@@ -3075,6 +3093,7 @@ REGISTRY: dict[str, Tunable] = {
         *_LEVELS_TUNABLES,
         *_RANGE_EDGES_TUNABLES,
         *_PULLBACK_TUNABLES,
+        *_STRIKE_LEVELS_TUNABLES,
         *_MARKET_HEALTH_TUNABLES,
         *_OPTIONS_FAST_TUNABLES,
         *_CARRYOVER_TUNABLES,
@@ -3520,6 +3539,7 @@ _STRATEGY_SWITCHES = frozenset(
         ("oi_walls", "enabled"),  # E23.0 (D98)
         ("range_edges", "enabled"),  # E23.1 (D98)
         ("pullback_watch", "enabled"),  # E23.2 (D98)
+        ("strike_levels", "enabled"),  # E23.3 (D98)
     }
 )
 # E20.3: choice switches in strategy.yaml (E12.5) -> the control value when absent.

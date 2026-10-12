@@ -339,6 +339,8 @@ export function QuantBlocks({ d }: { d: TradeDetail }) {
     },
     { label: "Breakeven", value: p.breakevens?.length ? p.breakevens.map((b) => formatNumber(b, 2)).join(" / ") : DASH, hint: beAtrHint(a?.breakevens) },
   ];
+  // E23.3 (D98): the trade card's Levels fact (short strike / breakeven vs volume-profile and OI-wall levels)
+  if (q.levels_text) value.push({ label: "Levels", value: q.levels_text, hint: "vs volume profile / OI walls" });
   if (realized != null && r.net_ev != null && r.net_ev !== 0)
     value.push({
       label: "Realized vs modelled",

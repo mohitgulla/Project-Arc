@@ -1194,6 +1194,29 @@ class PullbackWatchSettings(BaseModel):
         )
 
 
+class StrikeLevelsSettings(BaseModel):
+    """E23.3 (D98): strike vs level context on the Quant menu and the trade card.
+
+    Each Quant menu item gets a ``levels`` text and each proposal's analytics a
+    ``levels`` list (:class:`arc.journal.analytics.LevelCrossing`): whether the short
+    strike (verticals) and the breakeven sit before, at or beyond the first E23.0
+    volume-profile / OI-wall level between spot and them, in the trade's direction
+    (credit verticals and condors: both sides). Read from the ticker's ``regime``
+    technicals; no data call. Shipped **on** (D86); ``enabled: off`` is the rollback:
+    menu, card and stored analytics byte-identical to before E23.3. Context only: no
+    filter, no ranking change, never a gate input.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    enabled: bool = False
+
+    @field_validator("enabled", mode="before")
+    @classmethod
+    def _enabled(cls, v: Any) -> bool:
+        return parse_on_off(v, where="strike_levels.enabled")
+
+
 class RoutinesConfig(BaseModel):
     """Top-level ``config/routines.yaml``."""
 
@@ -1256,6 +1279,8 @@ class RoutinesConfig(BaseModel):
     range_edges: RangeEdgesSettings = Field(default_factory=RangeEdgesSettings)
     # E23.2 (D98): the pullback watch for anti-chase drops (strategy.yaml `pullback_watch:`)
     pullback_watch: PullbackWatchSettings = Field(default_factory=PullbackWatchSettings)
+    # E23.3 (D98): strike vs level context (strategy.yaml `strike_levels:`)
+    strike_levels: StrikeLevelsSettings = Field(default_factory=StrikeLevelsSettings)
 
     @model_validator(mode="before")
     @classmethod

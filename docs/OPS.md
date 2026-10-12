@@ -2732,3 +2732,21 @@ Deterministic, never a gate input.
 
 Check: `arc context show --kind pullback_watch --latest` and `decisions where reason_code
 like 'pullback_%'` after a run following a `stretched_entry` drop.
+
+### Strike vs level context (E23.3, D98)
+
+Each Quant menu item carries `levels`, e.g. `BE beyond POC 186.1 (+0.5 ATR) · short strike
+at call wall 190`: where the breakeven and the short strike (verticals) sit against the
+E23.0 levels (POC, VAH, VAL, nearest HVNs, call/put wall) between spot and them in the
+trade's direction. Credit verticals and condors read both sides (`upper BE`, `short call`).
+`at` = within 0.1 ATR14 of a level; `beyond` = the move must push through at least one
+level first (the first one met, distance in ATR14 past it); `before` = no level in between
+(the next one past it, negative distance). No level on that side → no text.
+
+The same text is the approval card's `Levels` fact and the Tower trade detail's
+`levels_text`; the structured crossings are stored in `market_contexts` analytics
+(`levels`). Context only: no filter, no ranking change, never a gate input.
+
+**Switch** (`config/strategy.yaml strike_levels:`, registry): `strike_levels.enabled` (on,
+D86/D98). Rollback: `!arc config set strike_levels off` (menu, card and stored analytics
+byte-identical to before E23.3).

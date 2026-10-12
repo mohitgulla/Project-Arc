@@ -104,6 +104,15 @@ pullback_watch:
   invalidate_below_sma20_atr: -1.0   # bullish: (spot - SMA20)/ATR14 below this = thesis broken (bears mirror)
   max_ready_in_prompt: 5        # ready lines shown to Research (highest confidence first)
 
+# E23.3 (D98): strike vs level context. Each Quant menu item (`levels`) and the trade card
+# (`Levels` fact, Tower trade detail) say whether the breakeven and the short strike sit
+# before, at or beyond the first volume-profile / OI-wall level (E23.0) between spot and
+# them in the trade's direction (credit verticals / condors: both sides). Context only:
+# no filter, no ranking change, never a gate input. Shipped on (D86); `enabled: off` =
+# rollback (menu, card and stored analytics byte-identical).
+strike_levels:
+  enabled: on                   # key strike_levels.enabled
+
 # E16.4 (D76/D83): one code-rendered `Market health (…)` line in Research's market block.
 # The market_health job writes its daily read whatever this says. The thresholds only
 # label that line (never a gate or pipeline input). Percentiles are 1-year (252 prior

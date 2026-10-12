@@ -14,10 +14,12 @@ from arc.backtest.costs import MULTIPLIER, CostModel, FeeBreakdown
 from arc.journal.analytics import (
     BreakevenStat,
     LegAnalytics,
+    LevelCrossing,
     ProposalAnalytics,
     VolStats,
     be_atr_multiple,
     expected_move,
+    level_crossings,
     moneyness_pct,
     otm,
     sigma_distance,
@@ -27,9 +29,10 @@ from arc.structures import parse_occ
 
 if TYPE_CHECKING:
     from arc.exits.model import ExitModelResult
+    from arc.models import Structure
     from arc.pipeline.market import PricedStructure
 
-__all__ = ["build_analytics", "regime_atr14"]
+__all__ = ["build_analytics", "regime_atr14", "structure_levels"]
 
 
 def _f(v: object) -> float | None:
@@ -58,6 +61,26 @@ def regime_atr14(regime: dict[str, Any] | None) -> float | None:
     return atr if atr is not None and atr > 0 else None
 
 
+def structure_levels(
+    st: Structure, spot: float, regime: dict[str, Any] | None
+) -> list[LevelCrossing]:
+    """E23.3 (D98): *st*'s short strike / breakeven vs the E23.0 levels on *regime*'s
+    technicals (``[]`` without levels). Pure: no data call."""
+    legs = []
+    for leg in st.legs:
+        occ = parse_occ(leg.occ_symbol)
+        kind = "call" if occ.kind.name == "CALL" else "put"
+        legs.append((leg.side.value, kind, float(occ.strike)))
+    tech = (regime or {}).get("technicals")
+    return level_crossings(
+        spot=spot,
+        net_debit_credit=float(st.net_debit_credit),
+        legs=legs,  # type: ignore[arg-type]
+        breakevens=[float(b) for b in st.breakevens],
+        tech=tech if isinstance(tech, dict) else None,
+    )
+
+
 def build_analytics(
     priced: PricedStructure,
     *,
@@ -66,8 +89,13 @@ def build_analytics(
     exit_model: ExitModelResult | None = None,
     account_profile: str | None = None,
     sleeve_window: str | None = None,
+    strike_levels: bool = False,
 ) -> ProposalAnalytics:
-    """Analytics for *priced* (raises ``ValueError`` without a spot)."""
+    """Analytics for *priced* (raises ``ValueError`` without a spot).
+
+    *strike_levels* (E23.3): also store ``levels`` (the short strike / breakeven vs the
+    E23.0 levels on *regime*); off leaves the field unset (payload byte-identical).
+    """
     st = priced.structure
     spot = priced.spot
     if spot is None or spot <= 0:
@@ -153,4 +181,5 @@ def build_analytics(
         exit_model=exit_model,
         account_profile=account_profile,
         sleeve_window=sleeve_window,
+        levels=structure_levels(st, spot, regime) if strike_levels else None,
     )
