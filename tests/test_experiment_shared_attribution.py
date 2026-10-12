@@ -261,6 +261,8 @@ def test_free_codes_in_order_and_fail_closed() -> None:
     with pytest.raises(CodeAllocationError, match="no free arm code: 61 of 62"):
         free_codes(ARM_CODES[:61], 2)
     assert free_codes(ARM_CODES[:61], 1) == ["z"]
+    with pytest.raises(CodeAllocationError, match="no free arm code"):
+        free_codes(ARM_CODES, 1)  # a 63rd concurrent arm
 
 
 def _db(path: Path | str = ":memory:") -> sqlite3.Connection:
