@@ -253,6 +253,9 @@ RESEARCH_READS = [
     # E16.4 (D76): the daily market-health read; rendered only with
     # personas.market_health_context on (one line in the market block)
     "market_health",
+    # E23.0 (D98): the pre-market volume profile + OI walls, merged into the day's
+    # regime technicals (volume_profile / oi_walls on)
+    "levels",
 ]  # == routines.yaml research.reads (D30 adds the options-data kinds)
 # E5.9 drop reasons (Research stage; deterministic). Values == ReasonCode values.
 DROP_CONCENTRATION = ReasonCode.DROP_CONCENTRATION.value
@@ -649,6 +652,14 @@ def _regime_entries(ctx: JobContext, env: PipelineEnv, tickers: list[str]) -> li
         if (have := ctx.snapshot.latest("regime", t)) is None
         or have.payload.get("as_of") != today.isoformat()
     ]
+    # E23.0 (D98): today's entries written before the pre-market levels landed (e.g. a
+    # late levels catch-up) get the levels merged in place, with no network call.
+    for t in tickers:
+        if t not in todo:
+            have = ctx.snapshot.latest("regime", t)
+            if have is not None and (upd := _with_levels(ctx, t, have.payload, today)):
+                ctx.write("regime", t, RegimePayload.model_validate(upd))
+                written.append(t)
     refs = _TechRefs(ctx, env, today, days, todo)
     for t in todo:
         try:
@@ -685,9 +696,43 @@ def _regime_entries(ctx: JobContext, env: PipelineEnv, tickers: list[str]) -> li
         except Exception as exc:  # noqa: BLE001 - features are context, not a gate input
             log.warning("pipeline.regime_failed", ticker=t, error=str(exc))
             continue
-        ctx.write("regime", t, RegimePayload.model_validate(snap.model_dump()))
+        payload = snap.model_dump()
+        payload = _with_levels(ctx, t, payload, today) or payload
+        ctx.write("regime", t, RegimePayload.model_validate(payload))
         written.append(t)
     return written
+
+
+def _with_levels(
+    ctx: JobContext, ticker: str, payload: Mapping[str, Any], today: _dt.date
+) -> dict[str, Any] | None:
+    """E23.0 (D98): *payload* with today's ``levels`` merged into its technicals.
+
+    ``None`` when there is nothing to change: both features off, no technicals, no
+    ``levels`` entry for *today*, or the merge sets nothing new (so an already-merged
+    entry is never rewritten). Off = no level field is ever set (byte-identical prompt).
+    """
+    from arc.features.levels import LevelsPayload, merge_levels
+    from arc.features.technicals import TechnicalFeatures
+
+    r = ctx.routines
+    vp_on, oi_on = r.volume_profile.enabled, r.oi_walls.enabled
+    raw = payload.get("technicals")
+    if not (vp_on or oi_on) or not raw:
+        return None
+    entry = ctx.snapshot.latest("levels", ticker)
+    if entry is None or entry.payload.get("as_of") != today.isoformat():
+        return None
+    try:
+        levels = LevelsPayload.model_validate(entry.payload)
+        tech = TechnicalFeatures.model_validate(raw)
+    except ValidationError as exc:
+        log.warning("pipeline.levels_invalid", ticker=ticker, error=str(exc)[:200])
+        return None
+    merged = merge_levels(tech, levels, volume_profile=vp_on, oi_walls=oi_on)
+    if merged == tech:
+        return None
+    return {**payload, "technicals": merged.model_dump(mode="json")}
 
 
 TECH_BENCHMARK = "SPY"  # E16.2: the rs_spy_* reference (the field names fix it)
@@ -2047,6 +2092,9 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
         inputs["technicals"] = True
     if ctx.routines.market_health_context.enabled:  # E16.4: absent when off (prompt unchanged)
         inputs["market_health"] = True
+    r = ctx.routines
+    if r.volume_profile.enabled or r.oi_walls.enabled:  # E23.0: absent when both off
+        inputs["levels"] = True
     # E13.8: the merged idea pool, recorded with the compact prompt's inputs
     inputs["idea_pool"] = [i.model_dump(mode="json") for i in pool.items]
     inputs["candidate_tickers"] = sorted(cands)

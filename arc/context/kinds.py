@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from arc.exits.model import ExitModelResult  # noqa: TC001 - pydantic field
+from arc.features.levels import LevelsPayload
 from arc.features.market_health import (
     IndexHistoryPayload,
     MarketHealthPayload,
@@ -95,6 +96,8 @@ class RegimePayload(FeatureSnapshot):
     """Regime + vol features for one underlying (E4.3).
 
     v4 (E16.2, D76): ``technicals`` (defaulted ``None``), so v3 rows still validate.
+    v5 (E23.0, D98): ``technicals`` gains the volume-profile / OI-wall fields (all
+    defaulted ``None``), so v4 rows still validate.
     """
 
     model_config = _FORBID
@@ -959,7 +962,7 @@ KINDS: Mapping[str, KindSpec] = _registry(
     KindSpec("raw_doc_ref", RawDocRefPayload),
     KindSpec("channel_brief", ChannelBriefPayload),
     KindSpec("candidate", CandidatePayload, schema_version=3),  # E13.7: feed, origins
-    KindSpec("regime", RegimePayload, schema_version=4),  # E16.2 (D76): technicals
+    KindSpec("regime", RegimePayload, schema_version=5),  # E23.0 (D98): technicals vp_*/oi_*
     KindSpec("shortlist", ShortlistPayload, schema_version=6),  # E17.2: market_guard run/margin z
     KindSpec("structures", StructuresPayload, schema_version=4),  # E18.1: profit_lock
     KindSpec("risk_review", RiskReviewPayload, schema_version=2),  # E13.9: verdicts
@@ -992,6 +995,8 @@ KINDS: Mapping[str, KindSpec] = _registry(
     KindSpec("index_history", IndexHistoryPayload),
     KindSpec("pc_history", PcHistoryPayload),
     KindSpec("market_health", MarketHealthPayload),
+    # E23.0 (D98): pre-market volume profile + OI walls; subject = ticker
+    KindSpec("levels", LevelsPayload),
     # E4.8 (D46): Finnhub per-ticker context (subject = ticker)
     KindSpec("earnings_history", EarningsHistoryPayload),
     KindSpec("insider_activity", InsiderActivityPayload),

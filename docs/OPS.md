@@ -2604,3 +2604,50 @@ sessions (was 5). Rollback without a PR: `!arc config set
 profiles.cash_debit.sleeves.short.max_positions 0` closes the short sleeve to new opens
 (held short-sleeve positions keep their exit block). The `sleeves.short` exit values
 are not registry keys; changing them is a PR to `config/exits.yaml`.
+
+## E23.0 levels: volume profile + options OI walls on regime technicals (D98)
+
+**Producer.** The `levels` source (07:20 ET trading days, after the final active list and
+the Scout/Trending catch-up; `ttl` 2h so a missed slot catches up by 09:20, before the
+09:40 research loop; background lane; `reference: true`) covers the active list, open
+underlyings, today's candidates and SPY/QQQ/IWM. Per ticker it makes:
+
+- one `history_bars` request: the 20 completed sessions before today, 15-min bars on the
+  history feed (`data.alpaca_history_feed`, SIP by default, E23.0a), regular hours only;
+- one `option_chain` call over the swing sleeve's expiries (the active profile's sleeve
+  named `swing`, else its longest one). It costs 3 slots of the shared Alpaca data budget.
+
+It writes one `levels` context entry per ticker (`ttl: 1 session`, subject = ticker).
+A ticker's failure is recorded and the rest continue. No new ticker starts after
+`max_runtime_s` (900 s).
+
+**Math** (`arc/features/volume_profile.py`, `arc/features/oi_walls.py`, pure):
+
+- Each bar's volume is spread evenly over the bins its high–low touches.
+- The bin width is `max($0.01, ATR14 × bin_atr)`, with ATR14 taken from the same sessions.
+- POC is the heaviest bin. The value area grows from the POC toward the heavier neighbour until it holds 70% of the volume.
+- HVNs and LVNs are the local maxima and minima of the 3-bin smoothed histogram, above or below `hvn_min_share`.
+- OI walls:
+  - call wall = the strike with the most call OI above spot;
+  - put wall = the strike with the most put OI below spot;
+  - max-OI strike = the strike with the most total OI.
+  - OI is summed over the swing expiries, and a strike below `min_oi` (500) is never a wall.
+  - Spot is the last RTH close of the profile window.
+
+**Consumer.** The Research regime step merges today's `levels` entry into the `regime`
+technicals (schema v5: `vp_poc/vah/val`, `vp_hvn_above/below`,
+`vp_pos = (close − VAL)/(VAH − VAL)` unclipped, `dist_{poc,vah,val}_atr`,
+`oi_call_wall/put_wall/max_strike`, `dist_{call,put}_wall_atr`). It makes no network
+call. A regime row already written today gets the levels merged in place. The `tech`
+segment then ends with, e.g., `vp POC 230.6 (-0.2 ATR) VA 221.0–239.6 pos 0.44 · OI walls
+C245 / P200`, and the legend gains one line. This is context only, never a gate input.
+E23.1–E23.3 read these fields.
+
+**Switches** (`config/strategy.yaml`, registry): `volume_profile.enabled` and
+`oi_walls.enabled` (both on), plus `volume_profile.sessions|bar|value_area|bin_atr|hvn_min_share`
+and `oi_walls.min_oi`. Rollback: `!arc config set volume_profile.enabled off` and/or
+`oi_walls.enabled off`. Off means no fields are merged and Research's prompt is
+byte-identical. With both off the job skips without making any request.
+
+Check: `arc routines run levels --db <scratch copy> --no-slack`, then
+`arc context show --kind levels --latest`.

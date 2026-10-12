@@ -33,11 +33,13 @@ from arc.routines.config import (
     FinnhubContextSettings,
     FunnelConfig,
     MarketHealthContextSettings,
+    OiWallsSettings,
     ResearchDiversificationSettings,
     ResearchTechnicalsSettings,
     RetailSentimentContextSettings,
     ScalpMoversContextSettings,
     ScoutBuzzVelocitySettings,
+    VolumeProfileSettings,
 )
 
 if TYPE_CHECKING:
@@ -81,6 +83,8 @@ MOVED_BLOCKS: tuple[str, ...] = (
     "market_health",
     "technicals",
     "funnel",
+    "volume_profile",  # E23.0 (D98): born in strategy.yaml; refused in routines.yaml
+    "oi_walls",  # E23.0 (D98)
 )
 
 
@@ -116,6 +120,9 @@ class StrategyConfig(BaseModel):
         default_factory=ResearchDiversificationSettings
     )
     funnel: FunnelConfig = Field(default_factory=FunnelConfig)
+    # E23.0 (D98): levels on regime technicals (the pre-market `levels` job)
+    volume_profile: VolumeProfileSettings = Field(default_factory=VolumeProfileSettings)
+    oi_walls: OiWallsSettings = Field(default_factory=OiWallsSettings)
 
     def routines_fields(self) -> dict[str, Any]:
         """The :class:`~arc.routines.config.RoutinesConfig` fields this file sets."""
@@ -131,6 +138,8 @@ class StrategyConfig(BaseModel):
             "market_health": mh.thresholds,
             "director_diversification": self.director_diversification,
             "funnel": self.funnel,
+            "volume_profile": self.volume_profile,
+            "oi_walls": self.oi_walls,
         }
 
 

@@ -1051,6 +1051,52 @@ class IvBackfillSettings(BaseModel):
     since: _dt.date = _dt.date(2024, 3, 1)
 
 
+class VolumeProfileSettings(BaseModel):
+    """E23.0 (D98): the 20-session composite volume profile on regime technicals.
+
+    Built pre-market by the ``levels`` job from SIP intraday bars (E23.0a feed), stored
+    as the ``levels`` kind and merged into the day's ``technicals`` (``vp_*`` fields)
+    by the regime step. Shipped **on** (D86); ``enabled: off`` is the rollback: no
+    profile is computed or merged and Research's prompt is byte-identical to before.
+    Context only, never a gate input.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    enabled: bool = False
+    sessions: Annotated[int, Field(ge=5, le=60)] = 20
+    bar: Literal["5Min", "15Min", "1Hour"] = "15Min"
+    value_area: Annotated[float, Field(ge=0.5, le=0.95)] = 0.70
+    bin_atr: Annotated[float, Field(gt=0.0, le=1.0)] = 0.1
+    hvn_min_share: Annotated[float, Field(gt=0.0, le=0.5)] = 0.03
+
+    @field_validator("enabled", mode="before")
+    @classmethod
+    def _enabled(cls, v: Any) -> bool:
+        return parse_on_off(v, where="volume_profile.enabled")
+
+
+class OiWallsSettings(BaseModel):
+    """E23.0 (D98): options open-interest walls on regime technicals.
+
+    Per ticker the strike with the largest call OI above spot, the largest put OI below
+    spot and the largest total OI, summed over the swing sleeve's expiries (Alpaca
+    contract OI), computed pre-market by the ``levels`` job. A strike below ``min_oi``
+    is never a wall. Shipped **on** (D86); ``enabled: off`` is the rollback (no chain
+    call, no ``oi_*`` fields, prompt byte-identical). Context only, never a gate input.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    enabled: bool = False
+    min_oi: Annotated[int, Field(ge=0, le=1_000_000)] = 500
+
+    @field_validator("enabled", mode="before")
+    @classmethod
+    def _enabled(cls, v: Any) -> bool:
+        return parse_on_off(v, where="oi_walls.enabled")
+
+
 class RoutinesConfig(BaseModel):
     """Top-level ``config/routines.yaml``."""
 
@@ -1106,6 +1152,9 @@ class RoutinesConfig(BaseModel):
     options_slow: OptionsSlowSettings = Field(default_factory=OptionsSlowSettings)  # E13.5
     options_fast: OptionsFastSettings = Field(default_factory=OptionsFastSettings)  # E13.6
     iv_backfill: IvBackfillSettings = Field(default_factory=IvBackfillSettings)  # E16.1 (D76)
+    # E23.0 (D98): levels on regime technicals (strategy.yaml blocks)
+    volume_profile: VolumeProfileSettings = Field(default_factory=VolumeProfileSettings)
+    oi_walls: OiWallsSettings = Field(default_factory=OiWallsSettings)
 
     @model_validator(mode="before")
     @classmethod

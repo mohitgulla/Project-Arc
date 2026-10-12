@@ -395,6 +395,19 @@
           "default": null,
           "title": "Close Vs Prev Range"
         },
+        "dist_call_wall_atr": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "(call wall - close) / ATR14",
+          "title": "Dist Call Wall Atr"
+        },
         "dist_high20_atr": {
           "anyOf": [
             {
@@ -420,6 +433,58 @@
           "default": null,
           "description": "(close - low20) / ATR14",
           "title": "Dist Low20 Atr"
+        },
+        "dist_poc_atr": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "(close - POC) / ATR14",
+          "title": "Dist Poc Atr"
+        },
+        "dist_put_wall_atr": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "(close - put wall) / ATR14",
+          "title": "Dist Put Wall Atr"
+        },
+        "dist_vah_atr": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "(close - VAH) / ATR14",
+          "title": "Dist Vah Atr"
+        },
+        "dist_val_atr": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "(close - VAL) / ATR14",
+          "title": "Dist Val Atr"
         },
         "gap_pct": {
           "anyOf": [
@@ -492,6 +557,45 @@
           },
           "title": "Missing",
           "type": "array"
+        },
+        "oi_call_wall": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Max call-OI strike above spot",
+          "title": "Oi Call Wall"
+        },
+        "oi_max_strike": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Max total-OI strike",
+          "title": "Oi Max Strike"
+        },
+        "oi_put_wall": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Max put-OI strike below spot",
+          "title": "Oi Put Wall"
         },
         "pct_from_52w_high": {
           "anyOf": [
@@ -785,6 +889,84 @@
           "default": null,
           "description": "(close - SMA20) / ATR14",
           "title": "Stretch Atr"
+        },
+        "vp_hvn_above": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Nearest high-volume node above close",
+          "title": "Vp Hvn Above"
+        },
+        "vp_hvn_below": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Nearest high-volume node below close",
+          "title": "Vp Hvn Below"
+        },
+        "vp_poc": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Volume-profile point of control",
+          "title": "Vp Poc"
+        },
+        "vp_pos": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "(close - VAL) / (VAH - VAL), unclipped",
+          "title": "Vp Pos"
+        },
+        "vp_vah": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Value area high (70% of volume)",
+          "title": "Vp Vah"
+        },
+        "vp_val": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Value area low",
+          "title": "Vp Val"
         }
       },
       "required": [
@@ -959,7 +1141,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "Regime + vol features for one underlying (E4.3).\n\nv4 (E16.2, D76): ``technicals`` (defaulted ``None``), so v3 rows still validate.",
+  "description": "Regime + vol features for one underlying (E4.3).\n\nv4 (E16.2, D76): ``technicals`` (defaulted ``None``), so v3 rows still validate.\nv5 (E23.0, D98): ``technicals`` gains the volume-profile / OI-wall fields (all\ndefaulted ``None``), so v4 rows still validate.",
   "properties": {
     "as_of": {
       "description": "Session date (ET); uses data up to that close only",
