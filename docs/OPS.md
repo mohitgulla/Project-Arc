@@ -376,6 +376,19 @@ categories, D58 `retail_buzz`, then Reference data). The SPA takes every persona
 OpenAPI browser. Every response carries `as_of` (ET); errors are `{error, detail, as_of}`
 (e.g. 503 `db_unavailable`, 503 `config_unavailable`).
 
+**Arm-scoped reads (E15.6, D69).** Every `/api/*` GET takes `?arm=<experiment id>:<arm>`
+(e.g. `?arm=XP-12:t1`; ids from `/api/meta` `arms`: `{id, experiment_id, arm, label
+"XP-12 · T1", status, store_age_s, viewable}`, running first). It reads that arm's store
+(`mode=ro`, the path control recorded at t0 in `routine_state experiment_arm:*`) with the
+same loaders. Equity, positions, trades, performance, halts, runs, budget and context are
+then the arm's own data: its virtual account and attributed fills (E15.2), never the
+shared broker account. Pages fed by control-only data serve control's response with
+`shared_from_control: true`: the session timeline, health strip, alerts, sources, LLM
+spend, config, the idea funnel and experiments, plus the universe unless the arm runs
+the Scout/Trending itself. Every response carries `scope: {arm_id}` (`null` means Arc
+Investor). No param, or `arm=control`, gives today's response. An unknown, stopped or
+store-less arm returns 404 `unknown_arm`, listing the valid arms.
+
 **D56 views (E13.14).**
 - *Positions:* each open row shows the latest
   Research exit watch (`hold | review` + thesis status), Quant exit case (recommendation +

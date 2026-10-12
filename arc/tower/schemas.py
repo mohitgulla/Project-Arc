@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from arc.tower.catalogue import CategoryMeta, PersonaMeta  # noqa: TC001 - pydantic fields
 from arc.tower.data_sleeves import SleeveMeta  # noqa: TC001 - pydantic fields
+from arc.tower.scope import ArmMeta, ScopeInfo  # noqa: TC001 - pydantic fields
 
 __all__ = [
     "REFRESH_CHOICES",
@@ -50,6 +51,8 @@ class HealthResponse(BaseModel):
     status: Literal["ok"]
     db: str = Field(description="Audit store path, opened read-only")
     as_of: _dt.datetime
+    scope: ScopeInfo = Field(default_factory=ScopeInfo, description="E15.6 (D69)")
+    shared_from_control: bool = False
 
 
 class AppInfo(BaseModel):
@@ -114,3 +117,10 @@ class MetaResponse(BaseModel):
         description="E22.5 (D97): the profile's entry-DTE sleeves (window, slots, exit "
         "policy per kind); [] for a single-window profile",
     )
+    arms: list[ArmMeta] = Field(
+        default_factory=list,
+        description="E15.6 (D69): experiment arms the tower can be scoped to with ?arm=<id>, "
+        "running first (the default view is Arc Investor, never listed here)",
+    )
+    scope: ScopeInfo = Field(default_factory=ScopeInfo, description="E15.6 (D69)")
+    shared_from_control: bool = False

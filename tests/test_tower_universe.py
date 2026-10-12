@@ -21,7 +21,8 @@ from arc.store.db import connect
 from arc.store.migrate import migrate
 from arc.tower.api import create_app
 from arc.tower.data import connect_ro
-from arc.tower.data_universe import UniverseResponse, load_universe
+from arc.tower.data_universe import load_universe
+from arc.tower.routes.ops import UniverseOut
 from arc.universe.tiers import (
     DROP_OVER_ACTIVE_CAP,
     DROP_OVER_TIER_SIZE,
@@ -228,7 +229,7 @@ def test_route_on_the_ops_fixture_is_get_only(tmp_path: Path) -> None:
     with TestClient(create_app(db, clock=lambda: NOW)) as client:
         res = client.get("/api/ops/universe")
         assert res.status_code == 200
-        body = UniverseResponse.model_validate(res.json())
+        body = UniverseOut.model_validate(res.json())
         assert client.post("/api/ops/universe").status_code == 405
     assert body.state == "today"
     assert len(body.active) == body.active_max == 50

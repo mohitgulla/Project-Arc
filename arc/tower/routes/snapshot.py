@@ -7,8 +7,9 @@ from typing import TYPE_CHECKING, Annotated
 from fastapi import APIRouter, Query
 
 from arc.tower.data import TowerSnapshot, load_snapshot
-from arc.tower.routes.deps import Conn, Tower, effective
+from arc.tower.routes.deps import Conn, Scope, Tower, effective
 from arc.tower.schemas import ErrorResponse
+from arc.tower.scope import scoped, wrap
 
 if TYPE_CHECKING:
     import sqlite3
@@ -17,17 +18,22 @@ if TYPE_CHECKING:
 
 __all__ = ["read_snapshot", "router"]
 
-router = APIRouter(tags=["snapshot"], responses={503: {"model": ErrorResponse}})
+router = APIRouter(
+    tags=["snapshot"], responses={503: {"model": ErrorResponse}, 404: {"model": ErrorResponse}}
+)
+
+SnapshotOut = scoped(TowerSnapshot)
 
 
-@router.get("/snapshot", response_model=TowerSnapshot)
+@router.get("/snapshot", response_model=SnapshotOut)
 def snapshot(
     cfg: Tower,
     conn: Conn,
+    scope: Scope,
     lookback_days: Annotated[int | None, Query(ge=1, le=366)] = None,
 ) -> TowerSnapshot:
     """Every dashboard section read in one pass (SELECT only), with the gate's caps."""
-    return read_snapshot(cfg, conn, lookback_days)
+    return wrap(SnapshotOut, read_snapshot(cfg, conn, lookback_days), scope)
 
 
 def read_snapshot(

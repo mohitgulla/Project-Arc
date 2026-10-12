@@ -22,9 +22,7 @@ from arc.store.migrate import migrate
 from arc.tower.api import create_app
 from arc.tower.data import connect_ro
 from arc.tower.data_trades import (
-    SearchResponse,
     TradeDetail,
-    TradeFilterOptions,
     TradeFilters,
     TradeListResponse,
     client_order_ref,
@@ -34,6 +32,7 @@ from arc.tower.data_trades import (
     load_trades,
     search,
 )
+from arc.tower.routes.trades import SearchOut, TradeDetailOut, TradeFilterOptionsOut, TradeListOut
 from arc.utils.calendar import ET
 
 REPO = Path(__file__).resolve().parent.parent
@@ -772,7 +771,7 @@ def test_api_list_with_url_filters(client: TestClient) -> None:
     r = client.get("/api/trades", params={"ticker": "AMD,SPY", "kind": "open", "sort": "ticker",
                                            "dir": "asc", "size": 1})  # fmt: skip
     assert r.status_code == 200
-    body = TradeListResponse.model_validate(r.json())
+    body = TradeListOut.model_validate(r.json())
     assert body.total == 2 and [i.ticker for i in body.items] == ["AMD"]
     assert body.filters.ticker == ["AMD", "SPY"] and body.as_of == NOW
     r = client.get("/api/trades?stage=gate_fail&stage=expired")
@@ -791,13 +790,13 @@ def test_api_list_rejects_bad_params(client: TestClient, query: str) -> None:
 def test_api_detail_filters_search(client: TestClient) -> None:
     r = client.get(f"/api/trades/{H('pos-spy')}")
     assert r.status_code == 200
-    d = TradeDetail.model_validate(r.json())
+    d = TradeDetailOut.model_validate(r.json())
     assert d.header.row.ticker == "SPY" and d.manifest is not None
     miss = client.get(f"/api/trades/{'0' * 64}")
     assert miss.status_code == 404 and miss.json()["error"] == "not_found"
-    opts = TradeFilterOptions.model_validate(client.get("/api/trades/filters").json())
+    opts = TradeFilterOptionsOut.model_validate(client.get("/api/trades/filters").json())
     assert "AMD" in opts.tickers
-    s = SearchResponse.model_validate(client.get("/api/search", params={"q": "AMD"}).json())
+    s = SearchOut.model_validate(client.get("/api/search", params={"q": "AMD"}).json())
     assert s.matches[0].route == "/trades?ticker=AMD"
 
 

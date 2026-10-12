@@ -492,6 +492,9 @@ def test_cli_snapshot_matches_api_snapshot(db: Path, capsys: pytest.CaptureFixtu
         api_payload = c.get("/api/snapshot").json()
     for k in ("as_of", "ops"):  # wall-clock read time / age fields
         cli_payload.pop(k), api_payload.pop(k)
+    # E15.6: the route adds its read scope (control here); the CLI has no ?arm=
+    assert api_payload.pop("scope") == {"arm_id": None}
+    assert api_payload.pop("shared_from_control") is False
     assert cli_payload == api_payload
 
 

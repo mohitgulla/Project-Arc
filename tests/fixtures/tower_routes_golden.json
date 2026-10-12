@@ -1,0 +1,3991 @@
+{
+ "/api/experiments": {
+  "body": {
+   "as_of": "<volatile>",
+   "items": []
+  },
+  "status": 200
+ },
+ "/api/experiments/XP-1": {
+  "body": {
+   "as_of": "<volatile>",
+   "detail": "no experiment XP-1",
+   "error": "not_found"
+  },
+  "status": 404
+ },
+ "/api/health": {
+  "body": {
+   "as_of": "<volatile>",
+   "db": "<volatile>",
+   "status": "ok"
+  },
+  "status": 200
+ },
+ "/api/ops/alerts": {
+  "body": {
+   "alerts": [
+    {
+     "duration_s": 0,
+     "id": "al-1",
+     "key": "tick_stale",
+     "kind": "tick_stale",
+     "message": "no tick for 20m",
+     "open": true,
+     "opened_at": "2026-09-28T15:00:00-04:00",
+     "posted_ts": null,
+     "resolved_at": null
+    }
+   ],
+   "as_of": "<volatile>",
+   "open": 1
+  },
+  "status": 200
+ },
+ "/api/ops/budget": {
+  "body": {
+   "as_of": "<volatile>",
+   "broker_checked": false,
+   "by_state": {},
+   "close_reserve": 25,
+   "day": "2026-09-28",
+   "limit": 200,
+   "local": 0,
+   "open_limit": 175,
+   "orders": [],
+   "remaining_opens": 175,
+   "reserved": 0,
+   "restrict_at": 100,
+   "tier": "normal",
+   "used": 0
+  },
+  "status": 200
+ },
+ "/api/ops/context": {
+  "body": {
+   "as_of": "<volatile>",
+   "expired_24h": 0,
+   "groups": [
+    {
+     "active": 0,
+     "key": "sources",
+     "kinds": 21,
+     "label": "Sources"
+    },
+    {
+     "active": 0,
+     "key": "universe",
+     "kinds": 1,
+     "label": "Universe"
+    },
+    {
+     "active": 0,
+     "key": "scout",
+     "kinds": 1,
+     "label": "Scout"
+    },
+    {
+     "active": 0,
+     "key": "scalp",
+     "kinds": 3,
+     "label": "Scalp"
+    },
+    {
+     "active": 0,
+     "key": "trading_loop",
+     "kinds": 11,
+     "label": "Trading loop"
+    },
+    {
+     "active": 0,
+     "key": "position_management",
+     "kinds": 1,
+     "label": "Position management"
+    },
+    {
+     "active": 0,
+     "key": "post_market",
+     "kinds": 1,
+     "label": "Post-market"
+    }
+   ],
+   "kinds": [
+    {
+     "active": 0,
+     "expired_24h": 0,
+     "group": "sources",
+     "kind": "raw_doc_ref",
+     "latest_at": null,
+     "latest_by": null,
+     "latest_id": null,
+     "latest_subject": null,
+     "next_expiry": null,
+     "readers": [],
+     "remaining_fraction": null,
+     "ttl": "5d",
+     "writers": [
+      "YouTube briefs",
+      "RSS news",
+      "EDGAR",
+      "Ticker news",
+      "Earnings"
+     ]
+    },
+    {
+     "active": 0,
+     "expired_24h": 0,
+     "group": "sources",
+     "kind": "channel_brief",
+     "latest_at": null,
+     "latest_by": null,
+     "latest_id": null,
+     "latest_subject": null,
+     "next_expiry": null,
+     "readers": [
+      "Scout",
+      "Trade Loop"
+     ],
+     "remaining_fraction": null,
+     "ttl": null,
+     "writers": [
+      "YouTube briefs"
+     ]
+    },
+    {
+     "active": 0,
+     "expired_24h": 0,
+     "group": "scalp",
+     "kind": "candidate",
+     "latest_at": null,
+     "latest_by": null,
+     "latest_id": null,
+     "latest_subject": null,
+     "next_expiry": null,
+     "readers": [
+      "Trade Loop",
+      "Quant propose"
+     ],
+     "remaining_fraction": null,
+     "ttl": "1 session",
+     "writers": [
+      "Scout",
+      "Scalp",
+      "Trade Loop"
+     ]
+    },
+    {
+     "active": 0,
+     "expired_24h": 0,
+     "group": "trading_loop",
+     "kind": "regime",
+     "latest_at": null,
+     "latest_by": null,
+     "latest_id": null,
+     "latest_subject": null,
+     "next_expiry": null,
+     "readers": [
+      "Trade Loop",
+      "Position marks",
+      "Quant open",
+      "Quant revise",
+      "Quant propose",
+      "Quant exit"
+     ],
+     "remaining_fraction": null,
+     "ttl": "1 session",
+     "writers": [
+      "Trade Loop"
+     ]
+    },
+    {
+     "active": 0,
+     "expired_24h": 0,
+     "group": "trading_loop",
+     "kind": "shortlist",
+     "latest_at": null,
+     "latest_by": null,
+     "latest_id": null,
+     "latest_subject": null,
+     "next_expiry": null,
+     "readers": [
+      "Quant open",
+      "Quant revise",
+      "Quant propose"
+     ],
+     "remaining_fraction": null,
+     "ttl": "1 session",
+     "writers": [
+      "Trade Loop"
+     ]
+    },
+    {
+     "active": 0,
+     "expired_24h": 0,
+     "group": "trading_loop",
+     "kind": "structures",
+     "latest_at": null,
+     "latest_by": null,
+     "latest_id": null,
+     "latest_subject": null,
+     "next_expiry": null,
+     "readers": [
+      "Risk open",
+      "Quant revise",
+      "Quant propose"
+     ],
+     "remaining_fraction": null,
+     "ttl": "1 session",
+     "writers": [
+      "Quant open",
+      "Quant revise"
+     ]
+    },
+    {
+     "active": 0,
+     "expired_24h": 0,
+     "group": "trading_loop",
+     "kind": "risk_review",
+     "latest_at": null,
+     "latest_by": null,
+     "latest_id": null,
+     "latest_subject": null,
+     "next_expiry": null,
+     "readers": [
+      "Quant revise",
+      "Quant propose"
+     ],
+     "remaining_fraction": null,
+     "ttl": "1 session",
+     "writers": [
+      "Risk open"
+     ]
+    },
+    {
+     "active": 0,
+     "expired_24h": 0,
+     "group": "trading_loop",
+     "kind": "proposal",
+     "latest_at": null,
+     "latest_by": null,
+     "latest_id": null,
+     "latest_subject": null,
+     "next_expiry": null,
+     "readers": [
+      "Intraday monitor",
+      "Broker execute"
+     ],
+     "remaining_fraction": null,
+     "ttl": "1 session",
+     "writers": [
+      "Intraday monitor",
+      "Quant propose",
+      "Exits mandatory"
+     ]
+    },
+    {
+     "active": 0,
+     "expired_24h": 0,
+     "group": "position_management",
+     "kind": "position_review",
+     "latest_at": null,
+     "latest_by": null,
+     "latest_id": null,
+     "latest_subject": null,
+     "next_expiry": null,
+     "readers": [
+      "Trade Loop",
+      "Quant propose",
+      "Quant exit",
+      "Exits mandatory",
+      "Risk exit"
+     ],
+     "remaining_fraction": null,
+     "ttl": "1h",
+     "writers": [
+      "Trade Loop",
+      "Position marks"
+     ]
+    },
+    {
+     "active": 0,
+     "expired_24h": 0,
+     "group": "trading_loop",
+     "kind": "portfolio_context",
+     "latest_at": null,
+     "latest_by": null,
+     "latest_id": null,
+     "latest_subject": null,
+     "next_expiry": null,
+     "readers": [
+      "Quant exit",
+      "Risk exit"
+     ],
+     "remaining_fraction": null,
+     "ttl": "10m",
+     "writers": [
+      "Trade Loop"
+     ]
+    },
+    {
+     "active": 0,
+     "expired_24h": 0,
+     "group": "post_market",
+     "kind": "journal",
+     "latest_at": null,
+     "latest_by": null,
+     "latest_id": null,
+     "latest_subject": null,
+     "next_expiry": null,
+     "readers": [],
+     "remaining_fraction": null,
+     "ttl": "20 sessions",
+     "writers": [
+      "Broker reconcile"
+     ]
+    },
+    {
+     "active": 0,
+     "expired_24h": 0,
+     "group": "trading_loop",
+     "kind": "note",
+     "latest_at": null,
+     "latest_by": null,
+     "latest_id": null,
+     "latest_subject": null,
+     "next_expiry": null,
+     "readers": [
+      "Trade Loop"
+     ],
+     "remaining_fraction": null,
+     "ttl": "1 session",
+     "writers": [
+      "Scout",
+      "Scalp",
+      "Trade Loop",
+      "Broker reconcile",
+      "Broker orders",
+      "Quant open",
+      "Risk open",
+      "Quant revise",
+      "Quant exit",
+      "Risk exit"
+     ]
+    },
+    {
+     "active": 0,
+     "expired_24h": 0,
+     "group": "scalp",
+     "kind": "story",
+     "latest_at": null,
+     "latest_by": null,
+     "latest_id": null,
+     "latest_subject": null,
+     "next_expiry": null,
+     "readers": [
+      "Trade Loop",
+      "Quant exit"
+     ],
+     "remaining_fraction": null,
+     "ttl": "1 session",
+     "writers": [
+      "Scalp"
+     ]
+    },
+    {
+     "active": 0,
+     "expired_24h": 0,
+     "group": "sources",
+     "kind": "vol_term",
+     "latest_at": null,
+     "latest_by": null,
+     "latest_id": null,
+     "latest_subject": null,
+     "next_expiry": null,
+     "readers": [
+      "Scout",
+      "Trade Loop"
+     ],
+     "remaining_fraction": null,
+     "ttl": "1 session",
+     "writers": [
+      "VIX term structure"
+     ]
+    },
+    {
+     "active": 0,
+     "expired_24h": 0,
+     "group": "sources",
+     "kind": "options_daily",
+     "latest_at": null,
+     "latest_by": null,
+     "latest_id": null,
+     "latest_subject": null,
+     "next_expiry": null,
+     "readers": [
+      "Scout"
+     ],
+     "remaining_fraction": null,
+     "ttl": "1 session",
+     "writers": [
+      "Cboe daily options"
+     ]
+    },
+    {
+     "active": 0,
+     "expired_24h": 0,
+     "group": "sources",
+     "kind": "vx_curve",
+     "latest_at": null,
+     "latest_by": null,
+     "latest_id": null,
+     "latest_subject": null,
+     "next_expiry": null,
+     "readers": [
+      "Scout"
+     ],
+     "remaining_fraction": null,
+     "ttl": "1 session",
+     "writers": [
+      "VX futures curve"
+     ]
+    },
+    {
+     "active": 0,
+     "expired_24h": 0,
+     "group": "sources",
+     "kind": "index_vols",
+     "latest_at": null,
+     "latest_by": null,
+     "latest_id": null,
+     "latest_subject": null,
+     "next_expiry": null,
+     "readers": [
+      "Scalp"
+     ],
+     "remaining_fraction": null,
+     "ttl": "1h",
+     "writers": [
+      "Options tape"
+     ]
+    },
+    {
+     "active": 0,
+     "expired_24h": 0,
+     "group": "sources",
+     "kind": "chain_snapshot",
+     "latest_at": null,
+     "latest_by": null,
+     "latest_id": null,
+     "latest_subject": null,
+     "next_expiry": null,
+     "readers": [
+      "Scalp"
+     ],
+     "remaining_fraction": null,
+     "ttl": "1h",
+     "writers": [
+      "Options tape"
+     ]
+    },
+    {
+     "active": 0,
+     "expired_24h": 0,
+     "group": "sources",
+     "kind": "exchange_volume",
+     "latest_at": null,
+     "latest_by": null,
+     "latest_id": null,
+     "latest_subject": null,
+     "next_expiry": null,
+     "readers": [
+      "Scalp"
+     ],
+     "remaining_fraction": null,
+     "ttl": "1h",
+     "writers": [
+      "Options tape"
+     ]
+    },
+    {
+     "active": 0,
+     "expired_24h": 0,
+     "group": "sources",
+     "kind": "market_movers",
+     "latest_at": null,
+     "latest_by": null,
+     "latest_id": null,
+     "latest_subject": null,
+     "next_expiry": null,
+     "readers": [
+      "Scalp"
+     ],
+     "remaining_fraction": null,
+     "ttl": "1h",
+     "writers": [
+      "Tape movers"
+     ]
+    },
+    {
+     "active": 0,
+     "expired_24h": 0,
+     "group": "sources",
+     "kind": "retail_buzz",
+     "latest_at": null,
+     "latest_by": null,
+     "latest_id": null,
+     "latest_subject": null,
+     "next_expiry": null,
+     "readers": [
+      "Trending tier",
+      "Scout"
+     ],
+     "remaining_fraction": null,
+     "ttl": null,
+     "writers": [
+      "Retail buzz"
+     ]
+    },
+    {
+     "active": 0,
+     "expired_24h": 0,
+     "group": "sources",
+     "kind": "retail_sentiment",
+     "latest_at": null,
+     "latest_by": null,
+     "latest_id": null,
+     "latest_subject": null,
+     "next_expiry": null,
+     "readers": [
+      "Scout",
+      "Trade Loop"
+     ],
+     "remaining_fraction": null,
+     "ttl": null,
+     "writers": [
+      "Retail sentiment"
+     ]
+    },
+    {
+     "active": 0,
+     "expired_24h": 0,
+     "group": "sources",
+     "kind": "macro_calendar",
+     "latest_at": null,
+     "latest_by": null,
+     "latest_id": null,
+     "latest_subject": null,
+     "next_expiry": null,
+     "readers": [
+      "Trade Loop",
+      "Risk open",
+      "Risk exit"
+     ],
+     "remaining_fraction": null,
+     "ttl": "7d",
+     "writers": [
+      "Macro calendar"
+     ]
+    },
+    {
+     "active": 0,
+     "expired_24h": 0,
+     "group": "sources",
+     "kind": "ex_dividend",
+     "latest_at": null,
+     "latest_by": null,
+     "latest_id": null,
+     "latest_subject": null,
+     "next_expiry": null,
+     "readers": [
+      "Trade Loop",
+      "Risk open",
+      "Quant exit",
+      "Risk exit"
+     ],
+     "remaining_fraction": null,
+     "ttl": "7d",
+     "writers": [
+      "Ex-dividend"
+     ]
+    },
+    {
+     "active": 0,
+     "expired_24h": 0,
+     "group": "sources",
+     "kind": "index_history",
+     "latest_at": null,
+     "latest_by": null,
+     "latest_id": null,
+     "latest_subject": null,
+     "next_expiry": null,
+     "readers": [],
+     "remaining_fraction": null,
+     "ttl": "7d",
+     "writers": [
+      "Market health"
+     ]
+    },
+    {
+     "active": 0,
+     "expired_24h": 0,
+     "group": "sources",
+     "kind": "pc_history",
+     "latest_at": null,
+     "latest_by": null,
+     "latest_id": null,
+     "latest_subject": null,
+     "next_expiry": null,
+     "readers": [],
+     "remaining_fraction": null,
+     "ttl": "7d",
+     "writers": [
+      "Market health"
+     ]
+    },
+    {
+     "active": 0,
+     "expired_24h": 0,
+     "group": "sources",
+     "kind": "market_health",
+     "latest_at": null,
+     "latest_by": null,
+     "latest_id": null,
+     "latest_subject": null,
+     "next_expiry": null,
+     "readers": [
+      "Trade Loop"
+     ],
+     "remaining_fraction": null,
+     "ttl": "1 session",
+     "writers": [
+      "Market health"
+     ]
+    },
+    {
+     "active": 0,
+     "expired_24h": 0,
+     "group": "sources",
+     "kind": "levels",
+     "latest_at": null,
+     "latest_by": null,
+     "latest_id": null,
+     "latest_subject": null,
+     "next_expiry": null,
+     "readers": [
+      "Trade Loop"
+     ],
+     "remaining_fraction": null,
+     "ttl": "1 session",
+     "writers": [
+      "Levels"
+     ]
+    },
+    {
+     "active": 0,
+     "expired_24h": 0,
+     "group": "sources",
+     "kind": "earnings_history",
+     "latest_at": null,
+     "latest_by": null,
+     "latest_id": null,
+     "latest_subject": null,
+     "next_expiry": null,
+     "readers": [
+      "Trade Loop"
+     ],
+     "remaining_fraction": null,
+     "ttl": "8d",
+     "writers": [
+      "Finnhub EPS surprises"
+     ]
+    },
+    {
+     "active": 0,
+     "expired_24h": 0,
+     "group": "sources",
+     "kind": "insider_activity",
+     "latest_at": null,
+     "latest_by": null,
+     "latest_id": null,
+     "latest_subject": null,
+     "next_expiry": null,
+     "readers": [
+      "Trade Loop"
+     ],
+     "remaining_fraction": null,
+     "ttl": "2d",
+     "writers": [
+      "Finnhub insider"
+     ]
+    },
+    {
+     "active": 0,
+     "expired_24h": 0,
+     "group": "sources",
+     "kind": "analyst_recs",
+     "latest_at": null,
+     "latest_by": null,
+     "latest_id": null,
+     "latest_subject": null,
+     "next_expiry": null,
+     "readers": [
+      "Trade Loop"
+     ],
+     "remaining_fraction": null,
+     "ttl": "8d",
+     "writers": [
+      "Finnhub analyst recs"
+     ]
+    },
+    {
+     "active": 0,
+     "expired_24h": 0,
+     "group": "sources",
+     "kind": "fundamentals",
+     "latest_at": null,
+     "latest_by": null,
+     "latest_id": null,
+     "latest_subject": null,
+     "next_expiry": null,
+     "readers": [
+      "Trade Loop"
+     ],
+     "remaining_fraction": null,
+     "ttl": "8d",
+     "writers": [
+      "Finnhub fundamentals"
+     ]
+    },
+    {
+     "active": 0,
+     "expired_24h": 0,
+     "group": "universe",
+     "kind": "universe_tier",
+     "latest_at": null,
+     "latest_by": null,
+     "latest_id": null,
+     "latest_subject": null,
+     "next_expiry": null,
+     "readers": [
+      "Trending tier",
+      "Scout"
+     ],
+     "remaining_fraction": null,
+     "ttl": "1 session",
+     "writers": [
+      "Momentum tier",
+      "Trending tier",
+      "Scout"
+     ]
+    },
+    {
+     "active": 0,
+     "expired_24h": 0,
+     "group": "scalp",
+     "kind": "active_universe",
+     "latest_at": null,
+     "latest_by": null,
+     "latest_id": null,
+     "latest_subject": null,
+     "next_expiry": null,
+     "readers": [
+      "Scout"
+     ],
+     "remaining_fraction": null,
+     "ttl": "1 session",
+     "writers": [
+      "Active list",
+      "Momentum tier",
+      "Trending tier",
+      "Scout",
+      "Scalp"
+     ]
+    },
+    {
+     "active": 0,
+     "expired_24h": 0,
+     "group": "scout",
+     "kind": "scout_read",
+     "latest_at": null,
+     "latest_by": null,
+     "latest_id": null,
+     "latest_subject": null,
+     "next_expiry": null,
+     "readers": [
+      "Trade Loop",
+      "Quant exit"
+     ],
+     "remaining_fraction": null,
+     "ttl": "1d",
+     "writers": [
+      "Scout"
+     ]
+    },
+    {
+     "active": 0,
+     "expired_24h": 0,
+     "group": "trading_loop",
+     "kind": "exit_watchlist",
+     "latest_at": null,
+     "latest_by": null,
+     "latest_id": null,
+     "latest_subject": null,
+     "next_expiry": null,
+     "readers": [
+      "Quant exit"
+     ],
+     "remaining_fraction": null,
+     "ttl": "30m",
+     "writers": [
+      "Trade Loop"
+     ]
+    },
+    {
+     "active": 0,
+     "expired_24h": 0,
+     "group": "trading_loop",
+     "kind": "exit_case",
+     "latest_at": null,
+     "latest_by": null,
+     "latest_id": null,
+     "latest_subject": null,
+     "next_expiry": null,
+     "readers": [
+      "Quant propose",
+      "Risk exit"
+     ],
+     "remaining_fraction": null,
+     "ttl": "30m",
+     "writers": [
+      "Quant exit"
+     ]
+    },
+    {
+     "active": 0,
+     "expired_24h": 0,
+     "group": "trading_loop",
+     "kind": "risk_exit_review",
+     "latest_at": null,
+     "latest_by": null,
+     "latest_id": null,
+     "latest_subject": null,
+     "next_expiry": null,
+     "readers": [
+      "Quant propose"
+     ],
+     "remaining_fraction": null,
+     "ttl": "30m",
+     "writers": [
+      "Risk exit"
+     ]
+    },
+    {
+     "active": 0,
+     "expired_24h": 0,
+     "group": "trading_loop",
+     "kind": "pullback_watch",
+     "latest_at": null,
+     "latest_by": null,
+     "latest_id": null,
+     "latest_subject": null,
+     "next_expiry": null,
+     "readers": [
+      "Trade Loop"
+     ],
+     "remaining_fraction": null,
+     "ttl": "8 sessions",
+     "writers": [
+      "Trade Loop"
+     ]
+    }
+   ],
+   "total_active": 0
+  },
+  "status": 200
+ },
+ "/api/ops/context/nope": {
+  "body": {
+   "as_of": "<volatile>",
+   "detail": "no context entry 'nope'",
+   "error": "not_found"
+  },
+  "status": 404
+ },
+ "/api/ops/halts": {
+  "body": {
+   "active": 1,
+   "as_of": "<volatile>",
+   "halts": [
+    {
+     "active": true,
+     "actor": "arc:reconcile",
+     "at": "2026-09-28T14:00:00-04:00",
+     "cleared_at": null,
+     "cleared_by": null,
+     "id": "<id>",
+     "kind": "manual",
+     "reason": "reconciliation mismatch",
+     "run_id": null,
+     "trades": 0,
+     "trades_route": "/trades?date=custom&date_from=2026-09-28&date_to=2026-09-28"
+    },
+    {
+     "active": false,
+     "actor": "U1",
+     "at": "2026-09-26T15:00:00-04:00",
+     "cleared_at": "2026-09-27T15:00:00-04:00",
+     "cleared_by": "U1",
+     "id": "<id>",
+     "kind": "manual",
+     "reason": "manual",
+     "run_id": null,
+     "trades": 0,
+     "trades_route": "/trades?date=custom&date_from=2026-09-26&date_to=2026-09-27"
+    }
+   ]
+  },
+  "status": 200
+ },
+ "/api/ops/health": {
+  "body": {
+   "as_of": "<volatile>",
+   "checks": {},
+   "items": [
+    {
+     "age_s": 180,
+     "at": "2026-09-28T14:57:00-04:00",
+     "chip": "Tick ok 3m",
+     "detail": "OK \u00b7 3m",
+     "key": "tick",
+     "label": "Tick heartbeat",
+     "name": "Tick",
+     "status": "ok",
+     "threshold": "stale after 30 min",
+     "value": "3 min ago"
+    },
+    {
+     "age_s": null,
+     "at": null,
+     "chip": "Health check not checked",
+     "detail": "Not Checked",
+     "key": "health",
+     "label": "Health check",
+     "name": "Health check",
+     "status": "unknown",
+     "threshold": "runs every 30 min; stale after 90 min",
+     "value": "none \u00b7 never"
+    },
+    {
+     "age_s": null,
+     "at": null,
+     "chip": "Gateway not checked",
+     "detail": "Not Checked",
+     "key": "gateway",
+     "label": "Gateway",
+     "name": "Gateway",
+     "status": "unknown",
+     "threshold": "`hermes gateway status` ok; cron jobs fire",
+     "value": "not checked"
+    },
+    {
+     "age_s": null,
+     "at": null,
+     "chip": "Remote not checked",
+     "detail": "Not Checked",
+     "key": "remote_access",
+     "label": "Remote access",
+     "name": "Remote",
+     "status": "unknown",
+     "threshold": "Tailscale dashboard + tower ports answer",
+     "value": "not checked"
+    },
+    {
+     "age_s": null,
+     "at": null,
+     "chip": "Log none",
+     "detail": "No log",
+     "key": "log",
+     "label": "Log size",
+     "name": "Log",
+     "status": "unknown",
+     "threshold": "rotates at 5.0 MB",
+     "value": "no log file"
+    }
+   ]
+  },
+  "status": 200
+ },
+ "/api/ops/llm": {
+  "body": {
+   "as_of": "<volatile>",
+   "days": 30,
+   "models": [],
+   "period": [],
+   "personas": [],
+   "series": [
+    {
+     "by_model": {},
+     "by_persona": {},
+     "calls": 0,
+     "cost_usd": 0.0,
+     "day": "2026-08-30",
+     "input_tokens": 0,
+     "output_tokens": 0
+    },
+    {
+     "by_model": {},
+     "by_persona": {},
+     "calls": 0,
+     "cost_usd": 0.0,
+     "day": "2026-08-31",
+     "input_tokens": 0,
+     "output_tokens": 0
+    },
+    {
+     "by_model": {},
+     "by_persona": {},
+     "calls": 0,
+     "cost_usd": 0.0,
+     "day": "2026-09-01",
+     "input_tokens": 0,
+     "output_tokens": 0
+    },
+    {
+     "by_model": {},
+     "by_persona": {},
+     "calls": 0,
+     "cost_usd": 0.0,
+     "day": "2026-09-02",
+     "input_tokens": 0,
+     "output_tokens": 0
+    },
+    {
+     "by_model": {},
+     "by_persona": {},
+     "calls": 0,
+     "cost_usd": 0.0,
+     "day": "2026-09-03",
+     "input_tokens": 0,
+     "output_tokens": 0
+    },
+    {
+     "by_model": {},
+     "by_persona": {},
+     "calls": 0,
+     "cost_usd": 0.0,
+     "day": "2026-09-04",
+     "input_tokens": 0,
+     "output_tokens": 0
+    },
+    {
+     "by_model": {},
+     "by_persona": {},
+     "calls": 0,
+     "cost_usd": 0.0,
+     "day": "2026-09-05",
+     "input_tokens": 0,
+     "output_tokens": 0
+    },
+    {
+     "by_model": {},
+     "by_persona": {},
+     "calls": 0,
+     "cost_usd": 0.0,
+     "day": "2026-09-06",
+     "input_tokens": 0,
+     "output_tokens": 0
+    },
+    {
+     "by_model": {},
+     "by_persona": {},
+     "calls": 0,
+     "cost_usd": 0.0,
+     "day": "2026-09-07",
+     "input_tokens": 0,
+     "output_tokens": 0
+    },
+    {
+     "by_model": {},
+     "by_persona": {},
+     "calls": 0,
+     "cost_usd": 0.0,
+     "day": "2026-09-08",
+     "input_tokens": 0,
+     "output_tokens": 0
+    },
+    {
+     "by_model": {},
+     "by_persona": {},
+     "calls": 0,
+     "cost_usd": 0.0,
+     "day": "2026-09-09",
+     "input_tokens": 0,
+     "output_tokens": 0
+    },
+    {
+     "by_model": {},
+     "by_persona": {},
+     "calls": 0,
+     "cost_usd": 0.0,
+     "day": "2026-09-10",
+     "input_tokens": 0,
+     "output_tokens": 0
+    },
+    {
+     "by_model": {},
+     "by_persona": {},
+     "calls": 0,
+     "cost_usd": 0.0,
+     "day": "2026-09-11",
+     "input_tokens": 0,
+     "output_tokens": 0
+    },
+    {
+     "by_model": {},
+     "by_persona": {},
+     "calls": 0,
+     "cost_usd": 0.0,
+     "day": "2026-09-12",
+     "input_tokens": 0,
+     "output_tokens": 0
+    },
+    {
+     "by_model": {},
+     "by_persona": {},
+     "calls": 0,
+     "cost_usd": 0.0,
+     "day": "2026-09-13",
+     "input_tokens": 0,
+     "output_tokens": 0
+    },
+    {
+     "by_model": {},
+     "by_persona": {},
+     "calls": 0,
+     "cost_usd": 0.0,
+     "day": "2026-09-14",
+     "input_tokens": 0,
+     "output_tokens": 0
+    },
+    {
+     "by_model": {},
+     "by_persona": {},
+     "calls": 0,
+     "cost_usd": 0.0,
+     "day": "2026-09-15",
+     "input_tokens": 0,
+     "output_tokens": 0
+    },
+    {
+     "by_model": {},
+     "by_persona": {},
+     "calls": 0,
+     "cost_usd": 0.0,
+     "day": "2026-09-16",
+     "input_tokens": 0,
+     "output_tokens": 0
+    },
+    {
+     "by_model": {},
+     "by_persona": {},
+     "calls": 0,
+     "cost_usd": 0.0,
+     "day": "2026-09-17",
+     "input_tokens": 0,
+     "output_tokens": 0
+    },
+    {
+     "by_model": {},
+     "by_persona": {},
+     "calls": 0,
+     "cost_usd": 0.0,
+     "day": "2026-09-18",
+     "input_tokens": 0,
+     "output_tokens": 0
+    },
+    {
+     "by_model": {},
+     "by_persona": {},
+     "calls": 0,
+     "cost_usd": 0.0,
+     "day": "2026-09-19",
+     "input_tokens": 0,
+     "output_tokens": 0
+    },
+    {
+     "by_model": {},
+     "by_persona": {},
+     "calls": 0,
+     "cost_usd": 0.0,
+     "day": "2026-09-20",
+     "input_tokens": 0,
+     "output_tokens": 0
+    },
+    {
+     "by_model": {},
+     "by_persona": {},
+     "calls": 0,
+     "cost_usd": 0.0,
+     "day": "2026-09-21",
+     "input_tokens": 0,
+     "output_tokens": 0
+    },
+    {
+     "by_model": {},
+     "by_persona": {},
+     "calls": 0,
+     "cost_usd": 0.0,
+     "day": "2026-09-22",
+     "input_tokens": 0,
+     "output_tokens": 0
+    },
+    {
+     "by_model": {},
+     "by_persona": {},
+     "calls": 0,
+     "cost_usd": 0.0,
+     "day": "2026-09-23",
+     "input_tokens": 0,
+     "output_tokens": 0
+    },
+    {
+     "by_model": {},
+     "by_persona": {},
+     "calls": 0,
+     "cost_usd": 0.0,
+     "day": "2026-09-24",
+     "input_tokens": 0,
+     "output_tokens": 0
+    },
+    {
+     "by_model": {},
+     "by_persona": {},
+     "calls": 0,
+     "cost_usd": 0.0,
+     "day": "2026-09-25",
+     "input_tokens": 0,
+     "output_tokens": 0
+    },
+    {
+     "by_model": {},
+     "by_persona": {},
+     "calls": 0,
+     "cost_usd": 0.0,
+     "day": "2026-09-26",
+     "input_tokens": 0,
+     "output_tokens": 0
+    },
+    {
+     "by_model": {},
+     "by_persona": {},
+     "calls": 0,
+     "cost_usd": 0.0,
+     "day": "2026-09-27",
+     "input_tokens": 0,
+     "output_tokens": 0
+    },
+    {
+     "by_model": {},
+     "by_persona": {},
+     "calls": 0,
+     "cost_usd": 0.0,
+     "day": "2026-09-28",
+     "input_tokens": 0,
+     "output_tokens": 0
+    }
+   ],
+   "today": [],
+   "today_cost": 0.0,
+   "total_cost": 0.0,
+   "yesterday_cost": 0.0
+  },
+  "status": 200
+ },
+ "/api/ops/runs": {
+  "body": {
+   "as_of": "<volatile>",
+   "options": {
+    "jobs": [],
+    "statuses": [
+     "ok",
+     "failed",
+     "skipped",
+     "running",
+     "no_change"
+    ]
+   },
+   "page": 1,
+   "rows": [],
+   "size": 50,
+   "total": 0
+  },
+  "status": 200
+ },
+ "/api/ops/runs/nope": {
+  "body": {
+   "as_of": "<volatile>",
+   "detail": "no routine run 'nope'",
+   "error": "not_found"
+  },
+  "status": 404
+ },
+ "/api/overview": {
+  "body": {
+   "account": null,
+   "activity": [
+    {
+     "at": "2026-09-28T15:00:00-04:00",
+     "count": 1,
+     "entries": [],
+     "group": null,
+     "kind": "alert",
+     "ref": null,
+     "text": "Alert tick_stale: no tick for 20m",
+     "tone": "warn"
+    },
+    {
+     "at": "2026-09-28T14:00:00-04:00",
+     "count": 1,
+     "entries": [],
+     "group": null,
+     "kind": "halt",
+     "ref": null,
+     "text": "Trading halted by arc:reconcile: reconciliation mismatch",
+     "tone": "neg"
+    },
+    {
+     "at": "2026-09-27T15:00:00-04:00",
+     "count": 1,
+     "entries": [],
+     "group": null,
+     "kind": "resume",
+     "ref": null,
+     "text": "Halt cleared by U1",
+     "tone": "neutral"
+    }
+   ],
+   "activity_hours": 24,
+   "activity_since": "2026-09-27T15:00:00-04:00",
+   "as_of": "<volatile>",
+   "day_pnl": {
+    "as_of": "<volatile>",
+    "day_pct": 0.00099601593625498,
+    "day_pnl": "100.0",
+    "performance": {
+     "day_pct": 0.004,
+     "day_pnl": 400.0,
+     "equity": 100400.0,
+     "mtd_pct": 0.004,
+     "mtd_pnl": 400.0,
+     "ytd_pct": 0.004,
+     "ytd_pnl": 400.0
+    },
+    "performance_day": "2026-09-25",
+    "prev_close_source": "arc_close",
+    "prev_equity": "100400",
+    "realized": "10",
+    "realized_at": "2026-09-25T16:30:00-04:00",
+    "source": "intraday",
+    "unrealized": "-15",
+    "unrealized_at": "2026-09-28T14:50:00-04:00"
+   },
+   "equity": {
+    "benchmarks": [],
+    "change": "100.0",
+    "change_pct": 0.00099601593625498,
+    "range": "1D",
+    "series": [
+     {
+      "t": "2026-09-28T14:50:00-04:00",
+      "v": "100500.0"
+     }
+    ],
+    "series_source": "intraday",
+    "source": "intraday",
+    "start_at": "2026-09-25T16:00:00-04:00",
+    "start_label": "prev close",
+    "start_source": "arc_close",
+    "start_value": "100400",
+    "value": "100500.0",
+    "value_at": "2026-09-28T14:50:00-04:00"
+   },
+   "greeks": {
+    "gamma": {
+     "high_pct": 0.015,
+     "med_pct": 0.005,
+     "pct_of_equity": 0.0,
+     "risk": "low",
+     "value": 0.0
+    },
+    "greeks": {
+     "at": "2026-09-28T14:50:00-04:00",
+     "beta_delta_cap": 201000.0,
+     "beta_dollar_delta": null,
+     "delta": 25.0,
+     "delta_by_underlying": {},
+     "dollar_delta": 14500.0,
+     "dollar_delta_cap": 100500.0,
+     "equity": 100500.0,
+     "gamma": -0.5,
+     "max_loss": 140.0,
+     "positions": 1,
+     "stale_after_s": 1800,
+     "theta": 4.2,
+     "valued": true,
+     "vega": -300.0,
+     "vega_cap_usd": 1005.0,
+     "vega_usd": -3.0
+    },
+    "max_alloc_pct": 0.05,
+    "max_loss_by_underlying": {
+     "SPY": "20.00"
+    },
+    "per_underlying_cap": "5025.000",
+    "theta": {
+     "high_pct": 0.0025,
+     "med_pct": 0.001,
+     "pct_of_equity": 0.0,
+     "risk": "low",
+     "value": 4.2
+    }
+   },
+   "marks_at": "2026-09-28T14:50:00-04:00",
+   "marks_stale": false,
+   "movers": [
+    {
+     "at": "2026-09-28T14:50:00-04:00",
+     "change_today": null,
+     "direction": "bullish",
+     "kind": "vertical_credit",
+     "open_proposal_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "spark": [
+      -15.0
+     ],
+     "structure_id": "<id>",
+     "ticker": "SPY",
+     "underlying_change": null,
+     "unrealized_pct": -0.08333333333333333
+    }
+   ],
+   "positions": [
+    {
+     "close_net": null,
+     "closed_at": null,
+     "contracts": 2,
+     "day_change": "-15",
+     "direction": "bullish",
+     "dte": 32,
+     "entry_net": "-0.90",
+     "exit_case": null,
+     "exit_pending": false,
+     "exit_proposal_hash": null,
+     "exit_reason": null,
+     "exit_review": null,
+     "exit_watch": null,
+     "expiration": "2026-10-30",
+     "held": true,
+     "held_at": "2026-09-25T15:00:00-04:00",
+     "id": "<id>",
+     "kind": "vertical_credit",
+     "legs": [
+      "SPY261030P00710000",
+      "SPY261030P00711000"
+     ],
+     "mandatory_signal": null,
+     "mark_at": "2026-09-28T14:50:00-04:00",
+     "mark_net": null,
+     "max_loss": "20.00",
+     "open_proposal_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "opened_at": "2026-09-28T10:00:00-04:00",
+     "realized_pl": null,
+     "status": "open",
+     "ticker": "SPY",
+     "unrealized_pct": -0.08333333333333333,
+     "unrealized_pl": "-15"
+    }
+   ],
+   "proposals": [
+    {
+     "approval": "approved",
+     "contracts": 2,
+     "created_at": "<volatile>",
+     "day": "2026-09-28",
+     "direction": "bullish",
+     "ev": "12.5",
+     "execution": "filled",
+     "fill_price": "-0.90",
+     "gate_passed": true,
+     "kind": "open",
+     "limit": "-0.90",
+     "net_ev": null,
+     "pop": 0.62,
+     "pop_managed": null,
+     "proposal_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "structure_kind": "vertical_credit",
+     "ticker": "SPY",
+     "violations": []
+    },
+    {
+     "approval": null,
+     "contracts": 2,
+     "created_at": "<volatile>",
+     "day": "2026-09-28",
+     "direction": "bullish",
+     "ev": "12.5",
+     "execution": null,
+     "fill_price": null,
+     "gate_passed": false,
+     "kind": "open",
+     "limit": "-0.90",
+     "net_ev": null,
+     "pop": 0.62,
+     "pop_managed": null,
+     "proposal_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+     "structure_kind": "vertical_credit",
+     "ticker": "QQQ",
+     "violations": [
+      "delta_cap: post-trade |\u0394| 400 > cap 300",
+      "stale_quote: SPY old"
+     ]
+    }
+   ],
+   "proposals_since": "2026-09-27T15:00:00-04:00",
+   "range": "1D",
+   "sleeves": [
+    {
+     "label": "Short",
+     "max_positions": 5,
+     "name": "short",
+     "open": 0
+    },
+    {
+     "label": "Swing",
+     "max_positions": 5,
+     "name": "swing",
+     "open": 1
+    }
+   ],
+   "stale_after_s": 1800,
+   "status": {
+    "active_halts": 1,
+    "alerts": [
+     {
+      "key": "tick_stale",
+      "kind": "tick_stale",
+      "message": "no tick for 20m",
+      "opened_at": "2026-09-28T15:00:00-04:00"
+     }
+    ],
+    "halt": {
+     "active": true,
+     "actor": "arc:reconcile",
+     "at": "2026-09-28T14:00:00-04:00",
+     "cleared_at": null,
+     "cleared_by": null,
+     "id": "<id>",
+     "kind": "manual",
+     "reason": "reconciliation mismatch",
+     "scope": "all"
+    },
+    "halted": true,
+    "health_at": null,
+    "health_status": null,
+    "order_budget": null,
+    "sessions": 20,
+    "sessions_since": "2026-08-31",
+    "tick_at": "2026-09-28T14:57:00-04:00",
+    "tick_status": "ok"
+   }
+  },
+  "status": 200
+ },
+ "/api/performance": {
+  "body": {
+   "as_of": "<volatile>",
+   "breakdowns": {
+    "exit_reason": [],
+    "profile": [],
+    "reason_code": [],
+    "regime": [],
+    "sleeve": [],
+    "structure": [],
+    "ticker": []
+   },
+   "calibration": {
+    "empty": true,
+    "rows": [],
+    "trades": 0
+   },
+   "compare": "none",
+   "compare_period": null,
+   "costs": {
+    "bars": [
+     {
+      "commission": 0.0,
+      "end": "2026-07-05",
+      "fees": 0.0,
+      "label": "Jul 1",
+      "slippage": 0.0,
+      "spread": 0.0,
+      "start": "2026-07-01"
+     },
+     {
+      "commission": 0.0,
+      "end": "2026-07-12",
+      "fees": 0.0,
+      "label": "Jul 6",
+      "slippage": 0.0,
+      "spread": 0.0,
+      "start": "2026-07-06"
+     },
+     {
+      "commission": 0.0,
+      "end": "2026-07-19",
+      "fees": 0.0,
+      "label": "Jul 13",
+      "slippage": 0.0,
+      "spread": 0.0,
+      "start": "2026-07-13"
+     },
+     {
+      "commission": 0.0,
+      "end": "2026-07-26",
+      "fees": 0.0,
+      "label": "Jul 20",
+      "slippage": 0.0,
+      "spread": 0.0,
+      "start": "2026-07-20"
+     },
+     {
+      "commission": 0.0,
+      "end": "2026-08-02",
+      "fees": 0.0,
+      "label": "Jul 27",
+      "slippage": 0.0,
+      "spread": 0.0,
+      "start": "2026-07-27"
+     },
+     {
+      "commission": 0.0,
+      "end": "2026-08-09",
+      "fees": 0.0,
+      "label": "Aug 3",
+      "slippage": 0.0,
+      "spread": 0.0,
+      "start": "2026-08-03"
+     },
+     {
+      "commission": 0.0,
+      "end": "2026-08-16",
+      "fees": 0.0,
+      "label": "Aug 10",
+      "slippage": 0.0,
+      "spread": 0.0,
+      "start": "2026-08-10"
+     },
+     {
+      "commission": 0.0,
+      "end": "2026-08-23",
+      "fees": 0.0,
+      "label": "Aug 17",
+      "slippage": 0.0,
+      "spread": 0.0,
+      "start": "2026-08-17"
+     },
+     {
+      "commission": 0.0,
+      "end": "2026-08-30",
+      "fees": 0.0,
+      "label": "Aug 24",
+      "slippage": 0.0,
+      "spread": 0.0,
+      "start": "2026-08-24"
+     },
+     {
+      "commission": 0.0,
+      "end": "2026-09-06",
+      "fees": 0.0,
+      "label": "Aug 31",
+      "slippage": 0.0,
+      "spread": 0.0,
+      "start": "2026-08-31"
+     },
+     {
+      "commission": 0.0,
+      "end": "2026-09-13",
+      "fees": 0.0,
+      "label": "Sep 7",
+      "slippage": 0.0,
+      "spread": 0.0,
+      "start": "2026-09-07"
+     },
+     {
+      "commission": 0.0,
+      "end": "2026-09-20",
+      "fees": 0.0,
+      "label": "Sep 14",
+      "slippage": 0.0,
+      "spread": 0.0,
+      "start": "2026-09-14"
+     },
+     {
+      "commission": 0.0,
+      "end": "2026-09-27",
+      "fees": 0.0,
+      "label": "Sep 21",
+      "slippage": 0.0,
+      "spread": 0.0,
+      "start": "2026-09-21"
+     },
+     {
+      "commission": 0.0,
+      "end": "2026-09-28",
+      "fees": 0.0,
+      "label": "Sep 28",
+      "slippage": 0.0,
+      "spread": 0.0,
+      "start": "2026-09-28"
+     }
+    ],
+    "change": null,
+    "commission": 0.0,
+    "compare_total": null,
+    "cost_pct_of_gross": null,
+    "empty": false,
+    "fees": 0.0,
+    "fees_from_open": 0,
+    "fills": 1,
+    "gross_pnl": null,
+    "slippage": 0.0,
+    "spread": 0.0,
+    "total": 0.0,
+    "unmodelled": 1
+   },
+   "equity": {
+    "drawdown_peak": null,
+    "drawdown_recovered": null,
+    "drawdown_trough": null,
+    "empty": false,
+    "end_equity": 100400.0,
+    "max_drawdown": 0.0,
+    "max_drawdown_pct": 0.0,
+    "points": [
+     {
+      "day": "2026-08-31",
+      "equity": 100000.0
+     },
+     {
+      "day": "2026-09-25",
+      "equity": 100400.0
+     }
+    ],
+    "return_pct": 0.004,
+    "returns": 1,
+    "sharpe": null,
+    "sortino": null,
+    "start_equity": 100000.0
+   },
+   "funnel": {
+    "empty": false,
+    "gate_fail": 2,
+    "steps": [
+     {
+      "count": 3,
+      "key": "proposed",
+      "label": "Proposed"
+     },
+     {
+      "count": 1,
+      "key": "gate_pass",
+      "label": "Gate pass"
+     },
+     {
+      "count": 1,
+      "key": "approved",
+      "label": "Approved"
+     },
+     {
+      "count": 1,
+      "key": "filled",
+      "label": "Filled"
+     },
+     {
+      "count": 0,
+      "key": "closed",
+      "label": "Closed"
+     }
+    ],
+    "violations": {
+     "delta_cap": 1,
+     "halted": 1,
+     "stale_quote": 1
+    }
+   },
+   "include_tests": false,
+   "model": {
+    "empty": true,
+    "hold_win_rate": null,
+    "mean_managed_pop": null,
+    "mean_static_pop": null,
+    "n": 0,
+    "n_shadow": 0,
+    "points": [],
+    "sum_managed_ev": 0.0,
+    "sum_realised": 0.0,
+    "sum_shadow": null,
+    "sum_static_ev": 0.0,
+    "win_rate": null
+   },
+   "net_pnl": {
+    "bars": [
+     {
+      "cumulative": 0.0,
+      "end": "2026-07-05",
+      "future": false,
+      "label": "Jul 1",
+      "pnl": null,
+      "shadow_cumulative": null,
+      "start": "2026-07-01"
+     },
+     {
+      "cumulative": 0.0,
+      "end": "2026-07-12",
+      "future": false,
+      "label": "Jul 6",
+      "pnl": null,
+      "shadow_cumulative": null,
+      "start": "2026-07-06"
+     },
+     {
+      "cumulative": 0.0,
+      "end": "2026-07-19",
+      "future": false,
+      "label": "Jul 13",
+      "pnl": null,
+      "shadow_cumulative": null,
+      "start": "2026-07-13"
+     },
+     {
+      "cumulative": 0.0,
+      "end": "2026-07-26",
+      "future": false,
+      "label": "Jul 20",
+      "pnl": null,
+      "shadow_cumulative": null,
+      "start": "2026-07-20"
+     },
+     {
+      "cumulative": 0.0,
+      "end": "2026-08-02",
+      "future": false,
+      "label": "Jul 27",
+      "pnl": null,
+      "shadow_cumulative": null,
+      "start": "2026-07-27"
+     },
+     {
+      "cumulative": 0.0,
+      "end": "2026-08-09",
+      "future": false,
+      "label": "Aug 3",
+      "pnl": null,
+      "shadow_cumulative": null,
+      "start": "2026-08-03"
+     },
+     {
+      "cumulative": 0.0,
+      "end": "2026-08-16",
+      "future": false,
+      "label": "Aug 10",
+      "pnl": null,
+      "shadow_cumulative": null,
+      "start": "2026-08-10"
+     },
+     {
+      "cumulative": 0.0,
+      "end": "2026-08-23",
+      "future": false,
+      "label": "Aug 17",
+      "pnl": null,
+      "shadow_cumulative": null,
+      "start": "2026-08-17"
+     },
+     {
+      "cumulative": 0.0,
+      "end": "2026-08-30",
+      "future": false,
+      "label": "Aug 24",
+      "pnl": null,
+      "shadow_cumulative": null,
+      "start": "2026-08-24"
+     },
+     {
+      "cumulative": 0.0,
+      "end": "2026-09-06",
+      "future": false,
+      "label": "Aug 31",
+      "pnl": null,
+      "shadow_cumulative": null,
+      "start": "2026-08-31"
+     },
+     {
+      "cumulative": 0.0,
+      "end": "2026-09-13",
+      "future": false,
+      "label": "Sep 7",
+      "pnl": null,
+      "shadow_cumulative": null,
+      "start": "2026-09-07"
+     },
+     {
+      "cumulative": 0.0,
+      "end": "2026-09-20",
+      "future": false,
+      "label": "Sep 14",
+      "pnl": null,
+      "shadow_cumulative": null,
+      "start": "2026-09-14"
+     },
+     {
+      "cumulative": 400.0,
+      "end": "2026-09-27",
+      "future": false,
+      "label": "Sep 21",
+      "pnl": 400.0,
+      "shadow_cumulative": null,
+      "start": "2026-09-21"
+     },
+     {
+      "cumulative": 400.0,
+      "end": "2026-09-28",
+      "future": false,
+      "label": "Sep 28",
+      "pnl": null,
+      "shadow_cumulative": null,
+      "start": "2026-09-28"
+     }
+    ],
+    "bucket": "week",
+    "change": null,
+    "compare_net": null,
+    "empty": false,
+    "net": 400.0,
+    "now_label": "Sep 28",
+    "realised": 0.0,
+    "shadow_delta": null,
+    "shadow_known": 0,
+    "source": "equity",
+    "tests_excluded_pnl": 0.0,
+    "unrealised_change": 400.0
+   },
+   "period": {
+    "days": 90,
+    "first": "2026-07-01",
+    "last": "2026-09-28",
+    "slot_end": "2026-09-28"
+   },
+   "preset": "90d",
+   "sleeve": null,
+   "sleeve_stats": [
+    {
+     "ci_high": null,
+     "ci_low": null,
+     "closed": 0,
+     "costs": 0.0,
+     "dte_max": 29,
+     "dte_min": 10,
+     "entry_slippage": null,
+     "exit_reasons": {},
+     "max_positions": 5,
+     "mean_days_held": null,
+     "mean_entry_slippage": null,
+     "mean_mae": null,
+     "mean_mfe": null,
+     "mean_net_pnl": null,
+     "mean_pct_of_max_loss": null,
+     "mean_pnl": null,
+     "median_pnl": null,
+     "n_excursion": 0,
+     "opens": 0,
+     "ready": false,
+     "realised": 0.0,
+     "sleeve": "short",
+     "verdict": "collect",
+     "win_rate": null,
+     "wins": 0
+    },
+    {
+     "ci_high": null,
+     "ci_low": null,
+     "closed": 0,
+     "costs": 0.0,
+     "dte_max": 60,
+     "dte_min": 30,
+     "entry_slippage": null,
+     "exit_reasons": {},
+     "max_positions": 5,
+     "mean_days_held": null,
+     "mean_entry_slippage": null,
+     "mean_mae": null,
+     "mean_mfe": null,
+     "mean_net_pnl": null,
+     "mean_pct_of_max_loss": null,
+     "mean_pnl": null,
+     "median_pnl": null,
+     "n_excursion": 0,
+     "opens": 1,
+     "ready": false,
+     "realised": 0.0,
+     "sleeve": "swing",
+     "verdict": "collect",
+     "win_rate": null,
+     "wins": 0
+    }
+   ],
+   "win_loss": {
+    "compare_expectancy": null,
+    "compare_win_rate": null,
+    "empty": true,
+    "stats": {
+     "avg_days_held": null,
+     "avg_loss": null,
+     "avg_win": null,
+     "best": null,
+     "closed": 0,
+     "expectancy": null,
+     "gross_losses": 0.0,
+     "gross_wins": 0.0,
+     "losses": 0,
+     "profit_factor": null,
+     "realised": 0.0,
+     "win_rate": null,
+     "wins": 0,
+     "worst": null
+    }
+   }
+  },
+  "status": 200
+ },
+ "/api/performance/breakdown": {
+  "body": {
+   "as_of": "<volatile>",
+   "by": "ticker",
+   "include_tests": false,
+   "period": {
+    "days": 90,
+    "first": "2026-07-01",
+    "last": "2026-09-28",
+    "slot_end": "2026-09-28"
+   },
+   "rows": [],
+   "sleeve": null
+  },
+  "status": 200
+ },
+ "/api/performance/funnel": {
+  "body": {
+   "discovery_fill": {},
+   "sessions": 5,
+   "since": "2026-09-22",
+   "stages": [
+    {
+     "by_category": {},
+     "by_feed": {},
+     "count": 0,
+     "stage": "docs_fresh"
+    },
+    {
+     "by_category": {},
+     "by_feed": {},
+     "count": 0,
+     "stage": "docs_read"
+    },
+    {
+     "by_category": {},
+     "by_feed": {},
+     "count": 0,
+     "stage": "stories"
+    },
+    {
+     "by_category": {},
+     "by_feed": {},
+     "count": 0,
+     "stage": "candidates"
+    },
+    {
+     "by_category": {},
+     "by_feed": {},
+     "count": 0,
+     "stage": "pool"
+    },
+    {
+     "by_category": {},
+     "by_feed": {},
+     "count": 0,
+     "stage": "shortlist"
+    },
+    {
+     "by_category": {},
+     "by_feed": {},
+     "count": 0,
+     "stage": "structures"
+    },
+    {
+     "by_category": {},
+     "by_feed": {},
+     "count": 2,
+     "stage": "proposals"
+    },
+    {
+     "by_category": {},
+     "by_feed": {},
+     "count": 1,
+     "stage": "approved"
+    },
+    {
+     "by_category": {},
+     "by_feed": {},
+     "count": 1,
+     "stage": "filled"
+    }
+   ],
+   "top_sources": [],
+   "until": "2026-09-28"
+  },
+  "status": 200
+ },
+ "/api/positions": {
+  "body": {
+   "as_of": "<volatile>",
+   "exit_path": {
+    "cases_today": 0,
+    "closes_proposed_today": 0,
+    "holds_today": 0,
+    "mandatory_pending": 0,
+    "mode": "research"
+   },
+   "items": [
+    {
+     "close_net": null,
+     "closed_at": null,
+     "contracts": 2,
+     "day_change": "-15",
+     "direction": "bullish",
+     "dte": 32,
+     "entry_net": "-0.90",
+     "exit_case": null,
+     "exit_pending": false,
+     "exit_proposal_hash": null,
+     "exit_reason": null,
+     "exit_review": null,
+     "exit_watch": null,
+     "expiration": "2026-10-30",
+     "held": true,
+     "held_at": "2026-09-25T15:00:00-04:00",
+     "id": "<id>",
+     "kind": "vertical_credit",
+     "legs": [
+      "SPY261030P00710000",
+      "SPY261030P00711000"
+     ],
+     "mandatory_signal": null,
+     "mark_at": "2026-09-28T14:50:00-04:00",
+     "mark_net": null,
+     "max_loss": "20.00",
+     "open_proposal_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "opened_at": "2026-09-28T10:00:00-04:00",
+     "realized_pl": null,
+     "status": "open",
+     "ticker": "SPY",
+     "unrealized_pct": -0.08333333333333333,
+     "unrealized_pl": "-15"
+    }
+   ],
+   "marks_at": "2026-09-28T14:50:00-04:00",
+   "stale_after_s": 1800,
+   "status": "open"
+  },
+  "status": 200
+ },
+ "/api/search": {
+  "body": {
+   "as_of": "<volatile>",
+   "matches": [],
+   "q": ""
+  },
+  "status": 200
+ },
+ "/api/snapshot": {
+  "body": {
+   "as_of": "<volatile>",
+   "db_path": "<volatile>",
+   "greeks": {
+    "at": "2026-09-28T14:50:00-04:00",
+    "beta_delta_cap": 201000.0,
+    "beta_dollar_delta": null,
+    "delta": 25.0,
+    "delta_by_underlying": {},
+    "dollar_delta": 14500.0,
+    "dollar_delta_cap": 100500.0,
+    "equity": 100500.0,
+    "gamma": -0.5,
+    "max_loss": 140.0,
+    "positions": 1,
+    "stale_after_s": 1800,
+    "theta": 4.2,
+    "valued": true,
+    "vega": -300.0,
+    "vega_cap_usd": 1005.0,
+    "vega_usd": -3.0
+   },
+   "halts": [
+    {
+     "active": true,
+     "actor": "arc:reconcile",
+     "at": "2026-09-28T14:00:00-04:00",
+     "cleared_at": null,
+     "cleared_by": null,
+     "id": "<id>",
+     "kind": "manual",
+     "reason": "reconciliation mismatch",
+     "scope": "all"
+    },
+    {
+     "active": false,
+     "actor": "U1",
+     "at": "2026-09-26T15:00:00-04:00",
+     "cleared_at": "2026-09-27T15:00:00-04:00",
+     "cleared_by": "U1",
+     "id": "<id>",
+     "kind": "manual",
+     "reason": "manual",
+     "scope": "all"
+    }
+   ],
+   "legs": [
+    {
+     "asset_class": "us_option",
+     "avg_entry_price": null,
+     "change_today": null,
+     "current_price": null,
+     "lastday_price": null,
+     "market_value": null,
+     "qty": "-2",
+     "side": "short",
+     "symbol": "SPY261030P00711000",
+     "unrealized_pl": "-20"
+    },
+    {
+     "asset_class": "us_option",
+     "avg_entry_price": null,
+     "change_today": null,
+     "current_price": null,
+     "lastday_price": null,
+     "market_value": null,
+     "qty": "2",
+     "side": "long",
+     "symbol": "SPY261030P00710000",
+     "unrealized_pl": "5"
+    }
+   ],
+   "ops": {
+    "health_at": null,
+    "health_status": null,
+    "open_alerts": [
+     {
+      "key": "tick_stale",
+      "kind": "tick_stale",
+      "message": "no tick for 20m",
+      "opened": "2026-09-28 15:00 EDT"
+     }
+    ],
+    "order_budget": null,
+    "tick_at": "2026-09-28T14:57:00-04:00",
+    "tick_status": "ok"
+   },
+   "pnl": {
+    "day_pnl": null,
+    "equity": "100400",
+    "equity_series": [
+     [
+      "2026-08-31",
+      "100000"
+     ],
+     [
+      "2026-09-25",
+      "100400"
+     ]
+    ],
+    "intraday_at": "2026-09-28T14:50:00-04:00",
+    "intraday_day_pnl": "100.0",
+    "intraday_equity": "100500.0",
+    "intraday_prev_close": "100400",
+    "intraday_prev_close_source": "arc_close",
+    "performance": {
+     "day_pct": 0.004,
+     "day_pnl": 400.0,
+     "equity": 100400.0,
+     "mtd_pct": 0.004,
+     "mtd_pnl": 400.0,
+     "ytd_pct": 0.004,
+     "ytd_pnl": 400.0
+    },
+    "realized": "10",
+    "reconcile_clean": true,
+    "reconciled_at": "2026-09-25T16:30:00-04:00",
+    "reconciled_day": "2026-09-25",
+    "total": "-5",
+    "unrealized": "-15"
+   },
+   "proposals": [
+    {
+     "approval": "approved",
+     "contracts": 2,
+     "created_at": "<volatile>",
+     "day": "2026-09-28",
+     "direction": "bullish",
+     "ev": "12.5",
+     "execution": "filled",
+     "fill_price": "-0.90",
+     "gate_passed": true,
+     "kind": "open",
+     "limit": "-0.90",
+     "pop": 0.62,
+     "proposal_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "structure_kind": "vertical_credit",
+     "ticker": "SPY",
+     "violations": []
+    },
+    {
+     "approval": null,
+     "contracts": 2,
+     "created_at": "<volatile>",
+     "day": "2026-09-28",
+     "direction": "bullish",
+     "ev": "12.5",
+     "execution": null,
+     "fill_price": null,
+     "gate_passed": false,
+     "kind": "open",
+     "limit": "-0.90",
+     "pop": 0.62,
+     "proposal_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+     "structure_kind": "vertical_credit",
+     "ticker": "QQQ",
+     "violations": [
+      "delta_cap: post-trade |\u0394| 400 > cap 300",
+      "stale_quote: SPY old"
+     ]
+    }
+   ],
+   "structures": [
+    {
+     "contracts": 2,
+     "entry_net": "-0.90",
+     "exit_pending": false,
+     "exit_reason": null,
+     "expiration": "2026-10-30",
+     "held": true,
+     "id": "<id>",
+     "kind": "vertical_credit",
+     "opened_at": "2026-09-28T10:00:00-04:00",
+     "status": "open",
+     "ticker": "SPY",
+     "unrealized_pl": "-15"
+    }
+   ],
+   "violation_counts": {
+    "delta_cap": 1,
+    "stale_quote": 1
+   },
+   "violations": [
+    {
+     "code": "delta_cap",
+     "decided_at": "2026-09-28T15:00:00-04:00",
+     "detail": "post-trade |\u0394| 400 > cap 300",
+     "kind": "open",
+     "proposal_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+     "ticker": "QQQ"
+    },
+    {
+     "code": "stale_quote",
+     "decided_at": "2026-09-28T15:00:00-04:00",
+     "detail": "SPY old",
+     "kind": "open",
+     "proposal_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+     "ticker": "QQQ"
+    }
+   ]
+  },
+  "status": 200
+ },
+ "/api/trades": {
+  "body": {
+   "as_of": "<volatile>",
+   "date_from": null,
+   "date_to": null,
+   "dir": "desc",
+   "filters": {
+    "account_profile": [],
+    "date": "all",
+    "date_from": null,
+    "date_to": null,
+    "exit_reason": [],
+    "kind": [],
+    "min_net_ev": null,
+    "min_pop": null,
+    "q": null,
+    "reason_code": [],
+    "sleeve": [],
+    "stage": [],
+    "structure": [],
+    "ticker": []
+   },
+   "items": [
+    {
+     "account_profile": null,
+     "approval": null,
+     "chain_run_id": null,
+     "closes_structure_id": null,
+     "contracts": 2,
+     "created_at": "<volatile>",
+     "day": "2026-09-28",
+     "direction": "bullish",
+     "entry_dte": 35,
+     "execution": null,
+     "exit_reason": null,
+     "fill_price": null,
+     "first_violation": "delta_cap: post-trade |\u0394| 400 > cap 300",
+     "gate_passed": false,
+     "kind": "open",
+     "legs": [
+      "SPY261030P00710000",
+      "SPY261030P00711000"
+     ],
+     "limit": "-0.9",
+     "net_ev": null,
+     "pop": 0.62,
+     "pop_hold": null,
+     "pop_managed": null,
+     "proposal_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+     "realized_pnl": null,
+     "run_id": null,
+     "sleeve": "swing",
+     "slippage_bps": null,
+     "stage": "gate_fail",
+     "structure_id": null,
+     "structure_kind": "vertical_credit",
+     "swap_id": null,
+     "ticker": "QQQ",
+     "violations": 2
+    },
+    {
+     "account_profile": null,
+     "approval": "approved",
+     "chain_run_id": null,
+     "closes_structure_id": null,
+     "contracts": 2,
+     "created_at": "<volatile>",
+     "day": "2026-09-28",
+     "direction": "bullish",
+     "entry_dte": 35,
+     "execution": "filled",
+     "exit_reason": null,
+     "fill_price": "-0.90",
+     "first_violation": null,
+     "gate_passed": true,
+     "kind": "open",
+     "legs": [
+      "SPY261030P00710000",
+      "SPY261030P00711000"
+     ],
+     "limit": "-0.9",
+     "net_ev": null,
+     "pop": 0.62,
+     "pop_hold": null,
+     "pop_managed": null,
+     "proposal_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "realized_pnl": null,
+     "run_id": null,
+     "sleeve": "swing",
+     "slippage_bps": 0.0,
+     "stage": "open",
+     "structure_id": "<id>",
+     "structure_kind": "vertical_credit",
+     "swap_id": null,
+     "ticker": "SPY",
+     "violations": 0
+    },
+    {
+     "account_profile": null,
+     "approval": null,
+     "chain_run_id": null,
+     "closes_structure_id": null,
+     "contracts": 2,
+     "created_at": "<volatile>",
+     "day": "2026-09-08",
+     "direction": "bullish",
+     "entry_dte": 35,
+     "execution": null,
+     "exit_reason": null,
+     "fill_price": null,
+     "first_violation": "halted: manual",
+     "gate_passed": false,
+     "kind": "open",
+     "legs": [
+      "SPY261030P00710000",
+      "SPY261030P00711000"
+     ],
+     "limit": "-0.9",
+     "net_ev": null,
+     "pop": 0.62,
+     "pop_hold": null,
+     "pop_managed": null,
+     "proposal_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+     "realized_pnl": null,
+     "run_id": null,
+     "sleeve": "swing",
+     "slippage_bps": null,
+     "stage": "gate_fail",
+     "structure_id": null,
+     "structure_kind": "vertical_credit",
+     "swap_id": null,
+     "ticker": "IWM",
+     "violations": 1
+    }
+   ],
+   "page": 1,
+   "size": 50,
+   "sort": "time",
+   "summary": {
+    "avg_net_ev": null,
+    "avg_slippage_bps": 0.0,
+    "count": 3,
+    "filled": 1,
+    "filled_pct": 0.3333333333333333,
+    "net_ev_realized": null,
+    "realized_count": 0,
+    "realized_pnl": null
+   },
+   "total": 3
+  },
+  "status": 200
+ },
+ "/api/trades/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {
+  "body": {
+   "approval": {
+    "channel": "log",
+    "decided_at": null,
+    "decided_by": null,
+    "expires_at": "2026-09-28T15:00:00-04:00",
+    "limit_price": null,
+    "message_ts": null,
+    "permalink": null,
+    "posted_at": "2026-09-28T15:00:00-04:00",
+    "reason": "",
+    "status": "approved",
+    "thread_ts": null,
+    "ttl_s": 0
+   },
+   "as_of": "<volatile>",
+   "context": {
+    "kinds": [],
+    "snapshot_ids": [],
+    "total": 0
+   },
+   "decisions": {
+    "chain_run_id": null,
+    "items": [],
+    "notes": [],
+    "persona_calls": {}
+   },
+   "execution": {
+    "attempts": 0,
+    "band_hi": "-0.85",
+    "band_lo": "-0.95",
+    "contracts": 2,
+    "detail": "",
+    "fill_price": "-0.90",
+    "filled_qty": 2,
+    "fills": [],
+    "finished_at": "2026-09-28T15:00:00-04:00",
+    "kind": "open",
+    "limit": "-0.9",
+    "max_steps": 3,
+    "mid": "-0.9",
+    "orders": [],
+    "slippage_vs_limit": "0.00",
+    "slippage_vs_mid": "0.00",
+    "started_at": "2026-09-28T15:00:00-04:00",
+    "status": "filled",
+    "steps_used": null,
+    "token_version": "arc2"
+   },
+   "exit_review": null,
+   "gate": [
+    {
+     "account_snapshot": {},
+     "decided_at": "2026-09-28T15:00:00-04:00",
+     "id": "<id>",
+     "passed": true,
+     "run_id": null,
+     "token_version": null,
+     "violations": []
+    }
+   ],
+   "header": {
+    "candidate_id": "<id>",
+    "closed_at": null,
+    "dte": 35,
+    "expires_at": "2026-09-28T15:00:00-04:00",
+    "legs": [
+     {
+      "intent": "long put",
+      "occ_symbol": "SPY261030P00710000",
+      "premium": "4.70",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short put",
+      "occ_symbol": "SPY261030P00711000",
+      "premium": "5.60",
+      "ratio": 1,
+      "side": "short"
+     }
+    ],
+    "lifecycle": "open",
+    "lifecycle_failed": null,
+    "opened_at": "2026-09-28T10:00:00-04:00",
+    "risk_narrative": "",
+    "row": {
+     "account_profile": null,
+     "approval": "approved",
+     "chain_run_id": null,
+     "closes_structure_id": null,
+     "contracts": 2,
+     "created_at": "<volatile>",
+     "day": "2026-09-28",
+     "direction": "bullish",
+     "entry_dte": 35,
+     "execution": "filled",
+     "exit_reason": null,
+     "fill_price": "-0.90",
+     "first_violation": null,
+     "gate_passed": true,
+     "kind": "open",
+     "legs": [
+      "SPY261030P00710000",
+      "SPY261030P00711000"
+     ],
+     "limit": "-0.9",
+     "net_ev": null,
+     "pop": 0.62,
+     "pop_hold": null,
+     "pop_managed": null,
+     "proposal_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "realized_pnl": null,
+     "run_id": null,
+     "sleeve": null,
+     "slippage_bps": 0.0,
+     "stage": "open",
+     "structure_id": "<id>",
+     "structure_kind": "vertical_credit",
+     "swap_id": null,
+     "ticker": "SPY",
+     "violations": 0
+    },
+    "thesis": "t"
+   },
+   "manifest": null,
+   "market": {
+    "at": null,
+    "atm_iv": null,
+    "candidate": {
+     "catalyst_date": null,
+     "catalyst_type": "t",
+     "confidence": 0.7,
+     "corroboration": null,
+     "created_at": "<volatile>",
+     "id": "<id>",
+     "run_id": null,
+     "sources": [],
+     "stance": "bullish",
+     "ticker": "SPY"
+    },
+    "hv20": null,
+    "ivr": null,
+    "legs": [],
+    "quotes_as_of": null,
+    "regime": null,
+    "regime_label": null,
+    "spot": null,
+    "subject": null
+   },
+   "outcome": {
+    "outcome": null,
+    "reviews": []
+   },
+   "payoff": {
+    "breakevens": [
+     710.1
+    ],
+    "contracts": 2,
+    "entry_spot": null,
+    "entry_spot_at": null,
+    "error": null,
+    "latest_spot": null,
+    "latest_spot_at": null,
+    "mark_at": null,
+    "mark_pnl": null,
+    "max_gain": 180.0,
+    "max_loss": 20.0,
+    "points": [
+     {
+      "pnl": -20.0,
+      "spot": 568.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 569.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 570.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 571.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 572.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 573.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 574.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 575.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 576.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 577.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 578.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 579.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 580.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 581.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 582.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 583.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 584.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 585.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 586.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 587.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 588.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 589.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 590.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 591.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 592.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 593.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 594.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 595.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 596.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 597.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 598.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 599.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 600.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 601.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 602.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 603.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 604.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 605.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 606.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 607.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 608.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 609.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 610.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 611.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 612.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 613.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 614.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 615.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 616.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 617.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 618.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 619.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 620.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 621.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 622.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 623.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 624.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 625.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 626.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 627.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 628.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 629.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 630.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 631.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 632.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 633.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 634.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 635.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 636.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 637.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 638.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 639.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 640.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 641.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 642.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 643.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 644.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 645.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 646.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 647.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 648.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 649.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 650.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 651.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 652.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 653.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 654.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 655.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 656.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 657.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 658.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 659.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 660.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 661.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 662.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 663.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 664.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 665.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 666.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 667.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 668.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 669.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 670.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 671.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 672.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 673.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 674.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 675.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 676.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 677.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 678.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 679.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 680.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 681.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 682.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 683.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 684.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 685.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 686.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 687.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 688.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 689.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 690.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 691.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 692.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 693.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 694.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 695.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 696.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 697.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 698.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 699.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 700.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 701.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 702.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 703.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 704.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 705.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 706.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 707.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 708.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 709.0
+     },
+     {
+      "pnl": -20.0,
+      "spot": 710.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 711.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 712.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 713.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 714.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 715.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 716.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 717.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 718.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 719.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 720.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 721.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 722.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 723.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 724.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 725.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 726.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 727.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 728.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 729.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 730.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 731.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 732.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 733.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 734.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 735.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 736.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 737.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 738.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 739.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 740.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 741.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 742.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 743.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 744.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 745.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 746.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 747.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 748.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 749.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 750.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 751.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 752.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 753.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 754.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 755.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 756.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 757.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 758.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 759.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 760.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 761.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 762.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 763.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 764.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 765.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 766.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 767.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 768.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 769.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 770.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 771.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 772.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 773.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 774.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 775.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 776.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 777.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 778.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 779.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 780.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 781.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 782.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 783.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 784.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 785.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 786.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 787.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 788.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 789.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 790.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 791.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 792.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 793.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 794.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 795.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 796.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 797.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 798.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 799.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 800.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 801.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 802.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 803.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 804.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 805.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 806.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 807.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 808.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 809.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 810.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 811.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 812.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 813.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 814.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 815.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 816.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 817.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 818.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 819.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 820.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 821.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 822.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 823.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 824.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 825.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 826.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 827.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 828.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 829.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 830.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 831.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 832.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 833.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 834.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 835.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 836.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 837.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 838.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 839.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 840.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 841.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 842.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 843.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 844.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 845.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 846.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 847.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 848.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 849.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 850.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 851.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 852.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 853.0
+     },
+     {
+      "pnl": 180.0,
+      "spot": 853.2
+     }
+    ]
+   },
+   "position": {
+    "close_net": null,
+    "closed_at": null,
+    "contracts": 2,
+    "days_held": null,
+    "entry_net": "-0.90",
+    "exit_pending": false,
+    "exit_reason": null,
+    "exits": [],
+    "floor_exit": null,
+    "open_proposal_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "opened_at": "2026-09-28T10:00:00-04:00",
+    "realized_pnl": null,
+    "status": "open",
+    "structure_id": "<id>",
+    "swaps": [],
+    "ticker": "SPY"
+   },
+   "quant": {
+    "analytics": null,
+    "analytics_at": null,
+    "analytics_error": null,
+    "buying_power": "10.00",
+    "contracts": 2,
+    "cost_bps": 0.0,
+    "dte": 35,
+    "ev": "12.5",
+    "levels_text": null,
+    "max_gain": "90.00",
+    "max_loss": "10.00",
+    "net_ev_hold": null,
+    "net_ev_managed": null,
+    "notional": "140",
+    "pct_equity": 0.01,
+    "pop": 0.62,
+    "pop_hold": null,
+    "pop_managed": null
+   }
+  },
+  "status": 200
+ },
+ "/api/trades/filters": {
+  "body": {
+   "account_profiles": [],
+   "as_of": "<volatile>",
+   "date_presets": [
+    "today",
+    "7d",
+    "30d",
+    "mtd",
+    "ytd",
+    "all",
+    "custom"
+   ],
+   "exit_reasons": [],
+   "kinds": [
+    "open"
+   ],
+   "reason_codes": [],
+   "sleeves": [
+    "short",
+    "swing",
+    "other"
+   ],
+   "sort_keys": [
+    "time",
+    "ticker",
+    "contracts",
+    "limit",
+    "net_ev",
+    "pop",
+    "slippage_bps",
+    "realized_pnl"
+   ],
+   "stages": [
+    "proposed",
+    "gate_pass",
+    "gate_fail",
+    "approved",
+    "rejected",
+    "expired",
+    "filled",
+    "cancelled",
+    "open",
+    "closed"
+   ],
+   "structures": [
+    "vertical_credit"
+   ],
+   "tickers": [
+    "IWM",
+    "QQQ",
+    "SPY"
+   ]
+  },
+  "status": 200
+ }
+}
