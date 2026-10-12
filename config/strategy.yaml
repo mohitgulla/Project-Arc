@@ -72,6 +72,19 @@ oi_walls:                       # max call OI above / put OI below spot, swing-s
   enabled: on                   # key oi_walls.enabled
   min_oi: 500                   # a strike below this summed OI is never a wall
 
+# E23.1 (D98): range-edge entry filter. In a sideways regime a bullish/bearish
+# long-premium idea is kept only from the right edge of its range (bullish near the
+# bottom, bearish near the top); a mid-range (or wrong-edge) idea is dropped
+# (`mid_range_entry`). Neutral ideas, credit-capable profiles, trending regimes and
+# missing technicals are kept. Shipped on (D86); `enabled: off` = rollback (byte-identical).
+range_edges:
+  enabled: on                   # key personas.range_edges
+  regimes: [sideways]           # regime.current labels the rule applies to
+  levels: value_area            # value_area: vp_pos (VAL..VAH, outside = that edge) | high_low: range_pos_20d
+  bull_max_pos: 0.35            # bullish idea kept only when pos <= this
+  bear_min_pos: 0.65            # bearish idea kept only when pos >= this
+  min_range_atr: 1.5            # range width / ATR14 below this = no usable range: rule skipped (idea kept)
+
 # E16.4 (D76/D83): one code-rendered `Market health (…)` line in Research's market block.
 # The market_health job writes its daily read whatever this says. The thresholds only
 # label that line (never a gate or pipeline input). Percentiles are 1-year (252 prior

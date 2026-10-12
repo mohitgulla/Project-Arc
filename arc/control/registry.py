@@ -2874,6 +2874,78 @@ _LEVELS_TUNABLES: tuple[Tunable, ...] = (
     ),
 )
 
+# E23.1 (D98): the range-edge entry filter (strategy.yaml `range_edges:`). Shipped on
+# (D86); off = rollback. A higher bull bar, a lower bear bar or a wider minimum range
+# keeps more mid-range entries: riskier.
+_RANGE_EDGES_TUNABLES: tuple[Tunable, ...] = (
+    Tunable(
+        key="personas.range_edges",
+        group=Group.ROUTINES,
+        type=ValueType.CHOICE,
+        description="E23.1: in a sideways regime, drop a bullish/bearish long-premium idea "
+        "that starts mid-range (bullish kept near the range bottom, bearish near the top; "
+        "range_edges.* thresholds; journaled mid_range_entry). Deterministic, never a gate "
+        "input. off = rollback (pipeline as before E23.1).",
+        target=Target.STRATEGY,
+        risk=Risk.ORDER,
+        path=("range_edges", "enabled"),
+        choices=("on", "off"),
+        aliases=("range_edges",),
+    ),
+    Tunable(
+        key="range_edges.levels",
+        group=Group.ROUTINES,
+        type=ValueType.CHOICE,
+        description="E23.1: the range the position is read in: value_area = E23.0 volume "
+        "profile VAL..VAH (vp_pos; falls back to high_low when missing), high_low = the "
+        "20-session low..high (range_pos_20d).",
+        target=Target.STRATEGY,
+        risk=Risk.ANY,
+        path=("range_edges", "levels"),
+        choices=("value_area", "high_low"),
+    ),
+    Tunable(
+        key="range_edges.bull_max_pos",
+        group=Group.ROUTINES,
+        type=_F,
+        description="E23.1: a bullish idea is kept only at or below this position in its "
+        "range (0 = the low edge).",
+        target=Target.STRATEGY,
+        risk=Risk.UP,
+        path=("range_edges", "bull_max_pos"),
+        min=0.1,
+        max=0.5,
+        hard_ceiling=0.5,
+    ),
+    Tunable(
+        key="range_edges.bear_min_pos",
+        group=Group.ROUTINES,
+        type=_F,
+        description="E23.1: a bearish idea is kept only at or above this position in its "
+        "range (1 = the high edge).",
+        target=Target.STRATEGY,
+        risk=Risk.DOWN,
+        path=("range_edges", "bear_min_pos"),
+        min=0.5,
+        max=0.9,
+        hard_ceiling=0.5,
+    ),
+    Tunable(
+        key="range_edges.min_range_atr",
+        group=Group.ROUTINES,
+        type=_F,
+        description="E23.1: a range narrower than this many ATR14 is noise: the rule is "
+        "skipped and the idea kept.",
+        target=Target.STRATEGY,
+        risk=Risk.UP,
+        path=("range_edges", "min_range_atr"),
+        unit="ATR",
+        min=0.5,
+        max=5.0,
+        hard_ceiling=5.0,
+    ),
+)
+
 REGISTRY: dict[str, Tunable] = {
     t.key: t
     for t in (
@@ -2888,6 +2960,7 @@ REGISTRY: dict[str, Tunable] = {
         *_IV_BACKFILL_TUNABLES,
         *_ANTI_CHASE_TUNABLES,
         *_LEVELS_TUNABLES,
+        *_RANGE_EDGES_TUNABLES,
         *_MARKET_HEALTH_TUNABLES,
         *_OPTIONS_FAST_TUNABLES,
         *_CARRYOVER_TUNABLES,
@@ -3331,6 +3404,7 @@ _STRATEGY_SWITCHES = frozenset(
         ("market_health_context", "enabled"),  # E16.4
         ("volume_profile", "enabled"),  # E23.0 (D98)
         ("oi_walls", "enabled"),  # E23.0 (D98)
+        ("range_edges", "enabled"),  # E23.1 (D98)
     }
 )
 # E20.3: choice switches in strategy.yaml (E12.5) -> the control value when absent.

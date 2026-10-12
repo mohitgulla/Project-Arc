@@ -38,10 +38,14 @@ __all__ = [
     "MIN_TECH_BARS",
     "RSI_PERIOD",
     "AntiChaseRule",
+    "RangeEdgeRule",
+    "RangeVerdict",
     "StretchVerdict",
     "TechnicalFeatures",
     "compute_technicals",
+    "is_mid_range",
     "is_stretched",
+    "range_position",
     "session_vwap",
     "squeeze_series",
     "vwap_stretch_atr",
@@ -142,6 +146,10 @@ class TechnicalFeatures(BaseModel):
     oi_max_strike: float | None = Field(None, description="Max total-OI strike")
     dist_call_wall_atr: float | None = Field(None, description="(call wall - close) / ATR14")
     dist_put_wall_atr: float | None = Field(None, description="(close - put wall) / ATR14")
+    # E23.1 (D98): position in the 20-session high/low range (regime v6; None on older rows).
+    range_pos_20d: float | None = Field(
+        None, ge=0.0, le=1.0, description="(close - low20) / (high20 - low20), clipped to [0, 1]"
+    )
     missing: list[str] = Field(default_factory=list)
 
 
@@ -239,6 +247,19 @@ def _sma(closes: np.ndarray, n: int) -> float | None:
 
 def _pct(a: float | None, b: float | None) -> float | None:
     return None if a is None or b is None or b <= 0 else a / b - 1.0
+
+
+def range_position(close: float | None, low: float | None, high: float | None) -> float | None:
+    """E23.1 (D98): ``(close - low) / (high - low)`` clipped to [0, 1].
+
+    ``None`` when any input is missing or not finite, or the range is empty
+    (``high <= low``).
+    """
+    if close is None or low is None or high is None:
+        return None
+    if not all(math.isfinite(x) for x in (close, low, high)) or high <= low:
+        return None
+    return min(1.0, max(0.0, (close - low) / (high - low)))
 
 
 def _div(a: float | None, b: float | None) -> float | None:
@@ -347,6 +368,7 @@ def compute_technicals(
         stretch_atr=None if sma20 is None or atr_pos is None else (close - sma20) / atr_pos,
         high20=high20,
         low20=low20,
+        range_pos_20d=range_position(close, low20, high20),
         dist_high20_atr=None if high20 is None or atr_pos is None else (high20 - close) / atr_pos,
         dist_low20_atr=None if low20 is None or atr_pos is None else (close - low20) / atr_pos,
         pct_from_52w_high=_pct(close, hi52),
@@ -537,6 +559,141 @@ def is_stretched(
         vwap_stretch_atr=vwap_stretch,
         rule=cfg,
     )
+
+
+# ---------------------------------------------------------------------------
+# E23.1 (D98): range-edge entry filter for sideways regimes (pure)
+# ---------------------------------------------------------------------------
+
+RangeLevels = Literal["value_area", "high_low"]
+RangeStatus = Literal["ok", "mid_range", "too_narrow", "missing", "not_applicable"]
+
+
+class RangeEdgeRule(BaseModel):
+    """Thresholds of the range-edge rule (D98 defaults; ``config/strategy.yaml range_edges:``).
+
+    In a regime listed in ``regimes`` a bullish long-premium idea is kept only when the
+    close sits at or below ``bull_max_pos`` of its range, a bearish one only at or above
+    ``bear_min_pos``. ``levels: value_area`` reads ``vp_pos`` (VAL..VAH, unclipped, so a
+    close outside the value area is that edge); ``high_low`` reads ``range_pos_20d``
+    (20-session low..high). A range narrower than ``min_range_atr`` x ATR14 is noise:
+    the rule is skipped.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    regimes: tuple[str, ...] = ("sideways",)
+    levels: RangeLevels = "value_area"
+    bull_max_pos: float = Field(0.35, ge=0.0, le=0.5)
+    bear_min_pos: float = Field(0.65, ge=0.5, le=1.0)
+    min_range_atr: float = Field(1.5, ge=0.0, le=10.0)
+
+
+class RangeVerdict(BaseModel):
+    """The range-edge rule's outcome for one idea, with the numbers it read (journal payload)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    status: RangeStatus
+    direction: Direction | None = None
+    regime: str | None = None
+    levels: RangeLevels | None = Field(None, description="The level source actually used")
+    vp_missing: bool = Field(False, description="value_area asked, no VA: fell back to high_low")
+    pos: float | None = Field(None, description="Close's position in the range (VA: unclipped)")
+    low: float | None = None
+    high: float | None = None
+    width_atr: float | None = Field(None, description="(high - low) / ATR14")
+    missing: list[str] = Field(default_factory=list)
+    rule: RangeEdgeRule
+
+    @property
+    def mid_range(self) -> bool:
+        return self.status == "mid_range"
+
+    def text(self) -> str:
+        """One plain line for the journal, e.g. ``0.52 of the value area 178.9–186.1 …``."""
+        if self.status == "not_applicable":
+            return "rule not applicable (not directional or regime not ranged)"
+        if self.status == "missing":
+            return "technicals missing: " + ", ".join(self.missing)
+        span = "value area" if self.levels == "value_area" else "20-day range"
+        band = ""
+        if self.low is not None and self.high is not None:
+            band = f" {self.low:.2f}–{self.high:.2f}"
+        if self.status == "too_narrow":
+            return (
+                f"{span}{band} is {self.width_atr:.2f} ATR wide "
+                f"(< {self.rule.min_range_atr:g}): rule skipped"
+            )
+        bull = self.direction == "bullish"
+        lim = f"keep ≤ {self.rule.bull_max_pos:g}" if bull else f"keep ≥ {self.rule.bear_min_pos:g}"
+        where = "mid-range" if self.status == "mid_range" else "at the edge"
+        return f"{where}: {self.pos:.2f} of the {span}{band} ({lim})"
+
+
+def is_mid_range(
+    tech: TechnicalFeatures | None,
+    regime_label: str | None,
+    stance: str,
+    rule: RangeEdgeRule,
+) -> RangeVerdict:
+    """Is a directional long-premium idea starting from the middle of a sideways range?
+
+    ``not_applicable`` for a non-directional stance or a regime outside
+    ``rule.regimes``. ``missing`` (never a drop) when the position or ATR14 can't be
+    read. ``too_narrow`` when the range is under ``min_range_atr`` x ATR14 (kept).
+    ``mid_range`` when a bullish close is above ``bull_max_pos`` (a bearish one below
+    ``bear_min_pos``); that includes the wrong edge. The caller decides that the idea
+    is long premium only.
+    """
+    s = stance.strip().lower()
+    label = (regime_label or "").strip().lower() or None
+    if s not in ("bullish", "bearish") or label is None or label not in rule.regimes:
+        return RangeVerdict(status="not_applicable", regime=label, rule=rule)
+    bull = s == "bullish"
+    direction: Direction = "bullish" if bull else "bearish"
+    if tech is None:
+        return RangeVerdict(
+            status="missing", direction=direction, regime=label, missing=["technicals"], rule=rule
+        )
+    levels: RangeLevels = rule.levels
+    vp_missing = False
+    pos = low = high = None
+    if levels == "value_area":
+        val, vah = tech.vp_val, tech.vp_vah
+        if val is not None and vah is not None and vah > val:
+            low, high = val, vah
+            pos = tech.vp_pos if tech.vp_pos is not None else (tech.close - val) / (vah - val)
+        else:
+            vp_missing, levels = True, "high_low"
+    if levels == "high_low":
+        low, high = tech.low20, tech.high20
+        pos = tech.range_pos_20d
+        if pos is None:  # a pre-E23.1 entry: same number from the stored fields
+            pos = range_position(tech.close, low, high)
+    missing: list[str] = []
+    if pos is None or low is None or high is None:
+        missing.append("range_pos_20d" if levels == "high_low" else "vp_pos")
+    atr = tech.atr14
+    if atr is None or atr <= 0:
+        missing.append("atr14")
+    base = {
+        "direction": direction,
+        "regime": label,
+        "levels": levels,
+        "vp_missing": vp_missing,
+        "pos": pos,
+        "low": low,
+        "high": high,
+        "rule": rule,
+    }
+    if missing or pos is None or low is None or high is None or atr is None:
+        return RangeVerdict(status="missing", missing=missing, **base)
+    width = (high - low) / atr
+    if width < rule.min_range_atr:
+        return RangeVerdict(status="too_narrow", width_atr=width, **base)
+    mid = pos > rule.bull_max_pos if bull else pos < rule.bear_min_pos
+    return RangeVerdict(status="mid_range" if mid else "ok", width_atr=width, **base)
 
 
 def session_vwap(bars: Iterable[IntradayBar], *, start: dt.time, end: dt.datetime) -> float | None:

@@ -1097,6 +1097,50 @@ class OiWallsSettings(BaseModel):
         return parse_on_off(v, where="oi_walls.enabled")
 
 
+class RangeEdgesSettings(BaseModel):
+    """E23.1 (D98): the range-edge entry filter for sideways regimes.
+
+    After Research ranks (and after anti-chase), a bullish / bearish idea whose account
+    profile maps it to long premium only, in a regime listed in ``regimes``, is kept only
+    from the right edge of its range: bullish at position <= ``bull_max_pos``, bearish at
+    >= ``bear_min_pos``; otherwise dropped as ``mid_range_entry``. ``levels:
+    value_area`` (default) reads the E23.0 volume-profile ``vp_pos`` (outside the value
+    area counts as that edge); ``high_low`` reads the 20-session ``range_pos_20d``. A
+    missing value area falls back to ``high_low`` (journaled ``vp_missing``); missing
+    technicals keep the idea (``technicals_missing``); a range narrower than
+    ``min_range_atr`` x ATR14 keeps it (``range_too_narrow``). Shipped **on** (D86);
+    ``enabled: off`` is the rollback: the pipeline is byte-identical to before E23.1.
+    Deterministic, never a gate input. The rule is
+    :func:`arc.features.technicals.is_mid_range`.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    enabled: bool = False
+    regimes: tuple[Literal["bull", "bear", "sideways"], ...] = ("sideways",)
+    levels: Literal["value_area", "high_low"] = "value_area"
+    bull_max_pos: Annotated[float, Field(ge=0.0, le=0.5)] = 0.35
+    bear_min_pos: Annotated[float, Field(ge=0.5, le=1.0)] = 0.65
+    min_range_atr: Annotated[float, Field(ge=0.0, le=10.0)] = 1.5
+
+    @field_validator("enabled", mode="before")
+    @classmethod
+    def _enabled(cls, v: Any) -> bool:
+        return parse_on_off(v, where="range_edges.enabled")
+
+    def rule(self) -> Any:
+        """The pure rule's thresholds (:class:`arc.features.technicals.RangeEdgeRule`)."""
+        from arc.features.technicals import RangeEdgeRule
+
+        return RangeEdgeRule(
+            regimes=tuple(self.regimes),
+            levels=self.levels,
+            bull_max_pos=self.bull_max_pos,
+            bear_min_pos=self.bear_min_pos,
+            min_range_atr=self.min_range_atr,
+        )
+
+
 class RoutinesConfig(BaseModel):
     """Top-level ``config/routines.yaml``."""
 
@@ -1155,6 +1199,8 @@ class RoutinesConfig(BaseModel):
     # E23.0 (D98): levels on regime technicals (strategy.yaml blocks)
     volume_profile: VolumeProfileSettings = Field(default_factory=VolumeProfileSettings)
     oi_walls: OiWallsSettings = Field(default_factory=OiWallsSettings)
+    # E23.1 (D98): the range-edge entry filter (strategy.yaml `range_edges:`)
+    range_edges: RangeEdgesSettings = Field(default_factory=RangeEdgesSettings)
 
     @model_validator(mode="before")
     @classmethod

@@ -696,6 +696,21 @@
           "default": null,
           "title": "Prev Low"
         },
+        "range_pos_20d": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "(close - low20) / (high20 - low20), clipped to [0, 1]",
+          "title": "Range Pos 20D"
+        },
         "realised_atr_move_20d": {
           "anyOf": [
             {
@@ -1141,7 +1156,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "Regime + vol features for one underlying (E4.3).\n\nv4 (E16.2, D76): ``technicals`` (defaulted ``None``), so v3 rows still validate.\nv5 (E23.0, D98): ``technicals`` gains the volume-profile / OI-wall fields (all\ndefaulted ``None``), so v4 rows still validate.",
+  "description": "Regime + vol features for one underlying (E4.3).\n\nv4 (E16.2, D76): ``technicals`` (defaulted ``None``), so v3 rows still validate.\nv5 (E23.0, D98): ``technicals`` gains the volume-profile / OI-wall fields (all\ndefaulted ``None``), so v4 rows still validate.\nv6 (E23.1, D98): ``technicals.range_pos_20d`` (defaulted ``None``), so v5 rows\nstill validate.",
   "properties": {
     "as_of": {
       "description": "Session date (ET); uses data up to that close only",

@@ -413,8 +413,8 @@ class TestSnapshot:
         assert f"technicals: need {MIN_TECH_BARS} OHLC bars" in snap.warnings
         assert build_snapshot("X", df["close"], df.index[-1]).technicals is None
 
-    def test_regime_kind_v5_round_trip_and_old_rows_load(self) -> None:
-        assert KINDS["regime"].schema_version == 5  # E23.0 (D98): level fields
+    def test_regime_kind_v6_round_trip_and_old_rows_load(self) -> None:
+        assert KINDS["regime"].schema_version == 6  # E23.1 (D98): range_pos_20d
         snap = build_snapshot_from_bars("NVDA", _bars_from(_nvda()), AS_OF, benchmark=_spy())
         stored = json.loads(
             json.dumps(RegimePayload.model_validate(snap.model_dump()).model_dump(mode="json"))
@@ -438,6 +438,12 @@ class TestSnapshot:
         assert "vp_poc" not in v4["technicals"]
         back4 = validate_payload("regime", v4)
         assert back4.technicals is not None and back4.technicals.vp_poc is None  # type: ignore[attr-defined]
+        # a v5 row (technicals without range_pos_20d) still validates
+        assert stored["technicals"]["range_pos_20d"] is not None
+        v5 = json.loads(json.dumps(stored))
+        v5["technicals"].pop("range_pos_20d")
+        back5 = validate_payload("regime", v5)
+        assert back5.technicals.range_pos_20d is None  # type: ignore[attr-defined]
 
     def test_extra_fields_rejected(self) -> None:
         f = compute_technicals(_nvda(), AS_OF)
