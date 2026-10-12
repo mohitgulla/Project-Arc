@@ -158,6 +158,19 @@ class TestHelpers:
         text = 'Sure!\n```json\n{"candidates": [{"x": {"y": 1}}]}\n```\nDone.'
         assert extract_json_object(text) == {"candidates": [{"x": {"y": 1}}]}
 
+    @pytest.mark.parametrize(
+        "text",
+        [
+            '{"a": {"b": 1}}\n\nNote: tickers verified.',  # trailing chatter
+            '{"a": {"b": 1}}\n}',  # stray closing brace
+            '```json\n{"a": {"b": 1}}\n```\n```json\n{"a": 2}\n```',  # second object
+        ],
+    )
+    def test_extract_json_ignores_trailing_text(self, text: str) -> None:
+        # 2026-10-12 Warrior Trading brief: "Extra data: line 149 column 1" from the
+        # first-{ .. last-} slice when the model appended text after the object.
+        assert extract_json_object(text) == {"a": {"b": 1}}
+
     @pytest.mark.parametrize("text", ["no json here", "} backwards {", "{not: json}"])
     def test_extract_json_errors(self, text: str) -> None:
         with pytest.raises(ValueError):
