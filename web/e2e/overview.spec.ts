@@ -208,6 +208,11 @@ for (const vp of [PHONE_75, { name: "desktop", width: 1440, height: 900 }] as co
         // below 480 px: Account | Trading, Orders | Tick, Health | Alerts.
         const rows = vp.width < 480 ? [[0, 2], [2, 4], [4, 6]] : [[0, 2], [2, 6]];
         for (const [a, z] of rows) expect(new Set(boxes.slice(a, z).map((b) => b.top)).size).toBe(1);
+        // D99: no slot text is truncated (`Orders 0/…` was clipped at 520 px)
+        const clipped = await page
+          .locator("[data-testid=status-slots] span.truncate")
+          .evaluateAll((els) => els.filter((e) => e.scrollWidth > e.clientWidth).map((e) => (e as HTMLElement).innerText));
+        expect(clipped).toEqual([]);
       }
     });
   });
