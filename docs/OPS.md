@@ -712,6 +712,35 @@ tower's ops strip and the monitor heartbeat carry the same numbers. Tunables:
 `order_budget.daily_max|restrict_at|close_reserve` plus the `order_budget.restrictive.*`
 knobs (see `!arc config execution`). Raising the cap is the riskier direction (confirm step).
 
+**Shared experiment account (D69, E15.3).** Treatment arms on the shared `ALPACA_EXP_*`
+account split its 200 orders. Each arm's effective settings carry its **slice** as
+`order_budget.daily_max`: `order_budget.per_arm` when set, else
+`floor(200 / experiments.runner.max_parallel_arms)` (20 at the default 10 arms). Its
+`restrict_at` and `close_reserve` scale by the same fraction (restrictive at 10, opens stop
+at 17, reserve rounded up to 3). An arm counts only the account's option orders tagged with
+its arm code (`arc2.<code>.…`), read in the same broker call as the whole account's count.
+The **account guard** (`order_budget_account_max` = control's `daily_max`, derived, never
+set by hand) stops every arm once the account has 200 option orders today, whatever each
+slice says; the ladder journals `order:budget_exhausted` with "shared account order cap
+reached". Control and dedicated-mode arms are unchanged. `arc budget status --arm
+<XP-n:arm | arm> [--db <control store>]` prints the arm line and the account line.
+
+**Alpaca rate bucket (D69).** Every REST call of a shared-mode arm draws from one
+file-locked token bucket per account key (`data/locks/alpaca-<last4>.bucket`), shared by all
+arm processes: `alpaca_rate_per_min` (default 180, Alpaca allows 200) with a burst of
+rate/10. Order submits (`POST /v2/orders`) take a token whenever one is left; reads leave a
+quarter of the burst for submits. A 429 empties the bucket (every arm backs off) and logs
+`alpaca.rate_limited` with the bucket state.
+
+**Cross-arm conflicts (D69).** Before each submit a shared-mode arm checks the account:
+an order opposite to another arm's working order on the same contract (Alpaca rejects it
+as a wash trade, 403 `40310000`), or one that would cross another arm's position beyond
+this arm's own holding, is **refused** before the broker and journalled
+`order:cross_arm_conflict` (`source: pre_check`). No netting, no simulated fills; closing an
+arm's own position never conflicts. A wash-trade 403 that still comes back is journalled
+the same way (`source: broker_403`). If the account can't be read the order is refused
+(`cross_arm_unchecked`). The arm report counts both as `cross_arm_conflicts`.
+
 ### 5.10 Auto-approve and in-chain Execute (E6.6, D34)
 
 `auto_approve` is one switch per environment, both **off** by default. When it is on for the

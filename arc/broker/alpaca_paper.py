@@ -36,7 +36,7 @@ from arc.broker.base import (
     Fill,
     MlegOrder,
 )
-from arc.broker.http import install_timeouts
+from arc.broker.http import TimeoutSession, install_timeouts
 
 if TYPE_CHECKING:
     from arc.broker.registry import BrokerInfo
@@ -272,6 +272,18 @@ class AlpacaPaperBroker:
         _require_paper()
         self._client = client or _make_client(api_key, secret_key, timeouts=timeouts)
         self._account_label = account_label
+        #: the key id (never the secret): names the D69 rate bucket file
+        self.key_id = api_key if api_key is not None else os.environ.get("ALPACA_API_KEY", "")
+        self.rate_bucket: Any = None
+
+    def use_rate_bucket(self, bucket: Any) -> None:
+        """D69 (E15.3): draw every REST call from *bucket* (the account's shared bucket)."""
+        session = getattr(self._client, "_session", None)
+        if not isinstance(session, TimeoutSession):
+            connect_s, read_s = _default_timeouts()
+            session = install_timeouts(self._client, connect_s=connect_s, read_s=read_s)
+        session.bucket = bucket
+        self.rate_bucket = bucket
 
     # -- identity (E13.11: registered as alpaca/paper/rest) -------------------
 

@@ -636,6 +636,44 @@ class VirtualBroker:
 
         return [f for f in out if parse_order_id(f.client_order_id).arm_code == self.arm_code]
 
+    # -- shared mode: account limits (E15.3, D69) -----------------------------------------
+
+    def option_orders_split(self, since: _dt.datetime) -> tuple[list[Any], list[Any] | None]:
+        """D32 budget on a shared account: ``(this arm's option orders, the account's)``.
+
+        One broker call. The arm's are those whose ``client_order_id`` carries its arm
+        code (E15.2's parser); dedicated mode: ``(the account's, None)`` as before.
+        """
+        everyone = list(self.inner.option_orders_since(since))  # type: ignore[attr-defined]
+        if not self.shared:
+            return everyone, None
+        from arc.execution.submission import parse_order_id
+
+        mine = [o for o in everyone if parse_order_id(o.client_order_id).arm_code == self.arm_code]
+        return mine, everyone
+
+    def cross_arm_conflict(self, order: Any) -> str | None:
+        """D69: why *order* would cross another arm on the shared account, else None.
+
+        Reads the account's open orders (``raw_orders`` since today's ET midnight) and the
+        attributed holdings (:meth:`book`), then :func:`arc.experiments.conflict.find_conflict`.
+        Dedicated mode: never (the arm owns the account).
+        """
+        if not self.shared:
+            return None
+        from arc.experiments.conflict import find_conflict, open_legs
+
+        now = self._now().astimezone(ET)
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        orders = self.inner.raw_orders(start)  # type: ignore[attr-defined]
+        held = self.book(refresh=True).attribution.held
+        return find_conflict(
+            order,
+            other_open=open_legs(orders, exclude_code=self.arm_code),
+            other_held={a: h for a, h in held.items() if a != self.arm_id},
+            own_held=held.get(self.arm_id, {}),
+        )
+
     # -- shared mode: account-wide write calls stay inside the arm ----------------------
 
     def _own_order(self, client_order_id: str | None) -> None:

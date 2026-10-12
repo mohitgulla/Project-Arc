@@ -71,8 +71,9 @@ if TYPE_CHECKING:
 __all__ = ["MULTI_REPORT_VERSION", "build_multi_report", "cross_arm_conflicts"]
 
 MULTI_REPORT_VERSION = 2
-#: E15.3 adds the reason code; until then any code named ``cross_arm_conflict`` (bare
-#: or namespaced, e.g. ``execution:cross_arm_conflict``) is counted.
+#: E15.3's ``ReasonCode.CROSS_ARM_CONFLICT`` is ``order:cross_arm_conflict`` (both the
+#: pre-check refusal and the mapped Alpaca 403 ``40310000``); any code named
+#: ``cross_arm_conflict`` (bare or namespaced) is counted.
 CROSS_ARM_CONFLICT = "cross_arm_conflict"
 
 

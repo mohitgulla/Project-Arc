@@ -58,9 +58,16 @@ from arc.execution.resolve import (
     ResolvedSubmit,
     api_status_code,
     is_transport_error,
+    is_wash_trade_rejection,
     resolve_unknown_submit,
 )
-from arc.execution.submission import SubmitRefused, attempt_order_id, broker_arm_code, submit
+from arc.execution.submission import (
+    RefusalCode,
+    SubmitRefused,
+    attempt_order_id,
+    broker_arm_code,
+    submit,
+)
 from arc.gate.band import PriceBand
 from arc.gate.rules import proposal_hash as hash_proposal
 from arc.gate.ticks import TickGrid, legs_grid
@@ -353,13 +360,15 @@ def _attempt(c: _Ctx, step: int, price: Decimal) -> tuple[AttemptRecord, str]:
     except SubmitRefused as exc:
         c.move(order_id, OrderState.CANCELLED, f"{REFUSED_DETAIL_PREFIX}: {exc}")
         a.status = "refused"
+        cross = exc.code is RefusalCode.CROSS_ARM_CONFLICT
         c.journal(
             Choice.REJECTED,
-            ReasonCode.ORDER_REFUSED,
+            ReasonCode.CROSS_ARM_CONFLICT if cross else ReasonCode.ORDER_REFUSED,
             str(exc),
             step=step,
             limit=str(price),
             refusal=str(exc.code),
+            source="pre_check" if cross else None,
         )
         return a, "refused"
     except Exception as exc:  # noqa: BLE001 - D71: the order may exist; resolve it
@@ -460,7 +469,16 @@ def _unknown_submit(c: _Ctx, a: AttemptRecord, exc: Exception) -> str:
         a.status = "rejected"
         a.detail = f"broker rejected step {a.step} on submit: {error}"
         c.move(a.order_id, OrderState.CANCELLED, a.detail)
-        c.journal(Choice.REJECTED, ReasonCode.ORDER_REJECTED, a.detail, **facts)
+        if is_wash_trade_rejection(exc):  # D69: Alpaca 403 40310000 = another arm's order
+            c.journal(
+                Choice.REJECTED,
+                ReasonCode.CROSS_ARM_CONFLICT,
+                a.detail,
+                source="broker_403",
+                **facts,
+            )
+        else:
+            c.journal(Choice.REJECTED, ReasonCode.ORDER_REJECTED, a.detail, **facts)
         return "rejected"
     if res.outcome == "absent":
         a.status = "cancelled"
@@ -576,12 +594,22 @@ def _fresh_band(
 
 
 def _budget_blocks(c: _Ctx, kind: str) -> str | None:
-    """D32: re-count the day's orders; the reason the next attempt may not be sent, or None."""
+    """D32: re-count the day's orders; the reason the next attempt may not be sent, or None.
+
+    D69: on a shared-account arm the count is the arm's slice plus the account guard.
+    """
     cfg = OrderBudgetConfig.from_settings(c.config)
     day = c.clock().astimezone(ET).date()
-    count = count_orders(c.conn, c.broker, day, exclude_proposal_hash=c.phash)
+    count = count_orders(
+        c.conn, c.broker, day, exclude_proposal_hash=c.phash, account_max=cfg.account_max
+    )
     if can_submit(count.used, cfg, kind=kind, attempts=1):
         return None
+    if count.account_blocked:
+        return (
+            f"shared account order cap reached ({count.account} of {count.account_max} "
+            "option orders on the account today)"
+        )
     cap = cfg.daily_max if kind == "close" else cfg.open_limit
     return f"order budget exhausted ({count.used} of {cap} {kind} orders used today)"
 

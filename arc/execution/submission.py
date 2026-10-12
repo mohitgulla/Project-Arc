@@ -126,6 +126,8 @@ class RefusalCode(StrEnum):
     BAD_TIME = "bad_time"
     VENUE_SINGLE_LEG_ONLY = "venue_single_leg_only"
     OFF_GRID = "off_grid"
+    CROSS_ARM_CONFLICT = "cross_arm_conflict"  # D69: opposite side of another arm
+    CROSS_ARM_UNCHECKED = "cross_arm_unchecked"  # D69: the shared account could not be read
 
 
 class SubmitRefused(Exception):
@@ -195,6 +197,29 @@ def broker_arm_code(broker: object) -> str | None:
     """The arm code a broker tags its orders with (a shared-mode arm broker), else None."""
     code = getattr(broker, "arm_code", None)
     return code if isinstance(code, str) else None
+
+
+def _cross_arm_check(broker: object, order: MlegOrder, *, step: int) -> None:
+    """D69 (E15.3): refuse an order opposite to another arm on the shared account.
+
+    Only a shared-mode arm broker (one with an arm code) exposes ``cross_arm_conflict``;
+    every other broker skips this. A failed account read refuses too (fail closed:
+    an unseen conflict would cross at the broker).
+    """
+    if broker_arm_code(broker) is None:
+        return
+    check = getattr(broker, "cross_arm_conflict", None)
+    if not callable(check):
+        return
+    try:
+        why = check(order)
+    except Exception as exc:  # noqa: BLE001 - fail closed; nothing was sent
+        detail = f"shared-account read failed: {type(exc).__name__}: {exc}"[:300]
+        log.warning("execution.submit_refused", code="cross_arm_unchecked", detail=detail)
+        raise SubmitRefused(RefusalCode.CROSS_ARM_UNCHECKED, detail) from exc
+    if why:
+        log.warning("execution.submit_refused", code="cross_arm_conflict", detail=why, step=step)
+        raise SubmitRefused(RefusalCode.CROSS_ARM_CONFLICT, str(why))
 
 
 def _check(
@@ -316,6 +341,7 @@ def submit(
     except SubmitRefused as exc:
         log.warning("execution.submit_refused", code=str(exc.code), detail=exc.detail, step=step)
         raise
+    _cross_arm_check(broker, order, step=step)
     broker_id = broker.submit_mleg(order)
     log.info(
         "execution.submitted",
