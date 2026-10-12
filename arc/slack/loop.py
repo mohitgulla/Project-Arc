@@ -7,6 +7,10 @@ Pure rendering. One of three states, then the same facts every time:
     :hourglass_flowing_sand: … • PENDING: SPY
     :heavy_multiplication_x: … • HOLD
 
+D100: a sleeved profile's root that shows an open (BUY / PENDING / WIP) ends with
+``• Sleeves: Short 3/5 · Swing 0/5``: open positions per sleeve (by entry
+DTE, every open position, not just this loop's) against each sleeve's slot cap.
+
 D65: the line is followed by a bold-italic *headline* (``_*…*_``): ONE sentence
 of at most two lines on a laptop (``HEADLINE_MAX`` chars), ``<main point>; <why>.``
 It is built from what the chain journaled (:func:`arc.routines.headline.loop_headline`),
@@ -38,6 +42,20 @@ _EMOJI = {
 }
 
 
+class SleeveAllocation(BaseModel):
+    """D100: one sleeve's open positions against its slot cap (``Short 2/5``)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    name: str
+    held: int = Field(..., ge=0)
+    cap: int | None = None  # None = uncapped sleeve
+
+    def text(self) -> str:
+        cap = "" if self.cap is None else f"/{self.cap}"
+        return f"{self.name.capitalize()} {self.held}{cap}"
+
+
 class LoopRoot(BaseModel):
     """Everything the root line shows (stored per chain, re-rendered on updates)."""
 
@@ -56,8 +74,11 @@ class LoopRoot(BaseModel):
     timeout: bool = False
     skipped: str | None = None  # the slot never ran (why)
     headline: list[str] = Field(default_factory=list)  # D65: one plain-text sentence
-    # E22.2 (D97): opens shown (BUY / PENDING / WIP) per DTE sleeve, sleeved profiles only
+    # E22.2 (D97): opens shown (BUY / PENDING / WIP) per DTE sleeve, sleeved profiles only.
+    # Kept for stored roots; D100 renders ``allocated`` instead.
     sleeves: dict[str, int] = Field(default_factory=dict)
+    # D100: every open position per DTE sleeve (held/cap), shown whenever ``sleeves`` is set
+    allocated: list[SleeveAllocation] = Field(default_factory=list)
 
     @property
     def outcome(self) -> LoopOutcome:
@@ -117,8 +138,8 @@ def loop_status_line(root: LoopRoot) -> str:
         elif root.no_change:
             hold = "HOLD (skip)"
         action.append(hold)
-    if root.sleeves:
-        action.append("Sleeves: " + ", ".join(f"{k} {v}" for k, v in root.sleeves.items()))
+    if root.sleeves and root.allocated:  # D100: totals over all open positions
+        action.append("Sleeves: " + " · ".join(a.text() for a in root.allocated))
     line = f"{_EMOJI[root.outcome]} " + " • ".join([*facts, *action])
     head = [h for h in (root.headline or _flag_headline(root)) if h.strip()][:1]
     return "\n".join([line, *(bold_italic(h) for h in head)])
@@ -153,6 +174,7 @@ __all__ = [
     "LoopOutcome",
     "bold_italic",
     "LoopRoot",
+    "SleeveAllocation",
     "loop_status_line",
     "slot_stamp",
 ]

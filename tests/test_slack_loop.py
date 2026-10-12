@@ -6,7 +6,14 @@ import datetime as dt
 
 import pytest
 
-from arc.slack.loop import HEADLINE_MAX, LoopOutcome, LoopRoot, loop_status_line, slot_stamp
+from arc.slack.loop import (
+    HEADLINE_MAX,
+    LoopOutcome,
+    LoopRoot,
+    SleeveAllocation,
+    loop_status_line,
+    slot_stamp,
+)
 from arc.utils.calendar import ET
 
 SLOT = dt.datetime(2026, 9, 28, 9, 40, tzinfo=ET)
@@ -75,11 +82,24 @@ class TestRootLine:
         assert slot_stamp(dt.datetime(2026, 9, 28, 13, 40, tzinfo=dt.UTC)) == "2026-09-28 09:40ET"
         assert slot_stamp(dt.datetime(2026, 12, 1, 14, 40, tzinfo=dt.UTC)) == "2026-12-01 09:40ET"
 
-    def test_sleeve_counts_follow_the_action(self) -> None:
-        # E22.2 (D97): sleeved profiles show opens per sleeve; absent otherwise
-        r = _root(buys=["SPY"], pending=["NVDA"], sleeves={"short": 1, "swing": 1})
-        assert r.text() == f":white_check_mark: {FACTS} • BUY: SPY • Sleeves: short 1, swing 1"
+    def test_allocated_sleeves_follow_the_action(self) -> None:
+        # D100: a root showing a sleeved open shows totals over all open positions
+        alloc = [
+            SleeveAllocation(name="short", held=3, cap=5),
+            SleeveAllocation(name="swing", held=0, cap=5),
+        ]
+        r = _root(buys=["SPY"], pending=["NVDA"], sleeves={"short": 1, "swing": 1}, allocated=alloc)
+        assert r.text() == (
+            f":white_check_mark: {FACTS} • BUY: SPY • Sleeves: Short 3/5 · Swing 0/5"
+        )
         assert "Sleeves" not in _root(buys=["SPY"]).text()
+        assert "Sleeves" not in _root(buys=["SPY"], allocated=alloc).text()  # no sleeved open
+        uncapped = [SleeveAllocation(name="swing", held=2)]
+        assert (
+            _root(sleeves={"swing": 1}, buys=["X"], allocated=uncapped)
+            .text()
+            .endswith("• Sleeves: Swing 2")
+        )
 
     def test_round_trip_through_json(self) -> None:
         r = _root(buys=["SPY"])
