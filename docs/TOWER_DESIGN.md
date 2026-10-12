@@ -239,8 +239,9 @@ they are never dropped.
   (stale = 3× the cadence from `/api/meta` `cadences.tick|health`). A halt replaces the Trading
   slot with the red `HALTED` pill + reason + actor · age. ≤ 768 px: a 4-column grid, row 1
   `Account | Trading` (2 + 2), row 2 `Orders | Tick | Health | Alerts`; wider: one row in the same
-  order, with a divider before Trading and before Orders. Model: `statusRow()` in
-  `lib/overview.ts`.
+  order, with a divider before Trading and before Orders. Phone cells are tight (card `px-3`,
+  cell `px-1`, columns `1.15 / 0.8 / 1.35 / 0.9fr`; < 480 px `1.1 / 0.9fr`) so no slot text
+  truncates at 390–520 px (D99). Model: `statusRow()` in `lib/overview.ts`.
 - **Equity** (D50): the `1D 1W 1M 3M YTD ALL` control sits **below the hero block** (value,
   pill, $ change, `vs … at prev close`), followed by the range's dates in the Performance
   `formatRange` format (`Sep 4 – Oct 4, 2026`; one day prints `Oct 4, 2026`), ET, from
