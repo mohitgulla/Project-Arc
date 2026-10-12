@@ -108,12 +108,14 @@ function SlotCell({ slot }: { slot: StatusSlot }) {
   );
 }
 
-const CELL = "flex min-h-[44px] min-w-0 items-center gap-2 rounded-control px-2 text-caption tablet:min-h-[32px]";
+/** Phone cells are tight (px-1, gap-1.5) so `Orders 0/200` and `Paper Trade · Arc Investor` fit at 390–520 px (D99). */
+const CELL = "flex min-h-[44px] min-w-0 items-center gap-1.5 rounded-control px-1 text-caption tablet:min-h-[32px] tablet:gap-2 tablet:px-2";
 /** D92 groups: Account ‖ Trading ‖ Orders · Tick · Health · Alerts (a divider before each group on desktop). */
 const GROUP_START = "tablet:border-l tablet:border-line tablet:pl-4";
 /** Phone (≤ 768 px) grid: row 1 Account | Trading (2 + 2 cols), row 2 Orders | Tick | Health | Alerts
- * (columns sized to their usual text so `Health OK 14m` fits at 520 px). Below 480 px: 2 columns,
- * rows Account | Trading, Orders | Tick, Health | Alerts. */
+ * (columns sized to their usual text so `Orders 0/200` and `Health Failed 30m` fit at 520 px, D99).
+ * Below 480 px: 2 columns (left one wider for the account name), rows Account | Trading,
+ * Orders | Tick, Health | Alerts. */
 const PHONE_SPAN: Partial<Record<StatusSlot["key"], string>> = { account: "min-[480px]:col-span-2", trading: "min-[480px]:col-span-2" };
 
 /**
@@ -136,10 +138,10 @@ function StatusStrip({ o, cad, now }: { o: Overview; cad: ReturnType<typeof useC
     <section
       data-testid="status-strip"
       data-tone={tone}
-      className={`arc-card flex flex-col gap-2 border ${border} !py-2`}
+      className={`arc-card flex flex-col gap-2 border ${border} !py-2 max-tablet:!px-3`}
       aria-label="Trading status"
     >
-      <ul className="grid grid-cols-2 gap-x-0.5 gap-y-1 min-[480px]:grid-cols-[minmax(0,0.9fr)_minmax(0,1.15fr)_minmax(0,1.2fr)_minmax(0,0.75fr)] tablet:flex tablet:flex-wrap tablet:items-center tablet:gap-x-4" data-testid="status-slots">
+      <ul className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)] gap-x-0.5 gap-y-1 min-[480px]:grid-cols-[minmax(0,1.15fr)_minmax(0,0.8fr)_minmax(0,1.35fr)_minmax(0,0.9fr)] tablet:flex tablet:flex-wrap tablet:items-center tablet:gap-x-4" data-testid="status-slots">
         {slots.map((slot) => {
           const span = PHONE_SPAN[slot.key] ?? "";
           if (slot.key === "trading" && slot.tone === "neg")
