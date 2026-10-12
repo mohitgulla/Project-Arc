@@ -220,9 +220,18 @@ def test_context_contains_scorecard_and_ledger(
     run_dir = _run_dir(p)
     assert out.startswith(f"RUN_DIR={run_dir}")
     assert "CLOSED_TRADES: week=1 all_time=1" in out
-    # realised-vs-model table by kind x regime
-    assert "## Realised vs model, this week (kind x regime)" in out
-    assert re.search(r"\| iron_condor \| risk_on \| 1 \| 98\.00 \| 40\.00 \| \+58\.00 \|", out)
+    # realised-vs-model table by kind x regime x sleeve (E22.5: the fixture condor
+    # maps to `swing` by its entry DTE, windows from `arc scorecard sleeves --json`)
+    assert "## Realised vs model, this week (kind x regime x DTE sleeve)" in out
+    assert re.search(
+        r"\| iron_condor \| risk_on \| swing \| 1 \| 98\.00 \| 40\.00 \| \+58\.00 \|", out
+    )
+    # E22.5 (D97): the per-sleeve report with the keep/shrink rule
+    assert "## DTE sleeves, all time (E22.5, D97" in out
+    assert "- rule (D97, fixed in advance, report only): Read after >= 30 closed" in out
+    assert "- short (10-29 DTE): opens 0, closed n=0" in out
+    assert "verdict collect (not ready)" in out
+    assert (run_dir / "sleeves-all.log").read_text().strip().startswith("{")
     assert "LOW (n<20)" in out
     assert "slippage_frac = 0.25" in out
     # scorecard (attribution + weekly), gaps, counterfactual, config

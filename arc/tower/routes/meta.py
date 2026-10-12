@@ -12,6 +12,7 @@ from fastapi import APIRouter
 
 from arc.tower.api import TowerError
 from arc.tower.catalogue import category_catalogue, persona_catalogue
+from arc.tower.data_sleeves import sleeve_meta
 from arc.tower.routes.deps import Conn, Tower, effective
 from arc.tower.schemas import (
     STALE_FACTOR,
@@ -146,4 +147,5 @@ def meta(cfg: Tower) -> MetaResponse:
         ),
         personas=persona_catalogue(routines),
         categories=category_catalogue(routines),
+        sleeves=sleeve_meta(settings),
     )

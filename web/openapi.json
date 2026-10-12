@@ -1005,7 +1005,8 @@
               "exit_reason",
               "reason_code",
               "profile",
-              "regime"
+              "regime",
+              "sleeve"
             ],
             "title": "By",
             "type": "string"
@@ -1023,6 +1024,17 @@
             },
             "title": "Rows",
             "type": "array"
+          },
+          "sleeve": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sleeve"
           }
         },
         "required": [
@@ -1102,6 +1114,14 @@
               "$ref": "#/components/schemas/BreakdownItem"
             },
             "title": "Regime",
+            "type": "array"
+          },
+          "sleeve": {
+            "description": "E22.5 (D97): by entry-DTE sleeve (derived)",
+            "items": {
+              "$ref": "#/components/schemas/BreakdownItem"
+            },
+            "title": "Sleeve",
             "type": "array"
           },
           "structure": {
@@ -7864,6 +7884,14 @@
             "title": "Refresh Interval S",
             "type": "integer"
           },
+          "sleeves": {
+            "description": "E22.5 (D97): the profile's entry-DTE sleeves (window, slots, exit policy per kind); [] for a single-window profile",
+            "items": {
+              "$ref": "#/components/schemas/SleeveMeta"
+            },
+            "title": "Sleeves",
+            "type": "array"
+          },
           "theme_default": {
             "default": "system",
             "enum": [
@@ -9020,6 +9048,14 @@
             "title": "Range",
             "type": "string"
           },
+          "sleeves": {
+            "description": "E22.5 (D97): open positions per entry-DTE sleeve vs its slots",
+            "items": {
+              "$ref": "#/components/schemas/SleeveUsage"
+            },
+            "title": "Sleeves",
+            "type": "array"
+          },
           "stale_after_s": {
             "description": "Monitor marks older than this are stale",
             "title": "Stale After S",
@@ -9578,6 +9614,26 @@
             ],
             "title": "Preset",
             "type": "string"
+          },
+          "sleeve": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "E22.5 (D97): entry-DTE sleeve filter; trade cards (Net P&L from realised, costs, win/loss, model, breakdowns, calibration) cover that sleeve only, Equity and the funnel stay account-wide",
+            "title": "Sleeve"
+          },
+          "sleeve_stats": {
+            "description": "E22.5 (D97): per-sleeve closed-trade stats + keep/shrink verdict, period",
+            "items": {
+              "$ref": "#/components/schemas/SleeveStats"
+            },
+            "title": "Sleeve Stats",
+            "type": "array"
           },
           "win_loss": {
             "$ref": "#/components/schemas/WinLossCard"
@@ -12485,6 +12541,373 @@
         "title": "SessionRow",
         "type": "object"
       },
+      "SleeveExitView": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "summary": {
+            "description": "ExitPolicy.summary() of the kind in this sleeve",
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "summary"
+        ],
+        "title": "SleeveExitView",
+        "type": "object"
+      },
+      "SleeveMeta": {
+        "additionalProperties": false,
+        "description": "One named sleeve of the active profile (the InfoTip's window and exit policy).",
+        "properties": {
+          "dte_max": {
+            "title": "Dte Max",
+            "type": "integer"
+          },
+          "dte_min": {
+            "title": "Dte Min",
+            "type": "integer"
+          },
+          "exit_policy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "exits.yaml `sleeves:` block; None = kind",
+            "title": "Exit Policy"
+          },
+          "exits": {
+            "items": {
+              "$ref": "#/components/schemas/SleeveExitView"
+            },
+            "title": "Exits",
+            "type": "array"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "max_positions": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Slot cap; None = uncapped",
+            "title": "Max Positions"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "label",
+          "dte_min",
+          "dte_max"
+        ],
+        "title": "SleeveMeta",
+        "type": "object"
+      },
+      "SleeveStats": {
+        "additionalProperties": false,
+        "description": "One sleeve's closed-trade statistics over the window.",
+        "properties": {
+          "ci_high": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ci High"
+          },
+          "ci_low": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Bootstrap 90% CI of mean net",
+            "title": "Ci Low"
+          },
+          "closed": {
+            "default": 0,
+            "title": "Closed",
+            "type": "integer"
+          },
+          "costs": {
+            "default": 0.0,
+            "description": "\u03a3 cost-model commission + fees of the trades' fills",
+            "title": "Costs",
+            "type": "number"
+          },
+          "dte_max": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dte Max"
+          },
+          "dte_min": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "None for `other`",
+            "title": "Dte Min"
+          },
+          "entry_slippage": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "\u03a3 entry fill \u2212 mid, $ (+ = worse)",
+            "title": "Entry Slippage"
+          },
+          "exit_reasons": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Exit Reasons",
+            "type": "object"
+          },
+          "max_positions": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Slot cap (None = uncapped / other)",
+            "title": "Max Positions"
+          },
+          "mean_days_held": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean Days Held"
+          },
+          "mean_entry_slippage": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean Entry Slippage"
+          },
+          "mean_mae": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Mean max adverse excursion, $ (\u2264 0)",
+            "title": "Mean Mae"
+          },
+          "mean_mfe": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Mean max favourable excursion, $ (\u2265 0)",
+            "title": "Mean Mfe"
+          },
+          "mean_net_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Mean of realised \u2212 costs (the rule's)",
+            "title": "Mean Net Pnl"
+          },
+          "mean_pct_of_max_loss": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Mean realised \u00f7 (max loss \u00d7 contracts), over trades with a max loss",
+            "title": "Mean Pct Of Max Loss"
+          },
+          "mean_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean Pnl"
+          },
+          "median_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Median Pnl"
+          },
+          "n_excursion": {
+            "default": 0,
+            "title": "N Excursion",
+            "type": "integer"
+          },
+          "opens": {
+            "default": 0,
+            "description": "Positions opened in the window",
+            "title": "Opens",
+            "type": "integer"
+          },
+          "ready": {
+            "default": false,
+            "title": "Ready",
+            "type": "boolean"
+          },
+          "realised": {
+            "default": 0.0,
+            "description": "\u03a3 realised P&L, fills only, before fees",
+            "title": "Realised",
+            "type": "number"
+          },
+          "sleeve": {
+            "title": "Sleeve",
+            "type": "string"
+          },
+          "verdict": {
+            "anyOf": [
+              {
+                "enum": [
+                  "keep",
+                  "shrink",
+                  "collect"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "None for `other`",
+            "title": "Verdict"
+          },
+          "win_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Win Rate"
+          },
+          "wins": {
+            "default": 0,
+            "title": "Wins",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sleeve"
+        ],
+        "title": "SleeveStats",
+        "type": "object"
+      },
+      "SleeveUsage": {
+        "additionalProperties": false,
+        "description": "Open positions in one sleeve vs its slot cap (Overview: ``Short 3/5``).",
+        "properties": {
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "max_positions": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Positions"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "open": {
+            "title": "Open",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "label",
+          "open"
+        ],
+        "title": "SleeveUsage",
+        "type": "object"
+      },
       "Slot": {
         "additionalProperties": false,
         "properties": {
@@ -13863,6 +14286,14 @@
             "title": "Reason Codes",
             "type": "array"
           },
+          "sleeves": {
+            "description": "E22.5 (D97): the profile's sleeves + `other`",
+            "items": {
+              "type": "string"
+            },
+            "title": "Sleeves",
+            "type": "array"
+          },
           "sort_keys": {
             "items": {
               "type": "string"
@@ -14017,6 +14448,14 @@
               "type": "string"
             },
             "title": "Reason Code",
+            "type": "array"
+          },
+          "sleeve": {
+            "description": "E22.5 (D97): entry-DTE sleeves (`short`, `swing`, `other`), by entry DTE",
+            "items": {
+              "type": "string"
+            },
+            "title": "Sleeve",
             "type": "array"
           },
           "stage": {
@@ -14386,6 +14825,18 @@
             "description": "D50: bullish / bearish / neutral from leg sides and strikes; a close inherits the structure it exits; null without legs",
             "title": "Direction"
           },
+          "entry_dte": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "DTE at the open (a close: its open's)",
+            "title": "Entry Dte"
+          },
           "execution": {
             "anyOf": [
               {
@@ -14543,6 +14994,18 @@
               }
             ],
             "title": "Run Id"
+          },
+          "sleeve": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "E22.5 (D97): entry-DTE sleeve; `other` = fits none",
+            "title": "Sleeve"
           },
           "slippage_bps": {
             "anyOf": [
@@ -16683,7 +17146,7 @@
     },
     "/api/performance": {
       "get": {
-        "description": "Every Performance card for the period, with the comparison computed server-side.",
+        "description": "Every Performance card for the period, with the comparison computed server-side.\n\n``sleeve`` (E22.5, D97) filters the trade cards to one entry-DTE sleeve (or ``other``).",
         "operationId": "performance_api_performance_get",
         "parameters": [
           {
@@ -16766,6 +17229,23 @@
               ],
               "title": "To"
             }
+          },
+          {
+            "in": "query",
+            "name": "sleeve",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9_]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sleeve"
+            }
           }
         ],
         "responses": {
@@ -16823,7 +17303,8 @@
                 "exit_reason",
                 "reason_code",
                 "profile",
-                "regime"
+                "regime",
+                "sleeve"
               ],
               "title": "By",
               "type": "string"
@@ -16893,6 +17374,23 @@
                 }
               ],
               "title": "To"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sleeve",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9_]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sleeve"
             }
           }
         ],
@@ -17206,7 +17704,7 @@
     },
     "/api/trades": {
       "get": {
-        "description": "Every proposal (opens and closes), filtered, sorted and paged server-side, with\nthe summary over the whole filter.",
+        "description": "Every proposal (opens and closes), filtered, sorted and paged server-side, with\nthe summary over the whole filter. ``sleeve`` (E22.5, D97) filters by entry-DTE sleeve\n(``short`` / ``swing`` / ``other``) derived from the open's entry DTE.",
         "operationId": "trades_api_trades_get",
         "parameters": [
           {
@@ -17427,6 +17925,25 @@
                 }
               ],
               "title": "Account Profile"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sleeve",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sleeve"
             }
           },
           {

@@ -74,10 +74,14 @@ from arc.tower.data_exits import (
     ExitWatchView,
     load_exit_path,
 )
+from arc.tower.data_sleeves import SleeveUsage, sleeve_usage
 from arc.utils.calendar import ET, sessions_between
 
 if TYPE_CHECKING:
     import sqlite3
+    from collections.abc import Sequence
+
+    from arc.account_profiles import DteSleeve
 
 __all__ = [
     "RANGES",
@@ -423,6 +427,10 @@ class OverviewResponse(BaseModel):
     activity: list[ActivityItem]
     activity_hours: int = Field(description="Recent Activity window (rolling hours)")
     activity_since: _dt.datetime = Field(description="as_of − activity_hours")
+    sleeves: list[SleeveUsage] = Field(
+        default_factory=list,
+        description="E22.5 (D97): open positions per entry-DTE sleeve vs its slots",
+    )
 
 
 class PositionsResponse(BaseModel):
@@ -1457,6 +1465,7 @@ def load_overview(
     activity_hours: int = ACTIVITY_HOURS,
     beta_delta_cap_pct: float = 2.00,
     greek_advisory: GreekAdvisorySettings | None = None,
+    sleeves: Sequence[DteSleeve] = (),
 ) -> OverviewResponse:
     """Every Overview section read in one pass as of *now* (SELECT only).
 
@@ -1504,4 +1513,5 @@ def load_overview(
         activity=_activity(conn, activity_since),
         activity_hours=activity_hours,
         activity_since=activity_since,
+        sleeves=sleeve_usage(conn, sleeves),
     )

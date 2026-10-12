@@ -13,6 +13,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from arc.tower.catalogue import CategoryMeta, PersonaMeta  # noqa: TC001 - pydantic fields
+from arc.tower.data_sleeves import SleeveMeta  # noqa: TC001 - pydantic fields
 
 __all__ = [
     "REFRESH_CHOICES",
@@ -107,4 +108,9 @@ class MetaResponse(BaseModel):
     categories: list[CategoryMeta] = Field(
         default_factory=list,
         description="E13.14 (D56): the six source categories + the reference-data group",
+    )
+    sleeves: list[SleeveMeta] = Field(
+        default_factory=list,
+        description="E22.5 (D97): the profile's entry-DTE sleeves (window, slots, exit "
+        "policy per kind); [] for a single-window profile",
     )

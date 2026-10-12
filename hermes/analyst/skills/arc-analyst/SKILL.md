@@ -170,6 +170,11 @@ line under "Obvious flaws" as `→ Sentinel` and do not draft a card for it.
    match, P&L tracking error, with n). Where does realised diverge, and with what N? A
    persistent drift (e.g. fills worse than the sim's `slippage_frac`) is a `cost-model` theme
    line or a `→ Sentinel` flaw, never a strategy recommendation.
+   The tables also split by **DTE sleeve** (D97: `short` 10–29, `swing` 30–60, derived from
+   the open's entry DTE; `other` = no sleeve). `## DTE sleeves` carries the D97 keep/shrink
+   verdict per sleeve with n and the bootstrap 90% CI. Quote it as computed (`keep` /
+   `shrink` / `collect`, and `not ready` before ≥ 30 closed or 6 weeks); never re-derive or
+   override it, and never propose a sleeve change on a `collect` sleeve.
 4a. **Backtest studies** (`## Backtest studies (D84)`; full list in
    `RUN_DIR/backtest-studies.log`): each `BT-<n>` with its arms, ladder reached, dev result,
    holdout verdict + CI or `holdout pending`, variants vs `max_variants` and its evidence class,
@@ -264,6 +269,7 @@ status (and `stop_advice` when running); `next_experiment` and `next_slot` are r
 
 *Performance vs model*
 • <kind> · <regime>: n=<n> realised $<x> vs EV $<y> (<±z>/trade) · slippage <a> bps vs modelled <b> bps
+• Sleeve <short|swing>: n=<n> mean net $<x> CI [<lo>, <hi>] · <keep|shrink|collect> (D97)
 *Standing themes*
 • cost-model: <status> — <note with N> (one line per theme, all six)
 *Quick changes* (≤3; "none: <why>" is a valid answer)

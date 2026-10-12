@@ -377,6 +377,8 @@ export interface paths {
         /**
          * Performance
          * @description Every Performance card for the period, with the comparison computed server-side.
+         *
+         *     ``sleeve`` (E22.5, D97) filters the trade cards to one entry-DTE sleeve (or ``other``).
          */
         get: operations["performance_api_performance_get"];
         put?: never;
@@ -499,7 +501,8 @@ export interface paths {
         /**
          * Trades
          * @description Every proposal (opens and closes), filtered, sorted and paged server-side, with
-         *     the summary over the whole filter.
+         *     the summary over the whole filter. ``sleeve`` (E22.5, D97) filters by entry-DTE sleeve
+         *     (``short`` / ``swing`` / ``other``) derived from the open's entry DTE.
          */
         get: operations["trades_api_trades_get"];
         put?: never;
@@ -999,12 +1002,14 @@ export interface components {
              * By
              * @enum {string}
              */
-            by: "ticker" | "structure" | "exit_reason" | "reason_code" | "profile" | "regime";
+            by: "ticker" | "structure" | "exit_reason" | "reason_code" | "profile" | "regime" | "sleeve";
             /** Include Tests */
             include_tests: boolean;
             period: components["schemas"]["PeriodView"];
             /** Rows */
             rows: components["schemas"]["BreakdownItem"][];
+            /** Sleeve */
+            sleeve?: string | null;
         };
         /** BreakdownRow */
         BreakdownRow: {
@@ -1032,6 +1037,11 @@ export interface components {
             reason_code?: components["schemas"]["BreakdownItem"][];
             /** Regime */
             regime?: components["schemas"]["BreakdownItem"][];
+            /**
+             * Sleeve
+             * @description E22.5 (D97): by entry-DTE sleeve (derived)
+             */
+            sleeve?: components["schemas"]["BreakdownItem"][];
             /** Structure */
             structure?: components["schemas"]["BreakdownItem"][];
             /** Ticker */
@@ -3673,6 +3683,11 @@ export interface components {
              */
             refresh_interval_s: number;
             /**
+             * Sleeves
+             * @description E22.5 (D97): the profile's entry-DTE sleeves (window, slots, exit policy per kind); [] for a single-window profile
+             */
+            sleeves?: components["schemas"]["SleeveMeta"][];
+            /**
              * Theme Default
              * @default system
              * @enum {string}
@@ -4079,6 +4094,11 @@ export interface components {
              */
             range: "1D" | "1W" | "1M" | "3M" | "YTD" | "ALL";
             /**
+             * Sleeves
+             * @description E22.5 (D97): open positions per entry-DTE sleeve vs its slots
+             */
+            sleeves?: components["schemas"]["SleeveUsage"][];
+            /**
              * Stale After S
              * @description Monitor marks older than this are stale
              */
@@ -4276,6 +4296,16 @@ export interface components {
              * @enum {string}
              */
             preset: "1d" | "7d" | "week" | "mtd" | "qtd" | "ytd" | "30d" | "90d" | "all" | "custom";
+            /**
+             * Sleeve
+             * @description E22.5 (D97): entry-DTE sleeve filter; trade cards (Net P&L from realised, costs, win/loss, model, breakdowns, calibration) cover that sleeve only, Equity and the funnel stay account-wide
+             */
+            sleeve?: string | null;
+            /**
+             * Sleeve Stats
+             * @description E22.5 (D97): per-sleeve closed-trade stats + keep/shrink verdict, period
+             */
+            sleeve_stats?: components["schemas"]["SleeveStats"][];
             win_loss: components["schemas"]["WinLossCard"];
         };
         /** PeriodView */
@@ -5198,6 +5228,165 @@ export interface components {
             /** Treatment Pnl */
             treatment_pnl: number;
         };
+        /** SleeveExitView */
+        SleeveExitView: {
+            /** Kind */
+            kind: string;
+            /**
+             * Summary
+             * @description ExitPolicy.summary() of the kind in this sleeve
+             */
+            summary: string;
+        };
+        /**
+         * SleeveMeta
+         * @description One named sleeve of the active profile (the InfoTip's window and exit policy).
+         */
+        SleeveMeta: {
+            /** Dte Max */
+            dte_max: number;
+            /** Dte Min */
+            dte_min: number;
+            /**
+             * Exit Policy
+             * @description exits.yaml `sleeves:` block; None = kind
+             */
+            exit_policy?: string | null;
+            /** Exits */
+            exits?: components["schemas"]["SleeveExitView"][];
+            /** Label */
+            label: string;
+            /**
+             * Max Positions
+             * @description Slot cap; None = uncapped
+             */
+            max_positions?: number | null;
+            /** Name */
+            name: string;
+        };
+        /**
+         * SleeveStats
+         * @description One sleeve's closed-trade statistics over the window.
+         */
+        SleeveStats: {
+            /** Ci High */
+            ci_high?: number | null;
+            /**
+             * Ci Low
+             * @description Bootstrap 90% CI of mean net
+             */
+            ci_low?: number | null;
+            /**
+             * Closed
+             * @default 0
+             */
+            closed: number;
+            /**
+             * Costs
+             * @description Σ cost-model commission + fees of the trades' fills
+             * @default 0
+             */
+            costs: number;
+            /** Dte Max */
+            dte_max?: number | null;
+            /**
+             * Dte Min
+             * @description None for `other`
+             */
+            dte_min?: number | null;
+            /**
+             * Entry Slippage
+             * @description Σ entry fill − mid, $ (+ = worse)
+             */
+            entry_slippage?: number | null;
+            /** Exit Reasons */
+            exit_reasons?: {
+                [key: string]: number;
+            };
+            /**
+             * Max Positions
+             * @description Slot cap (None = uncapped / other)
+             */
+            max_positions?: number | null;
+            /** Mean Days Held */
+            mean_days_held?: number | null;
+            /** Mean Entry Slippage */
+            mean_entry_slippage?: number | null;
+            /**
+             * Mean Mae
+             * @description Mean max adverse excursion, $ (≤ 0)
+             */
+            mean_mae?: number | null;
+            /**
+             * Mean Mfe
+             * @description Mean max favourable excursion, $ (≥ 0)
+             */
+            mean_mfe?: number | null;
+            /**
+             * Mean Net Pnl
+             * @description Mean of realised − costs (the rule's)
+             */
+            mean_net_pnl?: number | null;
+            /**
+             * Mean Pct Of Max Loss
+             * @description Mean realised ÷ (max loss × contracts), over trades with a max loss
+             */
+            mean_pct_of_max_loss?: number | null;
+            /** Mean Pnl */
+            mean_pnl?: number | null;
+            /** Median Pnl */
+            median_pnl?: number | null;
+            /**
+             * N Excursion
+             * @default 0
+             */
+            n_excursion: number;
+            /**
+             * Opens
+             * @description Positions opened in the window
+             * @default 0
+             */
+            opens: number;
+            /**
+             * Ready
+             * @default false
+             */
+            ready: boolean;
+            /**
+             * Realised
+             * @description Σ realised P&L, fills only, before fees
+             * @default 0
+             */
+            realised: number;
+            /** Sleeve */
+            sleeve: string;
+            /**
+             * Verdict
+             * @description None for `other`
+             */
+            verdict?: ("keep" | "shrink" | "collect") | null;
+            /** Win Rate */
+            win_rate?: number | null;
+            /**
+             * Wins
+             * @default 0
+             */
+            wins: number;
+        };
+        /**
+         * SleeveUsage
+         * @description Open positions in one sleeve vs its slot cap (Overview: ``Short 3/5``).
+         */
+        SleeveUsage: {
+            /** Label */
+            label: string;
+            /** Max Positions */
+            max_positions?: number | null;
+            /** Name */
+            name: string;
+            /** Open */
+            open: number;
+        };
         /** Slot */
         Slot: {
             /**
@@ -5753,6 +5942,11 @@ export interface components {
             reason_codes: {
                 [key: string]: string;
             }[];
+            /**
+             * Sleeves
+             * @description E22.5 (D97): the profile's sleeves + `other`
+             */
+            sleeves?: string[];
             /** Sort Keys */
             sort_keys?: string[];
             /** Stages */
@@ -5809,6 +6003,11 @@ export interface components {
              * @description any decision's code
              */
             reason_code?: string[];
+            /**
+             * Sleeve
+             * @description E22.5 (D97): entry-DTE sleeves (`short`, `swing`, `other`), by entry DTE
+             */
+            sleeve?: string[];
             /** Stage */
             stage?: ("proposed" | "gate_pass" | "gate_fail" | "approved" | "rejected" | "expired" | "filled" | "cancelled" | "open" | "closed")[];
             /**
@@ -5925,6 +6124,11 @@ export interface components {
              * @description D50: bullish / bearish / neutral from leg sides and strikes; a close inherits the structure it exits; null without legs
              */
             direction?: ("bullish" | "bearish" | "neutral") | null;
+            /**
+             * Entry Dte
+             * @description DTE at the open (a close: its open's)
+             */
+            entry_dte?: number | null;
             /** Execution */
             execution: string | null;
             /** Exit Reason */
@@ -5973,6 +6177,11 @@ export interface components {
             realized_pnl: number | null;
             /** Run Id */
             run_id?: string | null;
+            /**
+             * Sleeve
+             * @description E22.5 (D97): entry-DTE sleeve; `other` = fits none
+             */
+            sleeve?: string | null;
             /**
              * Slippage Bps
              * @description Fill vs the proposal net; + = worse
@@ -7120,6 +7329,7 @@ export interface operations {
                 include_tests?: boolean;
                 from?: string | null;
                 to?: string | null;
+                sleeve?: string | null;
             };
             header?: never;
             path?: never;
@@ -7159,11 +7369,12 @@ export interface operations {
     performance_breakdown_api_performance_breakdown_get: {
         parameters: {
             query?: {
-                by?: "ticker" | "structure" | "exit_reason" | "reason_code" | "profile" | "regime";
+                by?: "ticker" | "structure" | "exit_reason" | "reason_code" | "profile" | "regime" | "sleeve";
                 preset?: "1d" | "7d" | "week" | "mtd" | "qtd" | "ytd" | "30d" | "90d" | "all" | "custom";
                 include_tests?: boolean;
                 from?: string | null;
                 to?: string | null;
+                sleeve?: string | null;
             };
             header?: never;
             path?: never;
@@ -7377,6 +7588,7 @@ export interface operations {
                 min_net_ev?: number | null;
                 min_pop?: number | null;
                 account_profile?: string[] | null;
+                sleeve?: string[] | null;
                 q?: string | null;
                 page?: number;
                 size?: number;

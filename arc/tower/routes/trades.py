@@ -8,6 +8,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Path, Query
 
 from arc.tower.api import TowerError
+from arc.tower.data_sleeves import OTHER, named_sleeves
 from arc.tower.data_trades import (
     MAX_PAGE_SIZE,
     DatePreset,
@@ -22,7 +23,7 @@ from arc.tower.data_trades import (
     load_trades,
     search,
 )
-from arc.tower.routes.deps import Conn, Tower  # noqa: TC001 - FastAPI dependencies
+from arc.tower.routes.deps import Conn, Tower, effective
 from arc.tower.schemas import ErrorResponse
 
 __all__ = ["router"]
@@ -56,6 +57,7 @@ def trades(  # noqa: PLR0913 - one query parameter per filter
     min_net_ev: Annotated[float | None, Query()] = None,
     min_pop: Annotated[float | None, Query(ge=0.0, le=1.0)] = None,
     account_profile: Multi = None,
+    sleeve: Multi = None,
     q: Annotated[str | None, Query(max_length=200)] = None,
     page: Annotated[int, Query(ge=1)] = 1,
     size: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = 50,
@@ -63,7 +65,15 @@ def trades(  # noqa: PLR0913 - one query parameter per filter
     dir: Annotated[Literal["asc", "desc"], Query()] = "desc",  # noqa: A002 - URL name
 ) -> TradeListResponse:
     """Every proposal (opens and closes), filtered, sorted and paged server-side, with
-    the summary over the whole filter."""
+    the summary over the whole filter. ``sleeve`` (E22.5, D97) filters by entry-DTE sleeve
+    (``short`` / ``swing`` / ``other``) derived from the open's entry DTE."""
+    sleeves = named_sleeves(effective(cfg)[0])
+    names = _split(sleeve)
+    known = {s.name for s in sleeves} | {OTHER}
+    bad = [n for n in names if n not in known]
+    if bad:
+        msg = f"unknown sleeve {bad[0]!r} (profile sleeves: {', '.join(sorted(known))})"
+        raise TowerError(422, "invalid_request", msg)
     try:
         filters = TradeFilters.model_validate(
             {
@@ -79,20 +89,28 @@ def trades(  # noqa: PLR0913 - one query parameter per filter
                 "min_net_ev": min_net_ev,
                 "min_pop": min_pop,
                 "account_profile": _split(account_profile),
+                "sleeve": names,
                 "q": q or None,
             }
         )
     except ValueError as exc:
         raise TowerError(422, "invalid_request", str(exc)) from exc
     return load_trades(
-        conn, filters, now=cfg.clock(), page=page, size=size, sort=sort, direction=dir
+        conn,
+        filters,
+        now=cfg.clock(),
+        page=page,
+        size=size,
+        sort=sort,
+        direction=dir,
+        sleeves=sleeves,
     )
 
 
 @router.get("/trades/filters", response_model=TradeFilterOptions)
 def trade_filters(cfg: Tower, conn: Conn) -> TradeFilterOptions:
     """Distinct values for the Trades filter dropdowns."""
-    return load_filter_options(conn, now=cfg.clock())
+    return load_filter_options(conn, now=cfg.clock(), sleeves=named_sleeves(effective(cfg)[0]))
 
 
 @router.get(

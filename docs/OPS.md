@@ -1440,6 +1440,29 @@ MIN-SAMPLE gate reads that flag rather than re-deriving it. Slippage is entry
 slippage (fill − mid) summed over trades that have a modelled value, next to
 the modelled `entry_slippage`. `arc journal scorecard` is still the weekly report.
 
+**Which DTE sleeve pays? (E22.5, D97)**
+
+```
+arc scorecard sleeves [--since 2026-10-11] [--json]
+#  short 10–29 DTE: opens 7 · closed n=4 · win 50% · mean +$12.00 · median … ·
+#    mean net … · 90% CI [… , …] · verdict collect (not ready)
+#    P&L/max loss … · days held … · costs … · entry slippage … · MAE … · MFE … · exits …
+```
+
+A trade's sleeve is derived from its **entry DTE** against the effective profile's
+sleeves (never a stored field), so pre-D97 30–60 DTE trades count as `swing` and a
+DTE that fits no sleeve shows as `other`. The keep/shrink rule is fixed in advance
+and the view only reports it, it never changes config: read once a sleeve has ≥ 30
+closed trades or 6 weeks have passed since the `store:epoch` (D80), whichever comes
+first; `keep` if mean net P&L (realised − cost-model fees) ≥ 0, `shrink` (to 2 slots,
+`profiles.cash_debit.sleeves.<s>.max_positions 2` by hand) if the mean < 0 and the
+bootstrap 90% CI of the mean is entirely below 0, otherwise `collect`. The Tower has
+the same split: a `Sleeve` filter (All · Short · Swing) on Trades and Performance
+(`?sleeve=`), a Sleeves card and a Sleeve breakdown tab on Performance, and
+`Short n/5 · Swing n/5` on the Overview Positions card. The Day Recap adds one line per
+sleeve (`Short 10–29: 2 opened · 1 closed +$84 · 3/5 open`), and the Analyst's
+realised-vs-model tables split by sleeve.
+
 **What would have been better?**
 
 ```

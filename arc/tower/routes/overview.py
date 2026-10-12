@@ -16,6 +16,7 @@ from arc.tower.data_overview import (
     load_overview,
     load_positions,
 )
+from arc.tower.data_sleeves import named_sleeves
 from arc.tower.routes.deps import Conn, Tower, effective
 from arc.tower.schemas import ErrorResponse
 
@@ -54,6 +55,7 @@ def overview(
         stale_after=monitor_stale_after(conn),
         activity_hours=hours,
         greek_advisory=routines.tower.overview.greek_advisory,
+        sleeves=named_sleeves(settings),
     )
 
 
