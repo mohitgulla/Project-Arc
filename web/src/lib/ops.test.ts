@@ -416,7 +416,7 @@ describe("E8.8d timeline bands", () => {
   // The API assigns bands from routines.yaml (category for sources, group: for the rest,
   // fallback other); the UI joins rows to bands in the API's order.
   const session = {
-    loop: eRow("research", "trading_loop", { persona: "research", label: "Research → Quant → Risk → Propose → Execute" }),
+    loop: eRow("research", "trading_loop", { persona: "research", label: "Trade Loop" }),
     rows: [
       eRow("rss", "sources.market_news", { kind: "source", categories: ["market_news", "company_data"] }),
       eRow("edgar", "sources.company_data", { kind: "source" }),

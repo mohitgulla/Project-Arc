@@ -76,7 +76,7 @@ def test_live_config_bands_in_owner_order(empty_db) -> None:
     assert labels["trading_loop"] == "Trading loop"
     # the loop row is in its band, labelled with its chain
     assert s.loop is not None and s.loop.band == "trading_loop"
-    assert s.loop.label == "Research → Quant → Risk → Propose → Execute"
+    assert s.loop.label == "Trade Loop"
     assert s.loop.persona == "research"
     rows = {r.job: r for r in [*s.rows, s.loop]}
     assert rows["positions.evaluate"].label == "Position marks"

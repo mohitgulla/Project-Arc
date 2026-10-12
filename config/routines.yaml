@@ -635,8 +635,8 @@ personas:
     writes: [candidate, note, story, active_universe]   # note: scan summary (D27); story: D30 stage-1 digests; active_universe: D51 resolve at start
     lane: background            # D39: p90 441 s; the tick never waits on the Scalp
   research:                     # D31/D52: the 10-min trading loop (see `loop:` above)
-    label: "Research → Quant → Risk → Propose → Execute"
-    about: "10-min trading loop: pick ideas, price structures, risk review, propose, auto-approve, execute"
+    label: "Trade Loop"         # D94 (owner); the chain is spelled out in `about`
+    about: "10-min trading loop: Research → Quant → Risk → Propose → Execute (pick ideas, price structures, risk review, propose, auto-approve, execute)"
     group: trading_loop
     persona: research
     every: 10m                  # D52

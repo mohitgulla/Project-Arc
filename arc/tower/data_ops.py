@@ -1426,8 +1426,8 @@ def _context_io(
     loop_runs = runs(loop) if loop else 1
     units: list[tuple[str, str, StepSpec, int]] = []
     for name, (kind, spec) in routines.jobs().items():
-        # the loop's label is its whole chain ("Research → Quant → …"); name it by its persona
-        label = "Research loop" if name == routines.loop.job else _label(name, spec)
+        # D94: the loop reads as "Trade Loop" everywhere (its routines.yaml label)
+        label = "Trade Loop" if name == routines.loop.job else _label(name, spec)
         units.append((label, _display(name, kind.value, spec, routines)["group"], spec, runs(spec)))
     for name, spec in routines.steps.items():
         head, _, tail = name.partition(".")  # quant.open -> "Quant open"
