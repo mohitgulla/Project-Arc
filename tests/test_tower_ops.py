@@ -27,7 +27,6 @@ from arc.store.migrate import migrate
 from arc.tower.api import create_app
 from arc.tower.data import connect_ro
 from arc.tower.data_ops import (
-    TIMELINE_START,
     load_alerts,
     load_budget,
     load_config,
@@ -111,17 +110,20 @@ def test_session_has_every_scheduled_job_and_the_loop_row(conn, routines) -> Non
     s = load_session(conn, routines, now=NOW, day=TODAY)
     assert s.loop is not None and s.loop.job == routines.loop.job == s.loop_job
     assert s.loop.kind == "loop"
-    start = dt.datetime.combine(TODAY, TIMELINE_START, tzinfo=ET)
-    end = dt.datetime.combine(TODAY, dt.time(22), tzinfo=ET)
+    # D93: the Day window is the whole ET day, [00:00, 24:00)
+    start = dt.datetime.combine(TODAY, dt.time(0), tzinfo=ET)
+    end = start + dt.timedelta(days=1)
+    assert (s.window, s.start, s.end) == ("day", start, end)
+    tiny = dt.timedelta(microseconds=1)
     expected = {
         name
         for name, (_, spec) in routines.jobs().items()
-        if slots_between(spec, start - dt.timedelta(microseconds=1), end)
+        if slots_between(spec, start - tiny, end - tiny)
     }
     got = {r.job for r in s.rows} | {s.loop.job}
     assert got == expected
     for row in [*s.rows, s.loop]:
-        assert all(start <= slot.at <= end for slot in row.slots)
+        assert all(start <= slot.at < end for slot in row.slots)
         assert [x.at for x in row.slots] == sorted(x.at for x in row.slots)
 
 
@@ -176,6 +178,91 @@ def test_session_endpoint(client) -> None:
     bad = client.get("/api/ops/session?day=someday")
     assert bad.status_code == 422
     assert bad.json()["error"] == "invalid_request"
+    assert body["window"] == "day"
+    rolling = client.get("/api/ops/session?window=rolling&day=yesterday")
+    assert rolling.status_code == 200
+    assert rolling.json()["window"] == "rolling"
+    assert rolling.json()["day"] == TODAY.isoformat()  # rolling ignores ?day=
+    assert client.get("/api/ops/session?window=week").status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# D93: Rolling / Day windows
+# ---------------------------------------------------------------------------
+
+
+def test_session_window_maths() -> None:
+    from arc.tower.data_ops import session_window
+
+    now = dt.datetime(2026, 9, 30, 13, 42, tzinfo=ET)
+    day, start, end = session_window("rolling", now=now, day=dt.date(2020, 1, 1))
+    assert day == TODAY
+    assert start == dt.datetime(2026, 9, 30, 5, 0, tzinfo=ET)  # 8 h before the 13:00 hour
+    assert end == dt.datetime(2026, 9, 30, 18, 0, tzinfo=ET)  # 4 h after the hour ends
+    # the window spans midnight when now is early / late in the ET day
+    _, s2, e2 = session_window("rolling", now=dt.datetime(2026, 9, 30, 2, 5, tzinfo=ET), day=TODAY)
+    assert s2 == dt.datetime(2026, 9, 29, 18, 0, tzinfo=ET)
+    assert e2 == dt.datetime(2026, 9, 30, 7, 0, tzinfo=ET)
+    _, s3, e3 = session_window(
+        "rolling", now=dt.datetime(2026, 9, 30, 22, 30, tzinfo=ET), day=TODAY
+    )
+    assert (s3.hour, e3) == (14, dt.datetime(2026, 10, 1, 3, 0, tzinfo=ET))
+    # a UTC "now" resolves to the ET clock
+    _, s4, _ = session_window("rolling", now=now.astimezone(dt.UTC), day=TODAY)
+    assert s4 == start
+    d, ds, de = session_window("day", now=now, day=dt.date(2026, 10, 9))
+    assert d == dt.date(2026, 10, 9)
+    assert (ds, de) == (
+        dt.datetime(2026, 10, 9, 0, 0, tzinfo=ET),
+        dt.datetime(2026, 10, 10, 0, 0, tzinfo=ET),
+    )
+
+
+def test_day_window_covers_the_23_00_jobs(conn, routines) -> None:
+    """The old 02:00-22:00 Gantt cut off the 23:00 jobs (options_daily / vix_futures)."""
+    s = load_session(conn, routines, now=NOW, day=TODAY)
+    late = {r.job for r in [*s.rows, s.loop] if r and any(x.at.hour >= 22 for x in r.slots)}
+    expected = {
+        name
+        for name, (_, spec) in routines.jobs().items()
+        if any(t.hour >= 22 for t in _slot_times(spec, TODAY))
+    }
+    assert late == expected
+    assert expected  # the live routines.yaml has late-evening jobs
+
+
+def _slot_times(spec, day: dt.date) -> list[dt.datetime]:
+    from arc.routines.schedule import slots_between
+
+    start = dt.datetime.combine(day, dt.time(0), tzinfo=ET)
+    tiny = dt.timedelta(microseconds=1)
+    return slots_between(spec, start - tiny, start + dt.timedelta(days=1) - tiny)
+
+
+def test_rolling_window_spans_midnight_with_both_days_runs(conn, routines) -> None:
+    """Rolling at 02:05 reads yesterday evening's runs and today's early slots in one payload."""
+    early = dt.datetime.combine(TODAY, dt.time(2, 5), tzinfo=ET)
+    s = load_session(conn, routines, now=early, day=TODAY, window="rolling")
+    assert s.window == "rolling"
+    assert s.start == dt.datetime.combine(TODAY - dt.timedelta(days=1), dt.time(18), tzinfo=ET)
+    assert s.end == dt.datetime.combine(TODAY, dt.time(7), tzinfo=ET)
+    slots = [x for r in [*s.rows, *([s.loop] if s.loop else [])] for x in r.slots]
+    assert slots
+    assert all(s.start <= x.at < s.end for x in slots)
+    days = {x.at.date() for x in slots}
+    assert days == {TODAY - dt.timedelta(days=1), TODAY}
+    # the fixture persisted yesterday's plan: yesterday evening's slots carry their runs
+    yday = [x for x in slots if x.at.date() < TODAY]
+    assert yday and any(x.run is not None for x in yday)
+    assert sum(s.counts.values()) == len(slots)
+
+
+def test_rolling_window_marks_the_future_after_now(conn, routines) -> None:
+    s = load_session(conn, routines, now=NOW, day=TODAY, window="rolling")
+    slots = [x for r in [*s.rows, *([s.loop] if s.loop else [])] for x in r.slots]
+    assert {x.status for x in slots if x.at > NOW} == {"future"}
+    assert s.end - NOW >= dt.timedelta(hours=4)
+    assert NOW - s.start >= dt.timedelta(hours=8)
 
 
 # ---------------------------------------------------------------------------
