@@ -219,8 +219,9 @@ class TestFingerprint:
         s = _settings()
         base = DedupeConfig.from_settings(s, Tier.NORMAL)
         strict = DedupeConfig.from_settings(s, Tier.RESTRICTIVE)
-        assert (base.executed_sessions, base.proposed_sessions, base.rejected_sessions) == (5, 1, 1)
-        assert (strict.executed_sessions, strict.proposed_sessions) == (10, 2)
+        # D97: executed cooldown 2 sessions (was 5)
+        assert (base.executed_sessions, base.proposed_sessions, base.rejected_sessions) == (2, 1, 1)
+        assert (strict.executed_sessions, strict.proposed_sessions) == (4, 2)
 
     def test_override_on_spot_move_or_regime_change_but_never_for_open(self) -> None:
         cfg = DedupeConfig(reprice_move_pct=0.03)
@@ -642,7 +643,7 @@ class TestProposeDedupe:
             Suppression.PROPOSED
         ]
         assert recent_ideas(conn, now=tuesday + dt.timedelta(days=1), cfg=strict) == []
-        # an executed idea: held while open (no window), then 5 sessions from the close
+        # an executed idea: held while open (no window), then 2 sessions from the close
         (p,) = conn.execute("SELECT proposal_hash, candidate_id, structure_json FROM proposals")
         sid = OpenStructureRepo(conn).open(
             ticker="SPY", open_proposal_hash=p["proposal_hash"], candidate_id=p["candidate_id"],
@@ -657,9 +658,10 @@ class TestProposeDedupe:
             (to_db(closed_at), sid),
         )
         conn.commit()
-        (done,) = recent_ideas(conn, now=closed_at + dt.timedelta(days=7), cfg=cfg)  # Mon 10/12
+        # D97: 2 sessions from the close (was 5): held through Wed 10/7, admitted Thu 10/8
+        (done,) = recent_ideas(conn, now=closed_at + dt.timedelta(days=2), cfg=cfg)  # Wed 10/7
         assert done.kind is Suppression.EXECUTED and not done.open_structure
-        assert recent_ideas(conn, now=closed_at + dt.timedelta(days=8), cfg=cfg) == []  # 10/13
+        assert recent_ideas(conn, now=closed_at + dt.timedelta(days=3), cfg=cfg) == []  # 10/8
 
     def test_spot_move_overrides_cooldown(self, settings, routines) -> None:  # noqa: ANN001
         conn, _ = _run(settings, routines, PipelineEnv.fixtures())
@@ -863,7 +865,7 @@ def test_fixture_book_portfolio_context(settings: ArcSettings) -> None:
     kinds = sorted(p.kind or "" for p in pc.positions)
     assert kinds == ["long_call", "vertical_credit", "vertical_debit"]
     text = render_portfolio_context(pc, settings)
-    assert "3 of 8 positions open" in text and "Flags: " in text
+    assert "3 of 10 positions open" in text and "Flags: " in text
     assert all(sid in text for sid in ids)
 
 

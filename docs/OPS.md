@@ -2543,3 +2543,26 @@ Commands (rehearse on a scratch `--db`):
   (not even one). The gate's settled-cash rule is unchanged and stays the final check.
 - **Loop.** See `loop.max_idle_with_free_slots` above (`loop_forced_free_slots`).
 
+
+## E22.4 switch-on: DTE sleeves live on the cash profiles (D97)
+
+`config/account_profiles.yaml` gives `cash_debit` and `cash_long_only` two entry-DTE
+sleeves instead of one 30-60 window (`margin` is unchanged: global 30-45):
+
+| Profile | Sleeve | Entry DTE | Slots | Exit policy |
+|---|---|---|---|---|
+| `cash_debit`, `cash_long_only` | `short` | 10-29 | 5 | `config/exits.yaml` `sleeves.short` |
+| `cash_debit`, `cash_long_only` | `swing` | 30-60 | 5 | the kind policy (D23/D78) |
+| `margin` | `default` | 30-45 (global) | `max_open_positions` | the kind policy |
+
+DTE 30 belongs to `swing`; a position's sleeve is fixed by its **entry** DTE. Short-sleeve
+debit exits (`vertical_debit`, `long_call`, `long_put`): take profit 40% of the debit,
+stop at 50% of the debit checked intraday on the 10-min marks, profit lock 0.30 → 0.10,
+close at 3 DTE; `expiry_guard` (flat by DTE 1) and the fill-day guard still apply. Swing
+keeps take profit 60%, a 75% EOD-only stop, lock 0.50 → 0.20 and close at 7 DTE.
+
+Baked defaults: `max_open_positions` 10 (was 8) and `dedupe.executed_cooldown` 2
+sessions (was 5). Rollback without a PR: `!arc config set
+profiles.cash_debit.sleeves.short.max_positions 0` closes the short sleeve to new opens
+(held short-sleeve positions keep their exit block). The `sleeves.short` exit values
+are not registry keys; changing them is a PR to `config/exits.yaml`.

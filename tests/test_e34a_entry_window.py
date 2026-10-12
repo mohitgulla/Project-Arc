@@ -50,6 +50,9 @@ from arc.routines.config import load_routines
 
 REPO = Path(__file__).resolve().parent.parent
 DTE_RANGE = re.compile(r"\b(\d{1,3})\s*[-\u2013]\s*(\d{1,3})\s*DTE\b")
+# E22.4 (D97): the shipped cash profiles carry two entry-DTE sleeves
+SLEEVES_WINDOW = "10-29 DTE (short) / 30-60 DTE (swing)"
+SLEEVE_RANGES = [("10", "29"), ("30", "60")]
 
 
 def _settings(profile: str) -> ArcSettings:
@@ -104,8 +107,9 @@ def _prompts(terms: EntryTerms) -> dict[str, str]:
 class TestEntryTerms:
     def test_cash_debit_window_and_bands(self) -> None:
         t = entry_terms(_settings("cash_debit"))
-        assert (t.dte_min, t.dte_max) == (30, 60)
-        assert t.window == "30-60 DTE"
+        # E22.4 (D97): two sleeves; dte_min/dte_max are their union envelope
+        assert (t.dte_min, t.dte_max) == (10, 60)
+        assert t.window == SLEEVES_WINDOW
         assert t.bands_text() == "debit-vertical short legs 20-35 delta; long legs 40-70 delta"
 
     def test_margin_window_and_bands(self) -> None:
@@ -115,7 +119,7 @@ class TestEntryTerms:
 
     def test_cash_long_only_has_long_band_only(self) -> None:
         t = entry_terms(_settings("cash_long_only"))
-        assert t.window == "30-60 DTE"
+        assert t.window == SLEEVES_WINDOW
         assert t.bands_text() == "long legs 40-70 delta"
 
     def test_window_follows_config_not_text(self) -> None:
@@ -142,9 +146,9 @@ class TestEntryTerms:
 
 class TestPrompts:
     @pytest.mark.parametrize("persona", ["research", "quant", "risk"])
-    def test_cash_debit_one_range_30_60(self, persona: str) -> None:
+    def test_cash_debit_states_each_sleeve_once(self, persona: str) -> None:
         p = _prompts(entry_terms(_settings("cash_debit")))[persona]
-        assert DTE_RANGE.findall(p) == [("30", "60")]
+        assert DTE_RANGE.findall(p) == SLEEVE_RANGES
         assert "30-45" not in p and "22-45" not in p and "16-30" not in p
         if persona != "research":
             assert "debit-vertical short legs 20-35 delta" in p
@@ -159,7 +163,8 @@ class TestPrompts:
 
     def test_quant_says_menu_is_in_window(self) -> None:
         p = _prompts(entry_terms(_settings("cash_debit")))["quant"]
-        assert "Every menu structure is inside the 30-60 DTE entry window" in p
+        assert "Entry windows: short 10-29 DTE, swing 30-60 DTE" in p
+        assert "Every menu structure is inside one of them" in p
         assert "do not reject or skip a menu item on DTE" in p
 
     def test_research_says_window_is_fixed(self) -> None:
@@ -352,7 +357,7 @@ class TestPipeline:
         assert {o.job: o.status for o in report.outcomes}["quant.open"] == "ok"
         for persona in ("research", "quant"):
             prompt = env.llms[persona].prompts[0]  # type: ignore[attr-defined]
-            assert DTE_RANGE.findall(prompt) == [("30", "60")], persona
+            assert DTE_RANGE.findall(prompt) == SLEEVE_RANGES, persona
             assert "30-45" not in prompt
         quant = env.llms["quant"].prompts[0]  # type: ignore[attr-defined]
         assert "debit-vertical short legs 20-35 delta; long legs 40-70 delta" in quant
@@ -400,7 +405,7 @@ class TestPipeline:
         assert "30-60 DTE" in p
         body = p.split("## Hard constraints")[0]
         assert "22-45" not in body and "16-30" not in body and "46+" not in body
-        assert DTE_RANGE.findall(body) == [("30", "60")]
+        assert DTE_RANGE.findall(body) == SLEEVE_RANGES
 
     def test_quant_dte_skip_is_logged(self) -> None:
         quant = json.loads((FIXTURES_DIR / "quant.json").read_text())

@@ -296,7 +296,7 @@ class TestResearchStep:
         conn, report, prompts = _fixture_run(monkeypatch)
         assert not report.failed
         assert re.search(
-            r"\nFree slots: 8/8 \u00b7 per-name cap \$[\d,]+\nRank at least 4 names when",
+            r"\nFree slots: 10/10 \u00b7 per-name cap \$[\d,]+\nRank at least 4 names when",
             prompts["research"],
         )
         (row,) = conn.execute(
@@ -333,7 +333,9 @@ class TestResearchStep:
         _, report, prompts = _recording_fixture_run(s, load_routines())
         assert not report.failed
         assert re.search(
-            r"\nFree slots: 8/8 \u00b7 settled cash \$[\d,]+ \u00b7 per-name cap \$[\d,]+\n",
+            # E22.4 (D97): the shipped cash profile names its two sleeves
+            r"\nFree slots: short 5/5, swing 5/5 \u00b7 settled cash \$[\d,]+ \u00b7 "
+            r"per-name cap \$[\d,]+\n",
             prompts["research"],
         )
 
@@ -448,8 +450,8 @@ class TestLoopFreeSlots:
             "SELECT choice, reason_text, payload FROM decisions "
             "WHERE reason_code='loop_forced_free_slots'"
         ).fetchall()
-        assert row["choice"] == "noted" and "Free slots: 8/8" in row["reason_text"]
-        assert json.loads(row["payload"])["free_slots"]["sleeves"][0]["free"] == 8
+        assert row["choice"] == "noted" and "Free slots: 10/10" in row["reason_text"]
+        assert json.loads(row["payload"])["free_slots"]["sleeves"][0]["free"] == 10
 
     def test_no_pressure_keeps_max_idle(self) -> None:
         """Every slot taken: the plain max_idle applies (no forced run)."""

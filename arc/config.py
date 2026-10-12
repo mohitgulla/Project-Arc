@@ -331,7 +331,7 @@ class ArcSettings(BaseSettings):
         description="Block short premium through earnings unless overridden.",
     )
     max_open_positions: Annotated[int, Field(ge=1)] = Field(
-        default=8,
+        default=10,  # D97: was 8 (cash profiles: short 5 + swing 5 sleeve slots)
         description="Max simultaneous open positions.",
     )
     approval_ttl_seconds: Annotated[int, Field(ge=1)] = Field(
@@ -537,7 +537,7 @@ class ArcSettings(BaseSettings):
     ] = Field(default=2.0, description="Restrictive tier: E5.9 dedupe cooldown multiplier.")
     # -- Portfolio-aware Research, dedupe, no-trade guard (E5.9, D33) ----------
     dedupe_executed_cooldown_sessions: Annotated[int, Field(ge=0, le=60)] = Field(
-        default=5,
+        default=2,  # D97: was 5
         description=(
             "D33: an idea whose fingerprint was executed (open, or closed within this many "
             "trading sessions) is suppressed. Doubled in the restrictive order-budget tier."

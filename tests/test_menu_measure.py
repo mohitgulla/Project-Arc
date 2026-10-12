@@ -359,7 +359,12 @@ def _quant_chains(prompt: str) -> dict[str, Any]:
     return json.loads(body)
 
 
-def _run(profile: str, monkeypatch: pytest.MonkeyPatch, **pipeline: object) -> Any:
+def _run(
+    profile: str,
+    monkeypatch: pytest.MonkeyPatch,
+    profiles_file: Path | None = None,
+    **pipeline: object,
+) -> Any:
     from arc.routines.config import load_routines
     from tests import test_pipeline as tp
 
@@ -370,19 +375,28 @@ def _run(profile: str, monkeypatch: pytest.MonkeyPatch, **pipeline: object) -> A
         on = cfg.model_copy(update={"pipeline": cfg.pipeline.model_copy(update=pipeline)})
         monkeypatch.setattr(steps, "exit_config", lambda _settings=None: on)
     monkeypatch.delenv("ARC_GATE_SECRET", raising=False)
-    s = ArcSettings(_env_file=None, account_profile=profile)  # type: ignore[call-arg]
+    kw: dict[str, Any] = {} if profiles_file is None else {"account_profiles_file": profiles_file}
+    s = ArcSettings(_env_file=None, account_profile=profile, **kw)  # type: ignore[call-arg]
     return tp._recording_fixture_run(s, load_routines())
 
 
 @pytest.mark.parametrize("profile", ["margin", "cash_debit"])
-def test_control_menu_is_identical_to_main(profile: str, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_control_menu_is_identical_to_main(
+    profile: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """Golden captured on main 71caa36 (pre-E7.5b): same menus, order and numbers.
 
     The full Quant prompt was also checked byte-identical to main for both profiles
     when the golden was captured (PR body); the chains JSON is the part E7.5b touches.
+    E22.4 (D97) switched the shipped cash profiles to two sleeves, so cash_debit runs on
+    its pre-D97 single 30-60 window here (the golden's shape); the margin run is the
+    shipped file, byte-identical.
     """
+    from tests.test_gate_sleeves import single_window_file
+
     want = json.loads(GOLDEN.read_text())[profile]
-    _, _, prompts = _run(profile, monkeypatch)
+    pf = single_window_file(tmp_path) if profile == "cash_debit" else None
+    _, _, prompts = _run(profile, monkeypatch, profiles_file=pf)
     got = _quant_chains(prompts["quant"])
     assert_json_close(got, want)
     for chain in got.values():

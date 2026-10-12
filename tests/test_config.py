@@ -38,7 +38,7 @@ class TestDefaults:
         assert s.dte_min == 30
         assert s.dte_max == 45
         assert s.earnings_blackout is True
-        assert s.max_open_positions == 8
+        assert s.max_open_positions == 10  # D97 (was 8)
         assert s.approval_ttl_seconds == 1200
         assert s.auto_approve is False
 

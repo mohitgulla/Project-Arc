@@ -21,7 +21,14 @@ from arc.scanner.scan import ScanParams
 from arc.store.db import connect
 from arc.store.migrate import migrate
 from arc.utils.calendar import ET
-from tests.test_gate_sleeves import D97_SLEEVES, call_at, codes, gate, sleeved_file
+from tests.test_gate_sleeves import (
+    D97_SLEEVES,
+    call_at,
+    codes,
+    gate,
+    single_window_file,
+    sleeved_file,
+)
 
 OWNER = "U0OWNER001"
 NOW = dt.datetime(2026, 10, 9, 10, 0, tzinfo=ET)
@@ -40,9 +47,17 @@ def _exits_with_sleeves(tmp_path: Path, sleeves: dict[str, Any]) -> Path:
 # ---------------------------------------------------------------------------
 
 
+def _exits_without_sleeves(tmp_path: Path) -> Path:
+    data = yaml.safe_load(Path("config/exits.yaml").read_text())
+    data.pop("sleeves", None)
+    f = tmp_path / "exits_no_sleeves.yaml"
+    f.write_text(yaml.safe_dump(data))
+    return f
+
+
 class TestPolicyFor:
-    def test_no_sleeve_block_is_identical(self) -> None:
-        cfg = load_exit_config()
+    def test_no_sleeve_block_is_identical(self, tmp_path: Path) -> None:
+        cfg = load_exit_config(_exits_without_sleeves(tmp_path))
         assert cfg.sleeves == {}
         for kind in [*SK, None]:
             base = cfg.policy_for(kind)
@@ -89,18 +104,27 @@ def cfg(profiles_file: Path | None = None) -> ArcSettings:
 
 
 class TestScannerAndPrompt:
-    def test_single_window_params_unchanged(self) -> None:
-        p = ScanParams.from_settings(cfg())
+    def test_single_window_params_unchanged(self, tmp_path: Path) -> None:
+        p = ScanParams.from_settings(cfg(single_window_file(tmp_path)))
         assert (p.dte_min, p.dte_max, p.dte_windows) == (30, 60, None)
+
+    def test_shipped_params_are_two_sleeves(self) -> None:
+        """E22.4 (D97): the shipped cash_debit scanner scans both sleeve windows."""
+        p = ScanParams.from_settings(cfg())
+        assert (p.dte_min, p.dte_max, p.dte_windows) == (10, 60, [(10, 29), (30, 60)])
 
     def test_sleeved_params(self, tmp_path: Path) -> None:
         p = ScanParams.from_settings(cfg(sleeved_file(tmp_path)))
         assert (p.dte_min, p.dte_max) == (10, 60)
         assert p.dte_windows == [(10, 29), (30, 60)]
 
-    def test_single_window_prompt_text_unchanged(self) -> None:
-        t = entry_terms(cfg())
+    def test_single_window_prompt_text_unchanged(self, tmp_path: Path) -> None:
+        t = entry_terms(cfg(single_window_file(tmp_path)))
         assert t.sleeves is None and t.window == "30-60 DTE"
+
+    def test_shipped_prompt_text_names_both_sleeves(self) -> None:
+        t = entry_terms(cfg())
+        assert t.window == "10-29 DTE (short) / 30-60 DTE (swing)"
 
     def test_sleeved_prompt_text(self, tmp_path: Path) -> None:
         t = entry_terms(cfg(sleeved_file(tmp_path)))

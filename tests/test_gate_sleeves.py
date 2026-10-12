@@ -52,6 +52,22 @@ def sleeved_file(tmp_path: Path, sleeves: dict[str, Any] | None = None) -> Path:
     return f
 
 
+def single_window_file(tmp_path: Path) -> Path:
+    """The shipped profiles file with the cash profiles back on one 30-60 window.
+
+    The pre-D97 shape (E22.4 switched the shipped cash profiles to sleeves): pins the
+    single-window back-compat path, which margin and any sleeve-less profile still use.
+    """
+    data = yaml.safe_load(Path("config/account_profiles.yaml").read_text())
+    for name in ("cash_debit", "cash_long_only"):
+        prof = data["profiles"][name]
+        prof.pop("sleeves", None)
+        prof["dte_min"], prof["dte_max"] = 30, 60
+    f = tmp_path / "account_profiles_single.yaml"
+    f.write_text(yaml.safe_dump(data))
+    return f
+
+
 def cfg(profiles_file: Path | None = None, profile: str = "cash_debit") -> ArcSettings:
     kw: dict[str, Any] = {"account_profile": profile}
     if profiles_file is not None:
@@ -233,8 +249,22 @@ class TestSettings:
             ("swing", 30, 60),
         ]
 
-    def test_shipped_cash_debit_is_one_default_sleeve(self) -> None:
+    def test_shipped_cash_debit_is_d97_sleeves(self) -> None:
+        """E22.4 (D97): the shipped cash_debit profile carries the short + swing sleeves."""
         s = cfg()
+        assert s.profile.has_sleeves
+        assert s.entry_dte_window == (10, 60)
+        assert [(x.name, x.dte_min, x.dte_max, x.max_positions) for x in s.entry_sleeves] == [
+            ("short", 10, 29, 5),
+            ("swing", 30, 60, 5),
+        ]
+        assert sum(x.max_positions or 0 for x in s.entry_sleeves) == s.max_open_positions
+        assert s.exit_block_for_dte(20) == "short"
+        assert s.exit_block_for_dte(30) is None  # DTE 30 belongs to swing
+        assert s.exit_block_for_dte(45) is None
+
+    def test_single_window_cash_debit_is_one_default_sleeve(self, tmp_path: Path) -> None:
+        s = cfg(single_window_file(tmp_path))
         assert not s.profile.has_sleeves
         assert s.entry_dte_window == (30, 60)
         assert [(x.name, x.dte_min, x.dte_max, x.max_positions) for x in s.entry_sleeves] == [
@@ -278,8 +308,8 @@ class TestGateDteWindow:
         v = R.check_dte_window(_derived(call_at(0)), cfg(f), NOW)
         assert v and "DTE 0 outside sleeves a[1-20]" in v[0].detail
 
-    def test_single_window_message_unchanged(self) -> None:
-        d = gate(call_at(61), cfg())
+    def test_single_window_message_unchanged(self, tmp_path: Path) -> None:
+        d = gate(call_at(61), cfg(single_window_file(tmp_path)))
         assert any("DTE 61 outside [30, 60]" in v for v in d.violations)
 
 
@@ -345,9 +375,10 @@ class TestGateSleevePositions:
         c = cfg(sleeved_file(tmp_path))
         assert R.check_sleeve_positions(held(20), _derived(call_at(70)), c, NOW) == []
 
-    def test_single_window_profile_never_fires(self) -> None:
+    def test_single_window_profile_never_fires(self, tmp_path: Path) -> None:
         many = held(*([45] * 30))
-        assert R.check_sleeve_positions(many, _derived(call_at(45)), cfg(), NOW) == []
+        c = cfg(single_window_file(tmp_path))
+        assert R.check_sleeve_positions(many, _derived(call_at(45)), c, NOW) == []
 
     def test_reason_code_label(self) -> None:
         from arc.journal.reasons import REASON_LABELS, ReasonCode
