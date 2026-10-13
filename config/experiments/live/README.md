@@ -28,7 +28,10 @@ single-treatment run = `t1`) and the stored report's `report_hash` (from
 `t<k>` tested. Any verdict file (win, futility, invalid) frees the leaves.
 
 Who adds specs (D86): specs are added only by `arc experiment adopt` (E21.4) after the
-owner approves an Analyst proposal (`approve P-<n>` in #arc-analyst). Cards and PRs never
+owner approves an Analyst proposal (`approve P-<n>` in #arc-analyst). It commits
+`xp<n>_<slug>.yaml` through an auto-merged PR on branch `xp/<n>`, and every concluded
+experiment gets its `verdicts/XP-<n>.yaml` the same way (branch `xp/<n>-verdict`; docs/OPS.md
+§5.18). Cards and PRs never
 draft XP specs here; a strategy PR's only XP touchpoint is its `XP-advisory:` line.
 `create` and `register` refuse without `--owner-approval <P-<n> | slack:<ts> | owner:<note>>`.
 

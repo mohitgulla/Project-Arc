@@ -673,8 +673,18 @@ def _evaluator_sha() -> str | None:
     return _git()[0]
 
 
+#: config sections that are no input to an evaluation (E21.4: the pre-open auto-start),
+#: kept out of the report so stored reports and their hashes stay comparable
+REPORT_CONFIG_EXCLUDE = frozenset({"autostart"})
+
+
+def report_config(cfg: ExperimentsConfig) -> dict[str, Any]:
+    """The experiments config a report records: everything that can change a verdict."""
+    return cfg.model_dump(mode="json", exclude=set(REPORT_CONFIG_EXCLUDE))
+
+
 def config_hash(cfg: ExperimentsConfig) -> str:
-    blob = json.dumps(cfg.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+    blob = json.dumps(report_config(cfg), sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(blob.encode()).hexdigest()
 
 
@@ -1014,7 +1024,7 @@ def build_report(
         spec_hash=st.spec_hash,
         registered_hash=st.registered_hash,
         config_hash=config_hash(cfg),
-        config=cfg.model_dump(mode="json"),
+        config=report_config(cfg),
         control_sha=run.control_sha,
         treatment_sha=_treatment_sha(conn, t_arm),
         evaluator_sha=_evaluator_sha(),

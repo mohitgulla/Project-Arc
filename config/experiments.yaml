@@ -30,6 +30,15 @@ experiments:
     sigma_upper_q: 0.05      # no A/A sigma: running sd inflated to its 95% upper chi2 bound
     bootstrap_resamples: 2000   # paired bootstrap of the Sortino difference (seeded)
 
+  # E21.4 (D86): the pre-open `experiments.autostart` routine (config/routines.yaml, 09:05
+  # ET) starts the oldest registered experiment the owner approved (`arc experiment adopt`)
+  # once its t0 checks pass: market session, no halt, an A/A calibration with a committed
+  # verdict, the spec merged on main (hash = the lock), and `arc experiment start`'s
+  # capacity checks. Slack: `!arc set experiments.autostart.enabled false` pauses it.
+  autostart:
+    enabled: true
+    max_per_day: 1           # experiments started per trading day
+
   # E10.2 arm runner (D44). While an experiment is `running`, every arm below runs the
   # trading loop again right after control's loop chain, on the SAME inputs: control's
   # Scalp/context entries and its recorded market reads (market_tape), forking at the

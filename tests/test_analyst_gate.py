@@ -885,7 +885,7 @@ def test_context_has_backlog_and_record_writes_p_ids(
 
 
 def test_owner_approve_drop_reprioritise_backlog(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     p = _paths(tmp_path, tmp_path / "unused.db")
     b = aa.empty_backlog()
@@ -893,19 +893,40 @@ def test_owner_approve_drop_reprioritise_backlog(
                                       _prop(key="xp-proposal:b", p_success=0.6)]},
                      "r", "t")  # fmt: skip
     aa.save_json(p.backlog, b)
-    assert aa.main(["approve", "P-9"], p, NOW) == 2
-    assert aa.main(["approve", "P-1", "go"], p, NOW) == 0
+    assert aa.main(["approve", "P-9", "--approval", "slack:1791668051.305679"], p, NOW) == 2
+    assert aa.main(["approve", "P-1", "go"], p, NOW) == 2  # E21.4: the owner's Slack ts
+    assert "needs --approval slack:<ts>" in capsys.readouterr().out
+    calls: list[tuple[str, Path, str]] = []
+
+    def fake_adopt(paths: Any, pid: str, spec_path: Path, approval: str) -> tuple[int, Any]:
+        calls.append((pid, spec_path, approval))
+        return 0, {
+            "experiment_id": "XP-3", "status": "registered", "area": "exits", "arms": 4,
+            "pr_url": "https://github.com/o/r/pull/9", "starts": "2026-10-05",
+            "queued_behind": [], "queue_reason": None,
+        }  # fmt: skip
+
+    monkeypatch.setattr(aa, "adopt_proposal", fake_adopt)
+    approval = ["--approval", "slack:1791668051.305679"]
+    assert aa.main(["approve", "P-1", "go", *approval], p, NOW) == 0
     out = capsys.readouterr().out
     spec_path = p.home / "proposals" / "P-1.yaml"
-    assert f"P-1 approved. Spec: {spec_path}" in out
-    assert "--owner-approval P-1" in out
+    assert calls == [("P-1", spec_path, "slack:1791668051.305679")]
+    assert "P-1 -> XP-3 [registered], area exits, 4 arms" in out
+    assert "Spec PR: https://github.com/o/r/pull/9" in out
+    assert "starts 2026-10-05 pre-open" in out
     spec = yaml.safe_load(spec_path.read_text())
     assert spec["id"] == "XP-<next>" and spec["kind"] == "ab" and spec["spec_version"] == 2
     from arc.experiments.models import ExperimentSpec
 
     assert len(ExperimentSpec.model_validate({**spec, "id": "XP-9"}).arms.treatments) == 4
     b = aa.load_backlog(p.backlog)
-    assert aa.backlog_by_id(b, "P-1")["status"] == "approved"
+    entry = aa.backlog_by_id(b, "P-1")
+    assert entry["status"] == "registered" and entry["experiment_id"] == "XP-3"
+    assert aa.main(["approve", "P-1", *approval], p, NOW) == 2  # already registered
+    capsys.readouterr()
+    aa.backlog_by_id(b, "P-1")["status"] = "approved"  # back to approved for the ranking part
+    aa.save_json(p.backlog, b)
     assert aa.main(["reprioritise", "P-1", "owner wants exits first"], p, NOW) == 0
     assert "P-1 -> rank #1" in capsys.readouterr().out
     assert aa.main(["reprioritise", "P-2", "why", "--score", "x"], p, NOW) == 2

@@ -142,7 +142,9 @@ line under "Obvious flaws" as `→ Sentinel` and do not draft a card for it.
      difference + Sortino non-inferiority). Your job is the *why*: which regime and structure
      rows of the per-arm breakdowns carry the difference, with N per row. Breakdowns are
      reported only, never decision inputs; below 20 trades in a row say "too few to attribute".
-     A `win` becomes a quick change (`evidence_kind: xp-winner`): the promotion PR.
+     A `win` becomes a quick change (`evidence_kind: xp-winner`): the promotion PR. The
+     context's "Promotion leads" section lists each such winner as "promote XP-<n> winner
+     t<k>" until it is promoted (E21.4; the verdict file is already committed).
    - An A/A (`kind: aa`) never wins: read it for sigma (the plan grid uses it). An A/A `invalid`
      is a harness flaw (→ Sentinel), not a strategy finding.
 8. **BACKTEST STUDIES (D84, E7.12 study framework; you never run one).** A study runs for hours
@@ -317,10 +319,15 @@ from `python3 ~/.hermes/profiles/arc-analyst/scripts/arc_analyst.py backlog`.
   `references/lessons.md`.
 - `accept A-<n>`: `triage A-<n> accepted`. `fixed A-<n>`: `triage A-<n> fixed` (next run
   re-verifies).
-- `approve P-<n> [note]`: `arc_analyst.py approve P-<n> "<note>"`. It freezes the spec, writes
-  it to `~/.hermes/profiles/arc-analyst/analyst/proposals/P-<n>.yaml` and prints the owner's
-  steps. Once E21.4 lands, hand off to `arc experiment adopt P-<n>`; until then reply with the
-  spec path and the printed manual steps (`--owner-approval P-<n>` on create and register).
+- `approve P-<n> [note]`: `arc_analyst.py approve P-<n> "<note>" --approval slack:<ts>`, where
+  `<ts>` is the owner's approving message ts in this thread (the D86 owner-confirmed rule;
+  only the owner `U0C5KUMH28G` may approve, so refuse anyone else). It freezes the spec, writes
+  it to `~/.hermes/profiles/arc-analyst/analyst/proposals/P-<n>.yaml` and runs
+  `arc experiment adopt` on the live store (E21.4). That command takes the next free XP id,
+  registers it (or queues it behind a busy area or arm cap) and opens the auto-merging spec PR.
+  The backlog entry then moves to `registered`. Reply with the printed XP id, PR URL and start
+  estimate. If adopt fails, reply with its error. Re-sending `approve P-<n>` retries it, and is
+  idempotent per P-<n>.
 - `drop P-<n> <why>`: `arc_analyst.py drop P-<n> "<why>"`.
 - `reprioritise P-<n> <why>`: `arc_analyst.py reprioritise P-<n> "<why>"` pins it to the top
   (`reprioritise P-<n> "<why>" --score <x>` overrides its value instead). Reply with the rank.

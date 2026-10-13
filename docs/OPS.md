@@ -1580,7 +1580,7 @@ python3 …/arc_analyst.py check-report RUN_DIR/report.md       # ≤ 3,500 char
 python3 …/arc_analyst.py mark RUN_DIR                         # advance the watermark
 python3 …/arc_analyst.py triage A-3 wontfix "why"             # owner: accepted|wontfix|fixed
 python3 …/arc_analyst.py ship A-4 "note"                      # owner: quick change shipped → next run reviews it
-python3 …/arc_analyst.py approve P-2 "note"                   # owner: proposal → proposals/P-2.yaml + manual steps (E21.4: adopt)
+python3 …/arc_analyst.py approve P-2 "note" --approval slack:<ts>  # owner: proposals/P-2.yaml → arc experiment adopt (E21.4)
 python3 …/arc_analyst.py drop P-3 "why"                       # owner
 python3 …/arc_analyst.py reprioritise P-3 "why" [--score X]   # owner: pin to the top / override value
 python3 …/arc_analyst.py backlog                              # ranked backlog with each value formula
@@ -1659,6 +1659,48 @@ stores one `ExperimentReport` in the append-only `experiment_reports` table:
 - `max_sessions` without a win → stop(futility); for an A/A that is the normal
   end and records σ (unlocks ab starts). An A/A whose CI excludes 0 → stop(invalid).
 - Breakdowns by regime / structure kind are reported, never decision inputs.
+
+**Approve → register → auto-start (E21.4, D86).** Nothing below needs a manual step once
+the owner approves a proposal:
+
+    arc experiment adopt P-2 --proposal <P-2.yaml | xp_backlog.json> \
+        --owner-approval slack:<ts> --db <db> [--dry-run] [--no-pr] [--no-slack] [--json]
+    arc experiment verdict XP-11 [--dry-run]     # retry / preview a verdict PR
+
+- **adopt** (the Analyst's `approve P-<n>` runs it on the live store): picks the next free
+  `XP-<n>` across the DB, the committed specs and `origin/main`, fills the defaults from
+  `config/experiments.yaml`, and validates the spec. It must be v2 `ab`, with exactly 4
+  treatments, overlays that validate, and arms that fit `max_parallel_arms`. Then it runs
+  `create` + `register` with `proposal_ref: P-<n>`, which leaves the experiment
+  `registered`, or `queued` with the reason. It commits
+  `config/experiments/live/xp<n>_<slug>.yaml` on branch `xp/<n>` through a PR with
+  `gh pr merge --auto --squash`, and posts one #arc-investor line ("XP-11 registered
+  (P-2), 4 arms, area entries, starts Tue Oct 13 pre-open" or "… queued behind XP-9").
+  Re-running for the same P-id only retries what is missing, such as a failed PR.
+- **`experiments.autostart`** (trading days 09:05 ET, ttl 30m, so before the 09:40
+  loop) takes the oldest `registered` experiment that carries a `proposal_ref`, and starts
+  it with `arc experiment start`'s checks once all of these hold:
+  - the market is open today;
+  - no halt is active;
+  - an A/A stopped with sigma, **and** its `verdicts/XP-<aa>.yaml` is on main (the
+    owner's A/A override is never used);
+  - the spec is on `origin/main` with a hash equal to the registered lock;
+  - capacity and `shared_capacity_frac` allow it.
+  It starts at most `experiments.autostart.max_per_day` (default 1) and posts started /
+  blocked-with-reason once. `!arc set experiments.autostart.enabled false` pauses it.
+  Hand-registered experiments (no `proposal_ref`, e.g. the E15.9 A/A) are never
+  auto-started. `arc routines tick --dry-run` shows what it would do.
+- **Verdict file for every outcome:** after each evaluation, `experiments.evaluate`
+  opens an auto-merging PR (branch `xp/<n>-verdict`) with
+  `config/experiments/live/verdicts/XP-<n>.yaml` for every concluded experiment that
+  does not have one yet. That covers its own stops and the owner's `arc experiment
+  stop`. The verdict is `win` (+ `winner: t<k>`), `loss` (harm), `futility`, `stopped`
+  (owner) or `invalid`, with the stored `report_hash`. The file unlocks the spec's
+  leaves (§5.20). The store's queue promotion has already made the next queued
+  experiment `registered` for the next 09:05. A verdict already on main
+  (hand-committed) is never overwritten. A failed publish raises a notice, and the
+  next day retries it. A `win` appears in the Analyst's context as the "promote XP-<n>
+  winner t<k>" lead.
 
 ### 5.19 Arm runner (E10.2, D44)
 
