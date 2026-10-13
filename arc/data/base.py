@@ -181,6 +181,18 @@ def _bar_day(bar: HistoryBar) -> dt.date:
     return (ts.astimezone(ET) if ts.tzinfo is not None else ts).date()
 
 
+def _after_close(stamp: dt.datetime, today: dt.date) -> bool:
+    """True when a quote *stamp* is after *today*'s regular close (D101).
+
+    Naive stamps and non-session days are never "after close" (the old rules apply).
+    """
+    from arc.utils.calendar import is_session, session_close
+
+    if stamp.tzinfo is None or not is_session(today):
+        return False
+    return stamp > session_close(today)
+
+
 def market_spot(
     provider: MarketDataProvider,
     symbol: str,
@@ -191,6 +203,10 @@ def market_spot(
 ) -> Spot:
     """Spot for pricing *symbol* on *today*: never a one-sided half-price mid (E4.12).
 
+    - a quote stamped after *today*'s session close: today's daily close when that
+      bar exists (D101: the closing book can leave a stale far bid behind. QQQ on
+      2026-10-12 at 16:00 ET quoted 727.10 / 746.09, a 2.6% spread inside the 5% cap,
+      so the mid was 736.60 against a 746.04 close); else the rules below;
     - both sides > 0 and spread <= ``max_spread_pct`` of the mid: the mid;
     - both sides > 0 but wider: the latest daily close when that bar is from
       *today* (after hours the close is the real price), else the mid;
@@ -200,6 +216,13 @@ def market_spot(
     *quote* is an already fetched quote (saves a second request).
     """
     q = quote if quote is not None else provider.underlying_quote(symbol)
+    if _after_close(q.timestamp, today):
+        bars = provider.history_bars(
+            symbol, today - dt.timedelta(days=REFERENCE_LOOKBACK_DAYS), today
+        )
+        last = bars[-1] if bars and bars[-1].close > 0 else None
+        if last is not None and _bar_day(last) == today:
+            return Spot(last.close, "last_close")
     two_sided = q.bid > 0 and q.ask > 0
     mid = (q.bid + q.ask) / 2.0 if two_sided else 0.0
     if two_sided and (q.ask - q.bid) <= max_spread_pct * mid:

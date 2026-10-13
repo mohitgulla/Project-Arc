@@ -141,7 +141,7 @@
   "SPY": {
    "exit_policy_note": "exits: static = hold to expiry; managed = under the exit policy in config/exits.yaml (both after costs, $ per contract). Paths move at the realised-vol forecast (path_vol, mean HV20/HV60) and are priced at IV; vrp = IV \u2212 forecast; rorc_day = managed net EV / (max loss \u00d7 days held).",
    "iv": {
-    "atm_iv": 0.13293525000000003,
+    "atm_iv": 0.13295250000000003,
     "atm_iv_expiration": "2026-10-30",
     "iv_percentile": null,
     "iv_rank": null,
@@ -157,20 +157,20 @@
      "cost_bps": 311.1,
      "credit_width": 0.334,
      "dte": 35,
-     "ev_per_contract": -23.4,
+     "ev_per_contract": -23.44,
      "exits": {
       "expected_days_held": 24.77,
-      "managed_net_ev": 3.27,
-      "managed_pop": 0.6792,
-      "p_dte_exit": 0.3267,
+      "managed_net_ev": 3.23,
+      "managed_pop": 0.6793,
+      "p_dte_exit": 0.3268,
       "p_expiry": 0.0,
       "p_profit_lock": 0.0,
-      "p_stop": 0.0812,
-      "p_take_profit": 0.5921,
+      "p_stop": 0.0811,
+      "p_take_profit": 0.592,
       "path_vol": 0.1074,
       "policy": "take profit 50% of max gain (credit); stop pct_max_loss 0.75 (end of day); close at 7 DTE",
-      "rorc_day": 0.000396,
-      "static_net_ev": 27.43,
+      "rorc_day": 0.000392,
+      "static_net_ev": 27.42,
       "static_pop": 0.7178,
       "stop_close": 4.1675,
       "take_profit_close": 0.835,
@@ -178,9 +178,9 @@
      },
      "expiration": "2026-10-30",
      "greeks": {
-      "delta": -2.0482010752506206,
-      "theta": 3.045696020922737,
-      "vega": -1680.3628433942176
+      "delta": -2.0517206191334445,
+      "theta": 3.0459702577521544,
+      "vega": -1680.210501210322
      },
      "legs": [
       {
@@ -223,7 +223,7 @@
      "max_gain": 167.0,
      "max_loss": 333.0,
      "net_debit_credit": -1.67,
-     "pop": 0.6146,
+     "pop": 0.6145,
      "short_deltas": [
       0.2071,
       0.2073
@@ -239,20 +239,20 @@
      "cost_bps": 203.9,
      "credit_width": 0.3311,
      "dte": 35,
-     "ev_per_contract": -18.74,
+     "ev_per_contract": -18.78,
      "exits": {
-      "expected_days_held": 24.48,
-      "managed_net_ev": 9.22,
-      "managed_pop": 0.6955,
+      "expected_days_held": 24.49,
+      "managed_net_ev": 9.19,
+      "managed_pop": 0.6954,
       "p_dte_exit": 0.3135,
       "p_expiry": 0.0,
       "p_profit_lock": 0.0,
       "p_stop": 0.0777,
-      "p_take_profit": 0.6088,
+      "p_take_profit": 0.6089,
       "path_vol": 0.1074,
       "policy": "take profit 50% of max gain (credit); stop pct_max_loss 0.75 (end of day); close at 7 DTE",
-      "rorc_day": 0.001126,
-      "static_net_ev": 32.36,
+      "rorc_day": 0.001122,
+      "static_net_ev": 32.34,
       "static_pop": 0.7278,
       "stop_close": 4.1639,
       "take_profit_close": 0.8277,
@@ -260,9 +260,9 @@
      },
      "expiration": "2026-10-30",
      "greeks": {
-      "delta": -2.0038529261320086,
-      "theta": 3.1367535026024242,
-      "vega": -1710.6531627253598
+      "delta": -2.0073812239626214,
+      "theta": 3.1370958542344116,
+      "vega": -1710.5279192001963
      },
      "legs": [
       {
@@ -305,7 +305,7 @@
      "max_gain": 165.55,
      "max_loss": 334.45,
      "net_debit_credit": -1.6555,
-     "pop": 0.6232,
+     "pop": 0.6231,
      "short_deltas": [
       0.2071,
       0.1982
@@ -321,30 +321,30 @@
      "cost_bps": 416.2,
      "credit_width": 0.31,
      "dte": 35,
-     "ev_per_contract": -29.74,
+     "ev_per_contract": -29.79,
      "exits": {
       "expected_days_held": 24.7,
       "managed_net_ev": -4.56,
-      "managed_pop": 0.6754,
+      "managed_pop": 0.6756,
       "p_dte_exit": 0.3245,
       "p_expiry": 0.0,
       "p_profit_lock": 0.0,
-      "p_stop": 0.0782,
+      "p_stop": 0.0781,
       "p_take_profit": 0.5974,
       "path_vol": 0.1074,
       "policy": "take profit 50% of max gain (credit); stop pct_max_loss 0.75 (end of day); close at 7 DTE",
       "rorc_day": -0.000535,
-      "static_net_ev": 20.71,
-      "static_pop": 0.7304,
+      "static_net_ev": 20.69,
+      "static_pop": 0.7302,
       "stop_close": 4.1375,
       "take_profit_close": 0.775,
       "vrp": 0.0255
      },
      "expiration": "2026-10-30",
      "greeks": {
-      "delta": -2.3958009025552656,
-      "theta": 2.889507506045481,
-      "vega": -1635.57886128057
+      "delta": -2.399294434096788,
+      "theta": 2.889714961896317,
+      "vega": -1635.3829373535746
      },
      "legs": [
       {
@@ -387,7 +387,7 @@
      "max_gain": 155.0,
      "max_loss": 345.0,
      "net_debit_credit": -1.55,
-     "pop": 0.6284,
+     "pop": 0.6283,
      "short_deltas": [
       0.1941,
       0.2073
@@ -403,20 +403,20 @@
      "cost_bps": 312.3,
      "credit_width": 0.3071,
      "dte": 35,
-     "ev_per_contract": -25.09,
+     "ev_per_contract": -25.13,
      "exits": {
       "expected_days_held": 24.37,
-      "managed_net_ev": 1.25,
+      "managed_net_ev": 1.23,
       "managed_pop": 0.6935,
-      "p_dte_exit": 0.3113,
+      "p_dte_exit": 0.3115,
       "p_expiry": 0.0,
       "p_profit_lock": 0.0,
-      "p_stop": 0.0743,
-      "p_take_profit": 0.6144,
+      "p_stop": 0.0742,
+      "p_take_profit": 0.6143,
       "path_vol": 0.1074,
       "policy": "take profit 50% of max gain (credit); stop pct_max_loss 0.75 (end of day); close at 7 DTE",
-      "rorc_day": 0.000148,
-      "static_net_ev": 25.64,
+      "rorc_day": 0.000146,
+      "static_net_ev": 25.62,
       "static_pop": 0.7399,
       "stop_close": 4.1339,
       "take_profit_close": 0.7678,
@@ -424,9 +424,9 @@
      },
      "expiration": "2026-10-30",
      "greeks": {
-      "delta": -2.3514527534366536,
-      "theta": 2.9805649877251685,
-      "vega": -1665.8691806117122
+      "delta": -2.354955038925965,
+      "theta": 2.980840558378574,
+      "vega": -1665.7003553434488
      },
      "legs": [
       {
@@ -469,7 +469,7 @@
      "max_gain": 153.55,
      "max_loss": 346.45,
      "net_debit_credit": -1.5355,
-     "pop": 0.637,
+     "pop": 0.6369,
      "short_deltas": [
       0.1941,
       0.1982
@@ -485,30 +485,30 @@
      "cost_bps": 165.8,
      "credit_width": 0.293,
      "dte": 35,
-     "ev_per_contract": -33.1,
+     "ev_per_contract": -33.13,
      "exits": {
       "expected_days_held": 25.02,
-      "managed_net_ev": -2.9,
-      "managed_pop": 0.6721,
-      "p_dte_exit": 0.3412,
+      "managed_net_ev": -2.92,
+      "managed_pop": 0.672,
+      "p_dte_exit": 0.3411,
       "p_expiry": 0.0,
       "p_profit_lock": 0.0,
       "p_stop": 0.0779,
-      "p_take_profit": 0.5809,
+      "p_take_profit": 0.581,
       "path_vol": 0.1074,
       "policy": "take profit 50% of max gain (credit); stop pct_max_loss 0.75 (end of day); close at 7 DTE",
-      "rorc_day": -0.000328,
-      "static_net_ev": 18.15,
-      "static_pop": 0.7332,
+      "rorc_day": -0.00033,
+      "static_net_ev": 18.14,
+      "static_pop": 0.7329,
       "stop_close": 4.1162,
       "take_profit_close": 0.7325,
       "vrp": 0.0255
      },
      "expiration": "2026-10-30",
      "greeks": {
-      "delta": -1.3206032452741248,
-      "theta": 2.6717032085386982,
-      "vega": -1602.2294179769751
+      "delta": -1.3242009046700627,
+      "theta": 2.6721342622815936,
+      "vega": -1602.2230944601515
      },
      "legs": [
       {
@@ -551,7 +551,7 @@
      "max_gain": 146.5,
      "max_loss": 353.5,
      "net_debit_credit": -1.465,
-     "pop": 0.6287,
+     "pop": 0.6286,
      "short_deltas": [
       0.2071,
       0.1849

@@ -95,7 +95,7 @@ class TestAnalyticsStored:
         assert mc is not None and mc.analytics is not None
         assert "analytics" not in Proposal.model_fields  # gate hash contract unchanged
         a = mc.analytics
-        assert a.spot == pytest.approx(771.335)
+        assert a.spot == pytest.approx(771.35)  # D101: post-close quote -> the day's close
         assert [la.occ_symbol for la in a.legs] == [leg.occ_symbol for leg in run.p.structure.legs]
         assert a.exit_model is not None and a.cost_model == load_cost_model()
 
@@ -115,7 +115,7 @@ class TestCardItems:
     def test_1_summary_sentence_case(self, run: SimpleNamespace) -> None:
         summary = run.view.blocks[1]["elements"][0]["text"]
         assert summary.startswith("Credit 1.66 · Max gain $165.55 · Max loss $334.45 · PoP 62%")
-        assert "Net EV $9.22 managed / $32.36 hold" in summary
+        assert "Net EV $9.19 managed / $32.34 hold" in summary
         assert summary.endswith("x14 · Account margin · :white_check_mark: Gate PASS")
 
     def test_2_legs_are_plain_lines(self, run: SimpleNamespace) -> None:
@@ -143,8 +143,8 @@ class TestCardItems:
         assert _field(run.view, "Net Greeks (position)") == [
             "Δ Delta -28.1 sh",
             "Γ Gamma -3.29 sh",
-            "ν Vega -$239.49 / vol pt",
-            "Θ Theta +$43.91 / day",
+            "ν Vega -$239.47 / vol pt",
+            "Θ Theta +$43.92 / day",
         ]
         for b in run.view.blocks:
             for f in b.get("fields", []):
@@ -187,16 +187,16 @@ class TestCardItems:
         hold = _field(run.view, "Net EV · hold to expiry")
         managed = _field(run.view, "Net EV · managed exit")
         assert hold == [
-            "Gross (model) EV $35.80",
+            "Gross (model) EV $35.78",
             "− Spread & slippage in $3.23",
             "− Spread & slippage out $0.00",
             "− Commission $0.00",
             "− Regulatory fees $0.21",
-            "Net EV $32.36 / contract",
-            "Net EV $453.04 x14",
+            "Net EV $32.34 / contract",
+            "Net EV $452.76 x14",
         ]
-        assert managed[0] == "Gross (model) EV $15.89"
-        assert managed[-2:] == ["Net EV $9.22 / contract", "Net EV $129.08 x14"]
+        assert managed[0] == "Gross (model) EV $15.86"
+        assert managed[-2:] == ["Net EV $9.19 / contract", "Net EV $128.66 x14"]
         assert NET_EV_DEFINITION in _all_text(run.view)
         assert "exchange/regulatory fees, slippage and bid-ask spread" in NET_EV_DEFINITION
 
@@ -219,9 +219,9 @@ class TestCardItems:
 
     def test_8_underlying_and_moneyness(self, run: SimpleNamespace) -> None:
         und = _field(run.view, "Underlying")
-        assert und[0] == "Spot 771.34 at 16:00 ET"
+        assert und[0] == "Spot 771.35 at 16:00 ET"
         assert und[1].startswith("Day change ")
-        assert und[2] == "1σ move to expiry ±31.75 (739.58 – 803.09)"
+        assert und[2] == "1σ move to expiry ±31.76 (739.59 – 803.11)"
         mon = _field(run.view, "Moneyness (% / σ from spot)")
         assert mon[1] == "Short 745P: -3.4%, 0.8σ"
         # E16.5: |BE - S| / (ATR14 x sqrt(DTE)) from the fixture regime's technicals
@@ -250,8 +250,8 @@ class TestCardItems:
             "Take profit 50% of max gain ($0.83 debit to close) · Stop at 75% of max loss "
             "($4.16 debit to close), end-of-day marks · Close at 7 DTE"
         )
-        assert plan[1] == "Managed: PoP 70% · Net EV $9.22 / contract"
-        assert plan[2] == "Hold to expiry: PoP 73% · Net EV $32.36 / contract"
+        assert plan[1] == "Managed: PoP 70% · Net EV $9.19 / contract"
+        assert plan[2] == "Hold to expiry: PoP 73% · Net EV $32.34 / contract"
         assert plan[3] == "Take profit 61% · Stop 8% · DTE exit 31% · Expiry 0%"
         assert plan[4] == "Expected days held 24.5"
 

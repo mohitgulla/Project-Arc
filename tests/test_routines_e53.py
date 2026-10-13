@@ -654,6 +654,40 @@ class TestMonitor:
         assert hb is not None and "benchmarks" not in hb.detail
         assert hb.detail["broker_requests"] == 2
 
+    def test_benchmark_wide_quote_uses_todays_bar(self) -> None:
+        """D101: a benchmark quote wider than 0.5% falls back to today's daily bar, even
+        mid-session and under the 5% pricing cap; after the bell today's close wins."""
+        import datetime as dt
+
+        from arc.data.base import HistoryBar, UnderlyingQuote
+        from arc.routines.monitor import _benchmarks
+        from arc.utils.calendar import ET
+
+        day = dt.date(2026, 10, 12)
+
+        class _M:
+            def __init__(self, at: dt.datetime) -> None:
+                self.at = at
+
+            def underlying_quote(self, s: str) -> UnderlyingQuote:
+                # live QQQ 16:00 ET quote: stale 727.10 bid, 2.6% spread
+                return UnderlyingQuote(symbol=s, bid=727.10, ask=746.09, mid=736.595,
+                                       timestamp=self.at)  # fmt: skip
+
+            def history_bars(self, s: str, start: dt.date, end: dt.date) -> list[HistoryBar]:
+                def bar(d: dt.date, c: float) -> HistoryBar:
+                    ts = dt.datetime.combine(d, dt.time(0), tzinfo=ET)
+                    return HistoryBar(timestamp=ts, open=c, high=c, low=c, close=c, volume=1)
+
+                return [bar(dt.date(2026, 10, 9), 751.26), bar(day, 746.04)]
+
+        for at in (
+            dt.datetime(2026, 10, 12, 16, 0, 6, tzinfo=ET),  # after the bell
+            dt.datetime(2026, 10, 12, 15, 40, tzinfo=ET),  # mid-session, wide quote
+        ):
+            out = _benchmarks(_M(at), ["QQQ"], at, 0.05)
+            assert out == {"QQQ": {"price": 746.04, "basis": "last_close", "prev_close": 751.26}}
+
     def test_missing_optional_account_fields_are_null(self, conn: sqlite3.Connection) -> None:
         from arc.monitoring.store import HeartbeatRepo
 
