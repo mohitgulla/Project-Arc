@@ -250,7 +250,7 @@ class _Market:
 def test_tape_records_control_and_replays_identically() -> None:
     ctl = _db()
     live = _Market()
-    rec = TapeRecorder(live, ctl, "chain-1")  # type: ignore[arg-type]
+    rec = TapeRecorder(live, ctl, "chain-1", clock=lambda: NOW)  # type: ignore[arg-type]
     q = rec.underlying_quote("SPY")
     replay_ = TapeReplay.from_store(ctl, "chain-1", None)
     assert replay_.underlying_quote("SPY") == q
