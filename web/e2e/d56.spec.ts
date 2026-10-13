@@ -71,7 +71,9 @@ for (const vp of VIEWPORTS) {
       // Timeline bands collapse on a phone: the chip is in the DOM, not necessarily visible.
       await expect(page.getByTestId("persona-chip").filter({ hasText: "⚡ Scalp" }).first()).toBeAttached();
       const text = await page.locator("body").innerText();
-      expect(text).not.toMatch(/\b(Director|Investor|Auditor|Sweep)\b/);
+      // "Arc Investor" is the production account's name (D92; E15.7's account switcher), not
+      // the removed Investor persona.
+      expect(text.replaceAll("Arc Investor", "")).not.toMatch(/\b(Director|Investor|Auditor|Sweep)\b/);
     });
   });
 }

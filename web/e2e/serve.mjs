@@ -6,6 +6,8 @@
 //   node e2e/serve.mjs --history  the fixture plus the E8.7c performance history (Performance)
 //   node e2e/serve.mjs --ops      the fixture plus the E8.7d Ops rows (runs, manifests, ...)
 //                                 and the E13.14 shadow exit chain (--exits, Positions)
+//   node e2e/serve.mjs --arms     the --ops store plus a running K=3 experiment XP-12 and
+//                                 its three arm stores (E15.7 arm switcher)
 import { execFileSync, spawn } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,9 +16,12 @@ import { join, resolve } from "node:path";
 const repo = resolve(import.meta.dirname, "..", "..");
 const py = process.env.ARC_PYTHON ?? join(repo, ".venv", "bin", "python");
 const history = process.argv.includes("--history");
-const ops = process.argv.includes("--ops");
+const arms = process.argv.includes("--arms");
+const ops = arms || process.argv.includes("--ops");
 const fixture = history || ops || process.argv.includes("--fixture");
-const port = ops
+const port = arms
+  ? (process.env.ARC_E2E_ARMS_PORT ?? "4185")
+  : ops
   ? (process.env.ARC_E2E_OPS_PORT ?? "4184")
   : history
   ? (process.env.ARC_E2E_HISTORY_PORT ?? "4183")
@@ -31,6 +36,7 @@ if (fixture) {
     db,
     ...(history ? ["--history"] : []),
     ...(ops ? ["--ops", "--exits"] : []),
+    ...(arms ? ["--arms"] : []),
   ];
   execFileSync(py, args, { stdio: "inherit", cwd: repo });
 } else {

@@ -64,7 +64,10 @@ import {
   type Universe,
 } from "../lib/universe";
 import { sleeveUsageLine } from "../lib/sleeves";
-import { useMeta, useOps, useOverview } from "../lib/useApi";
+import { useControlMeta, useMeta, useOps, useOverview } from "../lib/useApi";
+import { useArmState } from "../lib/armContext";
+import { viewLabel } from "../lib/arm";
+import { ArmSwitcher, Chevron } from "../components/ArmSwitcher";
 import { PositionsTable } from "./PositionsTable";
 
 const PROPOSAL_STAGES = ["proposed", "gate", "approval", "execution", "filled"] as const;
@@ -131,7 +134,16 @@ function StatusStrip({ o, cad, now }: { o: Overview; cad: ReturnType<typeof useC
   const s = o.status;
   const tone = stripTone(o);
   const alerts = s.alerts ?? [];
-  const slots = statusRow(o, { now, tickS: cad.tick, healthS: cad.health, env: cad.env, accountProfile: cad.accountProfile });
+  const { arm } = useArmState();
+  const armsMeta = useControlMeta().data?.arms;
+  const slots = statusRow(o, {
+    now,
+    tickS: cad.tick,
+    healthS: cad.health,
+    env: cad.env,
+    accountProfile: cad.accountProfile,
+    account: viewLabel(arm, armsMeta),
+  });
   const border = tone === "neg" ? "border-neg" : tone === "warn" ? "border-warn" : "border-line";
   const groupStart = (key: StatusSlot["key"]) => (key === "trading" || key === "orders" ? GROUP_START : "");
   return (
@@ -179,6 +191,16 @@ function StatusStrip({ o, cad, now }: { o: Overview; cad: ReturnType<typeof useC
               </li>
             );
           const testid = slot.key === "account" ? "account-slot" : slot.key === "orders" ? "order-budget" : `slot-${slot.key}`;
+          // E15.7 (D92): the account slot is the arm switcher (one account label per page).
+          if (slot.key === "account")
+            return (
+              <li key={slot.key} className={`min-w-0 ${span}`} data-testid={testid}>
+                <ArmSwitcher variant="slot" className={CELL} title={slot.title} testid="account-switcher">
+                  <SlotCell slot={slot} />
+                  <Chevron />
+                </ArmSwitcher>
+              </li>
+            );
           return (
             <li key={slot.key} className={`${CELL} ${span} ${groupStart(slot.key)}`} title={slot.title} data-testid={testid}>
               <SlotCell slot={slot} />
