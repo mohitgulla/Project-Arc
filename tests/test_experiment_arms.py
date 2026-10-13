@@ -120,12 +120,13 @@ def test_identity_written_once_and_control_has_none() -> None:
         c.execute("DELETE FROM arm_identity")
 
 
-def test_runner_config_ships_one_treatment_arm_on_its_own_keys() -> None:
+def test_runner_config_ships_one_shared_treatments_template_on_its_own_keys() -> None:
     runner = load_experiments_config().runner
-    assert set(runner.arms) == {"treatment"}
-    arm = runner.arms["treatment"]
-    assert arm.keys_env == "ALPACA_EXP" and arm.spec_arm == "treatment"
-    assert arm.db_path("XP-3").endswith("arc-exp-XP-3.db")
+    assert runner.account_mode == "shared"  # D107 (E15.9)
+    assert set(runner.arms) == {"t"}
+    arm = runner.arms["t"]
+    assert arm.keys_env == "ALPACA_EXP" and arm.is_template
+    assert arm.db.endswith("arc-exp-{experiment_id}-{arm}.db")
 
 
 # --- virtual account ----------------------------------------------------------

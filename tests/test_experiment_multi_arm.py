@@ -23,6 +23,7 @@ from arc.experiments.arms import (
 )
 from arc.experiments.config import ArmRunner, ExperimentDefaults, RunnerConfig
 from arc.experiments.models import (
+    ExperimentKind,
     ExperimentSpec,
     ExperimentStatus,
     StopReason,
@@ -169,12 +170,34 @@ def test_every_committed_v1_spec_loads_as_t1_with_its_hash_unchanged(path: str) 
     assert '"treatment":' in canonical_json(sp) and '"treatments"' not in canonical_json(sp)
 
 
+# Owner-proposed A/A calibration specs committed by their card (D107, E15.9). An A/A has
+# empty overlays, so it locks no strategy leaf; dev-drafted A/B specs stay forbidden (D86).
+OWNER_AA_SPECS = {"config/experiments/live/xp12_aa_k4.yaml"}
+
+
 def test_committed_specs_are_all_covered() -> None:
-    # D86: dev cards never draft XP specs; only XP-1 (history) is committed until
-    # `arc experiment adopt` (E21.4) adds owner-approved Analyst proposals.
+    # D86: dev cards never draft XP specs; only XP-1 (history) and owner A/A calibrations
+    # are committed until `arc experiment adopt` (E21.4) adds owner-approved proposals.
     assert {f"{p.relative_to(REPO)}" for p in LIVE.glob("*.yaml")} == {
         p for p in V1_HASHES if p.startswith("config/")
-    }
+    } | OWNER_AA_SPECS
+    for path in OWNER_AA_SPECS:
+        sp = ExperimentSpec.model_validate(yaml.safe_load((REPO / path).read_text()))
+        assert sp.kind == ExperimentKind.AA and sp.proposed_by == "owner"
+        assert not any(a.overlay for a in sp.arms.treatments.values())
+
+
+def test_k4_aa_calibration_spec_runs_four_shared_arms() -> None:
+    from arc.experiments.config import load_experiments_config
+
+    sp = ExperimentSpec.model_validate(yaml.safe_load((LIVE / "xp12_aa_k4.yaml").read_text()))
+    assert sp.id == "XP-12" and sp.spec_version == 2 and sp.area == "other"
+    assert sp.arms.names == ["t1", "t2", "t3", "t4"]
+    assert (sp.min_sessions, sp.max_sessions) == (10, 10)
+    arms = load_experiments_config().runner.arms_for(sp)
+    assert [a.db_path(sp.id) for a in arms.values()] == [
+        f"data/arc-exp-XP-12-t{i}.db" for i in range(1, 5)
+    ]
 
 
 def test_a_v1_spec_round_trips_through_its_stored_json() -> None:
@@ -297,13 +320,35 @@ def test_template_expands_one_arm_per_treatment() -> None:
         ).arms_for(_spec("XP-20", k=3))
 
 
-def test_shipped_experiments_yaml_is_dedicated_with_new_defaults() -> None:
+def test_shipped_experiments_yaml_is_shared_with_new_defaults() -> None:
     from arc.experiments.config import load_experiments_config
 
     r = load_experiments_config().runner
-    assert r.account_mode == "dedicated"
+    assert r.account_mode == "shared"  # D107 (E15.9)
     assert r.max_parallel_arms == 10 and r.shared_capacity_frac == 0.9
-    assert r.enabled is True and list(r.arms) == ["treatment"]
+    assert r.enabled is True and list(r.arms) == ["t"]
+    t = r.arms["t"]
+    assert t.is_template and t.keys_env == "ALPACA_EXP"
+    assert t.db == "data/arc-exp-{experiment_id}-{arm}.db"
+    # a K=4 spec expands to t1..t4, one store each, all on the shared account
+    arms = r.arms_for(_spec("XP-20", k=4))
+    assert list(arms) == ["t1", "t2", "t3", "t4"]
+    assert [a.db_path("XP-20") for a in arms.values()] == [
+        f"data/arc-exp-XP-20-t{i}.db" for i in range(1, 5)
+    ]
+    assert {a.keys_env for a in arms.values()} == {"ALPACA_EXP"}
+
+
+def test_shipped_template_still_runs_a_v1_one_treatment_spec() -> None:
+    from arc.experiments.config import load_experiments_config
+    from arc.experiments.overlay import load_spec
+
+    spec = load_spec(REPO / "config/experiments/live/xp1_aa_baseline.yaml")
+    assert spec.spec_version == 1 and spec.arms.names == ["t1"]
+    arms = load_experiments_config().runner.arms_for(spec)
+    assert list(arms) == ["t1"]
+    assert arms["t1"].spec_arm == "t1"
+    assert arms["t1"].db_path("XP-1") == "data/arc-exp-XP-1-t1.db"
 
 
 def test_new_runner_knobs_are_registered_with_ceilings() -> None:

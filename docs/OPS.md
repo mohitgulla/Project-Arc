@@ -1898,6 +1898,14 @@ dev drafts) into `P-<n>` proposals with 4 treatments.
 
 ### 5.21 A/A calibration run XP-1: runbook for E10.8 (E10.4, D44)
 
+> **Superseded for new runs by XP-12 (E15.9, D107):** the shipped runner is now
+> `account_mode: shared` with one `t` template, so an A/A runs as K arms on the shared
+> `ALPACA_EXP_*` account, stores `data/arc-exp-<id>-t<k>.db` (a one-treatment spec
+> such as XP-1 gets `data/arc-exp-XP-1-t1.db`). The spec is
+> `config/experiments/live/xp12_aa_k4.yaml` (t1–t4 vs control, 10/10 sessions). The
+> pre-checks and daily line below still apply; the start-time capacity check also
+> needs experiment-account equity ≥ K × control equity / `shared_capacity_frac`.
+
 XP-1 (`config/experiments/live/xp1_aa_baseline.yaml`) runs the production config on
 both paper accounts (empty overlay on both arms) for `experiments.aa_sessions` (10)
 sessions. It measures sigma of the paired daily difference d_t, the achievable MDE at

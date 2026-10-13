@@ -1,0 +1,31 @@
+# E15.9 (D69, D107): clean K=4 A/A calibration on the shared experiment account.
+# Four treatment arms t1..t4, each an empty overlay (the production config), run
+# against control as virtual sub-accounts of the one ALPACA_EXP paper account. Any
+# difference between control and an arm, or between two arms, is noise: its sigma
+# calibrates every later multi-arm A/B (and is the A/A verdict E21.4 autostart needs).
+# Every pair (Control-Ti, Ti-Tj) must come out null; a win marks the harness invalid.
+spec_version: 2
+id: XP-12
+title: K=4 A/A calibration, production config on four shared-account arms
+hypothesis: >
+  Four arms running the production config on the shared experiment paper account,
+  paired against control on production, produce a daily net P&L difference with mean
+  0 for every Control-Ti pair; the per-pair and pooled standard deviation set the MDE
+  that later multi-arm A/B experiments (K = 1, 2, 4 with Holm) are sized for.
+area: other
+kind: aa
+arms:
+  control:
+    overlay: {}
+  treatments:
+    t1:
+      overlay: {}
+    t2:
+      overlay: {}
+    t3:
+      overlay: {}
+    t4:
+      overlay: {}
+min_sessions: 10
+max_sessions: 10
+proposed_by: owner

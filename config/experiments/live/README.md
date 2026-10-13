@@ -33,6 +33,8 @@ owner approves an Analyst proposal (`approve P-<n>` in #arc-analyst). It commits
 experiment gets its `verdicts/XP-<n>.yaml` the same way (branch `xp/<n>-verdict`; docs/OPS.md
 §5.18). Cards and PRs never
 draft XP specs here; a strategy PR's only XP touchpoint is its `XP-advisory:` line.
+The one exception is an owner-proposed A/A calibration (empty overlays, so it locks no
+leaf) committed by its card: `xp12_aa_k4.yaml` (E15.9, D107, K=4 on the shared account).
 `create` and `register` refuse without `--owner-approval <P-<n> | slack:<ts> | owner:<note>>`.
 
 Retired drafts (E21.2, D86): the five dev-drafted specs XP-10 (trending velocity;
