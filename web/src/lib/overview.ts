@@ -5,8 +5,7 @@
 import type { TrendPoint } from "../components/TrendChart";
 import type { Stage } from "../components/StatusStepper";
 import { num, type Schemas } from "./api";
-import { ET_ZONE, STALE_FACTOR, formatAge, formatEt, isStale } from "./format";
-import { formatRange } from "./performance";
+import { STALE_FACTOR, formatAge, formatEt, isStale } from "./format";
 
 export type Overview = Schemas["OverviewResponse"];
 export type EquitySection = Schemas["EquitySection"];
@@ -60,28 +59,6 @@ export function equityView(e: EquitySection | undefined, range: OverviewRange): 
 }
 
 // Title Case on the Tower (D50); Slack keeps sentence case (D22).
-const ET_DAY = new Intl.DateTimeFormat("en-CA", { timeZone: ET_ZONE, year: "numeric", month: "2-digit", day: "2-digit" });
-
-/** The ET calendar date (`YYYY-MM-DD`) of an instant. */
-export function etDay(t: string | number | Date): string | null {
-  const d = new Date(t);
-  return Number.isNaN(d.getTime()) ? null : ET_DAY.format(d);
-}
-
-/**
- * Equity card date range (D50), Performance `formatRange` format, ET: from the range start
- * (`start_at`, else the first plotted point) to `value_at`. Without either end it falls back to
- * today (*now*), so a 1D range with no prior close prints just today's date.
- */
-export function equityDates(e: EquitySection | undefined, now: number): string {
-  const today = etDay(now) as string;
-  if (!e) return formatRange(today, today);
-  const first = [...(e.series ?? [])].sort((a, b) => Date.parse(a.t) - Date.parse(b.t))[0]?.t;
-  const end = (e.value_at && etDay(e.value_at)) || today;
-  const start = (e.start_at && etDay(e.start_at)) || (first && etDay(first)) || end;
-  return start > end ? formatRange(end, end) : formatRange(start, end);
-}
-
 const KIND_LABEL: Record<string, string> = {
   vertical_debit: "Debit Vertical",
   vertical_credit: "Credit Vertical",

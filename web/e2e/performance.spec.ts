@@ -48,7 +48,7 @@ for (const vp of VIEWPORTS) {
         await expect(range.getByRole("tab", { name: "3M" })).toHaveAttribute("aria-selected", "true");
         for (const title of CARDS)
           await expect(page.getByRole("heading", { level: 2, name: title, exact: true })).toBeVisible();
-        await expect(page.getByTestId("perf-range")).toContainText("–");
+        await expect(page.getByTestId("perf-range")).toHaveCount(0);
         await expect(page.getByText(/^vs -?\$/)).toHaveCount(0);
         await expect(page.getByTestId("diverging-bars").locator("svg path").first()).toBeVisible();
         await expect(page.getByTestId("equity-drawdown-chart").locator("svg path").first()).toBeVisible();
