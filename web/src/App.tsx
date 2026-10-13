@@ -6,6 +6,7 @@ import { Shell } from "./components/Shell";
 import { SettingsPanel } from "./components/Shell";
 import { Card } from "./components/Card";
 import { SettingsProvider } from "./lib/settings";
+import { ArmProvider } from "./lib/armContext";
 import { KitchenSink } from "./pages/KitchenSink";
 import { OverviewPage } from "./pages/Overview";
 import { PositionsPage } from "./pages/Positions";
@@ -44,6 +45,7 @@ export function App() {
     <QueryClientProvider client={client}>
       <SettingsProvider>
         <BrowserRouter>
+          <ArmProvider>
           <Routes>
             <Route element={<Shell />}>
               <Route index element={<OverviewPage />} />
@@ -64,6 +66,7 @@ export function App() {
               <Route path="*" element={<NotFoundPage />} />
             </Route>
           </Routes>
+          </ArmProvider>
         </BrowserRouter>
       </SettingsProvider>
     </QueryClientProvider>

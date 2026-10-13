@@ -138,6 +138,25 @@ Charts: Recharts, wrapped so no page imports Recharts directly. Tooltips share o
 - Verified with Playwright at 390×844, 768×1024 and 1440×900 in both themes (screenshots
   attached to the PR).
 
+### 6.1 Account under view (E15.7, D69/D92)
+
+- The Tower reads one account at a time: **Arc Investor** (production; the default, never
+  called "Control" in UI text) or one running experiment arm, shown as `XP-12 · T1`.
+- The choice lives only in the URL (`?arm=XP-12:t1`, shareable). Every API call carries it;
+  in-app links that drop it get it back (`ArmProvider`, `web/src/lib/armContext.tsx`). A load
+  without `?arm` is Arc Investor; nothing is stored in `localStorage`. Back/forward follows the
+  URL.
+- Switcher: Overview's status-strip account slot; on every other page a header pill
+  (accent-free, `--warn` border while an arm is under view). Menu = Arc Investor, then an
+  `Experiment Arms` group of running arms (dot in the arm's Experiments-page colour,
+  `Virtual account · updated 2m ago`), one checked item, 44 px rows on phones, Esc / outside
+  tap closes, arrow keys move.
+- Banner under the header on every page while an arm is selected: `Viewing XP-12 · T1 —
+  virtual account, shared inputs from Arc Investor` + **Back to Arc Investor**. No per-panel
+  "from Control" tags (owner). An arm the API refuses (stopped, unknown) gets a `--neg` banner
+  `XP-n · Tn is not a running experiment arm` with the same way back.
+- Helpers: `web/src/lib/arm.ts` (pure, vitest); component `web/src/components/ArmSwitcher.tsx`.
+
 ## 7. Data freshness and polling
 
 - TanStack Query, `refetchInterval` 60 s (configurable in Settings: 30/60/120 s), paused when
@@ -231,7 +250,9 @@ they are never dropped.
   (+ tier when not normal; never "Orders today") · `Tick 4m` · `Health OK 1m` · `Alerts n`
   (button; expands the open alerts inline, capped). The account slot names the account under view:
   **Arc Investor** for production (never "Control"), an arm's treatment name (`XP-12 · T1`) in
-  E15.7's arm view, which also has no "from Control" tag. The account profile (`cash_debit`) is
+  E15.7's arm view, which also has no "from Control" tag. On Overview this slot **is** the arm
+  switcher (a button with a chevron opening the account menu); other pages carry the same
+  menu as a header pill, so each page shows one account label. The account profile (`cash_debit`) is
   in its tooltip only; neutral dot, never a pill. `(n)` = trading sessions since the account
   started (`status.sessions`; tooltip `n trading sessions since <day>`). Tick shows minutes only
   (D92 rev; seconds dropped). Values are Title Case (`Enabled`, `OK`, `Failed`, `No data`). Each slot is `label

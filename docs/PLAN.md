@@ -451,7 +451,7 @@ IDs below are the card titles on the board. Dependencies are Kanban parent links
 - E15.4 Arms tick runs arms in parallel, one process and lock per arm (D69) ← E15.3
 - E15.5 Multi-arm stats: pairwise Control vs Ti (Holm) + all-arms comparison report (D69) ← E15.1
 - E15.6 Tower API arm-scoped reads `?arm=`, default control (D69) ← E15.2, E15.5
-- E15.7 Tower UI global arm switcher (default Arc Investor, D92) + Experiments multi-arm view (D69) ← E15.6
+- E15.7 Tower UI global arm switcher (default Arc Investor, D92; the Experiments multi-arm view shipped in D94/D95) ← E15.6
 - OPS · Owner: resize the experiment paper account for multi-arm; stop every running experiment on it first (D69)
 - E15.8 Multi-arm live evidence: K=3 A/A, one RTH session, owner go-ahead (D69) ← E15.4, E15.7, OPS resize
 - E15.9 Start the K=4 A/A (XP-1 already stopped at the resize) (4 treatment arms vs control) on the shared account as the calibration baseline (D69) ← E15.8
