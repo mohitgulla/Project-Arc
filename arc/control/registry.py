@@ -183,6 +183,9 @@ NEVER_TUNABLE: frozenset[str] = frozenset(
         "broker_transport",
         # D70 (E11.3): owner decision; live auto-approve always waits for the live gate.
         "live_auto_approve_requires_gate",
+        # D69 (E15.3): derived on a shared arm's effective settings, never set by hand.
+        "order_budget_account_max",
+        "alpaca_rate_lock_dir",
     }
 )
 
@@ -1406,6 +1409,29 @@ liquidity; a leg passes if within this OR spread_max_abs).",
         min=0,
         max=199,
         hard_ceiling=0,
+    ),
+    # D69 (E15.3): shared experiment account limits.
+    _s(
+        "order_budget.per_arm",
+        Group.EXECUTION,
+        _I,
+        "Shared-account arm's daily order slice (0 = daily_max / max_parallel_arms).",
+        Risk.UP,
+        field="order_budget_per_arm",
+        min=0,
+        max=200,
+        hard_ceiling=200,
+    ),
+    _s(
+        "alpaca_rate_per_min",
+        Group.EXECUTION,
+        _I,
+        "Alpaca requests per minute per account (token bucket shared by every arm).",
+        Risk.UP,
+        field="alpaca_rate_per_min",
+        min=1,
+        max=200,
+        hard_ceiling=200,
     ),
     _s(
         "order_budget.restrictive.research_max_shortlist",

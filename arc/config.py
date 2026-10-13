@@ -508,6 +508,38 @@ class ArcSettings(BaseSettings):
             "use the rest up to daily_max."
         ),
     )
+    # -- D69 shared experiment account (E15.3) ------------------------------------
+    order_budget_per_arm: Annotated[int, Field(ge=0, le=200)] = Field(
+        default=0,
+        description=(
+            "D69: one shared-account arm's daily order budget slice. 0 = "
+            "floor(order_budget_daily_max / experiments.runner.max_parallel_arms). The "
+            "restrictive tier and close reserve scale by the same fraction."
+        ),
+    )
+    order_budget_account_max: int | None = Field(
+        default=None,
+        ge=1,
+        le=200,
+        description=(
+            "D69 account guard (set only on a shared arm's effective settings): every "
+            "arm on the account stops once the account's option orders reach this."
+        ),
+    )
+    alpaca_rate_per_min: Annotated[int, Field(ge=1, le=200)] = Field(
+        default=180,
+        description=(
+            "D69: requests/min per Alpaca account (file-lock token bucket shared by "
+            "every arm process; 10% under Alpaca's 200/min)."
+        ),
+    )
+    alpaca_rate_lock_dir: Path | None = Field(
+        default=None,
+        description=(
+            "D69: where the per-account bucket files live (alpaca-<last4>.bucket). "
+            "None = data/locks in the repo."
+        ),
+    )
     order_budget_restrictive_research_max_shortlist: Annotated[int, Field(ge=0, le=10)] = Field(
         default=1, description="Restrictive tier: Research shortlist cap."
     )
