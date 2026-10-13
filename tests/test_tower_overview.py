@@ -626,6 +626,51 @@ def test_benchmark_without_a_start_price_is_left_out(fx_db: Path, tmp_path: Path
     assert syms == ["SPY"]
 
 
+def test_benchmark_start_on_a_non_session_uses_the_prior_close(fx_db: Path, tmp_path: Path) -> None:
+    """D105: the portfolio's range can start on a day with no benchmark close (the D80
+    store epoch was a Sunday). The benchmark then starts at its last close before that day
+    instead of vanishing from every range but 1D."""
+    import shutil
+    import sqlite3 as _sq
+
+    db = tmp_path / "weekend.db"
+    shutil.copy(fx_db, db)
+    c = connect_ro(db)
+    try:
+        start_day = _overview(c, "1W").equity.start_at.astimezone(ET).date()  # type: ignore[union-attr]
+    finally:
+        c.close()
+    w = _sq.connect(db)
+    w.execute("DELETE FROM iv_daily WHERE day = ?", (start_day.isoformat(),))
+    prior = w.execute(
+        "SELECT ticker, spot FROM iv_daily WHERE spot_basis = 'last_close' AND day < ?"
+        " ORDER BY day",
+        (start_day.isoformat(),),
+    ).fetchall()
+    w.commit()
+    w.close()
+    expected = {t: D(str(s)) for t, s in prior}  # last close before the start day wins
+    c = connect_ro(db)
+    try:
+        week = _overview(c, "1W").equity
+    finally:
+        c.close()
+    got = {b.symbol: b.start_value for b in week.benchmarks}
+    assert set(got) == {"SPY", "QQQ"}
+    assert got == {s: expected[s] for s in got}
+
+
+def test_close_on_or_before_looks_back_one_week_only() -> None:
+    from arc.tower.data_overview import _close_on_or_before
+
+    fri, sun = dt.date(2026, 10, 9), dt.date(2026, 10, 11)
+    closes = {fri: D("778.51")}
+    assert _close_on_or_before(closes, fri) == D("778.51")
+    assert _close_on_or_before(closes, sun) == D("778.51")
+    assert _close_on_or_before(closes, fri + dt.timedelta(days=8)) is None
+    assert _close_on_or_before(closes, fri - dt.timedelta(days=1)) is None
+
+
 def test_account_split_is_cash_vs_equity_minus_cash(conn: sqlite3.Connection) -> None:
     a = _overview(conn).account
     assert a is not None

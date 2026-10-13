@@ -695,6 +695,23 @@ def _daily_closes(
     return out
 
 
+#: D105: how far back a benchmark close may come from (a weekend / holiday run of days)
+_CLOSE_LOOKBACK_DAYS = 7
+
+
+def _close_on_or_before(closes: dict[_dt.date, Decimal], day: _dt.date) -> Decimal | None:
+    """D105: the benchmark's close on ``day``, else its last close within a week before it.
+
+    A portfolio day can fall on a non-session (the D80 store epoch was a Sunday); the
+    benchmark's value then is the prior session's close, so the line isn't dropped.
+    """
+    for back in range(_CLOSE_LOOKBACK_DAYS + 1):
+        c = closes.get(day - _dt.timedelta(days=back))
+        if c is not None:
+            return c
+    return None
+
+
 def _prev_session(day: _dt.date) -> _dt.date:
     from arc.utils.calendar import previous_session
 
@@ -736,10 +753,10 @@ def _benchmarks(
                 if live is not None and p.t == live.at:
                     if sym in live.benchmarks:
                         pts.append(EquityPoint(t=p.t, v=live.benchmarks[sym]))
-                elif day in closes:
-                    pts.append(EquityPoint(t=p.t, v=closes[day]))
+                elif (c := _close_on_or_before(closes, day)) is not None:
+                    pts.append(EquityPoint(t=p.t, v=c))
             if start_at is not None:
-                start = closes.get(start_at.astimezone(ET).date())
+                start = _close_on_or_before(closes, start_at.astimezone(ET).date())
         if start is None or start <= 0 or not pts:
             continue
         last = pts[-1]
