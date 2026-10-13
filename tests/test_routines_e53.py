@@ -655,7 +655,7 @@ class TestMonitor:
         assert hb.detail["broker_requests"] == 2
 
     def test_benchmark_wide_quote_uses_todays_bar(self) -> None:
-        """D101: a benchmark quote wider than 0.5% falls back to today's daily bar, even
+        """D102: a benchmark quote wider than 0.5% falls back to today's daily bar, even
         mid-session and under the 5% pricing cap; after the bell today's close wins."""
         import datetime as dt
 

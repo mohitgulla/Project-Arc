@@ -95,7 +95,7 @@ class TestAnalyticsStored:
         assert mc is not None and mc.analytics is not None
         assert "analytics" not in Proposal.model_fields  # gate hash contract unchanged
         a = mc.analytics
-        assert a.spot == pytest.approx(771.35)  # D101: post-close quote -> the day's close
+        assert a.spot == pytest.approx(771.35)  # D102: post-close quote -> the day's close
         assert [la.occ_symbol for la in a.legs] == [leg.occ_symbol for leg in run.p.structure.legs]
         assert a.exit_model is not None and a.cost_model == load_cost_model()
 

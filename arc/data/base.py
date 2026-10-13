@@ -182,7 +182,7 @@ def _bar_day(bar: HistoryBar) -> dt.date:
 
 
 def _after_close(stamp: dt.datetime, today: dt.date) -> bool:
-    """True when a quote *stamp* is after *today*'s regular close (D101).
+    """True when a quote *stamp* is after *today*'s regular close (D102).
 
     Naive stamps and non-session days are never "after close" (the old rules apply).
     """
@@ -204,7 +204,7 @@ def market_spot(
     """Spot for pricing *symbol* on *today*: never a one-sided half-price mid (E4.12).
 
     - a quote stamped after *today*'s session close: today's daily close when that
-      bar exists (D101: the closing book can leave a stale far bid behind. QQQ on
+      bar exists (D102: the closing book can leave a stale far bid behind. QQQ on
       2026-10-12 at 16:00 ET quoted 727.10 / 746.09, a 2.6% spread inside the 5% cap,
       so the mid was 736.60 against a 746.04 close); else the rules below;
     - both sides > 0 and spread <= ``max_spread_pct`` of the mid: the mid;

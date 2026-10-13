@@ -2079,7 +2079,7 @@ quote mid when both sides are > 0 and the spread is at most `spot_max_spread_pct
 (5 %), else today's daily close (a wide quote), else the last close (one-sided, e.g.
 after hours `ask=0`, which used to halve TSLA to 171 and read 77 % IV). A quote
 stamped after the session close (16:00 ET, 13:00 on early-close days) uses
-today's daily close whenever that bar exists (D101: the closing book can leave a stale
+today's daily close whenever that bar exists (D102: the closing book can leave a stale
 far bid behind; QQQ 2026-10-12 16:00 quoted 727.10 / 746.09 and read 736.60 vs a
 746.04 close). The monitor's SPY/QQQ benchmark marks use a 0.5 % spread cap
 (`BENCHMARK_MAX_SPREAD_PCT`) instead of 5 %. No spot at

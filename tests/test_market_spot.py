@@ -106,7 +106,7 @@ def test_naive_bar_timestamp() -> None:
     assert market_spot(p, "X", TODAY) == Spot(379.0, "last_close")
 
 
-# D101: after the bell a two-sided quote can still carry a stale far side.
+# D102: after the bell a two-sided quote can still carry a stale far side.
 QQQ_DAY = dt.date(2026, 10, 12)
 
 

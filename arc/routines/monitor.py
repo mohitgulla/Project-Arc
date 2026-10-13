@@ -70,7 +70,7 @@ def broker_requests(roots: int, benchmarks: int = 0) -> int:
     return _BASE_REQUESTS + _REQUESTS_PER_ROOT * roots + _REQUESTS_PER_BENCHMARK * benchmarks
 
 
-#: D101: the benchmarks are index ETFs whose real spread is a cent or two, so a quote wider
+#: D102: the benchmarks are index ETFs whose real spread is a cent or two, so a quote wider
 #: than this falls back to today's daily bar (its close is the last trade) instead of a mid.
 BENCHMARK_MAX_SPREAD_PCT = 0.005
 
@@ -82,7 +82,7 @@ def _benchmarks(
 
     Spot is :func:`arc.data.base.market_spot` (never a one-sided half price, and the
     day's close once the session has closed), with the spread cap tightened to
-    :data:`BENCHMARK_MAX_SPREAD_PCT` (D101); the prior close is the last daily bar before
+    :data:`BENCHMARK_MAX_SPREAD_PCT` (D102); the prior close is the last daily bar before
     today (ET). A symbol that fails is left out (the Tower then draws no line for it),
     never a monitor failure.
     """
