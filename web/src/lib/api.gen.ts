@@ -2251,6 +2251,11 @@ export interface components {
             /** Orders */
             orders?: components["schemas"]["OrderView"][];
             /**
+             * Regated Bands
+             * @description D101: bands walked after a re-gate (band_lo/band_hi is the approved band)
+             */
+            regated_bands?: components["schemas"]["RegatedBand"][];
+            /**
              * Slippage Vs Limit
              * @description $/share, + = worse
              */
@@ -5156,6 +5161,22 @@ export interface components {
             pop_hold?: number | null;
             /** Pop Managed */
             pop_managed?: number | null;
+        };
+        /**
+         * RegatedBand
+         * @description D101: a band the ladder re-gated to after the market moved past the approved one.
+         */
+        RegatedBand: {
+            /** At */
+            at?: string | null;
+            /** Band Hi */
+            band_hi?: string | null;
+            /** Band Lo */
+            band_lo?: string | null;
+            /** Mid */
+            mid?: string | null;
+            /** N */
+            n: number;
         };
         /** RegimeView */
         RegimeView: {

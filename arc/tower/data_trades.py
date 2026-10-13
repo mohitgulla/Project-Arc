@@ -671,6 +671,18 @@ class FillView(BaseModel):
     filled_at: _dt.datetime | None
 
 
+class RegatedBand(BaseModel):
+    """D101: a band the ladder re-gated to after the market moved past the approved one."""
+
+    model_config = _STRICT
+
+    n: int
+    band_lo: Decimal | None = None
+    band_hi: Decimal | None = None
+    mid: Decimal | None = None
+    at: _dt.datetime | None = None
+
+
 class ExecutionSection(BaseModel):
     model_config = _STRICT
 
@@ -694,6 +706,10 @@ class ExecutionSection(BaseModel):
     slippage_vs_mid: Decimal | None = None
     orders: list[OrderView] = Field(default_factory=list)
     fills: list[FillView] = Field(default_factory=list)
+    regated_bands: list[RegatedBand] = Field(
+        default_factory=list,
+        description="D101: bands walked after a re-gate (band_lo/band_hi is the approved band)",
+    )
 
 
 class ExitLink(BaseModel):
@@ -1752,6 +1768,30 @@ def _approval(conn: sqlite3.Connection, h: str) -> ApprovalView | None:
     )
 
 
+def _regated_bands(conn: sqlite3.Connection, h: str) -> list[RegatedBand]:
+    """D101: the re-gated bands, from the ladder's ``order:band_moved`` (selected) rows."""
+    if not _has_table(conn, "decisions"):
+        return []
+    out: list[RegatedBand] = []
+    for r in conn.execute(
+        """SELECT payload, at FROM decisions
+           WHERE proposal_hash = ? AND reason_code = 'order:band_moved' AND choice = 'selected'
+           ORDER BY at, rowid""",
+        (h,),
+    ):
+        p = _json(r["payload"], {})
+        out.append(
+            RegatedBand(
+                n=int(p.get("regate_n") or len(out) + 1),
+                band_lo=_dec(p.get("new_band_lo")),
+                band_hi=_dec(p.get("new_band_hi")),
+                mid=_dec(p.get("mid")),
+                at=parse_ts(r["at"]),
+            )
+        )
+    return out
+
+
 def _execution(
     conn: sqlite3.Connection, h: str, row: TradeRow, approval: ApprovalView | None
 ) -> ExecutionSection | None:
@@ -1814,6 +1854,7 @@ def _execution(
         ]
     if x is None and not orders:
         return None
+    regated = _regated_bands(conn, h)
     mid = row.limit
     limit = approval.limit_price if approval and approval.limit_price is not None else mid
     fill = _dec(x["fill_price"]) if x is not None else None
@@ -1824,6 +1865,7 @@ def _execution(
         slippage_vs_mid=fill - mid if fill is not None and mid is not None else None,
         orders=orders,
         fills=fills,
+        regated_bands=regated,
     )
     if x is None:
         return base

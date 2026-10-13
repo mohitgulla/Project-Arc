@@ -3993,6 +3993,14 @@
             "title": "Orders",
             "type": "array"
           },
+          "regated_bands": {
+            "description": "D101: bands walked after a re-gate (band_lo/band_hi is the approved band)",
+            "items": {
+              "$ref": "#/components/schemas/RegatedBand"
+            },
+            "title": "Regated Bands",
+            "type": "array"
+          },
           "slippage_vs_limit": {
             "anyOf": [
               {
@@ -12015,6 +12023,69 @@
           }
         },
         "title": "QuantSection",
+        "type": "object"
+      },
+      "RegatedBand": {
+        "additionalProperties": false,
+        "description": "D101: a band the ladder re-gated to after the market moved past the approved one.",
+        "properties": {
+          "at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "At"
+          },
+          "band_hi": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Band Hi"
+          },
+          "band_lo": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Band Lo"
+          },
+          "mid": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mid"
+          },
+          "n": {
+            "title": "N",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "n"
+        ],
+        "title": "RegatedBand",
         "type": "object"
       },
       "RegimeView": {

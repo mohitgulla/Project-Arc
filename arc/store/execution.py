@@ -75,6 +75,20 @@ class ExecutionRepo:
                 (proposal_hash,),
             )
 
+    def regate(self, proposal_hash: str, *, max_steps: int) -> None:
+        """D101: a re-gated band of *max_steps* steps follows the attempts already made.
+
+        ``max_steps`` becomes ``attempts + max_steps`` so the D32 reservation
+        (``max_steps + 1 - attempts``) covers exactly the new band's attempts.
+        The row's ``band_lo`` / ``band_hi`` keep the original (approved) band;
+        each re-gated band is journalled (``order:band_moved``).
+        """
+        with self.conn:
+            self.conn.execute(
+                "UPDATE executions SET max_steps = attempts + ? WHERE proposal_hash = ?",
+                (max_steps, proposal_hash),
+            )
+
     def finish(
         self,
         proposal_hash: str,

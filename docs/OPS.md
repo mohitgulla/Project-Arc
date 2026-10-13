@@ -783,6 +783,20 @@ that at the first attempt, the ladder re-prices at the current mid and re-anchor
 there (`PriceBand.reanchor`, pure gate code; the band is never widened). A mid outside the
 signed band sends nothing (journal `order:stale_band`); the next loop may propose afresh.
 
+Re-gate on band move (D101, E24.1; `execution.regate_max`, default 1, ceiling 3;
+`execution.regate_max_move_pct`, default 5%, ceiling 20%): before every attempt after the
+first, the Broker re-reads the legs' quotes. A mid still inside the band changes nothing.
+A mid past the band's worst price stops the walk (journal `order:band_moved` with the old
+band, the fresh mid, far touch and quote age). With a re-gate left and the approval TTL
+still open, the same structure is re-priced at the fresh mid and runs the **full** gate
+again (opens: the live Net EV floor too); a pass mints a new token and walks the new band
+under the same `executions` row, a fail stops (`gate:<rule>` / `net_ev_floor` row). A new
+worst price more than `regate_max_move_pct` of the approved mid past the approved one is
+refused (`regate: refused_move`), except for closes inside the D73 expiry guard window.
+The loop root and the broker card say `re-priced once: 4.65–4.75 → 4.82–4.95, filled
+4.88`; the Tower trade detail lists each re-gated band. Rollback:
+`!arc config set execution.regate_max 0` (no between-step check, as before D101).
+
 Runbook (paper): auto-approve and auto-exit are **on by default in paper** (D85, was off);
 live defaults stay off.
 1. `.venv/bin/arc approve auto status` → `auto_approve: on (paper); paper=on live=off`

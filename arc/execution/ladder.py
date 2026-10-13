@@ -35,6 +35,17 @@ Invariants
   token). A mid outside the signed band, or no usable mid, sends nothing: the
   execution ends ``cancelled`` with journal reason ``order:stale_band`` and the
   next loop may propose afresh. The band is never widened.
+- D101 re-gate on band move (E24.1): with ``execution_regate_max > 0`` and a
+  *quotes* reader, the legs are re-read before every attempt k >= 1. A fresh mid
+  still inside the band changes nothing. A mid past the band's worst price
+  (:meth:`arc.gate.band.PriceBand.moved_past`; mirrored for credits by the
+  signed prices) stops the walk: the remaining steps are not sent and
+  ``order:band_moved`` is journalled. With re-gates left, *regate* (the Broker
+  job's full gate run at the fresh mid, :func:`arc.broker.ladder_job.regater`)
+  either returns a re-priced order with a new band and a new token, which is
+  walked next under the same ``executions`` row, or refuses (gate failure, the
+  price-move ceiling, the approval TTL), which ends the execution ``cancelled``.
+  A band is never widened without a new gate decision and a new token.
 
 Every attempt is an ``orders`` row with its state events, fills go to ``fills``,
 and the outcome updates the local position model (``open_structures``,
@@ -72,7 +83,7 @@ from arc.gate.band import PriceBand
 from arc.gate.rules import proposal_hash as hash_proposal
 from arc.gate.ticks import TickGrid, legs_grid
 from arc.gate.token import BandToken, TokenError, parse_any
-from arc.journal.reasons import Choice, JournalPersona, ReasonCode, Stage
+from arc.journal.reasons import Choice, JournalPersona, ReasonCode, Stage, gate_reason
 from arc.journal.store import JournalStore
 from arc.models import OrderState
 from arc.store.execution import ExecutionRepo
@@ -96,8 +107,12 @@ __all__ = [
     "ExecutionAdoptedError",
     "ExecutionOutcome",
     "LadderContext",
+    "MarketRead",
+    "RegateResult",
+    "Regated",
     "execute",
     "fill_net_price",
+    "reprice_note",
     "resume_attempt",
 ]
 
@@ -143,6 +158,7 @@ class AttemptRecord:
     fill_price: Decimal | None = None
     adopted: bool = False  # D71: found by client_order_id after a submit error
     detail: str = ""
+    regate: int = 0  # D101: 0 = the approved band, n = the n-th re-gated band
 
 
 @dataclass
@@ -157,13 +173,83 @@ class ExecutionOutcome:
     steps_used: int | None = None
     structure_id: str | None = None
     detail: str = ""
+    # D101: every band walked after the approved one (each from a re-gate)
+    regated: list[PriceBand] = field(default_factory=list)
 
     def summary(self) -> str:
-        prices = ", ".join(f"s{a.step} {a.limit_price:+}" for a in self.attempts) or "none"
+        prices = (
+            ", ".join(
+                f"{f'r{a.regate}.' if a.regate else ''}s{a.step} {a.limit_price:+}"
+                for a in self.attempts
+            )
+            or "none"
+        )
         text = f"{self.status}: {len(self.attempts)} attempt(s) [{prices}]"
         if self.filled_qty:
             text += f"; filled {self.filled_qty} @ {self.fill_price:+}"
+        if self.regated:
+            text += f"; {reprice_note(self)}"
         return text + (f" ({self.detail})" if self.detail else "")
+
+
+_TIMES = {1: "once", 2: "twice"}
+
+
+def _band_text(b: PriceBand) -> str:
+    return f"{abs(b.lo):.2f}–{abs(b.hi):.2f}"
+
+
+def reprice_note(out: ExecutionOutcome) -> str:
+    """D101: ``re-priced once: 4.65–4.75 → 4.82–4.95, filled 4.88`` (or ``… missed``).
+
+    Empty when no re-gated band was walked.
+    """
+    if not out.regated:
+        return ""
+    n = len(out.regated)
+    bands = " → ".join(_band_text(b) for b in (out.band, *out.regated))
+    end = f"filled {abs(out.fill_price):.2f}" if out.fill_price is not None else "missed"
+    return f"re-priced {_TIMES.get(n, f'{n} times')}: {bands}, {end}"
+
+
+@dataclass(frozen=True)
+class MarketRead:
+    """D101: the legs' combo quote re-read between ladder steps (signed, + = debit).
+
+    ``far`` is the combo far touch (the worst price a band may reach, the gate's
+    :func:`arc.gate.rules.combo_nbbo` high); ``quote_age_s`` the oldest leg quote's
+    age. ``context`` is opaque to the ladder: the re-gate reuses it (the priced
+    legs) instead of reading the quotes a second time.
+    """
+
+    mid: Decimal
+    far: Decimal | None = None
+    quote_age_s: float | None = None
+    context: Any = None
+
+
+@dataclass(frozen=True)
+class Regated:
+    """D101: a re-priced order that passed the full gate, with its own token."""
+
+    proposal: Proposal
+    decision: GateDecision
+    approval: ApprovalRecord | None
+    band: PriceBand
+
+
+@dataclass(frozen=True)
+class RegateResult:
+    """What one re-gate attempt decided.
+
+    ``status``: ``passed`` (``regated`` set) | ``refused_move`` (D101 price-move
+    ceiling) | ``gate_failed`` | ``ttl_expired`` | ``no_quote`` | ``error``.
+    """
+
+    status: str
+    detail: str = ""
+    regated: Regated | None = None
+    payload: dict[str, Any] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -244,12 +330,21 @@ class LadderContext:
         if adopted and adopted != self.run_id:
             raise ExecutionAdoptedError(self.phash, str(adopted))
 
-    def journal(self, choice: Choice, code: ReasonCode, text: str, **payload: Any) -> None:
+    def journal(
+        self,
+        choice: Choice,
+        code: ReasonCode,
+        text: str,
+        *,
+        persona: JournalPersona = JournalPersona.BROKER,
+        stage: Stage = Stage.ORDER,
+        **payload: Any,
+    ) -> None:
         self.fence()
         with self.conn:
             JournalStore(self.conn).record(
-                persona=JournalPersona.BROKER,
-                stage=Stage.ORDER,
+                persona=persona,
+                stage=stage,
                 subject=self.ticker,
                 choice=choice,
                 reason_code=code,
@@ -320,7 +415,7 @@ def _record_fill(c: _Ctx, a: AttemptRecord, st: BrokerOrderStatus) -> None:
         a.filled_qty, a.fill_price = qty, price
 
 
-def _attempt(c: _Ctx, step: int, price: Decimal) -> tuple[AttemptRecord, str]:
+def _attempt(c: _Ctx, step: int, price: Decimal, regate: int = 0) -> tuple[AttemptRecord, str]:
     """Send and work one attempt. Returns the record and a verdict:
     ``filled`` | ``partial`` | ``next`` | ``refused`` | ``rejected`` | ``unconfirmed`` |
     ``submit_failed`` (D71)."""
@@ -339,7 +434,9 @@ def _attempt(c: _Ctx, step: int, price: Decimal) -> tuple[AttemptRecord, str]:
         run_id=c.run_id,
         created_at=to_db(c.clock()),
     )
-    a = AttemptRecord(step=step, limit_price=price, client_order_id=coid, order_id=order_id)
+    a = AttemptRecord(
+        step=step, limit_price=price, client_order_id=coid, order_id=order_id, regate=regate
+    )
     c.move(order_id, OrderState.GATED, "gate passed (token issued)")
     c.move(order_id, OrderState.APPROVED, f"approved; step {step} limit {price:+}")
     ExecutionRepo(c.conn).attempt(c.phash)
@@ -632,12 +729,16 @@ def execute(
     priced_at: _dt.datetime | None = None,
     fresh_mid: Callable[[], Decimal | None] | None = None,
     heartbeat: Callable[[], None] | None = None,
+    quotes: Callable[[], MarketRead | None] | None = None,
+    regate: Callable[[PriceBand, MarketRead, int], RegateResult] | None = None,
 ) -> ExecutionOutcome:
     """Work *proposal* through its price band; record orders, fills and the position.
 
     ``kind='close'`` closes ``structure_id`` (an ``open_structures`` row) on a fill.
     ``priced_at`` + ``fresh_mid`` enable the D34 re-price (see the module docstring).
     ``heartbeat`` (E11.2) is called before each attempt and on every poll.
+    ``quotes`` + ``regate`` (D101) enable the between-step band check and the
+    re-gate; both are ignored when ``execution_regate_max`` is 0.
 
     Raises :class:`ExecutionAdoptedError` (after writing nothing more) when a
     ``broker.reattach`` run adopted this execution while it was being worked.
@@ -661,8 +762,19 @@ def execute(
         heartbeat=heartbeat,
     )
     c.closing = kind == "close"
+    on = config.execution_regate_max > 0 and quotes is not None and regate is not None
     try:
-        return _execute(c, band, version, kind, structure_id, priced_at, fresh_mid)
+        return _execute(
+            c,
+            band,
+            version,
+            kind,
+            structure_id,
+            priced_at,
+            fresh_mid,
+            quotes=quotes if on else None,
+            regate=regate if on else None,
+        )
     except ExecutionAdoptedError as exc:
         log.warning("execution.adopted_elsewhere", proposal_hash=phash, adopted_by=exc.adopted_by)
         raise
@@ -676,6 +788,9 @@ def _execute(
     structure_id: str | None,
     priced_at: _dt.datetime | None,
     fresh_mid: Callable[[], Decimal | None] | None,
+    *,
+    quotes: Callable[[], MarketRead | None] | None = None,
+    regate: Callable[[PriceBand, MarketRead, int], RegateResult] | None = None,
 ) -> ExecutionOutcome:
     assert c.proposal is not None  # noqa: S101 - execute() always sets it
     conn, config, clock, run_id = c.conn, c.config, c.clock, c.run_id
@@ -707,16 +822,89 @@ def _execute(
             f"band {walk.lo:+} .. {walk.hi:+} holds no exchange-valid price "
             f"({grid.describe(walk.lo)}); not sent"
         )
-    for step, price in enumerate(ladder):
+    _walk(c, out, walk, ladder, grid, kind, quotes=quotes, regate=regate)
+
+    c.fence()
+    if out.filled_qty:
+        out.structure_id = _apply_fill(c, out, kind=kind, structure_id=structure_id)
+    stored = out.detail or out.summary()
+    note = reprice_note(out)
+    if note and note not in stored:
+        stored = f"{stored}; {note}"
+    execs.finish(
+        phash,
+        status=str(out.status),
+        now=clock(),
+        filled_qty=out.filled_qty,
+        fill_price=out.fill_price,
+        steps_used=out.steps_used,
+        structure_id=out.structure_id,
+        detail=stored,
+    )
+    if out.filled_qty:
+        full = out.status is ExecStatus.FILLED
+        last = out.regated[-1] if out.regated else band
+        c.journal(
+            Choice.FILLED,
+            ReasonCode.ORDER_FILLED if full else ReasonCode.ORDER_PARTIAL,
+            out.summary(),
+            filled_qty=out.filled_qty,
+            fill_price=str(out.fill_price),
+            steps_used=out.steps_used,
+            band_lo=str(last.lo),
+            band_hi=str(last.hi),
+            regates=len(out.regated) or None,
+            approved_band_lo=str(band.lo) if out.regated else None,
+            approved_band_hi=str(band.hi) if out.regated else None,
+        )
+    if out.status is ExecStatus.UNCONFIRMED and config.execution_intraday_reconcile:
+        from arc.reconcile.intraday import queue_intraday_reconcile
+
+        queue_intraday_reconcile(conn, phash, reason=out.detail or out.summary(), now=clock())
+    log.info("execution.done", proposal_hash=phash, kind=kind, summary=out.summary())
+    return out
+
+
+def _walk(
+    c: _Ctx,
+    out: ExecutionOutcome,
+    walk: PriceBand | None,
+    ladder: tuple[Decimal, ...],
+    grid: TickGrid,
+    kind: str,
+    *,
+    quotes: Callable[[], MarketRead | None] | None,
+    regate: Callable[[PriceBand, MarketRead, int], RegateResult] | None,
+) -> None:
+    """Send the ladder's attempts; D101: re-check the band before each step k >= 1."""
+    phash = c.phash
+    n = 0  # re-gates used
+    step = 0
+    while step < len(ladder):
+        price = ladder[step]
+        if step > 0 and walk is not None and quotes is not None and regate is not None:
+            read = _read_quotes(c, quotes)
+            if read is not None and walk.moved_past(read.mid, grid):
+                nxt = _band_moved(c, out, walk, read, n, step, len(ladder), regate)
+                if nxt is None:
+                    return
+                n += 1
+                walk, ladder, step = nxt, nxt.ladder(grid), 0
+                if not ladder:
+                    out.status = ExecStatus.CANCELLED
+                    out.detail = f"re-gated band {nxt.lo:+} .. {nxt.hi:+} holds no valid price"
+                    return
+                continue
         blocked = _budget_blocks(c, kind)
         if blocked is not None:
             out.status, out.detail = ExecStatus.CANCELLED, blocked
             c.journal(Choice.NO_TRADE, ReasonCode.ORDER_BUDGET_STOP, blocked, step=step, kind=kind)
             log.warning("execution.order_budget_stop", proposal_hash=phash, step=step, kind=kind)
-            break
-        a, verdict = _attempt(c, step, price)
+            return
+        a, verdict = _attempt(c, step, price, n)
         out.attempts.append(a)
         if verdict == "next":
+            step += 1
             continue
         if verdict in ("filled", "partial"):
             out.status = ExecStatus.FILLED if verdict == "filled" else ExecStatus.PARTIALLY_FILLED
@@ -728,42 +916,112 @@ def _execute(
             out.status, out.detail = ExecStatus.CANCELLED, a.detail
         else:  # refused / rejected
             out.status = ExecStatus.REJECTED
-        break
-    else:
-        if ladder:
-            out.detail = f"no fill after {len(ladder)} attempt(s); last {ladder[-1]:+}"
+        return
+    if ladder:
+        out.detail = f"no fill after {len(out.attempts)} attempt(s); last {ladder[-1]:+}"
 
-    c.fence()
-    if out.filled_qty:
-        out.structure_id = _apply_fill(c, out, kind=kind, structure_id=structure_id)
-    execs.finish(
-        phash,
-        status=str(out.status),
-        now=clock(),
-        filled_qty=out.filled_qty,
-        fill_price=out.fill_price,
-        steps_used=out.steps_used,
-        structure_id=out.structure_id,
-        detail=out.detail or out.summary(),
+
+def _read_quotes(c: _Ctx, quotes: Callable[[], MarketRead | None]) -> MarketRead | None:
+    """D101: the legs' fresh combo quote; ``None`` (walk on, as approved) when unreadable."""
+    try:
+        return quotes()
+    except Exception as exc:  # noqa: BLE001 - no fresh quote: the approved band stands
+        log.warning("execution.band_check_failed", proposal_hash=c.phash, error=str(exc))
+        return None
+
+
+def _band_moved(
+    c: _Ctx,
+    out: ExecutionOutcome,
+    walk: PriceBand,
+    read: MarketRead,
+    n: int,
+    step: int,
+    planned: int,
+    regate: Callable[[PriceBand, MarketRead, int], RegateResult],
+) -> PriceBand | None:
+    """D101: the market ran past *walk*. Re-gate (new band to walk) or stop (``None``)."""
+    base = {
+        "band_lo": str(walk.lo),
+        "band_hi": str(walk.hi),
+        "mid": str(read.mid),
+        "far_touch": str(read.far) if read.far is not None else None,
+        "quote_age_s": round(read.quote_age_s, 1) if read.quote_age_s is not None else None,
+        "step": step,
+        "unsent": planned - step,
+        "regate_n": n + 1,
+    }
+    what = (
+        f"market moved past the band: mid {read.mid:+} beyond worst price {walk.hi:+} "
+        f"(band {walk.lo:+} .. {walk.hi:+}); {planned - step} step(s) not sent"
     )
-    if out.filled_qty:
-        full = out.status is ExecStatus.FILLED
+    if n >= c.config.execution_regate_max:
+        out.status = ExecStatus.CANCELLED
+        out.detail = f"{what}; no re-gate left"
         c.journal(
-            Choice.FILLED,
-            ReasonCode.ORDER_FILLED if full else ReasonCode.ORDER_PARTIAL,
-            out.summary(),
-            filled_qty=out.filled_qty,
-            fill_price=str(out.fill_price),
-            steps_used=out.steps_used,
-            band_lo=str(band.lo),
-            band_hi=str(band.hi),
+            Choice.NO_TRADE, ReasonCode.ORDER_BAND_MOVED, out.detail, regate="none_left", **base
         )
-    if out.status is ExecStatus.UNCONFIRMED and config.execution_intraday_reconcile:
-        from arc.reconcile.intraday import queue_intraday_reconcile
-
-        queue_intraday_reconcile(conn, phash, reason=out.detail or out.summary(), now=clock())
-    log.info("execution.done", proposal_hash=phash, kind=kind, summary=out.summary())
-    return out
+        log.warning("execution.band_moved", proposal_hash=c.phash, regate="none_left")
+        return None
+    try:
+        res = regate(out.band, read, n + 1)
+    except Exception as exc:  # noqa: BLE001 - a failed re-gate never sends: fail closed
+        res = RegateResult("error", f"re-gate failed: {type(exc).__name__}: {exc}"[:500])
+    payload = {**base, **res.payload, "regate": res.status}
+    old_token = c.decision.token if c.decision is not None else None
+    if res.regated is not None and (
+        not res.regated.decision.token or res.regated.decision.token == old_token
+    ):  # a band is never walked without a new gate decision and a new token
+        res = RegateResult("error", "re-gate returned no new token", payload=res.payload)
+        payload["regate"] = res.status
+    if res.status != "passed" or res.regated is None:
+        out.status = ExecStatus.CANCELLED
+        out.detail = f"{what}; re-gate {res.status}: {res.detail}"[:1000]
+        c.journal(Choice.NO_TRADE, ReasonCode.ORDER_BAND_MOVED, out.detail, **payload)
+        if res.payload.get("ev_floor"):
+            c.journal(
+                Choice.FAILED,
+                ReasonCode.NET_EV_FLOOR,
+                f"re-gate {n + 1}: {res.payload['ev_floor']}",
+                persona=JournalPersona.GATE,
+                stage=Stage.GATE,
+                regate_n=n + 1,
+            )
+        for v in res.payload.get("violations") or ():
+            c.journal(
+                Choice.FAILED,
+                gate_reason(str(v)),
+                str(v),
+                persona=JournalPersona.GATE,
+                stage=Stage.GATE,
+                regate_n=n + 1,
+            )
+        log.warning("execution.band_moved", proposal_hash=c.phash, regate=res.status)
+        return None
+    new = res.regated
+    c.journal(
+        Choice.SELECTED,
+        ReasonCode.ORDER_BAND_MOVED,
+        f"{what}; re-gated at mid {new.band.lo:+}: new band {new.band.lo:+} .. {new.band.hi:+}",
+        new_band_lo=str(new.band.lo),
+        new_band_hi=str(new.band.hi),
+        new_max_steps=new.band.max_steps,
+        **payload,
+    )
+    c.journal(
+        Choice.PASSED,
+        ReasonCode.GATE_PASS,
+        f"re-gate {n + 1}: token issued for band {new.band.lo:+} .. {new.band.hi:+}",
+        persona=JournalPersona.GATE,
+        stage=Stage.GATE,
+        regate_n=n + 1,
+        regated_hash=new.decision.proposal_hash,
+    )
+    c.proposal, c.decision, c.approval = new.proposal, new.decision, new.approval
+    ExecutionRepo(c.conn).regate(c.phash, max_steps=new.band.max_steps)
+    out.regated.append(new.band)
+    log.info("execution.regated", proposal_hash=c.phash, n=n + 1, lo=str(new.band.lo))
+    return new.band
 
 
 def _apply_fill(c: _Ctx, out: ExecutionOutcome, *, kind: str, structure_id: str | None) -> str:

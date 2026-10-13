@@ -256,6 +256,7 @@ class ReasonCode(StrEnum):
     ORDER_UNCONFIRMED = "order:cancel_unconfirmed"
     ORDER_BUDGET_STOP = "order:budget_exhausted"
     ORDER_STALE_BAND = "order:stale_band"  # D34: re-priced mid left the gate-approved band
+    ORDER_BAND_MOVED = "order:band_moved"  # D101: market ran past the band; re-gate or stop
     ORDER_SUBMIT_FAILED = "order:submit_failed"  # D71: submit errored; broker has no such order
     # D69 (E15.3): opposite side of another arm on the shared account (pre-check or 403)
     CROSS_ARM_CONFLICT = "order:cross_arm_conflict"
@@ -515,6 +516,7 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.ORDER_UNCONFIRMED: "Cancel not confirmed by the broker",
     ReasonCode.ORDER_BUDGET_STOP: "Order stopped: daily budget used up",
     ReasonCode.ORDER_STALE_BAND: "Order stopped: price left the approved band",
+    ReasonCode.ORDER_BAND_MOVED: "Market moved past the approved price band",
     ReasonCode.ORDER_SUBMIT_FAILED: "Order not taken by the broker (submit failed)",
     ReasonCode.CROSS_ARM_CONFLICT: "Order refused: opposite side of another experiment arm",
     ReasonCode.EXIT_TAKE_PROFIT: "Exit: profit target hit",
