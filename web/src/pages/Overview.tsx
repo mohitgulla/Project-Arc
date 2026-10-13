@@ -191,11 +191,11 @@ function StatusStrip({ o, cad, now }: { o: Overview; cad: ReturnType<typeof useC
               </li>
             );
           const testid = slot.key === "account" ? "account-slot" : slot.key === "orders" ? "order-budget" : `slot-${slot.key}`;
-          // E15.7 (D92): the account slot is the arm switcher (one account label per page).
+          // E15.7 (D92, D103): the account slot is the Tower's one master account switcher.
           if (slot.key === "account")
             return (
               <li key={slot.key} className={`min-w-0 ${span}`} data-testid={testid}>
-                <ArmSwitcher variant="slot" className={CELL} title={slot.title} testid="account-switcher">
+                <ArmSwitcher className={CELL} title={slot.title}>
                   <SlotCell slot={slot} />
                   <Chevron />
                 </ArmSwitcher>

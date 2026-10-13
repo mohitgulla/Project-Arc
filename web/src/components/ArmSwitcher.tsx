@@ -15,18 +15,17 @@ const GAP = 4;
  * running arm (`/api/meta.arms`, always read from Arc Investor's store). Choosing one sets
  * `?arm=` (shareable); nothing is persisted, so a fresh load is Arc Investor.
  *
- * `variant="pill"` is the header control; `variant="slot"` renders the trigger as the Overview
- * status strip's account slot (its `children`), so the strip keeps one account label.
+ * It lives only in the Overview status strip's account slot (its `children` are the trigger), the
+ * Tower's one master account control: the choice applies to every page, which show the
+ * ArmBanner while an arm is under view instead of a per-page switcher (D103).
  */
 export function ArmSwitcher({
-  variant = "pill",
   children,
   className = "",
   title,
-  testid = "arm-switcher",
+  testid = "account-switcher",
 }: {
-  variant?: "pill" | "slot";
-  children?: ReactNode;
+  children: ReactNode;
   className?: string;
   title?: string;
   testid?: string;
@@ -35,7 +34,6 @@ export function ArmSwitcher({
   const meta = useControlMeta();
   const arms = viewableArms(meta.data?.arms);
   const label = viewLabel(arm, meta.data?.arms);
-  const current = arms.find((a) => a.id === arm) ?? null;
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
   const btn = useRef<HTMLButtonElement>(null);
@@ -51,10 +49,9 @@ export function ArmSwitcher({
     const r = btn.current.getBoundingClientRect();
     const w = menu.current.offsetWidth;
     const vw = window.innerWidth;
-    const right = variant === "pill";
-    const left = Math.max(MARGIN, Math.min(right ? r.right - w : r.left, vw - w - MARGIN));
+    const left = Math.max(MARGIN, Math.min(r.left, vw - w - MARGIN));
     setPos({ left, top: r.bottom + GAP });
-  }, [variant]);
+  }, []);
 
   useLayoutEffect(() => {
     if (open) place();
@@ -105,12 +102,7 @@ export function ArmSwitcher({
     if (next !== arm) setArm(next);
   };
 
-  const trigger =
-    variant === "pill"
-      ? `arc-press inline-flex h-8 max-w-[220px] items-center gap-1.5 rounded-pill border px-3 text-caption font-semibold max-tablet:h-11 ${
-          arm ? "border-warn text-primary" : "border-line-input text-primary hover:bg-hover"
-        }`
-      : `arc-press w-full text-left enabled:hover:bg-hover ${className}`;
+  const trigger = `arc-press w-full text-left enabled:hover:bg-hover ${className}`;
 
   return (
     <>
@@ -127,13 +119,7 @@ export function ArmSwitcher({
         onClick={() => (open ? close() : setOpen(true))}
         className={trigger}
       >
-        {children ?? (
-          <>
-            <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: armDot(current, arms) }} aria-hidden="true" />
-            <span className="min-w-0 truncate">{label}</span>
-            <Chevron />
-          </>
-        )}
+        {children}
       </button>
       {open && (
         <div

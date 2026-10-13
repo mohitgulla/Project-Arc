@@ -146,8 +146,9 @@ Charts: Recharts, wrapped so no page imports Recharts directly. Tooltips share o
   in-app links that drop it get it back (`ArmProvider`, `web/src/lib/armContext.tsx`). A load
   without `?arm` is Arc Investor; nothing is stored in `localStorage`. Back/forward follows the
   URL.
-- Switcher: Overview's status-strip account slot; on every other page a header pill
-  (accent-free, `--warn` border while an arm is under view). Menu = Arc Investor, then an
+- Switcher (D103): one master control, Overview's status-strip account slot. The choice
+  applies to every page; other pages have no per-page account control (the header pill was
+  removed), and show the banner below while an arm is under view. Menu = Arc Investor, then an
   `Experiment Arms` group of running arms (dot in the arm's Experiments-page colour,
   `Virtual account · updated 2m ago`), one checked item, 44 px rows on phones, Esc / outside
   tap closes, arrow keys move.
@@ -251,8 +252,8 @@ they are never dropped.
   (button; expands the open alerts inline, capped). The account slot names the account under view:
   **Arc Investor** for production (never "Control"), an arm's treatment name (`XP-12 · T1`) in
   E15.7's arm view, which also has no "from Control" tag. On Overview this slot **is** the arm
-  switcher (a button with a chevron opening the account menu); other pages carry the same
-  menu as a header pill, so each page shows one account label. The account profile (`cash_debit`) is
+  switcher (a button with a chevron opening the account menu) and the Tower's only account
+  control (D103): the pick applies to every page, which carry no per-page switcher. The account profile (`cash_debit`) is
   in its tooltip only; neutral dot, never a pill. `(n)` = trading sessions since the account
   started (`status.sessions`; tooltip `n trading sessions since <day>`). Tick shows minutes only
   (D92 rev; seconds dropped). Values are Title Case (`Enabled`, `OK`, `Failed`, `No data`). Each slot is `label
