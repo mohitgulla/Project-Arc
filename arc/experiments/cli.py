@@ -554,6 +554,10 @@ def run_experiment(args: argparse.Namespace) -> int:
     from arc.experiments.store import ExperimentError, ExperimentStore
 
     cmd = args.experiment_command
+    if cmd == "arm-tick":  # E15.4: control is read mode=ro only; never migrated here
+        from arc.experiments.cli_arms import run_arm_tick
+
+        return run_arm_tick(args)
     conn = _open(args.db)
     try:
         from arc.control.effective import effective_settings, experiments_config

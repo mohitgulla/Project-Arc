@@ -1670,6 +1670,7 @@ The treatment arm is the same trading loop on its own paper account
     arc experiment start XP-1 --fixtures --arm-dir <scratch> --db <scratch>.db
     arc experiment pair <control chain id> --db <db> [--fixtures --fixture-set bullish]
     arc experiment arms-tick --db data/arc.db           # what the live tick spawns
+    arc experiment arm-tick XP-1:treatment --db data/arc.db   # one arm (arms-tick spawns these)
 
 - t0: each arm store gets a one-row `arm_identity` and a virtual account opened
   at control's equity (broker equity for live, the fixture account offline);
@@ -1690,7 +1691,25 @@ The treatment arm is the same trading loop on its own paper account
   N open; plan exits.mandatory) …`. With an empty book it reuses control's
   Research as before.
 - After each live control tick, `arc routines tick` spawns `arc experiment
-  arms-tick` detached (own lock, own lock dirs), only while an experiment runs.
+  arms-tick` detached, only while an experiment runs.
+- Parallel arms (E15.4, D69): `arms-tick` holds `experiment-arms` only while it
+  plans (tape prune, book invariant, account checks), then runs each arm as its own
+  `arc experiment arm-tick XP-<n>:<arm>` process, at most
+  `experiments.runner.max_parallel_arms` at once. Each child holds its own lock
+  `experiment-arms:<arm>` (`data/locks/experiment-arms_XP-<n>_<arm>.lock`), reads
+  control `mode=ro`, syncs control's context itself and runs its loop with the
+  same `loop.max_runtime` deadline as control. A still-running arm skips its next
+  slot (`skipped: previous arm tick running`); a slow arm never blocks another.
+  The D39 `_llm` lock (local tiers only) stays in control's lock dir, shared by
+  every arm, so local runs stay serialised; remote routes run concurrently.
+  `arms-tick` waits at most 2 × `loop.max_runtime` + 5 min per child, then
+  reports the arm `failed` (the child keeps its lock until it ends).
+- The `arms-tick` report gives each arm `status` (`ok | skipped | failed`),
+  `started_at`, `finished_at`, `wall_ms`, plus `wall_ms` / `arms_wall_ms_max` for
+  the tick. Each arms tick records an `arms_tick` heartbeat on control; the
+  routines `tick` heartbeat carries the latest `arms_wall_ms_max`. Check it:
+
+      sqlite3 "file:data/arc.db?mode=ro" "select at, status, json_extract(detail,'$.arms_wall_ms_max') from heartbeats where component='arms_tick' order by at desc limit 5"
 - Evaluation reads arm rows through `arc.experiments.paired.paired_view`: arm
   stores ATTACHed read-only, `arm_id` projected per store. Nothing is copied
   into the control store (D32 counts and Tower stay control-only).
