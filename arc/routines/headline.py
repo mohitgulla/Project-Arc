@@ -43,7 +43,7 @@ _OPEN_BLOCKERS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("order_budget_exhausted",), "budget"),
     (("net_ev_floor",), "ev"),
     (("risk_reject", "risk_declined"), "risk"),
-    (("dedupe_executed", "dedupe_proposed", "dedupe_rejected"), "dedupe"),
+    (("dedupe_executed", "dedupe_proposed", "dedupe_rejected", "dedupe:missed_wait"), "dedupe"),
     (("drop_concentration", "drop_at_cap"), "concentration"),
     (("stretched_entry",), "stretched"),
     (("mid_range_entry",), "mid_range"),

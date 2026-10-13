@@ -182,6 +182,9 @@ class ReasonCode(StrEnum):
     DEDUPE_PROPOSED = "dedupe_proposed"  # same idea proposed within the cooldown
     DEDUPE_REJECTED = "dedupe_rejected"  # same idea rejected by the owner within the cooldown
     DEDUPE_OVERRIDE = "dedupe_override"  # re-admitted: spot moved or the regime changed
+    # E24.2 (D101): the missed-open retry (an approved open that never filled)
+    DEDUPE_MISSED_RETRY = "dedupe:missed_retry"  # re-admitted for its same-day retry
+    DEDUPE_MISSED_WAIT = "dedupe:missed_wait"  # held until dedupe.missed_retry_after
     RESEARCH_NO_TRADE = "research_no_trade"  # Research chose an empty shortlist
     MARKET_UNCLEAR = "market_unclear"  # VIX / term structure / regime guard: no new opens
     MARKET_DATA_MISSING = "market_data_missing"  # no VIX reading: fail closed for new opens
@@ -448,6 +451,8 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.DEDUPE_PROPOSED: "Same idea already proposed recently",
     ReasonCode.DEDUPE_REJECTED: "Same idea rejected by the owner recently",
     ReasonCode.DEDUPE_OVERRIDE: "Re-admitted: spot or regime moved",
+    ReasonCode.DEDUPE_MISSED_RETRY: "Re-admitted: retry of a missed open",
+    ReasonCode.DEDUPE_MISSED_WAIT: "Missed open: waiting before its retry",
     ReasonCode.RESEARCH_NO_TRADE: "Research chose no trade",
     ReasonCode.MARKET_UNCLEAR: "Market unclear: no new opens",
     ReasonCode.MARKET_DATA_MISSING: "Market data missing: no new opens",

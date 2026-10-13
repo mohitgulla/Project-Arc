@@ -1102,9 +1102,13 @@ def _held_and_recent(
         fp = IdeaFingerprint.parse(r.fingerprint)
         if fp.ticker not in cands or fp.prefix() in seen:
             continue
+        if r.retry is not None and r.retry.status == "retry":
+            continue  # E24.2: re-admitted for its retry (the `Retry:` lines instead)
         seen.add(fp.prefix())
         until = next_admissible(now, r, cfg)
         when = "held (open position)" if r.open_structure else f"{r.kind.value} {r.at:%b %d}"
+        if r.retry is not None and r.retry.status == "wait":
+            when += f"; one retry from {r.retry.ready_at.astimezone(ET):%H:%M} ET"
         lines.append(
             f"- {fp.ticker} {fp.stance.value} {fp.structure_type}: {when}"
             + (f"; admissible again {until:%b %d}" if until else "")
@@ -1115,6 +1119,59 @@ def _held_and_recent(
             )
         )
     return held, lines
+
+
+#: E24.2 (D101): at most this many ``Retry:`` lines reach Research.
+MAX_RETRY_LINES = 5
+
+
+def _retry_lines(cands: Mapping[str, Stance], priors: list[RecentIdea]) -> list[str]:
+    """E24.2 (D101): one code-built ``Retry: …`` line per missed idea due its retry.
+
+    Only candidates in today's pool; latest miss first, one per idea, at most
+    :data:`MAX_RETRY_LINES`. Research decides; the line only informs.
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+    for r in priors:  # latest first
+        if r.retry is None or r.retry.status != "retry" or r.fingerprint in seen:
+            continue
+        if IdeaFingerprint.parse(r.fingerprint).ticker not in cands:
+            continue
+        seen.add(r.fingerprint)
+        out.append(r.retry_line())
+    return out[:MAX_RETRY_LINES]
+
+
+def _journal_missed(j: Recorder, cands: Mapping[str, Stance], priors: list[RecentIdea]) -> None:
+    """E24.2 (D101): Research stage, one row per missed idea on a candidate.
+
+    ``dedupe:missed_retry`` when re-admitted (its ``Retry:`` line went to Research),
+    ``dedupe:missed_wait`` while it waits. A spent retry is plain ``proposed``.
+    """
+    seen: set[str] = set()
+    for r in priors:
+        if r.retry is None or r.retry.status == "spent" or r.fingerprint in seen:
+            continue
+        fp = IdeaFingerprint.parse(r.fingerprint)
+        if fp.ticker not in cands:
+            continue
+        seen.add(r.fingerprint)
+        due = r.retry.status == "retry"
+        j.add(
+            JournalPersona.RESEARCH,
+            Stage.SHORTLIST,
+            fp.ticker,
+            Choice.NOTED,
+            ReasonCode.DEDUPE_MISSED_RETRY if due else ReasonCode.DEDUPE_MISSED_WAIT,
+            reason_text=(
+                r.retry_line()
+                if due
+                else f"missed {r.retry.missed_at.astimezone(ET):%H:%M} ET; retry from "
+                f"{r.retry.ready_at.astimezone(ET):%H:%M} ET"
+            ),
+            payload={"fingerprint": r.fingerprint, "ref": r.ref, **r.retry.model_dump(mode="json")},
+        )
 
 
 def _portfolio_filter(
@@ -2061,7 +2118,12 @@ def _loop_inputs(
         pnl_bucket=pnl_bucket(pctx.account.day_pnl, pctx.account.equity, bucket_pct),
         pending_orders=pending_orders,
         budget_tier=budget.tier.value,
-        suppressed=sorted(f"{r.fingerprint}:{r.kind.value}" for r in priors),
+        suppressed=sorted(
+            f"{r.fingerprint}:{r.kind.value}"
+            # E24.2: a missed idea's wait -> retry flip is a change (the loop runs in full)
+            + (f":{r.retry.status}" if r.retry is not None else "")
+            for r in priors
+        ),
     )
 
 
@@ -2484,10 +2546,9 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
     pctx = _portfolio_context(ctx, env, settings, budget, snap=snap)
     dedupe_cfg = DedupeConfig.from_settings(settings, budget.tier)
     priors = recent_ideas(ctx.conn, now=ctx.now, cfg=dedupe_cfg)
-    ctx.record_input(
-        "recent_ideas", "db", [r.model_dump(mode="json") for r in priors], count=len(priors)
-    )
+    ctx.record_input("recent_ideas", "db", [r.dump() for r in priors], count=len(priors))
     held, recent_lines = _held_and_recent(cands, priors, pctx, ctx.now, dedupe_cfg)
+    retry_lines = _retry_lines(cands, priors)  # E24.2 (D101)
     # D31: change-aware skip. Same inputs as the previous loop and a full run not
     # yet due (loop.max_idle) -> no LLM call; the chain runs its deterministic tail.
     sentiment, sentiment_keys = _research_sentiment(ctx, snap, pool.tickers)
@@ -2544,6 +2605,8 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
         inputs["range_edges"] = True
     if pullback is not None and (pb_lines := pullback.lines(r.pullback_watch.max_ready_in_prompt)):
         inputs["pullback_watch"] = pb_lines  # E23.2: absent when off / nothing on watch
+    if retry_lines:  # E24.2 (D101): absent when no missed idea is due (prompt unchanged)
+        inputs["missed_retry"] = "\n".join(retry_lines)
     # E13.8: the merged idea pool, recorded with the compact prompt's inputs
     inputs["idea_pool"] = [i.model_dump(mode="json") for i in pool.items]
     inputs["candidate_tickers"] = sorted(cands)
@@ -2628,6 +2691,7 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
         persona_call_id=call_id,
         payload={"market_regime": out.market_regime, "session_notes": out.session_notes},
     )
+    _journal_missed(j, cands, priors)  # E24.2 (D101)
     for item in kept:
         j.add(
             JournalPersona.RESEARCH,
@@ -4592,9 +4656,7 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
     )
     dedupe_cfg = DedupeConfig.from_settings(settings, budget.tier)
     priors = recent_ideas(ctx.conn, now=now, cfg=dedupe_cfg)
-    ctx.record_input(
-        "recent_ideas", "db", [r.model_dump(mode="json") for r in priors], count=len(priors)
-    )
+    ctx.record_input("recent_ideas", "db", [r.dump() for r in priors], count=len(priors))
 
     # Over-budget names were journalled OVER_BUDGET by the Quant step (E5.7).
     for item in shortlist.budgeted():
@@ -4674,16 +4736,21 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
             )
             lines.append(f"{t}: repeat idea ({verdict.detail})")
             continue
-        if verdict.override is not None:
+        if verdict.override is not None or verdict.retry is not None:
             with ctx.conn:
                 j.add(
                     JournalPersona.QUANT,
                     Stage.PROPOSE,
                     t,
                     Choice.NOTED,
-                    ReasonCode.DEDUPE_OVERRIDE,
+                    verdict.reason_code or ReasonCode.DEDUPE_OVERRIDE,
                     reason_text=verdict.detail,
-                    payload={"fingerprint": fp.key(), "override": verdict.override},
+                    payload={"fingerprint": fp.key(), "override": verdict.override}
+                    | (
+                        {"retry": verdict.retry.model_dump(mode="json")}
+                        if verdict.retry is not None
+                        else {}
+                    ),
                 )
         exit_model = _proposal_exit_model(
             priced,
