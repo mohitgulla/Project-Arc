@@ -65,6 +65,7 @@ from arc.experiments.arms import (
     read_identity,
     write_identity,
 )
+from arc.experiments.reference import sync_reference_tables
 
 if TYPE_CHECKING:
     import sqlite3
@@ -243,6 +244,7 @@ class PairResult:
     arm_chain_run_id: str | None = None
     fork_step: str | None = None
     outcomes: list[Outcome] = field(default_factory=list)
+    reference_synced: int = 0  # E10.2e: control reference rows written before the fork
 
     def as_json(self) -> dict[str, Any]:
         return {
@@ -253,6 +255,7 @@ class PairResult:
             "fork_step": self.fork_step,
             "status": self.status,
             "reason": self.reason,
+            "reference_synced": self.reference_synced,
             "steps": [(o.job, o.status) for o in self.outcomes],
         }
 
@@ -1303,6 +1306,9 @@ def pair_chain(
             as_of=root.scheduled_for,
             personas=personas,
         )
+        # E10.2e: control's reference tables (betas, iv_daily, earnings docs) as of the chain
+        ref = sync_reference_tables(control, arm, as_of=root.scheduled_for)
+        res.reference_synced = sum(ref.values())
         reused = _reuse_upstream(
             control,
             arm,
@@ -1336,6 +1342,7 @@ def pair_chain(
             else f"forked at {fork}"
             + (f" (own book: {len(book)} open; plan {planned})" if fork != planned else "")
             + f"; reused {len(upstream)} step(s), synced {synced} entries"
+            + f", {res.reference_synced} reference rows"
         )
     except _DuplicateError as exc:
         res.status, res.reason = "duplicate", str(exc)
@@ -1852,6 +1859,8 @@ def _tick_one_arm(
         out["pairs"] = pairs
         plan = plan_of(ident, routines, runner)
         out["plan"] = plan.model_dump(mode="json")
+        # E10.2e: the arm's own jobs (monitor's β$Δ, exits) read control's reference tables
+        out["reference_synced"] = sync_reference_tables(control, arm, as_of=now)
         own = persona_jobs(plan.arm_personas)
         if own:  # E13.12: the arm's own Scout / Scalp read control's synced inputs
             out["persona_synced"] = sync_persona_inputs(

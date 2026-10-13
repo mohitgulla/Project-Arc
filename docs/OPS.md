@@ -1753,6 +1753,15 @@ The treatment arm is the same trading loop on its own paper account
   steps before the fork step (the first step its overlay changes; never later
   than `propose`) and replays control's market tape (`market_tape`). Every arm
   manifest carries `paired_chain_run_id`, `fork_step`, `arm_id`, `git_sha`.
+- Reference tables (E10.2e, D106): before the arm's first forked step, and before
+  its own jobs on each arm tick, `arc.experiments.reference.sync_reference_tables`
+  upserts control's `betas` and `iv_daily`/`iv_skips` (`day <=` the chain's ET date)
+  and the earnings calendar's `raw_docs` (ingested by the chain time) into the arm
+  store, keyed by each table's primary key, so the β$Δ cap, IV rank and earnings
+  guard read what control read. `arm_pairs.reason` ends `…, N reference rows`; a
+  repeat sync writes 0. `ARM_REFERENCE_TABLES` / `ARM_OWN_TABLES` classify every
+  table the arm's code reads (`tests/test_experiment_reference_sync.py` fails on a
+  new unlisted one).
 - Own book (E10.2b, D75): while the arm holds any open structure of its own, its
   paired chain forks at `research` (its own Research call, own `exit_watchlist`
   and exit cases); `arm_pairs.reason` then reads `forked at research (own book:

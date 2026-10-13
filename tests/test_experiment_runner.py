@@ -141,6 +141,7 @@ def test_n_arms_by_configuration_pair_one_control_chain(control: Path, tmp_path:
             assert r["summary"].startswith(f"paired: reused {control_runs[r['job']]}")
         pair = arm.execute("SELECT * FROM arm_pairs").fetchone()
         assert pair["status"] == "ok" and pair["fork_step"] == fork
+        assert pair["reason"].endswith(" reference rows")  # E10.2e: synced before the fork
         assert pair["arm_chain_run_id"] == f"{chain}.{name}"
         manifests = arm.execute(
             "SELECT arm_id, payload FROM run_manifests ORDER BY created_at"
