@@ -168,6 +168,24 @@ def simulate(
     return days
 
 
+def _dedicated_config(path: Path) -> Path:
+    """A copy of ``config/experiments.yaml`` in dedicated mode with XP-1's one arm."""
+    import yaml
+
+    doc = yaml.safe_load((REPO / "config" / "experiments.yaml").read_text())
+    runner = doc["experiments"]["runner"]
+    runner["account_mode"] = "dedicated"
+    runner["arms"] = {
+        "treatment": {
+            "spec_arm": "treatment",
+            "keys_env": "ALPACA_EXP",
+            "db": "data/arc-exp-{experiment_id}.db",
+        }
+    }
+    path.write_text(yaml.safe_dump(doc, sort_keys=False))
+    return path
+
+
 def run(
     scratch: Path, *, sessions: int = 10, inject_usd: float = 0.0, seed: int = 7
 ) -> dict[str, Any]:
@@ -193,7 +211,11 @@ def run(
     conn = connect(control)
     defaults_before = experiments_config(effective_settings(conn)).defaults
     conn.close()
+    # XP-1 models two dedicated accounts at the same fixture equity; the shipped runner
+    # is shared since D107, whose capacity check (t0 <= equity x 0.9) refuses that.
+    dedicated = _dedicated_config(scratch / "experiments.yaml")
     _check(*_arc("experiment", "start", EID, "--fixtures", "--arm-dir", str(scratch / "arms"),
+                 "--experiments-config", str(dedicated),
                  "--now", T0.isoformat(), *db), "start")  # fmt: skip
     # one fixture loop chain on control, then its paired copy on the arm
     _check(*_arc("propose", "--fixtures", "--fixture-set", "bullish", "--profile", "cash_debit",
