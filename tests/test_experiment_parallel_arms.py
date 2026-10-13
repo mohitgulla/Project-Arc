@@ -215,14 +215,18 @@ def test_plan_lock_covers_planning_only(tmp_path: Path) -> None:
     conn = _k4(tmp_path)
     locks = tmp_path / "locks"
     states: list[bool] = []
+    # the arms run in parallel threads: serialise the probes, or two launchers holding the
+    # same file lock at once read as "plan lock still held" (an intermittent False)
+    probe = threading.Lock()
 
     def launcher(task: ArmTask) -> dict[str, Any]:
         # the planning lock is released before any arm runs: another arms-tick could plan
-        try:
-            with LockManager(locks).hold("experiment-arms"):
-                states.append(True)
-        except LockBusyError:
-            states.append(False)
+        with probe:
+            try:
+                with LockManager(locks).hold("experiment-arms"):
+                    states.append(True)
+            except LockBusyError:
+                states.append(False)
         return {}
 
     arms_tick(
