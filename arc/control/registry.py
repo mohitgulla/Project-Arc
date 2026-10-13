@@ -1303,6 +1303,34 @@ liquidity; a leg passes if within this OR spread_max_abs).",
         hard_ceiling=600,
         aliases=("execute.max_quote_age",),
     ),
+    # -- D101 (E24.1): re-gate on band move ------------------------------------------
+    _s(
+        "regate_max",
+        Group.EXECUTION,
+        _I,
+        "D101: re-gates per ladder when the market moves past its band (full gate at the "
+        "fresh mid, new band and token). 0 = no between-step check (rollback).",
+        Risk.UP,
+        field="execution_regate_max",
+        min=0,
+        max=3,
+        hard_ceiling=3,
+        aliases=("execution.regate_max",),
+    ),
+    _s(
+        "regate_max_move_pct",
+        Group.EXECUTION,
+        _F,
+        "D101: a re-gate is refused when the new band's worst price is more than this "
+        "share of the original mid above the original worst price.",
+        Risk.UP,
+        field="execution_regate_max_move_pct",
+        unit="pct",
+        min=0.0,
+        max=0.20,
+        hard_ceiling=0.20,
+        aliases=("execution.regate_max_move_pct",),
+    ),
     # -- close quote check (E6.2a) -------------------------------------------------
     _s(
         "close_quote.max_age_seconds",

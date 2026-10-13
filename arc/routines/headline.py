@@ -108,6 +108,7 @@ class Trade:
     status: str  # filled | working | pending | missed | rejected | expired | proposed
     qty: int | None = None
     price: str = ""
+    reprice: str = ""  # D101: ``re-priced once: 4.65–4.75 → 4.82–4.95, filled 4.88``
 
 
 @dataclass
@@ -170,6 +171,15 @@ def _price(raw: object) -> str:
         return ""
 
 
+_REPRICE = re.compile(r"re-priced (?:once|twice|\d+ times): [^;()]*?, (?:filled [0-9.]+|missed)")
+
+
+def _reprice(detail: object) -> str:
+    """D101: the ladder's re-price note from ``executions.detail`` (``""`` if none)."""
+    m = _REPRICE.search(str(detail or ""))
+    return m.group(0) if m else ""
+
+
 def _status(p: sqlite3.Row) -> str:
     if p["execution"] in ("filled", "partially_filled"):
         return "filled"
@@ -195,7 +205,8 @@ def chain_facts(conn: sqlite3.Connection, chain_run_id: str) -> ChainFacts:
     ).fetchall()
     props = conn.execute(
         """SELECT p.ticker, p.kind, p.structure_json, a.status AS approval,
-                  e.status AS execution, e.filled_qty, e.fill_price, e.contracts
+                  e.status AS execution, e.filled_qty, e.fill_price, e.contracts,
+                  e.detail AS exec_detail
            FROM proposals p
            JOIN routine_runs r ON r.run_id = p.run_id
            LEFT JOIN approval_requests a ON a.proposal_hash = p.proposal_hash
@@ -261,6 +272,7 @@ def chain_facts(conn: sqlite3.Connection, chain_run_id: str) -> ChainFacts:
             status=_status(p),
             qty=p["filled_qty"] or p["contracts"],
             price=_price(p["fill_price"]),
+            reprice=_reprice(p["exec_detail"]),
         )
         (f.closes if trade.kind == "close" else f.opens).append(trade)
     acted = {t.ticker for t in f.opens}
@@ -304,7 +316,8 @@ def _open_clause(f: ChainFacts) -> str:
         what = " ".join(x for x in (t.ticker, _bias(f, t.ticker), t.structure) if x)
         at = f" at {t.price}" if t.price else ""
         more = f" (+{len(filled) - 1} more)" if len(filled) > 1 else ""
-        return f"{what} x{t.qty} filled{at}{more}"
+        note = f" ({t.reprice})" if t.reprice else ""
+        return f"{what} x{t.qty} filled{at}{note}{more}"
     for status, words in (
         ("pending", "awaits your approval"),
         ("working", "is working toward a fill"),
@@ -315,7 +328,8 @@ def _open_clause(f: ChainFacts) -> str:
         hit = [t for t in f.opens if t.status == status]
         if hit:
             t = hit[0]
-            return " ".join(x for x in (t.ticker, t.structure or "trade", words) if x)
+            note = f" ({t.reprice})" if t.reprice and status == "missed" else ""
+            return " ".join(x for x in (t.ticker, t.structure or "trade", words) if x) + note
     return ""
 
 

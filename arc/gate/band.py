@@ -26,7 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from arc.gate.ticks import TickGrid
 
-__all__ = ["MAX_BAND_STEPS", "PriceBand", "as_grid", "band_from_nbbo"]
+__all__ = ["MAX_BAND_STEPS", "PriceBand", "as_grid", "band_from_nbbo", "regate_move_ok"]
 
 MAX_BAND_STEPS = 9
 _CENT = Decimal("0.01")
@@ -86,6 +86,16 @@ class PriceBand(BaseModel):
         start = max(start, self.lo)
         return PriceBand(lo=start, hi=self.hi, max_steps=self.max_steps if self.hi > start else 0)
 
+    def moved_past(self, mid: Decimal, grid: TickGrid | Decimal) -> bool:
+        """D101: has a fresh *mid* run past the worst price ``hi``?
+
+        Pure. ``mid`` is snapped onto *grid* toward the marketable side, exactly
+        as :meth:`reanchor` does, so ``moved_past`` is true precisely when
+        ``reanchor`` would return ``None``: no attempt that reaches the market's
+        mid fits inside the signed band any more.
+        """
+        return as_grid(grid).snap(mid, "up") > self.hi
+
     def ladder(self, grid: TickGrid | Decimal) -> tuple[Decimal, ...]:
         """Distinct grid prices to send, attempt 0 (the start) first.
 
@@ -139,3 +149,18 @@ def band_from_nbbo(
     room = max(far - start, Decimal(0))
     hi = max(g.snap(start + room * reach, "down"), start)
     return PriceBand(lo=start, hi=hi, max_steps=max_steps if hi > start else 0)
+
+
+def regate_move_ok(original: PriceBand, new: PriceBand, max_move_pct: Decimal) -> bool:
+    """D101 price-move ceiling for a re-gated band: may *new* replace *original*?
+
+    The new worst price may exceed the original's by at most ``max_move_pct`` of
+    the original start price (its mid, in absolute value):
+    ``new.hi − original.hi <= max_move_pct · |original.lo|``. A new band no worse
+    than the original always passes. ``max_move_pct = 0`` allows no move at all.
+    Pure.
+    """
+    if max_move_pct < 0:
+        msg = f"invalid max_move_pct {max_move_pct}"
+        raise ValueError(msg)
+    return new.hi - original.hi <= max_move_pct * abs(original.lo)

@@ -398,6 +398,23 @@ class ArcSettings(BaseSettings):
             "gate-approved band is not sent (journal reason stale_band)."
         ),
     )
+    execution_regate_max: Annotated[int, Field(ge=0, le=3)] = Field(
+        default=1,
+        description=(
+            "D101: re-gates a ladder may make when the market moves past its band "
+            "(fresh mid above the band's worst price between steps). Each re-gate runs the "
+            "full gate on the same structure at the fresh mid and walks a new band under a "
+            "new token. 0 = today's behaviour (no between-step check; rollback)."
+        ),
+    )
+    execution_regate_max_move_pct: Annotated[float, Field(ge=0.0, le=0.20)] = Field(
+        default=0.05,
+        description=(
+            "D101 price-move ceiling: a re-gate is refused when the new band's worst price "
+            "exceeds the original worst price by more than this share of the original mid. "
+            "Closes inside the D73 expiry guard window are exempt."
+        ),
+    )
     # -- Unknown submit state (E11.1, D71) ---------------------------------------
     execution_broker_connect_timeout_s: Annotated[float, Field(gt=0.0, le=30.0)] = Field(
         default=5.0,

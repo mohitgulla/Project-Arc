@@ -558,6 +558,11 @@ export function Execution({ d }: { d: TradeDetail }) {
         items={[
           { label: "Status", value: <span className="capitalize">{x.status ?? "—"}</span>, hint: x.detail ?? undefined },
           { label: "Band", value: <><M v={x.band_lo} kind="price" /> – <M v={x.band_hi} kind="price" /></> },
+          ...(x.regated_bands ?? []).map((b) => ({
+            label: `Re-gated band ${b.n}`,
+            value: <><M v={b.band_lo} kind="price" /> – <M v={b.band_hi} kind="price" /></>,
+            hint: "Market moved past the approved band; re-priced and re-gated",
+          })),
           { label: "Steps used / max", value: `${x.steps_used ?? "—"} / ${x.max_steps ?? "—"}`, hint: x.attempts != null ? `${x.attempts} attempt${x.attempts === 1 ? "" : "s"}` : undefined },
           { label: "Filled", value: `${x.filled_qty ?? 0} / ${x.contracts ?? "—"}` },
           { label: "Fill price", value: <M v={x.fill_price} kind="fill" /> },
