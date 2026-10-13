@@ -355,6 +355,16 @@ def _spawn_arms(args: argparse.Namespace, conn: sqlite3.Connection) -> None:
         structlog.get_logger(__name__).info("routines.arms_spawned", pid=pid)
 
 
+def _arms_wall_ms_max(conn: sqlite3.Connection) -> int | None:
+    """E15.4: ``arms_wall_ms_max`` of the latest ``arms_tick`` heartbeat (None: no arms)."""
+    from arc.experiments.runner import ARMS_TICK_COMPONENT
+    from arc.monitoring.store import HeartbeatRepo
+
+    hb = HeartbeatRepo(conn).latest(ARMS_TICK_COMPONENT)
+    value = hb.detail.get("arms_wall_ms_max") if hb is not None else None
+    return int(value) if isinstance(value, int | float) else None
+
+
 def _record_tick(
     conn: sqlite3.Connection,
     report: TickReport,
@@ -388,6 +398,8 @@ def _record_tick(
             "tick_duration_ms": duration_ms,
             "slowest_jobs": report.slowest(3),
             "loop_wall_ms": report.loop_wall_ms,  # D63: the loop chain's wall time
+            # E15.4: the slowest arm of the latest (detached, so previous) arms tick
+            "arms_wall_ms_max": _arms_wall_ms_max(conn),
             "approvals": approvals or {},
             "outcomes": [
                 {"job": o.job, "status": o.status, "run_id": o.run_id}

@@ -43,8 +43,11 @@ With an empty book the planned fork stands (A/A: reuse control's Research).
 
 from __future__ import annotations
 
+import contextlib
 import datetime as _dt
 import json
+import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
@@ -66,6 +69,7 @@ from arc.experiments.arms import (
 if TYPE_CHECKING:
     import sqlite3
     from collections.abc import Callable, Iterable, Mapping, Sequence
+    from contextlib import AbstractContextManager
 
     from arc.config import ArcSettings
     from arc.experiments.config import ArmRunner, RunnerConfig
@@ -77,18 +81,23 @@ if TYPE_CHECKING:
 __all__ = [
     "ACCOUNT_CHANGED",
     "ACCOUNT_STEPS",
+    "ARMS_TICK_COMPONENT",
+    "ARM_TICK_LOCK_PREFIX",
     "BOOK_KINDS",
     "PERSONA_JOBS",
     "PERSONA_OVERLAY_PREFIXES",
     "STEP_TARGETS",
     "ArmAccount",
     "ArmAccountChangedError",
+    "ArmLauncher",
     "ArmStartError",
+    "ArmTask",
     "PairResult",
     "arm_owned_personas",
     "arm_plan",
     "arm_routines",
     "arm_stores",
+    "arm_tick_lock",
     "arms_preview",
     "arms_tick",
     "book_fork",
@@ -103,9 +112,15 @@ __all__ = [
     "plans_at_start",
     "start_arms",
     "sync_persona_inputs",
+    "tick_arm",
 ]
 
 log = structlog.get_logger(__name__)
+
+#: E15.4: per-arm tick lock prefix (``experiment-arms:<XP-n>:<arm>``, control lock dir).
+ARM_TICK_LOCK_PREFIX = "experiment-arms:"
+#: E15.4: the heartbeat component each arms tick records on control.
+ARMS_TICK_COMPONENT = "arms_tick"
 
 _RESEARCH = "research"
 
@@ -1353,6 +1368,30 @@ def _recent_loop_chains(
     return [r[0] for r in rows]
 
 
+@dataclass(frozen=True)
+class ArmTask:
+    """E15.4: one arm the arms tick runs (its experiment, name and store)."""
+
+    experiment_id: str
+    arm: str
+    path: Path
+
+    @property
+    def key(self) -> str:
+        """The arm id ``XP-<n>:<arm>`` (D69: the report and lock key)."""
+        return f"{self.experiment_id}:{self.arm}"
+
+
+#: E15.4: ``(task) -> the arm's report``: an in-process thread (:func:`tick_arm`), or the
+#: live CLI's ``arc experiment arm-tick`` child process.
+type ArmLauncher = Callable[[ArmTask], dict[str, Any]]
+
+
+def arm_tick_lock(arm_id: str) -> str:
+    """E15.4: the per-arm lock ``experiment-arms:<XP-n>:<arm>`` (control's lock dir)."""
+    return f"{ARM_TICK_LOCK_PREFIX}{arm_id}"
+
+
 def arms_tick(
     control: sqlite3.Connection,
     *,
@@ -1365,6 +1404,8 @@ def arms_tick(
     account_number: Callable[[str], str] | None = None,
     notifier: Any = None,
     book_reader: Callable[[str], Any] | None = None,
+    launcher: ArmLauncher | None = None,
+    plan_lock: Callable[[], AbstractContextManager[Any]] | None = None,
 ) -> dict[str, Any]:
     """Pair recent control loop chains, then run each arm's own jobs (see the module doc).
 
@@ -1377,9 +1418,21 @@ def arms_tick(
     per tick, before any arm runs; the book invariant halts the arms it reaches
     (:func:`arc.experiments.attribution.enforce_book`). ``report["books"]``.
 
+    E15.4 (D69): the arms run **in parallel**, at most ``runner.max_parallel_arms`` at
+    once. *launcher* runs one arm: the live CLI passes one that runs ``arc experiment
+    arm-tick <arm>`` (one process per arm); the default runs :func:`tick_arm` in a
+    thread on its own read-only control connection (one at a time when control is
+    ``:memory:``). Each arm holds its own lock ``experiment-arms:<arm>``, so a slow arm
+    never blocks another, and a still-running arm reports ``skipped: previous arm tick
+    running``. *plan_lock* (the CLI's ``experiment-arms`` lock) covers only the
+    planning (tape prune, book and account checks), never the arms' runs. Every arm's
+    entry carries ``status``, ``started_at``, ``finished_at`` and ``wall_ms``; the report
+    carries ``wall_ms`` and ``arms_wall_ms_max``, recorded as an ``arms_tick``
+    heartbeat on control.
+
     Never raises for one arm's failure; the report says what each arm did.
     """
-    from arc.experiments.tape import prune_tape, running_experiments
+    from arc.experiments.tape import running_experiments
 
     report: dict[str, Any] = {"now": now.isoformat(), "arms": {}}
     running = running_experiments(control)
@@ -1391,42 +1444,288 @@ def arms_tick(
     if not runner.enabled:
         report["skipped"] = "experiments.runner.enabled is off"
         return report
+    with plan_lock() if plan_lock is not None else contextlib.nullcontext():
+        tasks = _plan_arms(
+            control,
+            running,
+            report,
+            runner=runner,
+            now=now,
+            account_number=account_number,
+            notifier=notifier,
+            book_reader=book_reader,
+        )
+    workers = runner.max_parallel_arms
+    if launcher is None:
+        path = _main_path(control)
+        workers = workers if path is not None else 1  # :memory: control: one at a time
+        launcher = _in_process_launcher(
+            control,
+            path,
+            {st.experiment_id: st for st in running},
+            runner=runner,
+            routines_path=routines_path,
+            now=now,
+            lock_dir=lock_dir,
+            clock=clock,
+            handlers=handlers,
+            spawner=spawner,
+            notifier=notifier,
+        )
+    t0 = time.monotonic()
+    _run_arms(tasks, launcher, report["arms"], max_parallel=workers, now=now)
+    report["wall_ms"] = int((time.monotonic() - t0) * 1000)
+    report["arms_wall_ms_max"] = max(
+        (int(a["wall_ms"]) for a in report["arms"].values() if "wall_ms" in a), default=0
+    )
+    _record_arms_heartbeat(control, report, now=now)
+    log.info("experiments.arms_tick", **{k: v for k, v in report.items() if k != "arms"})
+    return report
+
+
+def _plan_arms(
+    control: sqlite3.Connection,
+    running: Sequence[ExperimentState],
+    report: dict[str, Any],
+    *,
+    runner: RunnerConfig,
+    now: _dt.datetime,
+    account_number: Callable[[str], str] | None,
+    notifier: Any,
+    book_reader: Callable[[str], Any] | None,
+) -> list[ArmTask]:
+    """The arms to launch this tick; an arm that fails a check is reported, not run."""
+    from arc.experiments.tape import prune_tape
+
     report["tape_pruned"] = prune_tape(control, keep_days=runner.tape_keep_days, now=now)
+    live_number = _account_reader(account_number) if account_number is not None else None
+    if book_reader is not None:
+        report["books"] = _check_books(control, running, book_reader, now=now, notifier=notifier)
+    tasks: list[ArmTask] = []
+    for st in running:
+        for name, path in arm_stores(control, st.experiment_id).items():
+            task = ArmTask(st.experiment_id, name, path)
+            out: dict[str, Any] = {"store": str(path)}
+            report["arms"][task.key] = out
+            err = _precheck_arm(st, task, now=now, live_number=live_number, notifier=notifier)
+            if err is not None:
+                out["error"], out["status"] = err, "failed"
+                continue
+            tasks.append(task)
+    return tasks
+
+
+def _account_reader(account_number: Callable[[str], str]) -> Callable[[str], str | Exception]:
+    """``keys_env -> account number | the error``, read once per keys (per tick)."""
     accounts: dict[str, str | Exception] = {}
 
-    def live_number(keys_env: str) -> str | Exception:
+    def read(keys_env: str) -> str | Exception:
         if keys_env not in accounts:
             try:
-                accounts[keys_env] = account_number(keys_env)  # type: ignore[misc]
+                accounts[keys_env] = account_number(keys_env)
             except Exception as exc:  # noqa: BLE001 - reported per arm; the arm skips
                 accounts[keys_env] = exc
         return accounts[keys_env]
 
-    if book_reader is not None:
-        report["books"] = _check_books(control, running, book_reader, now=now, notifier=notifier)
+    return read
 
-    for st in running:
-        for name, path in arm_stores(control, st.experiment_id).items():
-            out: dict[str, Any] = {"store": str(path)}
-            report["arms"][f"{st.experiment_id}:{name}"] = out
-            _tick_one_arm(
-                control,
-                st,
-                name,
-                path,
-                out,
-                runner=runner,
-                routines_path=routines_path,
-                now=now,
-                lock_dir=lock_dir,
-                clock=clock,
-                handlers=handlers,
-                spawner=spawner,
-                live_number=live_number if account_number is not None else None,
-                notifier=notifier,
-            )
-    log.info("experiments.arms_tick", **{k: v for k, v in report.items() if k != "arms"})
-    return report
+
+def _account_gate(
+    arm: sqlite3.Connection,
+    ident: ArmIdentity,
+    live_number: Callable[[str], str | Exception] | None,
+    *,
+    now: _dt.datetime,
+    notifier: Any,
+) -> str | None:
+    """D69: why the arm must run nothing (its keys reach another account), else None."""
+    if live_number is None or ident.account_sha256 is None:
+        return None
+    number = live_number(ident.keys_env)
+    if isinstance(number, Exception):
+        return f"account check failed: {type(number).__name__}: {number}"
+    if not check_arm_account(arm, ident, number, now=now, notifier=notifier):
+        return f"{ACCOUNT_CHANGED}: arm halted, nothing ran"
+    return None
+
+
+def _precheck_arm(
+    st: ExperimentState,
+    task: ArmTask,
+    *,
+    now: _dt.datetime,
+    live_number: Callable[[str], str | Exception] | None,
+    notifier: Any,
+) -> str | None:
+    """E15.4: the checks before an arm is launched (store, identity, D69 account)."""
+    if not task.path.is_file():
+        return "arm store missing"
+    arm = _connect(task.path)
+    try:
+        ident = read_identity(arm)
+        if ident is None or ident.experiment_id != st.experiment_id:
+            return "arm store belongs to another experiment"
+        return _account_gate(arm, ident, live_number, now=now, notifier=notifier)
+    finally:
+        arm.close()
+
+
+def _main_path(conn: sqlite3.Connection) -> str | None:
+    """The file behind *conn*'s main database, or None (``:memory:``)."""
+    for row in conn.execute("PRAGMA database_list"):
+        if row[1] == "main":
+            return str(row[2]) or None
+    return None  # pragma: no cover - sqlite always lists main
+
+
+def _in_process_launcher(
+    control: sqlite3.Connection,
+    path: str | None,
+    states: Mapping[str, ExperimentState],
+    **kw: Any,
+) -> ArmLauncher:
+    """Each arm on its own read-only control connection (on *control* itself when
+    *path* is None, which runs the arms one at a time)."""
+    from arc.store.db import connect_ro
+
+    def run(task: ArmTask) -> dict[str, Any]:
+        conn = connect_ro(path) if path is not None else control
+        try:
+            return tick_arm(conn, states[task.experiment_id], task, **kw)
+        finally:
+            if conn is not control:
+                conn.close()
+
+    return run
+
+
+def _arm_status(out: Mapping[str, Any]) -> str:
+    if "error" in out:
+        return "failed"
+    if "skipped" in out:
+        return "skipped"
+    return str(out.get("status") or "ok")
+
+
+def _run_arms(
+    tasks: Sequence[ArmTask],
+    launcher: ArmLauncher,
+    outs: dict[str, dict[str, Any]],
+    *,
+    max_parallel: int,
+    now: _dt.datetime,
+) -> None:
+    """Run *tasks* through *launcher*, at most *max_parallel* at once. Start/finish are
+    on *now*'s clock (*now* + the monotonic offset since the arms started)."""
+    mono0 = time.monotonic()
+
+    def at(mono: float) -> str:
+        return (now + _dt.timedelta(seconds=mono - mono0)).isoformat()
+
+    def one(task: ArmTask) -> tuple[ArmTask, dict[str, Any]]:
+        start = time.monotonic()
+        res: dict[str, Any]
+        try:
+            res = dict(launcher(task))
+        except Exception as exc:  # noqa: BLE001 - one arm's failure never stops another
+            res = {"error": f"{type(exc).__name__}: {exc}"}
+            log.exception("experiments.arm_tick_failed", arm_id=task.key)
+        end = time.monotonic()
+        res["status"] = _arm_status(res)
+        res["started_at"], res["finished_at"] = at(start), at(end)
+        res["wall_ms"] = int((end - start) * 1000)
+        return task, res
+
+    if max_parallel <= 1 or len(tasks) <= 1:
+        results = [one(t) for t in tasks]
+    else:
+        with ThreadPoolExecutor(max_workers=min(max_parallel, len(tasks))) as pool:
+            results = list(pool.map(one, tasks))
+    for task, res in results:
+        outs[task.key].update(res)
+
+
+def _record_arms_heartbeat(
+    control: sqlite3.Connection, report: Mapping[str, Any], *, now: _dt.datetime
+) -> None:
+    """E15.4: one ``arms_tick`` heartbeat on control per arms tick; the routines tick's
+    own heartbeat carries the latest one's ``arms_wall_ms_max``."""
+    import sqlite3 as _sqlite3
+
+    from arc.monitoring.store import HeartbeatRepo
+
+    keep = ("status", "started_at", "finished_at", "wall_ms", "error", "skipped")
+    arms = {k: {f: a[f] for f in keep if f in a} for k, a in report["arms"].items()}
+    failed = any(a.get("status") == "failed" for a in arms.values())
+    try:
+        HeartbeatRepo(control).record(
+            ARMS_TICK_COMPONENT,
+            "failed" if failed else "ok",
+            at=now,
+            detail={
+                "arms": arms,
+                "wall_ms": report.get("wall_ms"),
+                "arms_wall_ms_max": report.get("arms_wall_ms_max"),
+                "experiment_ids": report.get("experiment_ids"),
+            },
+        )
+    except _sqlite3.Error:  # pragma: no cover - a read-only control; the report has it all
+        log.warning("experiments.arms_heartbeat_failed", exc_info=True)
+
+
+def tick_arm(
+    control: sqlite3.Connection,
+    st: ExperimentState,
+    task: ArmTask,
+    *,
+    runner: RunnerConfig,
+    routines_path: str | None,
+    now: _dt.datetime,
+    lock_dir: Path | None,
+    clock: Callable[[], _dt.datetime] | None = None,
+    handlers: Mapping[str, Handler] | None = None,
+    spawner: Any = None,
+    notifier: Any = None,
+    live_number: Callable[[str], str | Exception] | None = None,
+) -> dict[str, Any]:
+    """E15.4: one arm's tick under its own lock ``experiment-arms:<arm>`` in *lock_dir*.
+
+    What ``arc experiment arm-tick <arm>`` runs (one process per arm). *control* may be
+    read-only (``mode=ro``): the arm reads control's chains and syncs its context, and
+    never writes control. A held lock (the arm's previous tick still running) skips.
+    """
+    from arc.routines.locks import LockBusyError, LockManager
+
+    out: dict[str, Any] = {"store": str(task.path)}
+
+    def run() -> None:
+        _tick_one_arm(
+            control,
+            st,
+            task.arm,
+            task.path,
+            out,
+            runner=runner,
+            routines_path=routines_path,
+            now=now,
+            lock_dir=lock_dir,
+            clock=clock,
+            handlers=handlers,
+            spawner=spawner,
+            live_number=live_number,
+            notifier=notifier,
+        )
+
+    if lock_dir is None:
+        run()
+        return out
+    try:
+        with LockManager(lock_dir).hold(arm_tick_lock(task.key)):
+            run()
+    except LockBusyError:
+        out["skipped"] = "previous arm tick running"
+        log.info("experiments.arm_tick_skipped", arm_id=task.key)
+    return out
 
 
 def _check_books(
@@ -1505,7 +1804,7 @@ def _tick_one_arm(
     from arc.routines.dispatcher import Dispatcher
     from arc.routines.handlers import RunEnv
     from arc.routines.heartbeat import LogNotifier
-    from arc.routines.locks import LockManager, NullLocks
+    from arc.routines.locks import LockManager, NullLocks, arm_lock_dir
 
     if not path.is_file():
         out["error"] = "arm store missing"
@@ -1520,16 +1819,13 @@ def _tick_one_arm(
         if ident is None or ident.experiment_id != st.experiment_id:
             out["error"] = "arm store belongs to another experiment"
             return
-        if live_number is not None and ident.account_sha256 is not None:
-            number = live_number(ident.keys_env)
-            if isinstance(number, Exception):
-                out["error"] = f"account check failed: {type(number).__name__}: {number}"
-                return
-            if not check_arm_account(arm, ident, number, now=now, notifier=notifier):
-                out["error"] = f"{ACCOUNT_CHANGED}: arm halted, nothing ran"
-                return
-        # D69: two experiments may reuse an arm name; lock per experiment + arm
-        arm_lock = lock_dir / f"arm-{st.experiment_id}-{name}" if lock_dir is not None else None
+        gate = _account_gate(arm, ident, live_number, now=now, notifier=notifier)
+        if gate is not None:
+            out["error"] = gate
+            return
+        # D69: two experiments may reuse an arm name; lock per experiment + arm. E15.4:
+        # the arm dir's D39 ``_llm`` lock resolves to control's dir (shared, serialised).
+        arm_lock = arm_lock_dir(lock_dir, st.experiment_id, name) if lock_dir is not None else None
         routines = effective_routines(arm, routines_path)
         env = RunEnv(
             db_path=str(path),
