@@ -42,7 +42,10 @@ Agent subcommands:
 Owner subcommands (run by an interactive Hermes session on the owner's thread reply):
   triage A-ID STATUS [NOTE]   STATUS in accepted|wontfix|fixed
   ship A-ID [NOTE]            a quick change shipped: prints how to apply it; next run reviews
-  approve P-ID [NOTE]         proposal approved: writes the spec for adoption (E21.4)
+  approve P-ID [NOTE] --approval slack:<ts>
+                              proposal approved: freezes the spec and runs
+                              `arc experiment adopt` on the live store (E21.4): XP id,
+                              spec PR (auto-merge), registered / queued
   drop P-ID WHY               drop a proposal
   reprioritise P-ID WHY [--score X]   pin to the top of the ranking (or override its score)
   backlog                     print the ranked backlog
@@ -158,7 +161,7 @@ REPORTABLE = ("draft", "queued", "registered", "running", "stopped")
 
 # ---- E21.3 (D86): XP proposals (P-<n>) in the Analyst-owned backlog ----
 BACKLOG_FILE = "xp_backlog.json"
-PROPOSALS_DIR = "proposals"  # approved specs for the owner's manual steps (until E21.4)
+PROPOSALS_DIR = "proposals"  # approved specs: the input of `arc experiment adopt` (E21.4)
 PROPOSAL_ID_RE = re.compile(r"^P-[1-9]\d*$")
 BACKTEST_ID_RE = re.compile(r"^BT-[1-9]\d*$")
 BACKLOG_STATUSES = ("proposed", "approved", "registered", "running", "concluded", "dropped")
@@ -1404,6 +1407,29 @@ def quick_change_items(ledger: dict, statuses: tuple = ("shipped",)) -> list[dic
     )
 
 
+def promotion_leads(overview: list[dict]) -> list[str]:
+    """E21.4 (D86): every experiment that stopped with a ``win`` and is not promoted yet is a
+    quick-change lead "promote XP-<n> winner t<k>" (the owner's PR citing ``Experiment:``)."""
+    out = []
+    for e in overview:
+        if e["status"] != "stopped" or e["reason"] != "win":
+            continue
+        payload = (e.get("report") or {}).get("payload") or {}
+        wins = [
+            pr.get("b")
+            for pr in payload.get("pairwise") or []
+            if pr.get("kind") == "control_vs_treatment" and pr.get("verdict") == "win"
+        ]
+        head = payload.get("headline_arm")
+        winner = head if head in wins else (wins[0] if wins else "t1")
+        out.append(
+            f"- promote {e['experiment_id']} winner {winner} ({e['area']}: {e['title']}): a "
+            f"quick-change lead; the PR cites `Experiment: {e['experiment_id']}` and sets "
+            f"{winner}'s overlay values (verdicts/{e['experiment_id']}.yaml)"
+        )
+    return out or ["- none (no experiment concluded with a win and awaiting promotion)"]
+
+
 def review_lines(ledger: dict) -> list[str]:
     """Quick changes shipped and not yet judged keep / roll back: the run must review each."""
     items = quick_change_items(ledger)
@@ -2419,10 +2445,9 @@ def write_study_spec(run_dir: Path, sid: str, spec: dict, f: dict, aid: str, now
 
 
 def write_proposal_spec(p: Paths, entry: dict) -> Path:
-    """An approved ``P-<n>``'s spec for the owner's manual adoption (until E21.4's
-    ``arc experiment adopt``). JSON is valid YAML, so ``arc experiment create --spec`` reads
-    it as is (stdlib only: no YAML writer). The id stays a placeholder: the owner (or E21.4)
-    takes the next free ``XP-<n>``."""
+    """An approved ``P-<n>``'s spec, the input of ``arc experiment adopt`` (E21.4). JSON is
+    valid YAML (stdlib only: no YAML writer). The id stays a placeholder: adopt takes the
+    next free ``XP-<n>``."""
     spec = {
         "id": "XP-<next>",
         "kind": "ab",
@@ -2434,10 +2459,9 @@ def write_proposal_spec(p: Paths, entry: dict) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         f"# APPROVED Arc Analyst proposal {entry['id']} ({entry['key']}).\n"
-        "# Not registered. Until E21.4 (`arc experiment adopt`): set `id` to the next free\n"
-        "# XP-<n> (arc experiment list), copy to config/experiments/live/, then\n"
-        f"#   arc experiment create --spec <file> --owner-approval {entry['id']} &&\n"
-        f"#   arc experiment register XP-<n> --owner-approval {entry['id']}  (D86)\n"
+        "# `arc experiment adopt` (E21.4) assigns the XP id, registers it and commits the\n"
+        f"# spec: arc experiment adopt {entry['id']} --proposal <this file> "
+        "--owner-approval slack:<ts>  (D86)\n"
         + json.dumps(spec, indent=2, sort_keys=True)
         + "\n"
     )
@@ -2595,32 +2619,90 @@ def _owner_entry(p: Paths, pid: str) -> tuple[dict, dict | None]:
     return backlog, backlog_by_id(backlog, pid)
 
 
-def cmd_approve(p: Paths, pid: str, note: str, now: dt.datetime) -> int:
-    """Owner ``approve P-<n>``: freeze the spec and write it for adoption. E21.4's
-    ``arc experiment adopt`` takes it from here; until then the owner runs the printed steps."""
+APPROVAL_RE = re.compile(r"^slack:\d{9,11}\.\d{1,6}$")
+GH_PREFIXES = ("GH_", "GITHUB_")
+
+
+def adopt_proposal(p: Paths, pid: str, spec_path: Path, approval: str) -> tuple[int, dict | str]:
+    """``arc experiment adopt`` on the LIVE store (E21.4): the one write the Analyst profile
+    makes, on the owner's ``approve``. Returns ``(exit code, adopt JSON | error text)``."""
+    argv = [
+        *p.arc,
+        "experiment",
+        "adopt",
+        pid,
+        "--proposal",
+        str(spec_path),
+        "--owner-approval",
+        approval,
+        "--db",
+        str(p.live_db),
+        "--json",
+    ]
+    # the GitHub CLI's token stays (adopt opens the spec PR); broker / LLM keys never do
+    env = {**clean_env(), **{k: v for k, v in os.environ.items() if k.startswith(GH_PREFIXES)}}
+    try:
+        r = subprocess.run(
+            argv, cwd=p.repo, env=env, capture_output=True, text=True, timeout=600, check=False
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return 127, str(e)
+    if r.returncode:
+        return r.returncode, (r.stderr or r.stdout).strip()
+    try:
+        return 0, json.loads(r.stdout)
+    except ValueError:
+        return 1, f"adopt printed no JSON: {r.stdout[:500]}"
+
+
+def cmd_approve(p: Paths, pid: str, note: str, approval: str, now: dt.datetime) -> int:
+    """Owner ``approve P-<n>``: freeze the spec, write it, and adopt it (E21.4): next free
+    XP id, spec PR (auto-merge), ``registered`` (or ``queued``); the backlog entry moves
+    ``approved`` -> ``registered``. Re-running retries a failed adopt (idempotent per P-<n>)."""
+    if not APPROVAL_RE.match(approval or ""):
+        print(
+            "approve needs --approval slack:<ts> (the owner's message ts in #arc-analyst, "
+            "D86 owner-confirmed registry rule)"
+        )
+        return 2
     backlog, entry = _owner_entry(p, pid)
     if entry is None:
         print(f"no proposal {pid}")
         return 2
     if entry["status"] not in ("proposed", "approved"):
-        print(f"{pid} is {entry['status']}; only a proposed entry can be approved")
+        print(f"{pid} is {entry['status']} ({entry.get('experiment_id') or '-'}); nothing to do")
         return 2
     if entry["status"] == "proposed":
         entry["status"] = "approved"
-        _hist(entry, iso(now), "approved", by="owner", note=note)
+        _hist(entry, iso(now), "approved", by="owner", note=note, approval=approval)
     path = write_proposal_spec(p, entry)
     entry["spec_path"] = str(path)
     save_json(p.backlog, backlog)
+    code, res = adopt_proposal(p, pid, path, approval)
+    if code or not isinstance(res, dict):
+        print(
+            f"{pid} approved, but `arc experiment adopt` failed (exit {code}): {res}\n"
+            f"Spec: {path}. Re-send `approve {pid}` to retry (idempotent)."
+        )
+        return 1
+    entry["status"] = "registered"
+    entry["experiment_id"] = res["experiment_id"]
+    entry["pr_url"] = res.get("pr_url")
+    _hist(
+        entry, iso(now), "adopted", experiment_id=res["experiment_id"],
+        registry_status=res["status"], pr=res.get("pr_url"),
+    )  # fmt: skip
+    save_json(p.backlog, backlog)
+    if res["status"] == "queued":
+        when = f"queued: {res.get('queue_reason') or 'behind ' + ', '.join(res['queued_behind'])}"
+    else:
+        when = f"starts {res.get('starts')} pre-open (experiments.autostart 09:05 ET)"
     print(
-        f"{pid} approved. Spec: {path}\n"
-        "Until E21.4 (`arc experiment adopt`), from the repo root:\n"
-        f"  1. pick the next free id: .venv/bin/arc experiment list\n"
-        f"  2. cp {path} config/experiments/live/xp<n>_<slug>.yaml; set `id: XP-<n>`; commit "
-        f"(PR body `Experiment: XP-<n>`)\n"
-        f"  3. .venv/bin/arc experiment create --spec config/experiments/live/xp<n>_<slug>.yaml "
-        f"--owner-approval {pid}\n"
-        f"  4. .venv/bin/arc experiment register XP-<n> --owner-approval {pid}\n"
-        "The backlog moves to registered/running at the next weekly run (proposal_ref sync)."
+        f"{pid} -> {res['experiment_id']} [{res['status']}], area {res['area']}, "
+        f"{res['arms']} arms\n"
+        f"Spec PR: {res.get('pr_url') or res.get('pr_status') or '-'} "
+        "(auto-merges when CI is green)\n"
+        f"{when}. The start needs the spec merged and the A/A calibration committed."
     )
     return 0
 
@@ -3105,6 +3187,10 @@ def build_context(
         f"open until proposed (seed_ref) or dropped (seed_drops); full: {p.idea_seed})",
         *seed_lines(seed, seed_errs, backlog.get("seed")),
         "",
+        "## Promotion leads (E21.4: winning experiments not promoted yet; propose each as a "
+        "quick change)",
+        *promotion_leads(overview),
+        "",
         "## Quick changes shipped since the last review (review each: keep / roll-back / "
         "too-early)",
         *review_lines(ledger),
@@ -3224,8 +3310,13 @@ def main(argv: list[str], p: Paths | None = None, now: dt.datetime | None = None
         return cmd_triage(p, rest[0], rest[1], rest[2] if len(rest) == 3 else "", now)
     if cmd == "ship" and len(rest) in (1, 2):
         return cmd_ship(p, rest[0], rest[1] if len(rest) == 2 else "", now)
+    if cmd == "approve" and "--approval" in rest[:-1]:
+        i = rest.index("--approval")
+        approval, args = rest[i + 1], rest[:i] + rest[i + 2 :]
+        if len(args) in (1, 2):
+            return cmd_approve(p, args[0], args[1] if len(args) == 2 else "", approval, now)
     if cmd == "approve" and len(rest) in (1, 2):
-        return cmd_approve(p, rest[0], rest[1] if len(rest) == 2 else "", now)
+        return cmd_approve(p, rest[0], rest[1] if len(rest) == 2 else "", "", now)
     if cmd == "drop" and len(rest) == 2:
         return cmd_drop(p, rest[0], rest[1], now)
     if cmd == "reprioritise" and len(rest) in (2, 4) and (len(rest) == 2 or rest[2] == "--score"):

@@ -440,7 +440,7 @@ def build_multi_report(
         spec_hash=st.spec_hash,
         registered_hash=st.registered_hash,
         config_hash=ev.config_hash(cfg),
-        config=cfg.model_dump(mode="json"),
+        config=ev.report_config(cfg),
         control_sha=run.control_sha,
         treatment_sha=sha,
         evaluator_sha=ev._evaluator_sha(),  # noqa: SLF001
