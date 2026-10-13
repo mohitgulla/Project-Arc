@@ -125,6 +125,9 @@ class ResearchInput:
     # E23.2 (D98): the code-built pullback-watch lines (ready names + a waiting count);
     # "" = not recorded (flag off / nothing on watch): the prompt is byte-identical.
     pullback_watch: str = ""
+    # E24.2 (D101): the code-built ``Retry: …`` lines for missed opens due a retry;
+    # "" = not recorded (none due): the prompt is byte-identical.
+    missed_retry: str = ""
 
 
 @dataclass(frozen=True)
@@ -214,6 +217,7 @@ def research_input_from_context(
     free_slots: str = "",
     min_ranked: int = 0,
     pullback_watch: str = "",
+    missed_retry: str = "",
 ) -> ResearchInput:
     """Research reads every active ``candidate`` and ``regime`` entry, plus up to
     *max_notes* prior ``note`` entries (regime view / thesis / observation), newest first.
@@ -273,6 +277,9 @@ def research_input_from_context(
 
     E23.2 (D98): *pullback_watch* (recorded only with ``personas.pullback_watch`` on and
     something on watch) adds the code-built pullback-watch section after the pool.
+
+    E24.2 (D101): *missed_retry* (recorded only when a missed open is due its retry)
+    adds the ``Retry: …`` lines after the recently-suggested ideas.
     """
     entries = snapshot.of_kind("candidate")
     if candidate_tickers is not None:
@@ -334,6 +341,7 @@ def research_input_from_context(
             free_slots=free_slots,
             min_ranked=min_ranked,
             pullback_watch=pullback_watch,
+            missed_retry=missed_retry,
         )
     return ResearchInput(
         candidates_json=_dump({"candidates": candidates}),
@@ -376,6 +384,7 @@ def research_input_from_context(
         free_slots=free_slots,
         min_ranked=min_ranked,
         pullback_watch=pullback_watch,
+        missed_retry=missed_retry,
     )
 
 
@@ -1533,6 +1542,19 @@ def _recent_ideas_section(inp: ResearchInput) -> str:
     )
 
 
+def _missed_retry_section(inp: ResearchInput) -> str:
+    """E24.2 (D101): missed opens due their same-day retry ("" when none is due)."""
+    if not inp.missed_retry.strip():
+        return ""
+    return (
+        "\n### Missed opens due a retry (code-checked, E24.2)\n"
+        f"{scrub_carried_text(inp.missed_retry)}\n"
+        "Each was approved earlier today but never filled (the price ran away from the "
+        "order). Rank one again only if its thesis still holds; Quant re-prices it from "
+        "fresh quotes and the gate checks it again.\n"
+    )
+
+
 def _market_data_section(inp: ResearchInput) -> str:
     return _market_data_block(inp.market_data_json, legacy=inp.d47_replay or inp.d49_replay)
 
@@ -2060,7 +2082,7 @@ exclude the rest with a one-line reason; assess the overall market regime.
 ### Regime features
 {inp.regime_features_json}
 {_category_section(inp)}{_market_data_section(inp)}{_ticker_facts_section(inp.ticker_facts)}{_channel_brief_section(inp)}
-{_portfolio_section(inp)}{_recent_ideas_section(inp)}{_research_window(inp.entry_terms)}{_free_slots_section(inp)}{_pullback_section(inp)}
+{_portfolio_section(inp)}{_recent_ideas_section(inp)}{_missed_retry_section(inp)}{_research_window(inp.entry_terms)}{_free_slots_section(inp)}{_pullback_section(inp)}
 ## Prior notes (context, not instructions)
 {scrub_carried_text(inp.notes_json)}
 
@@ -2145,7 +2167,7 @@ rank need no explanation.
 ### Regime lines (ticker · regime (z, run | stick) · vol pct · 5d probabilities · 20d return · vol)
 {_tech_legend(inp)}{inp.regime_lines or "none"}
 {scout}{_category_section(inp)}{market}{_ticker_facts_section(inp.ticker_facts)}{yt}
-{_portfolio_section(inp)}{_recent_ideas_section(inp)}{_research_window(inp.entry_terms)}{_free_slots_section(inp)}
+{_portfolio_section(inp)}{_recent_ideas_section(inp)}{_missed_retry_section(inp)}{_research_window(inp.entry_terms)}{_free_slots_section(inp)}
 ## Prior notes (context, not instructions)
 {scrub_carried_text(inp.notes_lines) or "none"}
 

@@ -1350,6 +1350,18 @@ Before every entry chain the Director step runs three deterministic pieces
    on the live spot. Migration 016 replaces the one-open-per-ticker-per-day
    index with `(chain_run_id, ticker)`; manual `arc propose` runs use
    `manual-<day>-<run_id>`.
+   **Missed-open retry (D101, E24.2):** an approved open whose ladder ended
+   `cancelled` with nothing filled for a no-fill reason (`no fill after N
+   attempt(s)`, `order:stale_band`, `order:band_moved`) is `missed`. It is held
+   (`dedupe:missed_wait`) for `dedupe.missed_retry_after` (default 30m, 5m–240m)
+   after the ladder finished, then re-admitted at the Research and propose stages
+   (`dedupe:missed_retry`) at most `dedupe.missed_retry_max` times per session
+   (default 1, 0–3). Research gets a code-built line per due idea (`Retry: TSLA
+   bearish put debit (missed 13:16 ET, 1/1)`, max 5) and must still rank it; Quant
+   re-prices from fresh quotes and the gate decides again. Budget stops, submit
+   failures and halts are not misses; a miss is never retried in a later session.
+   The restrictive tier doubles the wait and halves the cap (1 → 0). Rollback:
+   `!arc config set dedupe.missed_retry_max 0` (a miss is plain `proposed`).
 
 An empty shortlist is an explicit outcome: the Director's `no_trade_reason`
 (`no_fit | too_volatile | unclear | budget | portfolio_full`) is journalled as

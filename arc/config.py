@@ -613,6 +613,22 @@ class ArcSettings(BaseSettings):
             "at least this fraction since the last one (or the regime changed)."
         ),
     )
+    dedupe_missed_retry_after_minutes: Annotated[int, Field(ge=5, le=240)] = Field(
+        default=30,
+        description=(
+            "E24.2 (D101): a missed open (approved, ladder cancelled with no fill) is held "
+            "this many minutes after its ladder finished, then re-admitted for a same-day "
+            "retry. Doubled in the restrictive tier."
+        ),
+    )
+    dedupe_missed_retry_max: Annotated[int, Field(ge=0, le=3)] = Field(
+        default=1,
+        description=(
+            "E24.2 (D101): same-session retries of a missed open (0 = a miss is held like "
+            "any proposed idea, the pre-E24.2 behaviour). Halved (floor) in the restrictive "
+            "tier."
+        ),
+    )
     portfolio_sector_max_pct: Annotated[float, Field(gt=0.0, le=1.0)] = Field(
         default=0.40,
         description=(
