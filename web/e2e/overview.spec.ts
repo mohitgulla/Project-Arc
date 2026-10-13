@@ -84,14 +84,14 @@ for (const vp of VIEWPORTS) {
         await expect(page.getByTestId("activity").locator(":scope > li")).toHaveCount(8);
         await expect(page.getByTestId("activity-more")).toHaveText("Show 1 more");
         await expect(page.getByTestId("activity")).toContainText("missed_window ×12");
-        // D50: the range control sits below the hero block (under the comparison line), with dates.
+        // D50: the range control sits below the hero block (under the comparison line); no dates (D104).
         await expect(page.getByTestId("equity-range").getByRole("tab", { name: "3M" })).toBeVisible();
         const rangeBox = await page.getByTestId("equity-range").boundingBox();
         const cmpBox = await page.getByTestId("equity-comparison").boundingBox();
         expect(rangeBox!.y).toBeGreaterThanOrEqual(cmpBox!.y + cmpBox!.height);
         const chartBox = await page.getByTestId("trend-chart").boundingBox();
         expect(rangeBox!.y + rangeBox!.height).toBeLessThanOrEqual(chartBox!.y);
-        await expect(page.getByTestId("equity-dates")).toHaveText(/^[A-Z][a-z]{2} \d{1,2}(, \d{4})?( – ([A-Z][a-z]{2} )?\d{1,2}, \d{4})?$/);
+        await expect(page.getByTestId("equity-dates")).toHaveCount(0);
         await expect(page.getByTestId("max-loss-caps")).toContainText("SPY");
         // Fresh marks: the Greeks header badge is fresh (one freshness slot, §10).
         await expect(page.getByTestId("greeks-freshness")).toHaveAttribute("data-freshness", "fresh");
@@ -109,7 +109,7 @@ for (const vp of VIEWPORTS) {
 test.describe("overview behaviour", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 
-  test("range control switches the equity series; every range prints its dates", async ({ page }) => {
+  test("range control switches the equity series; no dates beside it", async ({ page }) => {
     await open(page, "/", "dark");
     await page.getByTestId("equity-info").click();
     await expect(page.getByText("Today's 10-min monitor marks.")).toBeVisible();
@@ -122,12 +122,10 @@ test.describe("overview behaviour", () => {
     await expect(page.getByText("Reconciled daily closes.")).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(page.getByText(/vs \$[\d,]+ at \d\d-\d\d/)).toBeVisible();
-    const dates = page.getByTestId("equity-dates");
     for (const r of ["1W", "3M", "YTD", "ALL", "1D", "1M"]) {
       await page.getByRole("tab", { name: r, exact: true }).click();
       await expect(page).toHaveURL(new RegExp(`range=${r}`));
-      await expect(dates).toHaveText(/\d{1,2}, \d{4}$/);
-      if (r === "1M") await expect(dates).toContainText("–"); // a multi-day range spans two dates
+      await expect(page.getByTestId("equity-dates")).toHaveCount(0);
     }
   });
 

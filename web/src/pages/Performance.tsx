@@ -64,11 +64,9 @@ function TitleTip({ about, children }: { about: string; children: React.ReactNod
 // ---------------------------------------------------------------------------
 
 function RangeBar({
-  p,
   params,
   update,
 }: {
-  p?: Performance;
   params: URLSearchParams;
   update: (c: Record<string, string | null>) => void;
 }) {
@@ -84,11 +82,6 @@ function RangeBar({
         options={PERF_RANGES.map((r) => ({ value: r }))}
         testid="perf-range-control"
       />
-      {p && (
-        <span className="text-caption text-muted tabular-nums" data-testid="perf-range">
-          {formatRange(p.period.first, p.period.last)}
-        </span>
-      )}
       <SleeveFilter params={params} update={update} testid="perf-sleeve-control" />
     </div>
   );
@@ -676,7 +669,7 @@ export function PerformancePage() {
   };
   return (
     <div className="grid gap-6 desktop:gap-10" data-testid="performance">
-      <RangeBar p={p} params={params} update={update} />
+      <RangeBar params={params} update={update} />
       {!p ? (
         <Card title="Performance">
           <EmptyState caption={res.isError ? `Could not load performance: ${String(res.error)}` : "Loading…"} />

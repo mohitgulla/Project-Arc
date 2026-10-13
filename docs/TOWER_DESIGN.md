@@ -265,11 +265,10 @@ they are never dropped.
   cell `px-1`, columns `1.15 / 0.8 / 1.35 / 0.9fr`; < 480 px `1.1 / 0.9fr`) so no slot text
   truncates at 390–520 px (D99). Model: `statusRow()` in `lib/overview.ts`.
 - **Equity** (D50): the `1D 1W 1M 3M YTD ALL` control sits **below the hero block** (value,
-  pill, $ change, `vs … at prev close`), followed by the range's dates in the Performance
-  `formatRange` format (`Sep 4 – Oct 4, 2026`; one day prints `Oct 4, 2026`), ET, from
-  `start_at` (else the first series point, else today) to `value_at`; then the chart. Same
-  layout as the Performance RangeBar (dates wrap under the control when narrow). The series
-  caption is an InfoTip in the header. Model: `equityDates()` in `lib/overview.ts`.
+  pill, $ change, `vs … at prev close`), then the chart. No date range beside the control
+  (D104; it printed the range's `formatRange` dates until then), and the Performance RangeBar
+  likewise shows only the range control and the sleeve filter. The series caption is an
+  InfoTip in the header.
 - **Structure labels** (D50, every Tower surface: Trades, Positions, trade detail, Overview,
   Performance breakdowns): Title Case (`Debit Vertical`, `Credit Vertical`, `Long Call`,
   `Long Put`, `Iron Condor`, `Covered Call`, `Cash-Secured Put`; unknown kinds Title Case each

@@ -32,7 +32,6 @@ import {
 } from "../lib/format";
 import {
   OVERVIEW_RANGES,
-  equityDates,
   directionView,
   equityView,
   greekRiskLabel,
@@ -229,7 +228,7 @@ function StatusStrip({ o, cad, now }: { o: Overview; cad: ReturnType<typeof useC
 // Equity + P&L
 // ---------------------------------------------------------------------------
 
-function EquityCard({ o, range, cad, now }: { o: Overview; range: OverviewRange; cad: ReturnType<typeof useCadences>; now: number }) {
+function EquityCard({ o, range, cad }: { o: Overview; range: OverviewRange; cad: ReturnType<typeof useCadences> }) {
   const e = o.equity;
   const v = equityView(e, range);
   const bench = withBenchmarks(e.range === range ? e : undefined, v.series, v.reference);
@@ -274,12 +273,9 @@ function EquityCard({ o, range, cad, now }: { o: Overview; range: OverviewRange;
         label: e.source === "intraday" ? "monitor mark" : "reconcile",
       }}
     >
-      {/* D50: the range selector sits below the hero, with its dates (Performance RangeBar layout). */}
+      {/* D50: the range selector sits below the hero; no date range beside it (D104). */}
       <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1" data-testid="equity-range">
         <RangeControl fallback="1D" ranges={OVERVIEW_RANGES} size="sm" />
-        <span className="text-caption text-muted tabular-nums" data-testid="equity-dates">
-          {equityDates(e.range === range ? e : undefined, now)}
-        </span>
       </div>
       {v.series.length > 1 ? (
         <TrendChart
@@ -963,7 +959,7 @@ export function OverviewPage() {
       <div className="grid gap-6 desktop:grid-cols-2 desktop:gap-10" data-testid="overview-grid">
         <div className={col}>
           <div className="order-1 min-w-0 desktop:order-none">
-            <EquityCard o={o} range={range} cad={cad} now={now} />
+            <EquityCard o={o} range={range} cad={cad} />
           </div>
           <div className="order-4 min-w-0 desktop:order-none">
             <Card
