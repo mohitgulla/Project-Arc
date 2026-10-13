@@ -8,7 +8,7 @@ import { withArm } from "../lib/arm";
 import { useLayout } from "../lib/layout";
 import { REFRESH_CHOICES, useSettings } from "../lib/settings";
 import { useMeta, useSearch, useSnapshot } from "../lib/useApi";
-import { ArmBanner, ArmSwitcher } from "./ArmSwitcher";
+import { ArmBanner } from "./ArmSwitcher";
 import { AsOfBadge } from "./AsOfBadge";
 import {
   IconClose,
@@ -415,13 +415,6 @@ export function Shell({ children }: { children?: ReactNode }) {
         <header className="sticky top-0 z-10 flex h-header-h items-center gap-3 border-b border-line bg-header px-4 tablet:px-6">
           <h1 className="min-w-0 truncate text-title font-semibold text-title">{title}</h1>
           <div className="ml-auto flex min-w-0 items-center gap-2">
-            {/* E15.7: on Overview the status strip's account slot is the switcher (D92: one
-                account label per page); every other page gets the header pill. */}
-            {pathname !== "/" && (
-              <div className="min-w-0 max-tablet:max-w-[150px]">
-                <ArmSwitcher />
-              </div>
-            )}
             {layout !== "mobile" && (
               <div className="w-[260px]">
                 <SearchInput />

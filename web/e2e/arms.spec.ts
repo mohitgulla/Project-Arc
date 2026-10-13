@@ -48,10 +48,11 @@ test.describe("arm switcher", () => {
     // Scoped calls carry no ?arm (useControlMeta never does either).
     expect(calls.length).toBeGreaterThan(0);
     expect(calls.filter((r) => armOf(r) !== null).map((r) => r.url())).toEqual([]);
-    // Other pages show the header pill instead of the strip's slot.
+    // D103: the strip's slot is the only switcher; other pages carry no per-page account control.
     await page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Trades" }).click();
-    await expect(page.getByTestId("arm-switcher")).toHaveText("Arc Investor");
-    await expect(page.getByTestId("arm-switcher")).toHaveAttribute("data-arm", "control");
+    await expect(page.getByRole("heading", { level: 1, name: "Trades" })).toBeVisible();
+    await expect(page.getByTestId("account-switcher")).toHaveCount(0);
+    await expect(page.getByTestId("arm-switcher")).toHaveCount(0);
   });
 
   test("the menu lists Arc Investor and the running arms; choosing one scopes every call", async ({ page }) => {
@@ -91,8 +92,12 @@ test.describe("arm switcher", () => {
     // Sidebar links carry no ?arm; the provider puts it back.
     await page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Positions" }).click();
     await expect(page).toHaveURL(/\/positions\?(.*&)?arm=XP-12%3At1/);
-    await expect(page.getByTestId("arm-switcher")).toHaveText("XP-12 · T1");
-    await expect(page.getByTestId("arm-banner")).toBeVisible();
+    await expect(page.getByTestId("arm-switcher")).toHaveCount(0);
+    await expect(page.getByTestId("arm-banner")).toContainText("Viewing XP-12 · T1");
+    expect(calls.filter((r) => new URL(r.url()).pathname === "/api/positions").every((r) => armOf(r) === ARM)).toBe(true);
+    // Back on Overview the master switcher still shows the arm chosen.
+    await page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Overview" }).click();
+    await expect(page.getByTestId("account-slot")).toHaveText("Paper Trade · XP-12 · T1");
   });
 
   test("the banner shows on every page while an arm is selected", async ({ page }) => {
@@ -111,7 +116,6 @@ test.describe("arm switcher", () => {
     await page.getByTestId("arm-back").click();
     await expect(page).toHaveURL(/\/trades$/);
     await expect(page.getByTestId("arm-banner")).toHaveCount(0);
-    await expect(page.getByTestId("arm-switcher")).toHaveText("Arc Investor");
     await expect.poll(() => calls.some((r) => new URL(r.url()).pathname === "/api/trades" && armOf(r) === null)).toBe(true);
     // Choose an arm, then load a URL without ?arm: Arc Investor (owner: no persistence).
     await open(page, `/?arm=${encodeURIComponent(ARM)}`);
@@ -130,12 +134,12 @@ test.describe("arm switcher", () => {
   });
 
   test("Escape closes the menu and keyboard picks an arm", async ({ page }) => {
-    await open(page, "/ops");
-    await page.getByTestId("arm-switcher").click();
+    await open(page, "/");
+    await page.getByTestId("account-switcher").click();
     await expect(page.getByTestId("arm-menu")).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(page.getByTestId("arm-menu")).toHaveCount(0);
-    await page.getByTestId("arm-switcher").press("Enter");
+    await page.getByTestId("account-switcher").press("Enter");
     await expect(page.getByTestId("arm-menu").getByRole("menuitemradio")).toHaveCount(4);
     // Opening focuses the checked item (Arc Investor); arrows move, Enter picks.
     await expect(page.getByTestId("arm-menu").getByRole("menuitemradio").first()).toBeFocused();
