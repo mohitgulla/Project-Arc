@@ -2614,6 +2614,7 @@
     "max_steps": 3,
     "mid": "-0.9",
     "orders": [],
+    "regated_bands": [],
     "slippage_vs_limit": "0.00",
     "slippage_vs_mid": "0.00",
     "started_at": "2026-09-28T15:00:00-04:00",
