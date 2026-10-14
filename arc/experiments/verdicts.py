@@ -5,7 +5,7 @@ outcome is committed as ``config/experiments/live/verdicts/XP-<n>.yaml`` through
 auto-merged PR (branch ``xp/<n>-verdict``, :mod:`arc.experiments.publish`). The file
 unlocks the spec's leaves for the strategy-lane check (E21.1); the store's queue
 promotion (:meth:`ExperimentStore.stop`) already made the next queued experiment
-``registered`` for the next pre-open auto-start.
+``registered`` for the owner's manual start (D112).
 
 ``verdict`` per stop reason: ``win`` (plus ``winner: t<k>``), ``loss`` (harm),
 ``futility``, ``stopped`` (owner) and ``invalid`` (a failed A/A harness check). The

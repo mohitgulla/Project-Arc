@@ -700,7 +700,7 @@ def _run_adopt(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
     if res.queue_reason:
         _out(f"  queued: {res.queue_reason}")
     _out(f"  area {res.area} · {res.arms} treatments · spec sha256 {res.spec_hash}")
-    _out(f"  starts: {res.starts or 'when the queue frees a slot'} (experiments.autostart 09:05)")
+    _out(f"  owner start: {res.start_cmd or 'when the queue frees a slot'} (D112, manual)")
     _out(f"  file: {res.path} (branch {res.branch})")
     if res.pr_url or res.pr_status:
         _out(f"  PR: {res.pr_url or '-'} ({res.pr_status})")

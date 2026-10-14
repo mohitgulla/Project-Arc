@@ -24,7 +24,6 @@ in-memory copy of the store and prints the file, branch, PR text and Slack line.
 
 from __future__ import annotations
 
-import datetime as _dt
 import re
 import sqlite3
 from dataclasses import dataclass, field
@@ -51,6 +50,7 @@ from arc.experiments.store import (
 )
 
 if TYPE_CHECKING:
+    import datetime as _dt
     from collections.abc import Iterable, Mapping
 
     from arc.experiments.config import ExperimentsConfig
@@ -69,7 +69,6 @@ __all__ = [
     "next_free_id",
     "spec_file_text",
     "spec_path",
-    "start_estimate",
 ]
 
 log = structlog.get_logger(__name__)
@@ -85,7 +84,6 @@ _TERMINAL = frozenset(
 )
 #: the Analyst's placeholder id in an approved ``proposals/P-<n>.yaml``
 _PLACEHOLDER_IDS = frozenset({"XP-<next>", "XP-<n>", ""})
-AUTOSTART_AT = _dt.time(9, 5)  # config/routines.yaml experiments.autostart
 
 
 class AdoptError(ExperimentError):
@@ -114,7 +112,7 @@ class AdoptResult:
     branch: str
     queued_behind: list[str] = field(default_factory=list)
     queue_reason: str | None = None
-    starts: str | None = None  # ISO date of the earliest pre-open auto-start
+    start_cmd: str | None = None  # D112: the owner's manual start (None while queued)
     pr_url: str | None = None
     pr_status: str | None = None
     slack: str = ""
@@ -261,30 +259,24 @@ def adopt_pr_body(st: ExperimentState, proposal_id: str, approval: str) -> str:
         f"(spec v{st.spec.spec_version}, PLAN D108)\n"
         f"- status `{st.status.value}`\n"
         f"- spec sha256 `{st.registered_hash}` (the pre-registration lock)\n\n"
-        "Auto-merged once CI is green. `experiments.autostart` starts it at the first "
-        "pre-open after this merge when its area and arms are free (E21.4).\n"
+        "Auto-merged once CI is green. **Owner:** start it once this merges and its area "
+        f"and arms are free: `arc experiment start {st.experiment_id}` (D112).\n"
     )
 
 
-def start_estimate(now: _dt.datetime, status: ExperimentStatus) -> _dt.date | None:
-    """The first pre-open the auto-start can pick it up (None while queued)."""
-    from arc.utils.calendar import ET, is_session, next_session
-
-    if status is not ExperimentStatus.REGISTERED:
+def start_command(st: ExperimentState) -> str | None:
+    """D112: the owner's manual start for a registered experiment (None while queued)."""
+    if st.status is not ExperimentStatus.REGISTERED:
         return None
-    local = now.astimezone(ET)
-    today = local.date()
-    if is_session(today) and local.time() < AUTOSTART_AT:
-        return today
-    return next_session(today)
+    return f"arc experiment start {st.experiment_id}"
 
 
-def slack_line(st: ExperimentState, proposal_id: str, starts: _dt.date | None) -> str:
+def slack_line(st: ExperimentState, proposal_id: str, start_cmd: str | None) -> str:
     k = len(st.spec.arms.treatments)
     arms = f"control + {k} treatments" if st.spec.control_runs else f"{k} arms"
     head = f"{st.experiment_id} registered ({proposal_id}), {arms}, area {st.spec.area.value}"
-    if starts is not None:
-        return f"{head}, starts {starts:%a %b} {starts.day} pre-open"
+    if start_cmd is not None:
+        return f"{head}, owner to start after the spec PR merges: `{start_cmd}`"
     behind = _queued_detail(st)[0]
     return f"{head}, queued behind {', '.join(behind) or 'the arm cap'}"
 
@@ -406,13 +398,13 @@ def adopt(
             st.experiment_id, actor=ADOPT_ACTOR, owner_approval=approval, proposal_ref=pid
         )
     behind, reason = _queued_detail(st) if st.status is ExperimentStatus.QUEUED else ([], None)
-    starts = start_estimate(now, st.status)
+    start_cmd = start_command(st)
     path = spec_path(st.spec)
     branch = f"xp/{st.experiment_id.split('-')[1]}"
     text = spec_file_text(st.spec, proposal_id=pid, approval=approval)
     title = f"{st.experiment_id}: register {st.spec.title} (owner approved {pid}, D86)"
     body = adopt_pr_body(st, pid, approval)
-    line = slack_line(st, pid, starts)
+    line = slack_line(st, pid, start_cmd)
     res = AdoptResult(
         experiment_id=st.experiment_id,
         proposal_id=pid,
@@ -425,7 +417,7 @@ def adopt(
         branch=branch,
         queued_behind=behind,
         queue_reason=reason,
-        starts=None if starts is None else starts.isoformat(),
+        start_cmd=start_cmd,
         slack=line,
         dry_run=dry_run,
         file_text=text,

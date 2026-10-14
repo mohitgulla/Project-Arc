@@ -2990,15 +2990,11 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "scorecard": "arc.routines.scorecard:scorecard_step",
     # E10.3 (D44): daily experiment evaluation after the EOD reconcile
     "experiments.evaluate": "arc.routines.experiments:experiments_evaluate_step",
-    # E21.4 (D86): pre-open auto-start of owner-approved (adopted) experiments
-    "experiments.autostart": "arc.routines.experiments:experiments_autostart_step",
 }
 
 #: E21.4: ``tick --dry-run`` previews (read-only) of what a planned job would decide,
 #: appended to its ``planned`` reason. ``(conn, now) -> str``.
-DRY_RUN_PREVIEWS: dict[str, str] = {
-    "experiments.autostart": "arc.routines.experiments:autostart_preview",
-}
+DRY_RUN_PREVIEWS: dict[str, str] = {}
 
 
 def import_handler(path: str) -> Handler:

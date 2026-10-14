@@ -1694,8 +1694,8 @@ stores one `ExperimentReport` in the append-only `experiment_reports` table:
   end and records σ (unlocks ab starts). An A/A whose CI excludes 0 → stop(invalid).
 - Breakdowns by regime / structure kind are reported, never decision inputs.
 
-**Approve → register → auto-start (E21.4, D86).** Nothing below needs a manual step once
-the owner approves a proposal:
+**Approve → register → owner start (E21.4, D86; D112).** After the owner approves a
+proposal, everything up to `registered` is automatic; the **start is manual**:
 
     arc experiment adopt P-2 --proposal <P-2.yaml | xp_backlog.json> \
         --owner-approval slack:<ts> --db <db> [--dry-run] [--no-pr] [--no-slack] [--json]
@@ -1712,21 +1712,23 @@ the owner approves a proposal:
   `registered`, or `queued` with the reason. It commits
   `config/experiments/live/xp<n>_<slug>.yaml` on branch `xp/<n>` through a PR with
   `gh pr merge --auto --squash`, and posts one #arc-investor line ("XP-11 registered
-  (P-2), control + 3 treatments, area entries, starts Tue Oct 13 pre-open" or "… queued behind XP-9").
+  (P-2), control + 3 treatments, area entries, owner to start after the spec PR merges:
+  `arc experiment start XP-11`" or "… queued behind XP-9").
   Re-running for the same P-id only retries what is missing, such as a failed PR.
-- **`experiments.autostart`** (trading days 09:05 ET, ttl 30m, so before the 09:40
-  loop) takes the oldest `registered` experiment that carries a `proposal_ref`, and starts
-  it with `arc experiment start`'s checks once all of these hold:
-  - the market is open today;
-  - no halt is active;
-  - an A/A stopped with sigma, **and** its `verdicts/XP-<aa>.yaml` is on main (the
-    owner's A/A override is never used);
-  - the spec is on `origin/main` with a hash equal to the registered lock;
-  - capacity and `shared_capacity_frac` allow it.
-  It starts at most `experiments.autostart.max_per_day` (default 1) and posts started /
-  blocked-with-reason once. `!arc set experiments.autostart.enabled false` pauses it.
-  Hand-registered experiments (no `proposal_ref`, e.g. the E15.9 A/A) are never
-  auto-started. `arc routines tick --dry-run` shows what it would do.
+- **Owner start (D112; the 09:05 `experiments.autostart` routine and its
+  `experiments.autostart.*` knobs are removed).** A `registered` experiment waits for
+  the owner. The adopt Slack line, the spec PR body and the Analyst's `approve` reply
+  name the command (`owner to start after the spec PR merges: arc experiment start XP-<n>`).
+  Start it before the 09:40 loop, once the spec PR is merged and the A/A calibration
+  verdict is committed:
+
+      arc experiment start XP-<n> --dry-run   # each arm's plan, nothing written
+      arc experiment start XP-<n>             # t0: arm stores, capacity checks, running
+
+  `start` keeps its own checks (A/A sigma unless `--aa-override`, arm stores,
+  `max_parallel_arms`, shared account flat / `shared_capacity_frac`). When a stop frees
+  the area, the next queued experiment becomes `registered` and waits for the owner the
+  same way.
 - **Verdict file for every outcome:** after each evaluation, `experiments.evaluate`
   opens an auto-merging PR (branch `xp/<n>-verdict`) with
   `config/experiments/live/verdicts/XP-<n>.yaml` for every concluded experiment that
@@ -1734,7 +1736,7 @@ the owner approves a proposal:
   stop`. The verdict is `win` (+ `winner: t<k>`), `loss` (harm), `futility`, `stopped`
   (owner) or `invalid`, with the stored `report_hash`. The file unlocks the spec's
   leaves (§5.20). The store's queue promotion has already made the next queued
-  experiment `registered` for the next 09:05. A verdict already on main
+  experiment `registered` for the owner to start (D112). A verdict already on main
   (hand-committed) is never overwritten. A failed publish raises a notice, and the
   next day retries it. A `win` appears in the Analyst's context as the "promote XP-<n>
   winner t<k>" lead.

@@ -2801,30 +2801,6 @@ def _runner(key: str, desc: str, risk: Risk, **kw: Any) -> Tunable:
 
 
 _EXPERIMENT_TUNABLES += (
-    # E21.4 (D86): the pre-open auto-start of owner-approved experiments.
-    Tunable(
-        key="experiments.autostart.enabled",
-        group=Group.EXPERIMENTS,
-        type=_B,
-        description="E21.4: at 09:05 ET start the oldest registered experiment the owner "
-        "approved (arc experiment adopt) once its t0 checks pass. off = registered "
-        "experiments wait for a manual `arc experiment start`.",
-        target=Target.EXPERIMENTS,
-        risk=Risk.TRUE,
-        path=("experiments", "autostart", "enabled"),
-    ),
-    Tunable(
-        key="experiments.autostart.max_per_day",
-        group=Group.EXPERIMENTS,
-        type=_I,
-        description="E21.4: experiments the pre-open auto-start starts per trading day.",
-        target=Target.EXPERIMENTS,
-        risk=Risk.UP,
-        path=("experiments", "autostart", "max_per_day"),
-        min=1,
-        max=4,
-        hard_ceiling=4,
-    ),
     _runner(
         "enabled",
         "run the configured arms paired with control's trading loop while an experiment "
