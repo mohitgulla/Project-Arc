@@ -6879,6 +6879,11 @@ export interface components {
              * @enum {string}
              */
             model: "d51" | "d56";
+            /**
+             * Next Resolve At
+             * @description E14.11: the Scalp's next slot (ET) when state = pending; null otherwise or when the Scalp job is disabled / missing
+             */
+            next_resolve_at?: string | null;
             /** Note */
             note?: string | null;
             /**
@@ -6903,10 +6908,10 @@ export interface components {
             shared_from_control: boolean;
             /**
              * State
-             * @description today = resolved today; stale = latest resolve is older (consumers use the core list until the next one); none = never resolved (core list shown)
+             * @description today = resolved today; pending = the previous session's resolve and today's first Scalp resolve is not due yet (window start + one `every`; D110); stale = a resolve is due and missing, or the stored one is older or expired (consumers use the core list until the next one); none = never resolved (core list shown)
              * @enum {string}
              */
-            state: "today" | "stale" | "none";
+            state: "today" | "pending" | "stale" | "none";
             /**
              * Tail Cuts
              * @description E13.14: names cut past the active cap (over_active_cap), with tier + rank
