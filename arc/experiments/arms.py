@@ -38,6 +38,7 @@ __all__ = [
     "arm_stores",
     "default_environ",
     "read_identity",
+    "shared_arms_on_account",
     "write_identity",
 ]
 
@@ -264,3 +265,64 @@ def arm_stores(conn: sqlite3.Connection, experiment_id: str | None = None) -> di
         elif not sep and _store_experiment(path) == experiment_id:
             out[rest] = path
     return out
+
+
+def _same_account(a: ArmIdentity, b: ArmIdentity) -> bool:
+    """Do two shared-mode arm identities trade one account (fingerprint, else keys)?"""
+    if a.account_sha256 and b.account_sha256:
+        return a.account_sha256 == b.account_sha256
+    return a.keys_env == b.keys_env
+
+
+def shared_arms_on_account(ident: ArmIdentity) -> int:
+    """D108: how many arms of running experiments trade on *ident*'s shared account.
+
+    Read-only from ``ident.control_db``: every arm store of every running experiment
+    (its [t0, stop] window is open) whose identity is shared-mode with an arm code and
+    the same account (``account_sha256``, else ``keys_env``). The arm itself always
+    counts, so the answer is at least 1; an unreadable control store answers 1, the
+    tightest guard (fails toward fewer orders, never more).
+    """
+    from arc.experiments.models import ExperimentStatus
+    from arc.experiments.store import ExperimentStore
+
+    path = Path(ident.control_db)
+    if not path.is_file():
+        return 1
+    try:
+        ctl = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return 1
+    ctl.row_factory = sqlite3.Row
+    try:
+        store = ExperimentStore(ctl)
+        running = {s.experiment_id for s in store.all(status=ExperimentStatus.RUNNING)}
+        stores = [
+            p
+            for key, p in arm_stores(ctl).items()
+            if key.rpartition(":")[0] in running or _store_experiment(p) in running
+        ]
+    except sqlite3.Error:
+        return 1
+    finally:
+        ctl.close()
+    seen = {ident.arm_id}
+    for p in stores:
+        try:
+            c = sqlite3.connect(f"{p.resolve().as_uri()}?mode=ro", uri=True)
+        except sqlite3.Error:
+            continue
+        try:
+            other = read_identity(c)
+        except sqlite3.Error:
+            other = None
+        finally:
+            c.close()
+        if (
+            other is not None
+            and other.account_mode == "shared"
+            and other.arm_code is not None
+            and _same_account(ident, other)
+        ):
+            seen.add(other.arm_id)
+    return len(seen)

@@ -23,30 +23,27 @@ Everything in the "pure" section reads only its arguments; the gate rule in
 :mod:`arc.gate.rules` uses :func:`can_submit` semantics without importing
 this package (the gate stays self-contained).
 
-Shared experiment account (D69, E15.3)
---------------------------------------
-Every treatment arm on the shared paper account gets a **slice** of the budget
-(:meth:`OrderBudgetConfig.arm_slice`): limit ``per_arm`` (``order_budget.per_arm``,
-0 = ``floor(daily_max / max_parallel_arms)``), with the restrictive tier and the
-close reserve scaled by the same fraction ``per_arm / daily_max``. The arm's
-``broker`` count is the account's option orders carrying *its* arm code, and an
-**account guard** (``account_max`` = control's ``daily_max``) refuses any arm's
-order once the whole account reached it that ET day::
+Shared experiment account (D69, E15.3; D108)
+--------------------------------------------
+Every arm on the shared paper account gets production's **full** budget (D108:
+``daily_max`` / ``restrict_at`` / ``close_reserve`` unchanged, 200 / 100 / 25 by
+default; the D69 per-arm slice is gone). The arm's ``broker`` count is the account's
+option orders carrying *its* arm code, and an **account guard**
+(:meth:`OrderBudgetConfig.shared_account`: ``account_max = arms on the account x
+daily_max``) refuses any arm's order once the whole account reached it that ET day::
 
-    used = max(local, broker_arm) + reserved     (the arm's slice)
+    used = max(local, broker_arm) + reserved     (the arm's own count)
     effective used = account_max  if account >= account_max  else used
 
 so every consumer (gate rule, ladder guard, pipeline tier) sees one number.
-:func:`arc.control.effective.effective_settings` applies the slice to a shared
-arm store's settings, so nothing downstream knows it is an arm.
+:func:`arc.control.effective.effective_settings` sets the guard on a shared arm
+store's settings, so nothing downstream knows it is an arm.
 """
 
 from __future__ import annotations
 
 import datetime as _dt
-import math
 from enum import StrEnum
-from fractions import Fraction
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -73,12 +70,20 @@ _FORBID = ConfigDict(extra="forbid", frozen=True)
 #: raise the cap above this (D32: 200 options orders per ET day).
 HARD_CEILING = 200
 
+#: D108: most arms one shared account carries (``experiments.runner.max_parallel_arms``'s
+#: code ceiling, ``arc.experiments.config.MAX_PARALLEL_ARMS_CEILING``; a test pins them
+#: equal). The account guard is at most ``MAX_SHARED_ARMS x HARD_CEILING``.
+MAX_SHARED_ARMS = 16
+ACCOUNT_HARD_CEILING = MAX_SHARED_ARMS * HARD_CEILING
+
 #: ``order_events.detail`` prefix the ladder writes when ``submit()`` refused an
 #: attempt before the broker saw it. Such rows never count against the budget.
 REFUSED_DETAIL_PREFIX = "refused before the broker"
 
 __all__ = [
+    "ACCOUNT_HARD_CEILING",
     "HARD_CEILING",
+    "MAX_SHARED_ARMS",
     "OrderBudget",
     "OrderBudgetConfig",
     "OrderCount",
@@ -145,8 +150,9 @@ class OrderBudgetConfig(BaseModel):
     restrict_at: int = Field(100, ge=0)
     close_reserve: int = Field(25, ge=0)
     restrictive: RestrictiveConfig = Field(default_factory=RestrictiveConfig)
-    #: D69 shared-account guard: the whole account's daily cap (None = not an arm slice)
-    account_max: int | None = Field(None, ge=1, le=HARD_CEILING)
+    #: D69/D108 shared-account guard: the whole account's daily cap, arms x daily_max
+    #: (None = not a shared-account arm)
+    account_max: int | None = Field(None, ge=1, le=ACCOUNT_HARD_CEILING)
 
     @model_validator(mode="after")
     def _ordered(self) -> OrderBudgetConfig:
@@ -166,30 +172,19 @@ class OrderBudgetConfig(BaseModel):
         """Opens stop once ``used`` reaches this (``daily_max - close_reserve``)."""
         return self.daily_max - self.close_reserve
 
-    def arm_slice(self, *, per_arm: int, max_parallel_arms: int) -> OrderBudgetConfig:
-        """D69: one shared-account arm's budget (pure; see the module doc).
+    def shared_account(self, *, arms: int) -> OrderBudgetConfig:
+        """D108: one shared-account arm's budget (pure; see the module doc).
 
-        ``limit = per_arm`` (0 = ``floor(daily_max / max_parallel_arms)``, never above
-        ``daily_max``, at least 1). With ``f = limit / daily_max``: the restrictive tier
-        starts at ``floor(restrict_at * f)`` and the close reserve is
-        ``ceil(close_reserve * f)`` (rounded toward closes), kept below the limit.
-        ``account_max`` = this config's ``daily_max`` (the account guard).
+        The arm keeps this config's full budget (``daily_max``, ``restrict_at``,
+        ``close_reserve`` unchanged: production's numbers) and gains the account
+        guard ``account_max = arms x daily_max``, where *arms* is how many arms of
+        running experiments trade on the account (this one included, 1 to
+        :data:`MAX_SHARED_ARMS`).
         """
-        if per_arm < 0 or max_parallel_arms < 1:
-            msg = f"per_arm >= 0 and max_parallel_arms >= 1 needed ({per_arm}, {max_parallel_arms})"
+        if not 1 <= arms <= MAX_SHARED_ARMS:
+            msg = f"arms must be 1..{MAX_SHARED_ARMS} on one shared account (got {arms})"
             raise ValueError(msg)
-        auto = self.daily_max // max_parallel_arms
-        limit = max(1, min(self.daily_max, per_arm if per_arm > 0 else auto))
-        frac = Fraction(limit, self.daily_max)
-        reserve = min(math.ceil(self.close_reserve * frac), limit - 1)
-        restrict = min(math.floor(self.restrict_at * frac), limit - reserve)
-        return OrderBudgetConfig(
-            daily_max=limit,
-            restrict_at=restrict,
-            close_reserve=reserve,
-            restrictive=self.restrictive,
-            account_max=self.daily_max,
-        )
+        return self.model_validate(self.model_dump() | {"account_max": arms * self.daily_max})
 
     @classmethod
     def from_settings(cls, settings: ArcSettings) -> OrderBudgetConfig:
@@ -240,7 +235,7 @@ class OrderCount(BaseModel):
     @property
     def used(self) -> int:
         """``max(local, broker) + reserved``; at the account guard, at least the account
-        count (>= any arm slice's cap, so every tier check reads exhausted)."""
+        count (>= the arm's own daily_max, so every tier check reads exhausted)."""
         base = max(self.local, self.broker or 0) + self.reserved
         if self.account_blocked:
             return max(base, self.account or 0)

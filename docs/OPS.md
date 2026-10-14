@@ -735,18 +735,20 @@ tower's ops strip and the monitor heartbeat carry the same numbers. Tunables:
 `order_budget.daily_max|restrict_at|close_reserve` plus the `order_budget.restrictive.*`
 knobs (see `!arc config execution`). Raising the cap is the riskier direction (confirm step).
 
-**Shared experiment account (D69, E15.3).** Treatment arms on the shared `ALPACA_EXP_*`
-account split its 200 orders. Each arm's effective settings carry its **slice** as
-`order_budget.daily_max`: `order_budget.per_arm` when set, else
-`floor(200 / experiments.runner.max_parallel_arms)` (20 at the default 10 arms). Its
-`restrict_at` and `close_reserve` scale by the same fraction (restrictive at 10, opens stop
-at 17, reserve rounded up to 3). An arm counts only the account's option orders tagged with
-its arm code (`arc2.<code>.…`), read in the same broker call as the whole account's count.
-The **account guard** (`order_budget_account_max` = control's `daily_max`, derived, never
-set by hand) stops every arm once the account has 200 option orders today, whatever each
-slice says; the ladder journals `order:budget_exhausted` with "shared account order cap
-reached". Control and dedicated-mode arms are unchanged. `arc budget status --arm
-<XP-n:arm | arm> [--db <control store>]` prints the arm line and the account line.
+**Shared experiment account (D69, E15.3; D108).** Every arm on the shared `ALPACA_EXP_*`
+account (control `XP-<n>:control` and each treatment) gets production's **full** budget:
+the same `order_budget.daily_max` / `restrict_at` / `close_reserve` (200 / 100 / 25), so
+each arm turns restrictive at 100 of its own orders and stops opens at 175. There is no
+per-arm slice any more (D108 removed `order_budget.per_arm`). An arm counts only the
+account's option orders tagged with its arm code (`arc2.<code>.…`), read in the same broker
+call as the whole account's count. The **account guard** (`order_budget_account_max` =
+arms on the account × `daily_max`, derived, never set by hand; *arms* = shared-mode arms of
+running experiments on that account, e.g. 4 × 200 = 800 for a K = 3 XP) stops every arm on
+the account once the account reaches it that ET day, whatever each arm's own count says;
+the ladder journals `order:budget_exhausted` with "shared account order cap reached".
+Production and dedicated-mode arms are unchanged (200/day each, no guard). `arc budget
+status --arm <XP-n:arm | arm> [--db <control store>]` prints the arm line and the account
+line. The real throttle at that volume is the shared rate bucket below.
 
 **Alpaca rate bucket (D69).** Every REST call of a shared-mode arm draws from one
 file-locked token bucket per account key (`data/locks/alpaca-<last4>.bucket`), shared by all

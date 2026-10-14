@@ -1,6 +1,6 @@
 """E15.3 (D69): shared-account limits for experiment arms.
 
-* the per-arm D32 budget slice and the account-level guard,
+* D108: every arm keeps the full D32 budget; the account guard = arms on the account x 200,
 * the file-locked Alpaca rate bucket shared by every arm process (fairness across
   three simulated processes, submit priority, a 429 empties it),
 * ``cross_arm_conflict``: the pre-check before the broker and the Alpaca 403
@@ -27,15 +27,20 @@ from structlog.testing import capture_logs
 from arc.broker.base import BrokerOrderRef, MlegLeg, MlegOrder
 from arc.broker.http import TimeoutSession
 from arc.broker.ratelimit import AccountRateBucket, bucket_path, request_kind
-from arc.budget import OrderBudgetConfig, Tier, budget_state, count_orders
+from arc.budget import OrderBudgetConfig, Tier, budget_state, can_submit, count_orders
+from arc.budget.orders import MAX_SHARED_ARMS
 from arc.config import ArcSettings
 from arc.control.effective import effective_settings, shared_arm_settings
+from arc.control.registry import TunableError, lookup
 from arc.execution.ladder import ExecStatus
 from arc.execution.resolve import WASH_TRADE_CODE, is_wash_trade_rejection
 from arc.execution.submission import RefusalCode, SubmitRefused, parse_order_id
-from arc.experiments.arms import arm_stores
+from arc.experiments.arms import arm_stores, read_identity, shared_arms_on_account
+from arc.experiments.config import MAX_PARALLEL_ARMS_CEILING
 from arc.experiments.conflict import find_conflict, open_legs
+from arc.experiments.models import StopReason
 from arc.experiments.multi import cross_arm_conflicts
+from arc.experiments.store import ExperimentStore
 from arc.journal.reasons import REASON_LABELS, ReasonCode
 from arc.store.db import connect
 from arc.store.migrate import migrate
@@ -73,70 +78,100 @@ def conn() -> sqlite3.Connection:
 # ---------------------------------------------------------------------------
 
 
-def test_arm_slice_defaults_to_200_over_max_parallel_arms() -> None:
-    s = OrderBudgetConfig().arm_slice(per_arm=0, max_parallel_arms=10)
-    # 20 = 200 // 10; restrictive at floor(100 * 0.1); reserve ceil(25 * 0.1)
-    assert (s.daily_max, s.restrict_at, s.close_reserve, s.open_limit) == (20, 10, 3, 17)
-    assert s.account_max == 200
-    s4 = OrderBudgetConfig().arm_slice(per_arm=0, max_parallel_arms=4)
-    assert (s4.daily_max, s4.restrict_at, s4.close_reserve) == (50, 25, 7)
-    s16 = OrderBudgetConfig().arm_slice(per_arm=0, max_parallel_arms=16)
-    assert (s16.daily_max, s16.restrict_at, s16.close_reserve) == (12, 6, 2)
+def test_arm_budget_equals_the_production_budget() -> None:
+    """D108: an arm keeps production's full D32 budget; only the guard is added."""
+    prod = OrderBudgetConfig.from_settings(settings())
+    arm = prod.shared_account(arms=4)
+    assert (arm.daily_max, arm.restrict_at, arm.close_reserve, arm.open_limit) == (
+        200,
+        100,
+        25,
+        175,
+    )
+    assert arm.model_dump(exclude={"account_max"}) == prod.model_dump(exclude={"account_max"})
+    assert prod.account_max is None
 
 
-def test_arm_slice_per_arm_override_and_never_above_the_account() -> None:
-    s = OrderBudgetConfig().arm_slice(per_arm=40, max_parallel_arms=10)
-    assert (s.daily_max, s.restrict_at, s.close_reserve) == (40, 20, 5)
-    cap = OrderBudgetConfig(daily_max=100, restrict_at=50, close_reserve=10)
-    assert cap.arm_slice(per_arm=200, max_parallel_arms=2).daily_max == 100
-    with pytest.raises(ValueError, match="needed"):
-        cap.arm_slice(per_arm=-1, max_parallel_arms=2)
-    with pytest.raises(ValueError, match="needed"):
-        cap.arm_slice(per_arm=0, max_parallel_arms=0)
-    with pytest.raises(ValueError, match="less than or equal to 200"):
-        settings(order_budget_per_arm=201)
+@pytest.mark.parametrize(("arms", "guard"), [(1, 200), (4, 800), (8, 1600), (16, 3200)])
+def test_account_guard_is_arms_times_the_daily_max(arms: int, guard: int) -> None:
+    assert OrderBudgetConfig().shared_account(arms=arms).account_max == guard
+    s = shared_arm_settings(settings(), arms=arms)
+    assert s.order_budget_account_max == guard
+    assert (s.order_budget_daily_max, s.order_budget_restrict_at) == (200, 100)
+    assert s.order_budget_close_reserve == 25
+
+
+def test_shared_account_refuses_an_arm_count_outside_1_to_16() -> None:
+    for bad in (0, -1, MAX_SHARED_ARMS + 1):
+        with pytest.raises(ValueError, match="arms must be"):
+            OrderBudgetConfig().shared_account(arms=bad)
+    assert MAX_SHARED_ARMS == MAX_PARALLEL_ARMS_CEILING  # start can never exceed the guard
+
+
+def test_order_budget_per_arm_is_retired() -> None:
+    assert "order_budget_per_arm" not in ArcSettings.model_fields
+    with pytest.raises(TunableError):
+        lookup("order_budget.per_arm")
 
 
 @given(
     daily=st.integers(2, 200),
     reserve_frac=st.floats(0, 0.9),
     restrict_frac=st.floats(0, 1),
-    per_arm=st.integers(0, 200),
-    arms=st.integers(1, 16),
+    arms=st.integers(1, MAX_SHARED_ARMS),
 )
-def test_arm_slice_is_always_a_valid_proportional_budget(
-    daily: int, reserve_frac: float, restrict_frac: float, per_arm: int, arms: int
+def test_shared_account_keeps_every_tier_and_scales_only_the_guard(
+    daily: int, reserve_frac: float, restrict_frac: float, arms: int
 ) -> None:
     reserve = min(daily - 1, int(daily * reserve_frac))
     restrict = int((daily - reserve) * restrict_frac)
     base = OrderBudgetConfig(daily_max=daily, restrict_at=restrict, close_reserve=reserve)
-    s = base.arm_slice(per_arm=per_arm, max_parallel_arms=arms)
-    assert 1 <= s.daily_max <= daily and s.account_max == daily
-    assert s.close_reserve < s.daily_max and s.restrict_at <= s.open_limit
-    # the tiers scale with the same fraction (reserve rounded toward closes)
-    f = s.daily_max / daily
-    assert s.restrict_at <= restrict * f + 1e-9
-    assert s.close_reserve >= min(reserve * f, s.daily_max - 1) - 1e-9
+    s = base.shared_account(arms=arms)
+    assert (s.daily_max, s.restrict_at, s.close_reserve) == (daily, restrict, reserve)
+    assert s.account_max == arms * daily
 
 
-def test_shared_arm_settings_cut_the_d32_fields() -> None:
-    s = shared_arm_settings(settings())
-    assert (s.order_budget_daily_max, s.order_budget_restrict_at) == (20, 10)
-    assert (s.order_budget_close_reserve, s.order_budget_account_max) == (3, 200)
-    s = shared_arm_settings(settings(order_budget_per_arm=60))
-    assert (s.order_budget_daily_max, s.order_budget_close_reserve) == (60, 8)
+def test_restrict_tier_at_100_per_arm() -> None:
+    cfg = OrderBudgetConfig().shared_account(arms=4)
+    assert budget_state(99, cfg, day=DAY).tier is Tier.NORMAL
+    assert budget_state(100, cfg, day=DAY).tier is Tier.RESTRICTIVE
+    assert budget_state(175, cfg, day=DAY).tier is Tier.OPENS_EXHAUSTED
+    assert budget_state(200, cfg, day=DAY).tier is Tier.EXHAUSTED
 
 
-def test_effective_settings_slice_only_a_shared_arm_store(tmp_path: Path) -> None:
-    conn, stores = A._shared_setup(tmp_path)
+def test_effective_settings_guard_only_a_shared_arm_store(tmp_path: Path) -> None:
+    conn, stores = A._shared_setup(tmp_path)  # XP-30: 3 shared arms on one account
     ctl = effective_settings(conn)
     assert (ctl.order_budget_daily_max, ctl.order_budget_account_max) == (200, None)
-    arm = A._db(stores["t2"])
-    s = effective_settings(arm)
-    # config/experiments.yaml: max_parallel_arms 10 -> 20 / 10 / 3 + the 200 account guard
-    assert (s.order_budget_daily_max, s.order_budget_restrict_at) == (20, 10)
-    assert (s.order_budget_close_reserve, s.order_budget_account_max) == (3, 200)
-    assert OrderBudgetConfig.from_settings(s).account_max == 200
+    s = effective_settings(A._db(stores["t2"]))
+    assert (s.order_budget_daily_max, s.order_budget_restrict_at) == (200, 100)
+    assert (s.order_budget_close_reserve, s.order_budget_account_max) == (25, 600)
+    assert OrderBudgetConfig.from_settings(s).account_max == 600
+
+
+def test_guard_counts_arms_of_every_running_experiment_on_the_account(tmp_path: Path) -> None:
+    conn, stores = A._shared_setup(tmp_path)
+    A._start(conn, "XP-31", 2, tmp_path)  # 3 + 2 arms on the same account
+    t2 = A._db(stores["t2"])
+    ident = read_identity(t2)
+    assert ident is not None
+    assert shared_arms_on_account(ident) == 5
+    assert effective_settings(t2).order_budget_account_max == 1000
+    # a stopped experiment's arms leave the account: its window is closed
+    ExperimentStore(conn).stop("XP-31", StopReason.OWNER, actor="local")
+    assert shared_arms_on_account(ident) == 3
+    assert effective_settings(t2).order_budget_account_max == 600
+
+
+def test_guard_falls_back_to_one_arm_when_control_is_unreadable(tmp_path: Path) -> None:
+    conn, stores = A._shared_setup(tmp_path)
+    ident = read_identity(A._db(stores["t2"]))
+    assert ident is not None
+    gone = ident.model_copy(update={"control_db": str(tmp_path / "missing.db")})
+    assert shared_arms_on_account(gone) == 1
+    junk = tmp_path / "junk.db"
+    junk.write_text("not a database")
+    assert shared_arms_on_account(ident.model_copy(update={"control_db": str(junk)})) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -166,19 +201,40 @@ class _SplitBroker:
 
 def test_arm_counts_its_tagged_orders_and_the_account_guard_overrides() -> None:
     c = A._db()
-    cfg = OrderBudgetConfig().arm_slice(per_arm=0, max_parallel_arms=10)
+    cfg = OrderBudgetConfig().shared_account(arms=4)  # guard 800
     n = count_orders(c, _SplitBroker(4, 50), DAY, account_max=cfg.account_max)
     assert (n.broker, n.account, n.used, n.account_blocked) == (4, 54, 4, False)
     assert budget_state(n.used, cfg, day=DAY, count=n).tier is Tier.NORMAL
-    # the whole account reaches 200 while this arm used only 4: every tier reads exhausted
+    # D108: 200 on the account (the old guard) no longer stops anyone at n = 4
     n = count_orders(c, _SplitBroker(4, 196), DAY, account_max=cfg.account_max)
-    assert n.account_blocked and n.used == 200
+    assert not n.account_blocked and n.used == 4
+    # one short of the guard: still the arm's own count
+    n = count_orders(c, _SplitBroker(4, 795), DAY, account_max=cfg.account_max)
+    assert not n.account_blocked and n.used == 4
+    # the whole account reaches 800 while this arm used only 4: every tier reads exhausted
+    n = count_orders(c, _SplitBroker(4, 796), DAY, account_max=cfg.account_max)
+    assert n.account_blocked and n.used == 800
     b = budget_state(n.used, cfg, day=DAY, count=n)
     assert b.tier is Tier.EXHAUSTED and b.remaining_total == 0
-    assert (b.account, b.account_max) == (200, 200)
+    assert (b.account, b.account_max) == (800, 800)
     # control (no account_max) and a plain broker are unchanged
-    n = count_orders(c, _SplitBroker(4, 196), DAY)
+    n = count_orders(c, _SplitBroker(4, 796), DAY)
     assert not n.account_blocked and n.used == 4
+
+
+@pytest.mark.parametrize("arms", [1, 4, 8])
+def test_guard_trips_every_arm_on_the_account_only_at_the_guard(arms: int) -> None:
+    c = A._db()
+    cfg = OrderBudgetConfig().shared_account(arms=arms)
+    guard = arms * 200
+    for mine in (0, 3, 150):
+        below = count_orders(c, _SplitBroker(mine, guard - 1 - mine), DAY, account_max=guard)
+        assert not below.account_blocked and below.used == mine
+        assert can_submit(below.used, cfg, kind="close")
+        at = count_orders(c, _SplitBroker(mine, guard - mine), DAY, account_max=guard)
+        assert at.account_blocked and at.used == guard
+        assert not can_submit(at.used, cfg, kind="close")
+        assert not can_submit(at.used, cfg, kind="open")
 
 
 def test_an_unreadable_split_falls_back_to_the_local_count() -> None:
@@ -217,7 +273,7 @@ def test_ladder_stops_on_the_account_guard_with_its_own_reason(conn: sqlite3.Con
             return None
 
     b = Guarded()
-    cfg = shared_arm_settings(L.cfg())
+    cfg = shared_arm_settings(L.cfg(), arms=1)
     out = L.run(conn, b, config=cfg)
     assert out.status is ExecStatus.CANCELLED and not b.orders
     assert out.detail == (
@@ -226,19 +282,19 @@ def test_ladder_stops_on_the_account_guard_with_its_own_reason(conn: sqlite3.Con
     assert ("no_trade", "order:budget_exhausted") in L.journal(conn)
 
 
-def test_ladder_arm_slice_runs_out_before_the_account(conn: sqlite3.Connection) -> None:
+def test_ladder_arm_budget_runs_out_before_the_account(conn: sqlite3.Connection) -> None:
     class Arm(L.ScriptedBroker, _SplitBroker):
         arm_code = "1"
 
         def __init__(self) -> None:
             L.ScriptedBroker.__init__(self, [["new", "filled"]], fills={0: (2, "-0.85")})
-            _SplitBroker.__init__(self, 17, 40)
+            _SplitBroker.__init__(self, 175, 400)
 
         def cross_arm_conflict(self, order: Any) -> None:
             return None
 
-    out = L.run(conn, Arm(), config=shared_arm_settings(L.cfg()))
-    assert out.detail == "order budget exhausted (17 of 17 open orders used today)"
+    out = L.run(conn, Arm(), config=shared_arm_settings(L.cfg(), arms=4))
+    assert out.detail == "order budget exhausted (175 of 175 open orders used today)"
 
 
 # ---------------------------------------------------------------------------
@@ -579,14 +635,15 @@ def test_cli_budget_status_arm_prints_arm_and_account_lines(
     rc = main(["budget", "status", "--db", str(db), "--day", day, "--no-broker", "--arm", "t2"])
     assert rc == 0
     out = capsys.readouterr().out
-    assert "orders today 0/20 (normal)" in out
-    assert "arm t2: used 0 of 20 (slice; restrictive at 10, opens stop at 17)" in out
-    assert "account: n/a (broker not read) of 200 option orders today" in out
+    # D108: the arm's own full budget; the guard is 3 arms on the account x 200
+    assert "orders today 0/200 (normal)" in out
+    assert "arm t2: used 0 of 200 (own budget; restrictive at 100, opens stop at 175)" in out
+    assert "account: n/a (broker not read) of 600 option orders today" in out
     rc = main(["budget", "status", "--db", str(db), "--day", day, "--no-broker",
                "--arm", "XP-30:t2", "--json"])  # fmt: skip
     assert rc == 0
     data = json.loads(capsys.readouterr().out)
-    assert (data["limit"], data["arm"], data["close_reserve"]) == (20, "XP-30:t2", 3)
+    assert (data["limit"], data["arm"], data["close_reserve"]) == (200, "XP-30:t2", 25)
     assert main(["budget", "status", "--db", str(db), "--no-broker", "--arm", "nope"]) == 2
     assert "is not an arm of this store" in capsys.readouterr().err
 
