@@ -261,6 +261,85 @@ def test_shared_leg_leaves_pnl_blank(tmp_path: Path) -> None:
     assert len(spys) == 2 and all(p.unrealized_pl is None and p.mark_net is None for p in spys)
 
 
+def _strip_leg_pnl(path: Path) -> None:
+    """Make every monitor mark look like a shared-account arm's (``arm_positions``): the
+    arm's own qty and the broker's per-share mark, no cost basis or broker P&L."""
+    c = connect(path)
+    c.execute("DROP TRIGGER heartbeats_no_update")  # fixture surgery on a scratch copy
+    for rowid, detail in c.execute(
+        "SELECT rowid, detail FROM heartbeats WHERE component = 'monitor'"
+    ).fetchall():
+        d = json.loads(detail)
+        for leg in d.get("legs", []):
+            leg.pop("unrealized_pl", None)
+            leg.pop("avg_entry_price", None)
+        c.execute("UPDATE heartbeats SET detail = ? WHERE rowid = ?", (json.dumps(d), rowid))
+    c.commit()
+    c.close()
+
+
+def test_shared_account_arm_pnl_from_entry_and_mark(
+    conn: sqlite3.Connection, tmp_path: Path
+) -> None:
+    """D115: a shared-account arm's legs carry no broker P&L; P&L $ / % (and the Movers
+    spark) come from the structure's entry and mark and match the broker's figure."""
+    broker = _overview(conn)
+    path = tmp_path / "arm.db"
+    fixture.build(path, NOW)
+    _strip_leg_pnl(path)
+    ro = connect_ro(path)
+    try:
+        arm = _overview(ro)
+        arm_pos = load_positions(ro, now=NOW, stale_after=STALE)
+    finally:
+        ro.close()
+    want = {p.ticker: p for p in broker.positions}
+    assert want and all(p.unrealized_pl is not None for p in want.values())
+    for rows in (arm.positions, arm_pos.items):
+        assert {p.ticker for p in rows} == set(want)
+        for p in rows:
+            w = want[p.ticker]
+            assert p.mark_net == w.mark_net
+            assert p.unrealized_pl == w.unrealized_pl
+            assert p.unrealized_pct == pytest.approx(w.unrealized_pct)
+            assert p.day_change == w.day_change
+    b_movers = {m.ticker: m for m in broker.movers}
+    for m in arm.movers:
+        assert m.unrealized_pct == pytest.approx(b_movers[m.ticker].unrealized_pct)
+        assert m.spark == pytest.approx(b_movers[m.ticker].spark)
+    assert arm.day_pnl.unrealized == sum(
+        (p.unrealized_pl or D(0) for p in arm.positions), start=D(0)
+    )
+
+
+def test_shared_account_arm_shared_leg_stays_blank(tmp_path: Path) -> None:
+    """The D115 fallback keeps the shared-leg rule: a leg two structures hold can't be split."""
+    path = tmp_path / "shared-arm.db"
+    fixture.build(path, NOW)
+    _strip_leg_pnl(path)
+    c = connect(path)
+    spy = c.execute("SELECT * FROM open_structures WHERE ticker = 'SPY'").fetchone()
+    c.execute(
+        """INSERT INTO open_structures (id, ticker, open_proposal_hash, candidate_id,
+               structure_json, contracts, entry_net, opened_at)
+           SELECT 'os-dup', ticker, ?, candidate_id, structure_json, 1, entry_net, opened_at
+           FROM open_structures WHERE id = ?""",
+        (fixture.phash("p-googl"), spy["id"]),
+    )
+    c.commit()
+    c.close()
+    ro = connect_ro(path)
+    try:
+        o = _overview(ro)
+    finally:
+        ro.close()
+    spys = [p for p in o.positions if p.ticker == "SPY"]
+    assert len(spys) == 2 and all(
+        p.unrealized_pl is None and p.unrealized_pct is None for p in spys
+    )
+    assert all(m.spark == [] for m in o.movers if m.ticker == "SPY")
+
+
 def test_load_positions_status(conn: sqlite3.Connection) -> None:
     open_ = load_positions(conn, now=NOW, status="open", stale_after=STALE)
     assert {p.ticker for p in open_.items} == {"SPY", "QQQ", "NVDA"}

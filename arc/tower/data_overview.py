@@ -951,6 +951,11 @@ def _position_rows(
                 )
             if all(leg.unrealized_pl is not None for leg in marked):
                 pl = sum((leg.unrealized_pl or Decimal(0) for leg in marked), start=Decimal(0))
+            elif mark is not None:
+                # D115: a shared-account arm's legs carry its own qty and the broker's mark,
+                # but no broker P&L (that is netted over every arm's lots): P&L since entry
+                # from the structure's own entry and mark.
+                pl = _pl_since_entry(mark, entry, n)
             prev = [_lastday(leg) for leg in marked]
             if all(leg.current_price is not None for leg in marked) and all(
                 x is not None for x in prev
@@ -1101,6 +1106,38 @@ def _underlying_changes(
     return out
 
 
+_CENT = Decimal("0.01")
+
+
+def _pl_since_entry(mark: Decimal, entry: Decimal, contracts: int) -> Decimal:
+    """(mark − entry) × 100 × contracts: equals Σ legs' broker P&L when the broker's
+    cost basis is the structure's fill (D115)."""
+    return ((mark - entry) * 100 * contracts).quantize(_CENT)
+
+
+def _spark_point(p: PositionRow, by: dict[str, LegView]) -> Decimal | None:
+    """P&L since entry at one mark: Σ legs' broker P&L, else (D115, shared-account arms)
+    from the legs' marks and the structure's entry."""
+    if not p.legs or any(s not in by for s in p.legs):
+        return None
+    vals = [by[s].unrealized_pl for s in p.legs]
+    if all(v is not None for v in vals):
+        return sum((v or Decimal(0) for v in vals), start=Decimal(0))
+    legs = [by[s] for s in p.legs]
+    if p.unrealized_pl is None or any(leg.current_price is None for leg in legs):
+        return None
+    # The leg is this structure's alone (else P&L is blank), so its qty is ratio × n;
+    # sign from `side` (Alpaca signs short qty, arm_positions() does not).
+    value = sum(
+        (
+            (-1 if leg.side == "short" else 1) * abs(leg.qty) * (leg.current_price or Decimal(0))
+            for leg in legs
+        ),
+        start=Decimal(0),
+    )
+    return ((value - p.entry_net * p.contracts) * 100).quantize(_CENT)
+
+
 def _movers(
     positions: list[PositionRow],
     marks: list[IntradayMark],
@@ -1112,10 +1149,9 @@ def _movers(
             continue
         spark: list[float] = []
         for m in marks:
-            by = {_occ_key(leg.symbol): leg for leg in m.legs}
-            vals = [by[s].unrealized_pl for s in p.legs if s in by]
-            if p.legs and len(vals) == len(p.legs) and all(v is not None for v in vals):
-                spark.append(float(sum((v or Decimal(0) for v in vals), start=Decimal(0))))
+            pt = _spark_point(p, {_occ_key(leg.symbol): leg for leg in m.legs})
+            if pt is not None:
+                spark.append(float(pt))
         change: float | None = None
         if p.day_change is not None and p.mark_net is not None:
             prev_value = p.mark_net * 100 * p.contracts - p.day_change
