@@ -5091,7 +5091,7 @@
       },
       "ExperimentReport": {
         "additionalProperties": false,
-        "description": "One evaluation of one experiment (stored append-only in ``experiment_reports``).\n\n``report_version`` 1: one treatment (D44). ``report_version`` 2 (D69, E15.5): K > 1\ntreatments. A v2 report adds ``pairwise``, ``omnibus`` and ``headline_arm`` (omitted\nfrom v1 JSON) and fills the all-arms fields of ``arms`` (Control first, then t1..tK).\nIts top-level ``primary`` / ``secondary`` / ``series`` are the **headline** pair\n(Control vs the best-ranked arm, ``headline_arm``) so one-line surfaces keep a\nsingle number; verdicts live per arm in ``pairwise``. ``calibration`` is pooled\nover the Control-vs-Ti pairs.",
+        "description": "One evaluation of one experiment (stored append-only in ``experiment_reports``).\n\n``report_version`` 1: one treatment (D44). ``report_version`` 2 (D69, E15.5): K > 1\ntreatments. ``report_version`` 3 (D108, E25.3): a spec v3 (any K), whose reference\nis the control arm ``XP-<n>:control`` (``reference``) and which adds the descriptive\n``production`` panel; otherwise shaped like v2. A v2 report adds ``pairwise``,\n``omnibus`` and ``headline_arm`` (omitted\nfrom v1 JSON) and fills the all-arms fields of ``arms`` (Control first, then t1..tK).\nIts top-level ``primary`` / ``secondary`` / ``series`` are the **headline** pair\n(Control vs the best-ranked arm, ``headline_arm``) so one-line surfaces keep a\nsingle number; verdicts live per arm in ``pairwise``. ``calibration`` is pooled\nover the Control-vs-Ti pairs.",
         "properties": {
           "alpha": {
             "title": "Alpha",
@@ -5235,6 +5235,30 @@
           "primary": {
             "$ref": "#/components/schemas/Primary"
           },
+          "production": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProductionPanel"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "v3: production vs control vs treatments (descriptive, never a verdict)"
+          },
+          "reference": {
+            "anyOf": [
+              {
+                "const": "control",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "v3: the verdict's reference series is the control arm XP-<n>:control",
+            "title": "Reference"
+          },
           "registered_hash": {
             "anyOf": [
               {
@@ -5250,7 +5274,8 @@
             "default": 1,
             "enum": [
               1,
-              2
+              2,
+              3
             ],
             "title": "Report Version",
             "type": "integer"
@@ -11196,6 +11221,251 @@
         "title": "Primary",
         "type": "object"
       },
+      "ProductionCompare": {
+        "additionalProperties": false,
+        "description": "``arm - production`` (fraction of t0 equity per session): descriptive CI only.",
+        "properties": {
+          "arm": {
+            "title": "Arm",
+            "type": "string"
+          },
+          "basis": {
+            "enum": [
+              "total",
+              "ex_start_book",
+              "post_ramp"
+            ],
+            "title": "Basis",
+            "type": "string"
+          },
+          "ci": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Interval"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Always-valid (mSPRT) CI, 1 - alpha"
+          },
+          "mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean"
+          },
+          "n": {
+            "title": "N",
+            "type": "integer"
+          },
+          "p_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Always-valid p (descriptive, no Holm)",
+            "title": "P Value"
+          }
+        },
+        "required": [
+          "arm",
+          "basis",
+          "n",
+          "mean"
+        ],
+        "title": "ProductionCompare",
+        "type": "object"
+      },
+      "ProductionPanel": {
+        "additionalProperties": false,
+        "description": "D108: production vs control vs treatments. Never a verdict, stop or promotion input.",
+        "properties": {
+          "compare": {
+            "items": {
+              "$ref": "#/components/schemas/ProductionCompare"
+            },
+            "title": "Compare",
+            "type": "array"
+          },
+          "cum_c_pnl": {
+            "default": 0.0,
+            "title": "Cum C Pnl",
+            "type": "number"
+          },
+          "cum_d_p_c": {
+            "default": 0.0,
+            "title": "Cum D P C",
+            "type": "number"
+          },
+          "cum_p_pnl": {
+            "default": 0.0,
+            "title": "Cum P Pnl",
+            "type": "number"
+          },
+          "cum_residual": {
+            "default": 0.0,
+            "title": "Cum Residual",
+            "type": "number"
+          },
+          "cum_start_book": {
+            "default": 0.0,
+            "title": "Cum Start Book",
+            "type": "number"
+          },
+          "descriptive": {
+            "const": true,
+            "default": true,
+            "title": "Descriptive",
+            "type": "boolean"
+          },
+          "missing_sessions": {
+            "items": {
+              "format": "date",
+              "type": "string"
+            },
+            "title": "Missing Sessions",
+            "type": "array"
+          },
+          "ramp_window": {
+            "default": 5,
+            "title": "Ramp Window",
+            "type": "integer"
+          },
+          "ramped_from": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "First ramped session",
+            "title": "Ramped From"
+          },
+          "sessions": {
+            "items": {
+              "$ref": "#/components/schemas/ProductionSession"
+            },
+            "title": "Sessions",
+            "type": "array"
+          },
+          "start_book": {
+            "$ref": "#/components/schemas/StartBook"
+          }
+        },
+        "required": [
+          "start_book"
+        ],
+        "title": "ProductionPanel",
+        "type": "object"
+      },
+      "ProductionSession": {
+        "additionalProperties": false,
+        "description": "One session of the production panel ($ amounts; fractions of t0 equity).",
+        "properties": {
+          "c_open": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Control's open structures at EOD",
+            "title": "C Open"
+          },
+          "c_pnl": {
+            "description": "Control arm's virtual-equity delta ($)",
+            "title": "C Pnl",
+            "type": "number"
+          },
+          "d_p_c": {
+            "description": "start_book + residual (~ (p_pnl - c_pnl) / t0)",
+            "title": "D P C",
+            "type": "number"
+          },
+          "day": {
+            "format": "date",
+            "title": "Day",
+            "type": "string"
+          },
+          "p_ex_start_pnl": {
+            "description": "p_pnl - p_start_book_pnl ($)",
+            "title": "P Ex Start Pnl",
+            "type": "number"
+          },
+          "p_open": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Production's open structures at EOD",
+            "title": "P Open"
+          },
+          "p_pnl": {
+            "description": "Production broker equity delta ($)",
+            "title": "P Pnl",
+            "type": "number"
+          },
+          "p_start_book_pnl": {
+            "description": "Start book's day P&L ($)",
+            "title": "P Start Book Pnl",
+            "type": "number"
+          },
+          "ramped": {
+            "default": false,
+            "title": "Ramped",
+            "type": "boolean"
+          },
+          "residual": {
+            "description": "(p_ex_start_pnl - c_pnl) / t0",
+            "title": "Residual",
+            "type": "number"
+          },
+          "start_book": {
+            "description": "p_start_book_pnl / t0",
+            "title": "Start Book",
+            "type": "number"
+          },
+          "ti_pnl": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "description": "Treatment -> virtual-equity delta ($); absent = missing",
+            "title": "Ti Pnl",
+            "type": "object"
+          }
+        },
+        "required": [
+          "day",
+          "p_pnl",
+          "p_start_book_pnl",
+          "p_ex_start_pnl",
+          "c_pnl",
+          "d_p_c",
+          "start_book",
+          "residual"
+        ],
+        "title": "ProductionSession",
+        "type": "object"
+      },
       "ProfitLock": {
         "additionalProperties": false,
         "description": "E18.1 (D78) trailing take profit, in units of the take-profit basis.\n\nArmed once the peak P&L since entry \u2265 ``arm_pct \u00b7 B``; then closes when the\ncurrent P&L \u2264 ``floor_pct \u00b7 B`` (``B`` = max gain for credit, debit for debit).\n``eod_only``: evaluated on end-of-day marks only (default: every mark).",
@@ -13757,6 +14027,91 @@
           "sources"
         ],
         "title": "SourcesResponse",
+        "type": "object"
+      },
+      "StartBook": {
+        "additionalProperties": false,
+        "description": "Production's open book at t0, tracked to its last close (reporting only).",
+        "properties": {
+          "close_dates": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Structure id -> ET close day (None = still open)",
+            "title": "Close Dates",
+            "type": "object"
+          },
+          "cum_pnl": {
+            "default": 0.0,
+            "title": "Cum Pnl",
+            "type": "number"
+          },
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/StartBookDay"
+            },
+            "title": "Days",
+            "type": "array"
+          },
+          "ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ids"
+        ],
+        "title": "StartBook",
+        "type": "object"
+      },
+      "StartBookDay": {
+        "additionalProperties": false,
+        "properties": {
+          "closed": {
+            "description": "Start-book structures closed by this day",
+            "title": "Closed",
+            "type": "integer"
+          },
+          "cum_pnl": {
+            "description": "Cumulative start-book P&L since t0 ($)",
+            "title": "Cum Pnl",
+            "type": "number"
+          },
+          "day": {
+            "format": "date",
+            "title": "Day",
+            "type": "string"
+          },
+          "open": {
+            "description": "Start-book structures still held at EOD",
+            "title": "Open",
+            "type": "integer"
+          },
+          "pnl": {
+            "description": "Start book's day P&L ($)",
+            "title": "Pnl",
+            "type": "number"
+          }
+        },
+        "required": [
+          "day",
+          "open",
+          "closed",
+          "pnl",
+          "cum_pnl"
+        ],
+        "title": "StartBookDay",
         "type": "object"
       },
       "StaticStats": {

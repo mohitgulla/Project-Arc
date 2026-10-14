@@ -182,6 +182,11 @@ def _detail(s: ExperimentState) -> list[str]:
         f"sessions {sp.min_sessions}-{sp.max_sessions}",
     ]
     many = len(sp.arms.treatments) > 1
+    if sp.control_runs:
+        lines.append(
+            f"  control: arm {sp.arm_id_for('control')} (spec v{sp.spec_version}, D108): "
+            "verdict = Ti vs control (Holm); production is a descriptive panel only"
+        )
     for name, arm in sp.arms.treatments.items():
         over = arm.overlay
         label = f"{name} overlay" if many else "treatment overlay"
@@ -230,7 +235,13 @@ def report_lines(r: ExperimentReport) -> list[str]:
         f"{r.experiment_id}  {r.kind.value}/{r.area}  {r.status.value}  "
         f"verdict {r.verdict.upper()}: {r.verdict_reason}",
         f"  evaluated {r.evaluated_at:%Y-%m-%d %H:%M %Z}; t0 {r.t0:%Y-%m-%d %H:%M %Z} "
-        f"equity {r.t0_equity:,.2f}; legacy book {len(r.legacy_book)}",
+        f"equity {r.t0_equity:,.2f}; "
+        + (
+            f"reference control arm (D108); production start book "
+            f"{len(r.production.start_book.ids) if r.production else 0}"
+            if r.reference == "control"
+            else f"legacy book {len(r.legacy_book)}"
+        ),
         f"  sessions {r.sessions} (min {r.min_sessions}, max {r.max_sessions}); "
         f"as of {r.as_of_day or '-'}"
         + (f"; missing {', '.join(map(str, r.missing_sessions))}" if r.missing_sessions else ""),
@@ -255,6 +266,8 @@ def report_lines(r: ExperimentReport) -> list[str]:
         )
     if r.multi_arm:
         lines += _multi_arm_lines(r)
+    if r.production is not None:
+        lines += production_lines(r)
     c = r.calibration
     lines.append(
         f"  calibration: sigma {_pct(c.sigma)}  MDE "
@@ -329,6 +342,53 @@ def _multi_arm_lines(r: ExperimentReport) -> list[str]:
             f"    {p.b} vs {p.a:8} n {p.n:3}  mean {_pct(p.mean)}/day  CI {ci}  p {pv}  "
             f"Holm p {hp}  {tag}"
         )
+    return lines
+
+
+def production_lines(r: ExperimentReport) -> list[str]:
+    """D108 (E25.3): the descriptive Production panel, printed after the Ti vs C table."""
+    pp = r.production
+    if pp is None:
+        return []
+    sb = pp.start_book
+    still = sum(1 for d in sb.close_dates.values() if d is None)
+    lines = [
+        "  production panel (descriptive only: never a verdict, stop or promotion input):",
+        f"    P total {pp.cum_p_pnl:+,.2f}  C total {pp.cum_c_pnl:+,.2f}  "
+        f"P - C {_pct(pp.cum_d_p_c)} = start book {_pct(pp.cum_start_book)} "
+        f"+ residual {_pct(pp.cum_residual)} (of t0 equity)",
+        f"    start book {len(sb.ids)} structure(s), {still} still open, "
+        f"cum P&L {sb.cum_pnl:+,.2f}"
+        + (
+            "; closed "
+            + ", ".join(f"{i[:8]} {d}" for i, d in sorted(sb.close_dates.items()) if d is not None)
+            if any(d is not None for d in sb.close_dates.values())
+            else ""
+        ),
+        f"    ramped (C open structures >= P, median of {pp.ramp_window}): "
+        f"{pp.ramped_from or 'not yet'}",
+        "    arm - production (always-valid CI, no Holm, no verdict):",
+    ]
+    for c in pp.compare:
+        ci = f"[{_pct(c.ci.lo)}, {_pct(c.ci.hi)}]" if c.ci else "-"
+        pv = "-" if c.p_value is None else f"{c.p_value:.4f}"
+        lines.append(
+            f"      {c.arm:9} {c.basis:13} n {c.n:3}  mean {_pct(c.mean)}/day  CI {ci}  p {pv}"
+        )
+    if pp.sessions:
+        lines.append(
+            "    sessions (day: P pnl, start book, P ex-start, C pnl, d_p_c, residual, "
+            "P/C open, ramped):"
+        )
+        for s in pp.sessions:
+            lines.append(
+                f"      {s.day}  {s.p_pnl:+10,.2f}  {s.p_start_book_pnl:+9,.2f}  "
+                f"{s.p_ex_start_pnl:+10,.2f}  {s.c_pnl:+10,.2f}  {_pct(s.d_p_c)}  "
+                f"{_pct(s.residual)}  {s.p_open if s.p_open is not None else '-'}/"
+                f"{s.c_open if s.c_open is not None else '-'}  {'yes' if s.ramped else 'no'}"
+            )
+    if pp.missing_sessions:
+        lines.append(f"    missing {', '.join(map(str, pp.missing_sessions))}")
     return lines
 
 

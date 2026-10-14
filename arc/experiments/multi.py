@@ -46,6 +46,14 @@ equity, daily mean +- sd, Sortino, max drawdown, orders, ``cross_arm_conflict``
 refusals and sessions, ranked by the primary (each arm's mean paired difference vs
 control; control = 0). Its numbers use all the arm's sessions, not only those up to a
 verdict (the owner sees what the arm actually did).
+
+**Spec v3 (D108, E25.3).** Control is the flat arm ``XP-<n>:control`` on the experiment
+account: its series is its ``virtual_equity`` (t0 equity before its first EOD row),
+nothing is subtracted (no legacy book), and any K (K = 1 included) gets this report
+(``report_version`` 3, ``reference: control``). The Holm family is the K Control-vs-Ti
+pairs in an A/B **and** an A/A (``invalid`` when any Ti vs C is rejected); Ti vs Tj
+stays descriptive. Production's comparison is the descriptive ``production`` panel
+(:mod:`arc.experiments.production`), built after the verdicts and read by none of them.
 """
 
 from __future__ import annotations
@@ -68,9 +76,16 @@ if TYPE_CHECKING:
     from arc.experiments.config import ExperimentsConfig
     from arc.experiments.models import ExperimentState
 
-__all__ = ["MULTI_REPORT_VERSION", "build_multi_report", "cross_arm_conflicts"]
+__all__ = [
+    "MULTI_REPORT_VERSION",
+    "V3_REPORT_VERSION",
+    "build_multi_report",
+    "cross_arm_conflicts",
+]
 
 MULTI_REPORT_VERSION = 2
+#: D108 (E25.3): the report of a spec v3: control arm as reference + production panel.
+V3_REPORT_VERSION = 3
 #: E15.3's ``ReasonCode.CROSS_ARM_CONFLICT`` is ``order:cross_arm_conflict`` (both the
 #: pre-check refusal and the mapped Alpaca 403 ``40310000``); any code named
 #: ``cross_arm_conflict`` (bare or namespaced) is counted.
@@ -220,7 +235,11 @@ def build_multi_report(
     known = None if is_aa else aa_sigma
     q = cfg.stats.sigma_upper_q
     t0_eq = run.t0_equity
-    legacy = set(run.production_book)
+    # D108: a spec v3's reference is the flat control arm XP-<n>:control (nothing is
+    # excluded from it); up to v2 it is production minus the legacy book
+    v3 = sp.control_runs
+    c_aid = ev.control_arm_id(st)
+    legacy: set[str] = set() if v3 else set(run.production_book)
     legacy_hashes = ev._legacy_hashes(conn, legacy)  # noqa: SLF001
 
     # -- pairs -----------------------------------------------------------------
@@ -261,7 +280,9 @@ def build_multi_report(
     checks: dict[int, Callable[[int], bool]] = {
         id(p): (lambda n, p=p: bool(secondary(p, n).non_inferior)) for p in ctrl_pairs
     }
-    family = [*ctrl_pairs, *tt_pairs] if is_aa else ctrl_pairs
+    # D108: a spec v3's family is the K control pairs in an A/A too (Ti vs Tj stays
+    # descriptive); v2 A/As put every pair in the family (D69)
+    family = [*ctrl_pairs, *tt_pairs] if is_aa and not v3 else ctrl_pairs
     invalid_look = _replay(
         ctrl_pairs, family, is_aa=is_aa, alpha=sp.alpha, known=known, q=q, mde=sp.mde,
         min_s=sp.min_sessions, max_s=sp.max_sessions, secondary_ok=checks,
@@ -300,17 +321,9 @@ def build_multi_report(
 
     # Holm p reported = Holm over the (frozen) running-minimum p's of the family
     if is_aa:
-        for p in tt_pairs:  # the replay may have stopped early on invalid
-            p.p_min = min(
-                [p.p_min]
-                + [
-                    _p_at(
-                        p.d[:k], alpha=sp.alpha, known=known, q=q, mde=sp.mde, min_s=sp.min_sessions
-                    )  # fmt: skip
-                    for k in range(1, len(p.d) + 1)
-                ]
-            )
-        for p in ctrl_pairs:
+        # the replay may have stopped early on invalid: finish each family pair's
+        # running minimum (v3: the control pairs only; Ti vs Tj stays descriptive)
+        for p in family:
             p.p_min = min(
                 [p.p_min]
                 + [
@@ -328,17 +341,17 @@ def build_multi_report(
     # -- all-arms view -----------------------------------------------------------
     ctrl_pnl_by_day = {r.day: r.control_pnl for p in ctrl_pairs for r in p.rows}
     c_pnl = [ctrl_pnl_by_day[d] for d in sorted(ctrl_pnl_by_day)]
-    c_out = ev._closed_outcomes(conn, None, run.t0, legacy_hashes)  # noqa: SLF001
+    c_out = ev._closed_outcomes(conn, c_aid, run.t0, legacy_hashes)  # noqa: SLF001
     outcomes = {CONTROL_ARM: c_out}
     rows_all = [
         _arm_row(
             CONTROL_ARM,
-            None,
+            c_aid,
             c_pnl,
             t0_eq,
-            ev._orders(conn, None, run.t0, legacy),
+            ev._orders(conn, c_aid, run.t0, legacy),
             c_out,  # noqa: SLF001
-            conflicts=cross_arm_conflicts(conn, None, run.t0),
+            conflicts=cross_arm_conflicts(conn, c_aid, run.t0),
             primary=0.0,
             verdict=None,
         )  # fmt: skip
@@ -412,8 +425,17 @@ def build_multi_report(
         (s for s in (ev._treatment_sha(conn, p.arm_id) for p in ctrl_pairs) if s),  # type: ignore[arg-type]  # noqa: SLF001
         None,
     )
+    production = None
+    if v3:
+        from arc.experiments.production import build_production_panel
+
+        assert c_aid is not None  # noqa: S101 - a v3 control is an arm
+        # descriptive only: built after every verdict above and read by none of them
+        production = build_production_panel(
+            conn, st, cfg, now=now, control_arm=c_aid, arm_ids=arm_ids
+        )
     return ev.ExperimentReport(
-        report_version=MULTI_REPORT_VERSION,
+        report_version=V3_REPORT_VERSION if v3 else MULTI_REPORT_VERSION,
         experiment_id=st.experiment_id,
         kind=sp.kind,
         area=sp.area.value,
@@ -447,6 +469,8 @@ def build_multi_report(
         headline_arm=headline_name,
         pairwise=pairwise,
         omnibus=omnibus,
+        reference=CONTROL_ARM if v3 else None,
+        production=production,
     )
 
 
