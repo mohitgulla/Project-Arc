@@ -38,6 +38,8 @@ from arc.data.base import (
     UnderlyingQuote,
 )
 from arc.utils.calendar import ET, now_et
+from arc.utils.http_retry import ReadRetryPolicy, install_read_retry
+from arc.utils.ratelimit import AccountRateBucket, bucket_path
 
 log = structlog.get_logger()
 
@@ -229,6 +231,8 @@ class AlpacaMarketData:
         *,
         api_key: str | None = None,
         secret_key: str | None = None,
+        read_retry: ReadRetryPolicy | None = None,
+        rate_bucket: Any = None,
     ) -> None:
         api_key, secret_key = _get_keys(api_key, secret_key)
         if data_feed is None or options_feed is None:
@@ -259,6 +263,39 @@ class AlpacaMarketData:
             )
         self._contracts_client = contracts_client
         self._raw_option_client = raw_option_client
+        self._install_read_retry(api_key, read_retry, rate_bucket)
+
+    def _install_read_retry(
+        self, api_key: str, policy: ReadRetryPolicy | None, bucket: Any
+    ) -> None:
+        """D114: every data client's GETs retry transient failures (arc.utils.http_retry).
+
+        Defaults from settings (``alpaca_read_retries`` / ``_base_s`` / ``_budget_s``);
+        each retry takes a ``read`` token from this key's account bucket
+        (``alpaca_rate_per_min``). Injected test doubles without a ``requests.Session``
+        are left untouched.
+        """
+        if policy is None or bucket is None:
+            s = get_settings()
+            if policy is None:
+                policy = ReadRetryPolicy(
+                    retries=s.alpaca_read_retries,
+                    base_s=s.alpaca_read_retry_base_s,
+                    budget_s=s.alpaca_read_retry_budget_s,
+                )
+            if bucket is None:
+                bucket = AccountRateBucket(
+                    bucket_path(api_key, s.alpaca_rate_lock_dir), s.alpaca_rate_per_min
+                )
+        self.read_retry = policy
+        for client in (
+            self._option_client,
+            self._stock_client,
+            self._contracts_client,
+            self._raw_option_client,
+        ):
+            if client is not None:
+                install_read_retry(client, policy, bucket=bucket)
 
     # -- option_chain --------------------------------------------------------
 

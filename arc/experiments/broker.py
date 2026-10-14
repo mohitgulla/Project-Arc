@@ -113,8 +113,8 @@ def _attach_rate_bucket(
     key = getattr(inner, "key_id", None)
     if not callable(use) or not isinstance(key, str) or not key:
         return
-    from arc.broker.ratelimit import AccountRateBucket, bucket_path
     from arc.control.effective import effective_settings
+    from arc.utils.ratelimit import AccountRateBucket, bucket_path
 
     s = settings if settings is not None else effective_settings(conn)
     use(AccountRateBucket(bucket_path(key, s.alpaca_rate_lock_dir), s.alpaca_rate_per_min))
