@@ -220,7 +220,7 @@ class TestLoopSleeves:
         root = loop_root_from_db(conn, CHAIN, SLOT, sleeves=SLEEVES)
         assert root.sleeves == {"short": 1, "swing": 2}
         line = root.text().split("\n")[0]
-        assert line.endswith("• Sleeves: Short 3/5 · Swing 0/5")
+        assert "Sleeves" not in line  # D109: counted on the model, not rendered
 
     def test_single_window_profile_shows_no_allocation(self) -> None:
         conn = _conn()
@@ -482,8 +482,10 @@ class TestDayRecap:
     def test_result_then_main_blocker(self) -> None:
         conn = _conn()
         self._day(conn)
+        # D109: 2x room, so the opposite extreme and the main blocker fit too
         assert day_recap(conn, SLOT.date(), day_pnl=-1945.57, equity_start=99604.46) == [
-            "Red day: -$1,946 (-2.0%) on 1 open and 2 closes; biggest hit META -$8,765."
+            "Red day: -$1,946 (-2.0%) on 1 open and 2 closes; biggest hit META -$8,765; "
+            "best win VST +$160; Net EV floor blocked 2 of 2 picks."
         ]
 
     def test_blocker_when_nothing_closed(self) -> None:
@@ -503,6 +505,16 @@ class TestDayRecap:
             "Green day: +$500 (+0.5%) on 1 open and 2 closes"
         )
         assert day_recap(conn, SLOT.date())[0].startswith("Day done on 1 open and 2 closes")
+
+    def test_recap_keeps_every_point_that_fits(self) -> None:
+        # D109: the recap headline may run to RECAP_CHARS (2x) and keeps each point that fits
+        from arc.routines.headline import HEADLINE_CHARS, RECAP_CHARS, headline_points
+
+        assert RECAP_CHARS == 2 * HEADLINE_CHARS
+        out = headline_points("Main point", "Second one", "", "Third one", limit=RECAP_CHARS)
+        assert out == "Main point; second one; third one."
+        assert headline_points("M", "x" * 300, "short", limit=RECAP_CHARS) == "M; short."
+        assert len(headline_points("a" * 400, limit=RECAP_CHARS)) == RECAP_CHARS
 
     def test_quiet_day(self) -> None:
         assert day_recap(_conn(), SLOT.date(), day_pnl=0.0) == ["Flat day: +$0, no trades."]
@@ -584,7 +596,8 @@ class TestRecapBroadcast:
         assert view.text.split("\n") == [
             ":rolled_up_newspaper: *Thu Oct 8 · Day Recap*",
             "",
-            "_*Red day: -$1,946 (-2.0%) on 1 open and 2 closes; biggest hit META -$8,765.*_",
+            "_*Red day: -$1,946 (-2.0%) on 1 open and 2 closes; biggest hit META -$8,765; "
+            "best win VST +$160; Net EV floor blocked 2 of 2 picks.*_",
         ]
 
     def test_recap_failure_never_blocks_the_reconcile(self) -> None:
