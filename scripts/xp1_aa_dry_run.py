@@ -5,8 +5,9 @@
 
 End to end through the real CLI and the real arm runner, on fixtures:
 
-1. ``arc experiment create`` + ``register`` the committed A/A spec
-   (``config/experiments/live/xp1_aa_baseline.yaml``) on a fresh control store;
+1. ``arc experiment create`` + ``register`` the v1 A/A spec, a test fixture since the
+   D111 registry reset (``tests/fixtures/experiments/xp1_aa_baseline.yaml``; the live
+   XP-1 is the K=3 A/A ``config/experiments/live/xp1_aa_k3.yaml``) on a fresh control store;
 2. ``arc experiment start XP-1 --fixtures --arm-dir`` (t0 at the fixture clock
    minus one hour; virtual account at the fixture account's equity);
 3. one fixture loop chain on control (``arc propose --fixtures``) and its paired
@@ -22,7 +23,7 @@ End to end through the real CLI and the real arm runner, on fixtures:
    ``arc experiment report XP-1 --stored --format md``.
 
 ``--write-doc`` writes the committed example ``docs/RESEARCH/experiments/XP-1-aa.md``
-(header: pending live run, E10.8). The scratch dir must not exist or be empty;
+(header: pending live run, E15.9). The scratch dir must not exist or be empty;
 this script never opens ``data/arc.db``.
 """
 
@@ -46,7 +47,7 @@ from arc.store.db import DEFAULT_DB_PATH, connect
 from arc.utils.calendar import next_session, previous_session, session_close
 
 REPO = Path(__file__).resolve().parent.parent
-SPEC = REPO / "config" / "experiments" / "live" / "xp1_aa_baseline.yaml"
+SPEC = REPO / "tests" / "fixtures" / "experiments" / "xp1_aa_baseline.yaml"
 DOC = REPO / "docs" / "RESEARCH" / "experiments" / "XP-1-aa.md"
 EID = "XP-1"
 APPROVAL = "owner:XP-1 A/A dry run on scratch stores"  # D86 registry write guard

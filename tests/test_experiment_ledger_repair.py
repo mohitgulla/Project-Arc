@@ -376,7 +376,7 @@ def test_cli_repair_ledger_on_a_running_experiment(
     from arc.experiments.runner import arm_stores, start_arms
 
     ctl = tmp_path / "control.db"
-    spec = "config/experiments/live/xp1_aa_baseline.yaml"
+    spec = "tests/fixtures/experiments/xp1_aa_baseline.yaml"
     assert (
         _arc("experiment", "create", "--owner-approval", "P-1", "--spec", spec, "--db", str(ctl))
         == 0

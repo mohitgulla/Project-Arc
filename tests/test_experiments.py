@@ -493,7 +493,7 @@ def test_cli_create_register_show_verify_stop(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     db = str(tmp_path / "x.db")
-    spec = str(LIVE / "xp1_aa_baseline.yaml")
+    spec = str(LIVE / "xp1_aa_k3.yaml")
     assert (
         run_experiment(_cli("create", "--owner-approval", "P-1", "--spec", spec, "--db", db)) == 0
     )
@@ -582,7 +582,7 @@ def test_cli_create_and_register_refuse_without_owner_approval(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     db = str(tmp_path / "x.db")
-    spec = str(LIVE / "xp1_aa_baseline.yaml")
+    spec = str(LIVE / "xp1_aa_k3.yaml")
     assert run_experiment(_cli("create", "--spec", spec, "--db", db)) == 2
     err = capsys.readouterr().err
     assert "arc experiment create: owner approval required" in err

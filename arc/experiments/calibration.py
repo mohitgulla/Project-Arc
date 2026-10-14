@@ -27,23 +27,26 @@ if TYPE_CHECKING:
 __all__ = ["aa_document", "calibration_markdown"]
 
 DOC_PATH = "docs/RESEARCH/experiments/XP-1-aa.md"
-PENDING_HEADER = "Status: **pending live run (E10.8)**."
+PENDING_HEADER = "Status: **pending live run (E15.9)**."
 
 
 def aa_document(r: ExperimentReport, *, example: bool = False) -> str:
     """The whole ``XP-<n>-aa.md`` document for *r*.
 
     ``example=True`` (the committed template, E10.4): the status header says the
-    live run is pending and the body is labelled as a fixture dry run. E10.8 writes
-    the live report with ``arc experiment report XP-1 --stored --format md --out``.
+    live run is pending and the body is labelled as a fixture dry run. E15.9 writes
+    the live report of XP-1 (the K=3 A/A, PLAN D111) with ``arc experiment report XP-1
+    --stored --format md --out``.
     """
     head = [f"# {r.experiment_id} A/A calibration", ""]
     if example:
         head += [
-            PENDING_HEADER + " The live A/A (about 10 sessions on the production and "
-            "experiment paper accounts) has not run yet. The section below is the "
-            "**fixture dry run** (synthetic sessions on scratch stores, no orders) that "
-            "shows the layout; E10.8 replaces this file with the live report:",
+            PENDING_HEADER + " XP-1 is the K=3 calibration A/A (control arm plus "
+            "t1–t3, every arm flat on the shared experiment account; "
+            "`config/experiments/live/xp1_aa_k3.yaml`, PLAN D108/D111) and has not run "
+            "yet. The section below is the **fixture dry run** of the v1 two-account "
+            "layout (synthetic sessions on scratch stores, no orders); E15.9 replaces "
+            "this file with the live report:",
             "",
             f"    arc experiment report {r.experiment_id} --db data/arc.db --stored "
             f"--format md --out {DOC_PATH}",
