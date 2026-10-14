@@ -2852,7 +2852,7 @@ export interface components {
              * @default 2
              * @enum {integer}
              */
-            spec_version: 1 | 2;
+            spec_version: 1 | 2 | 3;
             /** Title */
             title: string;
         };
@@ -5342,6 +5342,11 @@ export interface components {
         /**
          * RunningDetail
          * @description What ``running`` records at t0 (E10.2 fills it).
+         *
+         *     D108: ``production_book`` (the start book) is production's open structure ids at
+         *     t0. Up to spec v2 it was the *legacy book* (stored as ``legacy_book``; still read),
+         *     reserved in every arm and excluded from metrics; from v3 every arm starts flat and
+         *     it is recorded for reporting only.
          */
         RunningDetail: {
             /**
@@ -5363,10 +5368,10 @@ export interface components {
             /** Control Sha */
             control_sha: string;
             /**
-             * Legacy Book
-             * @description open_structures ids open at t0 (excluded from metrics)
+             * Production Book
+             * @description production's open_structures ids at t0 (the start book; v1/v2 events stored it as legacy_book)
              */
-            legacy_book?: string[];
+            production_book?: string[];
             /**
              * T0
              * Format: date-time

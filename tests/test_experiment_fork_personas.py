@@ -480,7 +480,8 @@ def test_cli_dry_runs(control: Path, capsys: pytest.CaptureFixture[str]) -> None
         == 0
     )  # fmt: skip
     rep = json.loads(capsys.readouterr().out)
-    assert rep["arms"]["treatment"]["plan"]["arm_personas"] == ["scout"]
+    # the shipped runner (D108: shared `t` template) runs the v1 treatment as arm t1
+    assert rep["arms"]["t1"]["plan"]["arm_personas"] == ["scout"]
     assert _arc("experiment", "arms-tick", "--experiment", "XP-5", "--db", str(control)) == 2
 
 

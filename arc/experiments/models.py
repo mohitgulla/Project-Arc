@@ -5,7 +5,11 @@ table. No DB, no clock, no network. :mod:`arc.experiments.store` persists them.
 
 An experiment compares control with K treatment arms on the same tick inputs:
 
-- **control** is the production config (its overlay must be empty);
+- **control** is the production config (its overlay must be empty). Up to spec v2
+  control *is* production (rows with ``arm_id`` NULL). From spec v3 (D108) control is
+  a real arm ``XP-<n>:control`` that runs production's config on the experiment
+  account, flat, next to the treatments; production (:data:`PRODUCTION_ARM`) is the
+  permanent baseline and is never the verdict's comparator;
 - each **treatment** ``t1`` .. ``tK`` (D69, spec v2; K <= 16) is the production
   config with a config *overlay* deep-merged on top: the same format and the same
   :func:`arc.utils.yamlpatch.deep_merge` as ``arc backtest rank --experiment``. A
@@ -18,7 +22,9 @@ floor (sigma, achievable MDE); ``ab`` experiments change one thing per treatment
 
 Spec versions: v1 (``arms.treatment``) is the one-treatment format of D44; it still
 loads, normalised to ``treatments: {t1: ...}``, and its canonical JSON (hence its
-hash) is the v1 document exactly as before. v2 writes ``arms.treatments``.
+hash) is the v1 document exactly as before. v2 writes ``arms.treatments``. v3 (D108)
+has the v2 shape; only the meaning of ``control`` changes (a runnable arm, see above),
+and only a document that sets ``spec_version: 3`` gets it (one without a version is v2).
 
 Pre-registration: once registered, the spec's canonical-JSON SHA-256 is locked
 and any edit needs a new experiment id.
@@ -33,15 +39,18 @@ import re
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 __all__ = [
     "ACTIVE_STATUSES",
     "CONTROL_ARM",
     "FIRST_TREATMENT",
+    "IMPLICIT_SPEC_VERSION",
     "LEGACY_TREATMENT",
     "MAX_TREATMENTS",
     "OVERLAY_TARGETS",
+    "PRODUCTION_ARM",
+    "RUNNABLE_CONTROL_VERSION",
     "SPEC_VERSION",
     "TRANSITIONS",
     "ARM_PERSONAS",
@@ -58,6 +67,7 @@ __all__ = [
     "StopDetail",
     "StopReason",
     "arm_id",
+    "control_runs",
     "canonical_dumps",
     "canonical_json",
     "document_hash",
@@ -67,8 +77,18 @@ __all__ = [
     "treatment_key",
 ]
 
-SPEC_VERSION = 2
-CONTROL_ARM = "control"  # arm_id NULL on a row means this arm
+#: The latest spec version (D108). A document must *say* ``spec_version: 3`` to get a
+#: runnable control: one that omits it keeps its pre-D108 meaning and hash
+#: (:data:`IMPLICIT_SPEC_VERSION`, or v1 when it carries ``arms.treatment``).
+SPEC_VERSION = 3
+IMPLICIT_SPEC_VERSION = 2
+#: D108: the spec arm ``control``. Up to spec v2 it is production (``arm_id`` NULL);
+#: from v3 it is the runnable arm ``XP-<n>:control`` on the experiment account.
+CONTROL_ARM = "control"
+#: D108: the ``arm_id`` of production's rows (the production account, never an arm).
+PRODUCTION_ARM: None = None
+#: D108: the first spec version whose ``control`` is a runnable arm.
+RUNNABLE_CONTROL_VERSION = 3
 #: D69: the v1 spec arm name; an alias of ``t1``. Reserved, like ``control``.
 LEGACY_TREATMENT = "treatment"
 FIRST_TREATMENT = "t1"
@@ -148,9 +168,18 @@ TRANSITIONS: dict[ExperimentStatus, frozenset[ExperimentStatus]] = {
 }
 
 
-def arm_id(experiment_id: str, arm: str) -> str | None:
-    """The ``arm_id`` a row of *arm* carries: NULL for control, ``XP-<n>:<arm>`` otherwise."""
-    return None if arm == CONTROL_ARM else f"{experiment_id}:{arm}"
+def control_runs(spec_version: int) -> bool:
+    """D108: does a spec of *spec_version* run ``control`` as its own arm (v3+)?"""
+    return spec_version >= RUNNABLE_CONTROL_VERSION
+
+
+def arm_id(experiment_id: str, arm: str, *, spec_version: int = 2) -> str | None:
+    """The ``arm_id`` a row of *arm* carries: ``XP-<n>:<arm>``, except control up to
+    spec v2, which is production (:data:`PRODUCTION_ARM`, NULL). From v3 (D108) control
+    is ``XP-<n>:control``."""
+    if arm == CONTROL_ARM and not control_runs(spec_version):
+        return PRODUCTION_ARM
+    return f"{experiment_id}:{arm}"
 
 
 class Arm(BaseModel):
@@ -263,7 +292,7 @@ class ExperimentSpec(BaseModel):
 
     model_config = _FORBID
 
-    spec_version: Literal[1, 2] = SPEC_VERSION
+    spec_version: Literal[1, 2, 3] = IMPLICIT_SPEC_VERSION
     id: str = Field(..., description="XP-<n>")
     title: str = Field(..., min_length=1)
     hypothesis: str = Field(..., min_length=1)
@@ -327,7 +356,10 @@ class ExperimentSpec(BaseModel):
             )
             raise ValueError(msg)
         if self.arms.control.overlay:
-            msg = "the control arm is the production config: its overlay must be empty"
+            msg = (
+                "the control arm runs production's config: its overlay must be empty "
+                "(put the change on a treatment)"
+            )
             raise ValueError(msg)
         for name, arm in self.arms.treatments.items():
             if self.kind is ExperimentKind.AA and arm.overlay:
@@ -354,6 +386,15 @@ class ExperimentSpec(BaseModel):
             msg = f"min_sessions {self.min_sessions} > max_sessions {self.max_sessions}"
             raise ValueError(msg)
         return self
+
+    @property
+    def control_runs(self) -> bool:
+        """D108: ``control`` is a runnable arm (spec v3+), not production."""
+        return control_runs(self.spec_version)
+
+    def arm_id_for(self, arm: str) -> str | None:
+        """The ``arm_id`` of spec arm *arm* (``control``, ``treatment`` = t1, ``tN``)."""
+        return arm_id(self.id, spec_arm_name(arm), spec_version=self.spec_version)
 
     @property
     def complete(self) -> bool:
@@ -422,14 +463,25 @@ class ArmPlan(BaseModel):
 
 
 class RunningDetail(BaseModel):
-    """What ``running`` records at t0 (E10.2 fills it)."""
+    """What ``running`` records at t0 (E10.2 fills it).
 
-    model_config = _FORBID
+    D108: ``production_book`` (the start book) is production's open structure ids at
+    t0. Up to spec v2 it was the *legacy book* (stored as ``legacy_book``; still read),
+    reserved in every arm and excluded from metrics; from v3 every arm starts flat and
+    it is recorded for reporting only.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
 
     t0: _dt.datetime
     t0_equity: float = Field(..., gt=0.0)
-    legacy_book: list[str] = Field(
-        default_factory=list, description="open_structures ids open at t0 (excluded from metrics)"
+    production_book: list[str] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("production_book", "legacy_book"),
+        description=(
+            "production's open_structures ids at t0 (the start book; v1/v2 events stored "
+            "it as legacy_book)"
+        ),
     )
     control_sha: str = Field(..., min_length=7)
     config_hashes: dict[str, str] = Field(default_factory=dict)

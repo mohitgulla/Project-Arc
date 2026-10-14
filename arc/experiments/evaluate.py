@@ -12,7 +12,7 @@ by ``arm_id``; NULL = control)::
     d_t         = (treat_pnl_t - ctrl_pnl_t) / t0_equity
 
 ``legacy_pnl_t`` is the day's change in value of control's legacy book (the
-structures open at t0, :attr:`RunningDetail.legacy_book`): the market value of
+structures open at t0, :attr:`RunningDetail.production_book`): the market value of
 their legs in control's EOD ``positions_snapshots`` plus the cash from any of
 their closes, so the legacy book is excluded from control's series. The
 treatment arm never holds the legacy book (its virtual account opens flat).
@@ -514,7 +514,7 @@ def _series(
         t_arm = arm_id(st.experiment_id, TREATMENT_ARM)
     ctrl = _eod_equity(conn, None)
     treat = _eod_equity(conn, t_arm, TREATMENT_EQUITY_FIELD)
-    legacy = set(run.legacy_book)
+    legacy = set(run.production_book)
     marks = _legacy_marks(conn, legacy)
     cash = _legacy_cash(conn, legacy)
     first = _first_session(run.t0)
@@ -938,7 +938,7 @@ def build_report(
 
         return build_multi_report(conn, st, cfg, now=now, aa_sigma=aa_sigma, arm_ids=arm_ids)
     t_arm = next(iter(arm_ids.values()))
-    legacy = set(run.legacy_book)
+    legacy = set(run.production_book)
     legacy_hashes = _legacy_hashes(conn, legacy)
     rows, missing = _series(conn, st, now=now, t_arm=t_arm)
     d = [r.d for r in rows]

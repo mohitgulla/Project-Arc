@@ -5479,7 +5479,8 @@
             "default": 2,
             "enum": [
               1,
-              2
+              2,
+              3
             ],
             "title": "Spec Version",
             "type": "integer"
@@ -12629,7 +12630,7 @@
       },
       "RunningDetail": {
         "additionalProperties": false,
-        "description": "What ``running`` records at t0 (E10.2 fills it).",
+        "description": "What ``running`` records at t0 (E10.2 fills it).\n\nD108: ``production_book`` (the start book) is production's open structure ids at\nt0. Up to spec v2 it was the *legacy book* (stored as ``legacy_book``; still read),\nreserved in every arm and excluded from metrics; from v3 every arm starts flat and\nit is recorded for reporting only.",
         "properties": {
           "aa_override": {
             "default": false,
@@ -12656,12 +12657,12 @@
             "title": "Control Sha",
             "type": "string"
           },
-          "legacy_book": {
-            "description": "open_structures ids open at t0 (excluded from metrics)",
+          "production_book": {
+            "description": "production's open_structures ids at t0 (the start book; v1/v2 events stored it as legacy_book)",
             "items": {
               "type": "string"
             },
-            "title": "Legacy Book",
+            "title": "Production Book",
             "type": "array"
           },
           "t0": {

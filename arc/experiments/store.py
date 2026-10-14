@@ -205,13 +205,14 @@ class ExperimentStore:
         now: Callable[[], _dt.datetime] | None = None,
     ) -> ExperimentStore:
         """A store capped by ``runner.max_parallel_arms``, counting each experiment's
-        runner arms (:meth:`RunnerConfig.arms_for`; its treatments when that refuses)."""
+        runner arms (:meth:`RunnerConfig.arms_for`; its treatments, plus a v3 control,
+        when that refuses)."""
 
         def count(spec: ExperimentSpec) -> int:
             try:
                 return len(runner.arms_for(spec))
-            except ValueError:
-                return len(spec.arms.treatments)
+            except ValueError:  # D108: a v3 spec's control is an arm too
+                return len(spec.arms.treatments) + int(spec.control_runs)
 
         return cls(conn, now=now, max_parallel_arms=runner.max_parallel_arms, arms_of=count)
 
@@ -563,7 +564,7 @@ class ExperimentStore:
                 hash_=st.spec_hash,
                 actor=actor,
                 detail=d.model_dump(mode="json"),
-                text=f"t0 equity {d.t0_equity:,.2f}; legacy book {len(d.legacy_book)}",
+                text=f"t0 equity {d.t0_equity:,.2f}; production book {len(d.production_book)}",
             )
         return self.require(experiment_id)
 
