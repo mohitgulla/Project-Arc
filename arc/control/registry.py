@@ -226,6 +226,10 @@ NOT_EXPOSED: dict[str, str] = {
     "iv_dividend_yields": "pricing input for the IV backfill",
     "spot_max_spread_pct": "data-quality guard on spot; change by PR",
     "alpaca_data_calls_per_minute": "data API plumbing",
+    # D114: transient market-data read retry; plumbing, change by PR.
+    "alpaca_read_retries": "data API plumbing (D114); change by PR",
+    "alpaca_read_retry_base_s": "data API plumbing (D114); change by PR",
+    "alpaca_read_retry_budget_s": "data API plumbing (D114); change by PR",
     "ingest_rss_timeout_seconds": "network plumbing",
     "yt_caption_grace_minutes": "ingestion plumbing",
     "yt_max_audio_minutes": "ingestion plumbing",

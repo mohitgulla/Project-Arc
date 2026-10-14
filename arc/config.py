@@ -543,6 +543,22 @@ class ArcSettings(BaseSettings):
             "every arm process; 10% under Alpaca's 200/min)."
         ),
     )
+    # -- Transient market-data read retry (XP-1 day 1 fix, D114) ----------------
+    alpaca_read_retries: Annotated[int, Field(ge=0, le=5)] = Field(
+        default=2,
+        description=(
+            "D114: retries of a market-data GET that failed transiently (HTTP 500/502/503, "
+            "DNS/connection reset/timeout). 0 = off. Never 4xx, never a non-GET (no submit)."
+        ),
+    )
+    alpaca_read_retry_base_s: Annotated[float, Field(ge=0.0, le=5.0)] = Field(
+        default=0.5,
+        description="D114: first retry backoff (s); each next one x3, jittered +/-25%.",
+    )
+    alpaca_read_retry_budget_s: Annotated[float, Field(ge=0.0, le=10.0)] = Field(
+        default=3.0,
+        description="D114: cap on the total retry sleep (s) of one market-data read.",
+    )
     alpaca_rate_lock_dir: Path | None = Field(
         default=None,
         description=(
