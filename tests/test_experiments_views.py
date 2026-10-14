@@ -33,6 +33,7 @@ from arc.slack.experiments import (
     stop_title,
     verdict_sentence,
 )
+from arc.slack.loop import RECAP_MAX, bold_italic
 from arc.store.db import connect
 from arc.store.migrate import migrate
 from arc.tower.api import create_app
@@ -113,19 +114,24 @@ def test_parity_slack_line_tower_api_and_cli_report(
     assert row["verdict"] == cli["verdict"] == "continue"
     assert (row["min_sessions"], row["max_sessions"]) == (20, 60)
 
-    # the Slack line is rendered from the same numbers, and the tower carries it verbatim
-    line = experiment_line(report).text
-    assert row["line"] == detail["experiment"]["line"] == line
+    # the Slack status is rendered from the same numbers; the tower carries its plain text
+    card = experiment_line(report)
+    line = card.text
+    assert card.broadcast is True and card.blocks == []
+    assert row["line"] == detail["experiment"]["line"] == "\n".join(view.status_lines(report))
     assert row["primary_p"] == cli["primary"]["p_value"] is not None
     assert row["sortino_p"] == cli["secondary"]["p_value"] is not None
     sd = cli["secondary"]["diff_ci"]["estimate"]
     assert row["sortino_delta"] == pytest.approx(sd)
     mean, lo, hi = cli["primary"]["mean"], cli["primary"]["ci"]["lo"], cli["primary"]["ci"]["hi"]
+    title, headline, gap = line.split("\n")
+    assert title == "[XP-2] Day 14/60"
+    assert headline.startswith("_*") and headline.endswith(" after 14 sessions.*_")
     want = (
-        f"[XP-2] Day 14 • P&L ∆ {view.pct(mean)}/day (p {view.p_text(cli['primary']['p_value'])})"
+        f"T1 − P • P&L ∆ {view.pct(mean)}/day (p {view.p_text(cli['primary']['p_value'])})"
         f" • Sortino ∆ {view.ratio(sd, sign=True)} (p {view.p_text(cli['secondary']['p_value'])})"
     )
-    assert line == want
+    assert gap == want
 
     # per-arm table: same drawdown / worst day / orders as the CLI report
     arms = {a["arm"]: a for a in detail["report"]["arms"]}
@@ -250,14 +256,18 @@ def test_daily_line_matches_owner_format(conn: sqlite3.Connection) -> None:
     assert "[Experiments]" not in line and " day " not in line and "p:" not in line
 
 
-def test_line_before_any_ci_and_for_aa(conn: sqlite3.Connection) -> None:
+def test_status_before_any_ci_and_for_aa(conn: sqlite3.Connection) -> None:
     store = fx.start(conn, fx.spec("XP-2"))
     r0 = build_report(conn, store.require("XP-2"), CFG, now=fx.T0)
-    assert view.daily_line(r0) == "[XP-2] Day 0 • P&L ∆ n/a (p n/a) • Sortino ∆ n/a (p n/a)"
+    assert view.status_lines(r0) == [
+        "[XP-2] Day 0/60",
+        "Waiting for the first paired session.",
+        "T1 − P • P&L ∆ n/a (p n/a) • Sortino ∆ n/a (p n/a)",
+    ]
     c2 = connect(":memory:")
     migrate(c2)
     aa = _report(c2, [10.0, -5.0, 3.0], [12.0, -4.0, 1.0], kind="aa")
-    assert view.daily_line(aa).startswith("[XP-2] A/A Day 3 • P&L ∆ ")
+    assert view.status_title(aa).startswith("[XP-2] A/A Day 3/")
 
 
 def test_msprt_p_is_the_dual_of_the_ci(conn: sqlite3.Connection) -> None:
@@ -352,13 +362,18 @@ def test_stop_card_layout_matches_owner_spec(conn: sqlite3.Connection) -> None:
     assert title == (f"[XP-2] Day 25 • Win • {view.delta_text(rep)} • {view.sortino_text(rep)}")
     fields = [f["text"] for blk in b if blk.get("fields") for f in blk["fields"]]
     labels = [f.split("\n", 1)[0] for f in fields]
+    # D108: a v1/v2 report's reference series is the production account; the treatment
+    # shows its short name
     assert labels[:5] == [
         "*Paired Daily P&L*",
         "*Sortino Ratio*",
-        "*Control*",
-        "*Treatment*",
+        "*Production*",
+        "*T1*",
         "*Sessions*",
     ]
+    assert b[1]["type"] == "section" and b[1]["text"]["text"].startswith("_*")
+    assert b[1]["text"]["text"] == bold_italic(view.status_headline(rep), RECAP_MAX)
+    assert card.broadcast is True
     prim, sec, ctrl, treat, sess = fields[:5]
     # primary and secondary share one shape: ∆, p, CI, control, treatment, margin
     for f, p_label in ((prim, "mSPRT p "), (sec, "Bootstrap p ")):
@@ -372,6 +387,7 @@ def test_stop_card_layout_matches_owner_spec(conn: sqlite3.Connection) -> None:
         assert [next(k for k in keys if r.startswith(k)) for r in rows] == keys
     assert f"Day 25/{rep.min_sessions}–{rep.max_sessions}" in sess
     assert f"{rep.t0:%b %-d} (t0) • Equity $100,000" in sess
+    assert "Start book 0" in sess and "Legacy book" not in sess
     whole = _texts(b)
     assert "Tower report" not in whole and "*Report*" not in whole
     assert "arc experiment report" not in whole
@@ -445,9 +461,12 @@ def test_routine_posts_line_and_stop_card_through_dispatcher(
     tick = dt.datetime.combine(fx.sessions(25)[-1], dt.time(16, 40), tzinfo=fx.ET)
     d.tick(tick, since=tick - dt.timedelta(minutes=5))
     posts = notes.day_thread_posts()
+    # the status and the stop card, each also sent to the channel (D65 "Also send to
+    # #arc-investor", E25.6)
     assert len(posts) == 2, posts
-    assert posts[0].startswith("[XP-2] Day 14 • P&L ∆ ")
+    assert posts[0].startswith("[XP-2] Day 14/60\n_*")
     assert posts[1].startswith("[XP-3] Day 25 • Win • P&L ∆ ")
+    assert notes.broadcasts == posts
     assert notes.blocks[0] is None and notes.blocks[1] is not None
     assert store.require("XP-3").status is ExperimentStatus.STOPPED
     c.close()
@@ -461,8 +480,8 @@ def test_heartbeat_card_posts_verbatim(conn: sqlite3.Connection) -> None:
     ctrl, treat = _curves(5, 50.0)
     r = _report(conn, ctrl, treat)
     line = experiment_line(r)
-    hb.card(fx.eod(fx.T0.date()), line.text, line.blocks or None)
-    assert rec.day_thread_posts() == [line.text]
+    hb.broadcast(fx.eod(fx.T0.date()), line.text, line.blocks or None)
+    assert rec.day_thread_posts() == [line.text] == rec.broadcasts
     assert rec.blocks == [None]
 
 

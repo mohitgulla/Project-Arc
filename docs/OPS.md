@@ -391,13 +391,15 @@ store-less arm returns 404 `unknown_arm`, listing the valid arms.
 
 **Arm switcher (E15.7, D69/D92).** The Tower shows one account at a time. On Overview the
 status strip's account slot (`Paper Trade · Arc Investor`) is the switcher; every other page
-has an account pill in the header. The menu lists Arc Investor plus each running arm from
+has an account pill in the header. The switcher, its production row and the Back button
+say "Arc Investor" (owner exception, E25.6); every other surface says "Production"
+(D108). The menu lists Arc Investor plus each running arm from
 `/api/meta` `arms` (`XP-12 · T1`, …). Choosing an arm puts `?arm=XP-12:t1` on the URL (copy
 it to share the view) and on every API call; in-app links keep it. While an arm is under view,
 a banner on every page reads
-`Viewing XP-12 · T1 — virtual account, shared inputs from Arc Investor` with
+`Viewing XP-12 · T1` with
 **Back to Arc Investor**. Nothing is remembered: any load without `?arm` is
-Arc Investor. A stopped or unknown arm in the URL shows a red banner with the same way back.
+Production. A stopped or unknown arm in the URL shows a red banner with the same way back.
 
 **D56 views (E13.14).**
 - *Positions:* each open row shows the latest
@@ -1998,15 +2000,26 @@ Dry run (scratch stores, fixtures, no broker, no orders), any time:
 `data/arc-exp-XP-1.db` and opens the arm's virtual account. From the next tick on,
 the tick spawns `arc experiment arms-tick` after every control loop chain.
 
-**Reading the daily line.** After the 16:40 ET `experiments.evaluate` routine, the
-#arc-investor day thread gets one line per running experiment:
+**Reading the daily status (D108, E25.6).** After the 16:40 ET `experiments.evaluate`
+routine, the #arc-investor day thread gets one status per running experiment (also
+sent to the channel):
 
-    [XP-1] A/A Day 4 • P&L ∆ −0.02%/day (p 1.00) • Sortino ∆ −0.35 (p 0.62)
+    [XP-30] Day 14/40
+    T2 leads control by +0.05%/day (p 1.00 Holm); T1 and T3 within noise after 14 sessions.
+    T1 − C • P&L ∆ +0.03%/day (p 1.00 Holm) • Sortino ∆ +1.62 (p 0.04)
+    T2 − C • P&L ∆ +0.05%/day (p 1.00 Holm) • Sortino ∆ +2.91 (p 0.07)
+    T3 − C • P&L ∆ +0.01%/day (p 1.00 Holm) • Sortino ∆ +0.48 (p 0.19)
 
-- `Day N`: paired sessions so far (both arms have an EOD snapshot). A session one
-  arm missed is skipped and listed under `missing` in the report.
-- `P&L ∆`: mean of d_t, % of t0 equity per day, with its always-valid p. On an A/A
-  it should hover around 0 with a large p.
+- `Day N/max`: paired sessions so far (every arm has an EOD snapshot) over the spec's
+  max. A session an arm missed is skipped and listed under `missing` in the report.
+- The headline (bold italic in Slack) says where the treatments stand: decided arms
+  first, else the arm with the largest gap, then the rest.
+- `Ti − C`: treatment minus the flat control arm (spec v3). `P&L ∆` is the mean of
+  d_t, % of t0 equity per day, with its always-valid p, Holm-adjusted across the K
+  treatments. On an A/A it should hover around 0 with a large p. A v1/v2 report
+  reads `T1 − P` (its reference series was production).
+- Production (P − C = start book + residual, Ti − P) is on the Tower's Experiments
+  page and the stop card, never in the daily status.
 - A stop card posts when the verdict changes: `Futility` after 10 sessions is the
   normal end and records sigma (it unlocks A/B starts); `Invalid` (CI excludes 0)
   means the harness is broken: the arms differ when they should not. Investigate

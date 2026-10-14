@@ -8,6 +8,7 @@ import {
   parseArm,
   searchWithArm,
   viewableArms,
+  switcherLabel,
   viewLabel,
   withArm,
   type ArmMeta,
@@ -30,7 +31,7 @@ const arm = (id: string, over: Partial<ArmMeta> = {}): ArmMeta => {
 const ARMS = [arm("XP-12:t1"), arm("XP-12:t2"), arm("XP-12:t3"), arm("XP-3:t1", { status: "stopped", viewable: false })];
 
 describe("parseArm", () => {
-  it("defaults to Arc Investor (null) without the param, empty or control", () => {
+  it("defaults to Production (null) without the param, empty or control", () => {
     expect(parseArm("")).toBeNull();
     expect(parseArm("?range=1W")).toBeNull();
     expect(parseArm("?arm=")).toBeNull();
@@ -46,14 +47,14 @@ describe("searchWithArm", () => {
   it("sets the arm and keeps other params", () => {
     expect(searchWithArm("?range=1W", "XP-12:t1")).toBe("?range=1W&arm=XP-12%3At1");
   });
-  it("removes the param for Arc Investor", () => {
+  it("removes the param for Production", () => {
     expect(searchWithArm("?range=1W&arm=XP-12%3At1", null)).toBe("?range=1W");
     expect(searchWithArm("?arm=XP-12%3At1", null)).toBe("");
   });
 });
 
 describe("withArm", () => {
-  it("leaves Arc Investor queries unchanged (no arm key)", () => {
+  it("leaves Production queries unchanged (no arm key)", () => {
     expect(withArm({ range: "1D" }, null)).toEqual({ range: "1D" });
     expect(withArm(undefined, null)).toEqual({});
   });
@@ -64,11 +65,18 @@ describe("withArm", () => {
 });
 
 describe("labels", () => {
-  it("names the production account Arc Investor, never Control (D92)", () => {
-    expect(viewLabel(null, ARMS)).toBe("Arc Investor");
-    expect(viewLabel(null, undefined)).toBe("Arc Investor");
-    expect(bannerText("XP-12 · T1")).toBe("Viewing XP-12 · T1 — virtual account, shared inputs from Arc Investor");
-    expect(bannerText("XP-12 · T1")).not.toMatch(/control/i);
+  it("names the production account Production, never Control (D108)", () => {
+    expect(viewLabel(null, ARMS)).toBe("Production");
+    expect(viewLabel(null, undefined)).toBe("Production");
+  });
+  it("the switcher says Arc Investor for production (owner exception), else the arm", () => {
+    expect(switcherLabel(null, ARMS)).toBe("Arc Investor");
+    expect(switcherLabel(null, undefined)).toBe("Arc Investor");
+    expect(switcherLabel("XP-12:t2", ARMS)).toBe("XP-12 · T2");
+  });
+  it("the banner is just Viewing <arm>", () => {
+    expect(bannerText("XP-12 · T1")).toBe("Viewing XP-12 · T1");
+    expect(bannerText("XP-1 · Control")).toBe("Viewing XP-1 · Control");
   });
   it("uses the API label, else derives XP-n · Tn", () => {
     expect(viewLabel("XP-12:t2", ARMS)).toBe("XP-12 · T2");

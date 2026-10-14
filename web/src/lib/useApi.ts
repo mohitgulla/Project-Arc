@@ -42,9 +42,9 @@ export function useMeta() {
 }
 
 /**
- * E15.7: Arc Investor's `/api/meta` (no `?arm`), for the arm switcher's list. `arms` always
+ * E15.7: Production's `/api/meta` (no `?arm`), for the arm switcher's list. `arms` always
  * come from control, and this still loads when the URL names an arm the API refuses (404).
- * Shares the cache entry with `useMeta()` on Arc Investor.
+ * Shares the cache entry with `useMeta()` on Production.
  */
 export function useControlMeta() {
   const poll = usePoll();

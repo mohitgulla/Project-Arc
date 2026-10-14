@@ -41,7 +41,8 @@ for (const vp of VIEWPORTS) {
         await expect(strip).not.toContainText("Orders today");
         await expect(page.getByTestId("slot-tick")).toHaveText(/^Tick (\d+m|now|\d+h|\d+d)$/);
         await expect(page.getByTestId("slot-health")).toContainText("Health");
-        // D92: the account slot names the account (Arc Investor), never "Control".
+        // The account slot is the switcher's trigger: "Arc Investor" (owner exception to D108),
+        // never "Control".
         await expect(page.getByTestId("account-slot")).toHaveText("Paper Trade · Arc Investor");
         await expect(strip).not.toContainText("Control");
         await expect(page.getByTestId("alerts-toggle")).toContainText("Alerts 1");

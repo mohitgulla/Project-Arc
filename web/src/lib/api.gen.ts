@@ -718,7 +718,7 @@ export interface components {
             scope?: components["schemas"]["ScopeInfo"];
             /**
              * Shared From Control
-             * @description True when an arm view serves Arc Investor's (control's) data
+             * @description True when an arm view serves Production's data (shared inputs)
              * @default false
              */
             shared_from_control: boolean;
@@ -1071,7 +1071,7 @@ export interface components {
             scope?: components["schemas"]["ScopeInfo"];
             /**
              * Shared From Control
-             * @description True when an arm view serves Arc Investor's (control's) data
+             * @description True when an arm view serves Production's data (shared inputs)
              * @default false
              */
             shared_from_control: boolean;
@@ -1134,6 +1134,40 @@ export interface components {
              */
             sigma?: number | null;
         };
+        /** Bucket */
+        Bucket: {
+            d_p_c: components["schemas"]["MeanCI"];
+            /**
+             * Grouping
+             * @enum {string}
+             */
+            grouping: "trend" | "vol" | "trend_vol" | "transitional";
+            /** Key */
+            key: string;
+            /**
+             * N
+             * @description Sessions in the bucket (P - C rows)
+             */
+            n: number;
+            residual: components["schemas"]["MeanCI"];
+            /**
+             * Thin
+             * @description n < 10
+             */
+            thin: boolean;
+            /**
+             * Ti Minus C
+             * @description XP-<n>:<ti> (and 'all') -> (Ti - C)/t0 per session
+             */
+            ti_minus_c?: {
+                [key: string]: components["schemas"]["MeanCI"];
+            };
+            /**
+             * Xps
+             * @description XPs contributing sessions
+             */
+            xps?: string[];
+        };
         /** BudgetResponse */
         BudgetResponse: {
             /**
@@ -1176,7 +1210,7 @@ export interface components {
             scope?: components["schemas"]["ScopeInfo"];
             /**
              * Shared From Control
-             * @description True when an arm view serves Arc Investor's (control's) data
+             * @description True when an arm view serves Production's data (shared inputs)
              * @default false
              */
             shared_from_control: boolean;
@@ -1550,7 +1584,7 @@ export interface components {
             scorecard_gate?: string | null;
             /**
              * Shared From Control
-             * @description True when an arm view serves Arc Investor's (control's) data
+             * @description True when an arm view serves Production's data (shared inputs)
              * @default false
              */
             shared_from_control: boolean;
@@ -1595,7 +1629,7 @@ export interface components {
             scope?: components["schemas"]["ScopeInfo"];
             /**
              * Shared From Control
-             * @description True when an arm view serves Arc Investor's (control's) data
+             * @description True when an arm view serves Production's data (shared inputs)
              * @default false
              */
             shared_from_control: boolean;
@@ -1711,7 +1745,7 @@ export interface components {
             scope?: components["schemas"]["ScopeInfo"];
             /**
              * Shared From Control
-             * @description True when an arm view serves Arc Investor's (control's) data
+             * @description True when an arm view serves Production's data (shared inputs)
              * @default false
              */
             shared_from_control: boolean;
@@ -2540,6 +2574,8 @@ export interface components {
             /** Events */
             events: components["schemas"]["ExperimentEvent"][];
             experiment: components["schemas"]["ExperimentListItem"];
+            /** @description E25.5 (D108 c): P − C and Ti − C pooled across every v3 XP by regime; descriptive only. Present when this experiment's latest report is v3. */
+            regime_panel?: components["schemas"]["RegimePanel"] | null;
             /** Registered Hash */
             registered_hash: string | null;
             /** @description Latest stored E10.3 report */
@@ -2556,7 +2592,7 @@ export interface components {
             scope?: components["schemas"]["ScopeInfo"];
             /**
              * Shared From Control
-             * @description True when an arm view serves Arc Investor's (control's) data
+             * @description True when an arm view serves Production's data (shared inputs)
              * @default false
              */
             shared_from_control: boolean;
@@ -2601,7 +2637,7 @@ export interface components {
             area: string;
             /**
              * Arm Verdicts
-             * @description Treatment arm -> its Control-vs-arm verdict
+             * @description Treatment arm -> its reference-vs-arm verdict
              */
             arm_verdicts?: {
                 [key: string]: string;
@@ -2619,13 +2655,13 @@ export interface components {
             experiment_id: string;
             /**
              * Headline Arm
-             * @description Arm the headline numbers compare with Control (v2: best-ranked)
+             * @description Arm the headline numbers compare with the reference (v2+: best-ranked)
              */
             headline_arm?: string | null;
             kind: components["schemas"]["ExperimentKind"];
             /**
              * Line
-             * @description The daily [XP-n] Slack line, verbatim
+             * @description The daily [XP-n] Slack status (D108), plain text, one line per row
              */
             line?: string | null;
             /** Max Sessions */
@@ -2647,6 +2683,11 @@ export interface components {
              */
             primary_p?: number | null;
             reason?: components["schemas"]["StopReason"] | null;
+            /**
+             * Reference
+             * @description D108: 'control' when the verdicts compare with the spec v3 control arm; null when they compare with production (v1/v2) or before the first evaluation
+             */
+            reference?: string | null;
             /**
              * Secondary
              * @description Sortino non-inferiority: ok | not_shown | aa | pending
@@ -2886,7 +2927,7 @@ export interface components {
             scope?: components["schemas"]["ScopeInfo"];
             /**
              * Shared From Control
-             * @description True when an arm view serves Arc Investor's (control's) data
+             * @description True when an arm view serves Production's data (shared inputs)
              * @default false
              */
             shared_from_control: boolean;
@@ -3020,7 +3061,7 @@ export interface components {
             sessions: number;
             /**
              * Shared From Control
-             * @description True when an arm view serves Arc Investor's (control's) data
+             * @description True when an arm view serves Production's data (shared inputs)
              * @default false
              */
             shared_from_control: boolean;
@@ -3317,7 +3358,7 @@ export interface components {
             scope?: components["schemas"]["ScopeInfo"];
             /**
              * Shared From Control
-             * @description True when an arm view serves Arc Investor's (control's) data
+             * @description True when an arm view serves Production's data (shared inputs)
              * @default false
              */
             shared_from_control: boolean;
@@ -3410,7 +3451,7 @@ export interface components {
             scope?: components["schemas"]["ScopeInfo"];
             /**
              * Shared From Control
-             * @description True when an arm view serves Arc Investor's (control's) data
+             * @description True when an arm view serves Production's data (shared inputs)
              * @default false
              */
             shared_from_control: boolean;
@@ -3729,7 +3770,7 @@ export interface components {
             series: components["schemas"]["LlmDay"][];
             /**
              * Shared From Control
-             * @description True when an arm view serves Arc Investor's (control's) data
+             * @description True when an arm view serves Production's data (shared inputs)
              * @default false
              */
             shared_from_control: boolean;
@@ -3862,6 +3903,18 @@ export interface components {
             /** Subject */
             subject?: string | null;
         };
+        /**
+         * MeanCI
+         * @description Mean of a per-session series (fraction of t0 equity) with a 95% normal CI.
+         */
+        MeanCI: {
+            /** @description mean +- 1.96 sd/sqrt(n); None if n < 2 */
+            ci?: components["schemas"]["Interval"] | null;
+            /** Mean */
+            mean: number | null;
+            /** N */
+            n: number;
+        };
         /** MetaResponse */
         MetaResponse: {
             /** Account Profile */
@@ -3869,7 +3922,7 @@ export interface components {
             app: components["schemas"]["AppInfo"];
             /**
              * Arms
-             * @description E15.6 (D69): experiment arms the tower can be scoped to with ?arm=<id>, running first (the default view is Arc Investor, never listed here)
+             * @description E15.6 (D69): experiment arms the tower can be scoped to with ?arm=<id>, running first (the default view is Production, never listed here)
              */
             arms?: components["schemas"]["ArmMeta"][];
             /**
@@ -4336,7 +4389,7 @@ export interface components {
             scope?: components["schemas"]["ScopeInfo"];
             /**
              * Shared From Control
-             * @description True when an arm view serves Arc Investor's (control's) data
+             * @description True when an arm view serves Production's data (shared inputs)
              * @default false
              */
             shared_from_control: boolean;
@@ -4547,7 +4600,7 @@ export interface components {
             scope?: components["schemas"]["ScopeInfo"];
             /**
              * Shared From Control
-             * @description True when an arm view serves Arc Investor's (control's) data
+             * @description True when an arm view serves Production's data (shared inputs)
              * @default false
              */
             shared_from_control: boolean;
@@ -4899,7 +4952,7 @@ export interface components {
             scope?: components["schemas"]["ScopeInfo"];
             /**
              * Shared From Control
-             * @description True when an arm view serves Arc Investor's (control's) data
+             * @description True when an arm view serves Production's data (shared inputs)
              * @default false
              */
             shared_from_control: boolean;
@@ -5330,6 +5383,26 @@ export interface components {
             pop_managed?: number | null;
         };
         /**
+         * RampPoint
+         * @description Control's ramp at one session index since t0 (0 = first session).
+         */
+        RampPoint: {
+            /**
+             * C Deployed
+             * @description Mean deployed fraction of equity
+             */
+            c_deployed?: number | null;
+            /**
+             * C Open
+             * @description Mean open structures over the XPs
+             */
+            c_open?: number | null;
+            /** Index */
+            index: number;
+            /** N Xps */
+            n_xps: number;
+        };
+        /**
          * RegatedBand
          * @description D101: a band the ladder re-gated to after the market moved past the approved one.
          */
@@ -5344,6 +5417,50 @@ export interface components {
             mid?: string | null;
             /** N */
             n: number;
+        };
+        /**
+         * RegimePanel
+         * @description E25.5 (D108 (c)): pooled across v3 XPs. Never a verdict, stop or promotion input.
+         */
+        RegimePanel: {
+            /** Buckets */
+            buckets?: components["schemas"]["Bucket"][];
+            /**
+             * Descriptive
+             * @default true
+             * @constant
+             */
+            descriptive: true;
+            /**
+             * Panel Version
+             * @default 1
+             * @constant
+             */
+            panel_version: 1;
+            /** Ramp By Start Regime */
+            ramp_by_start_regime?: {
+                [key: string]: components["schemas"]["RampPoint"][];
+            };
+            /**
+             * Sessions
+             * @default 0
+             */
+            sessions: number;
+            /** Starts */
+            starts?: components["schemas"]["StartRow"][];
+            /**
+             * Thin N
+             * @default 10
+             */
+            thin_n: number;
+            /**
+             * Unknown Sessions
+             * @description Sessions without a regime tag
+             * @default 0
+             */
+            unknown_sessions: number;
+            /** Xps */
+            xps?: string[];
         };
         /** RegimeView */
         RegimeView: {
@@ -5428,7 +5545,7 @@ export interface components {
             scope?: components["schemas"]["ScopeInfo"];
             /**
              * Shared From Control
-             * @description True when an arm view serves Arc Investor's (control's) data
+             * @description True when an arm view serves Production's data (shared inputs)
              * @default false
              */
             shared_from_control: boolean;
@@ -5458,7 +5575,7 @@ export interface components {
             scope?: components["schemas"]["ScopeInfo"];
             /**
              * Shared From Control
-             * @description True when an arm view serves Arc Investor's (control's) data
+             * @description True when an arm view serves Production's data (shared inputs)
              * @default false
              */
             shared_from_control: boolean;
@@ -5554,7 +5671,7 @@ export interface components {
         ScopeInfo: {
             /**
              * Arm Id
-             * @description '<experiment id>:<arm>' for an arm; null = Arc Investor
+             * @description '<experiment id>:<arm>' for an arm; null = Production
              */
             arm_id?: string | null;
         };
@@ -5587,7 +5704,7 @@ export interface components {
             scope?: components["schemas"]["ScopeInfo"];
             /**
              * Shared From Control
-             * @description True when an arm view serves Arc Investor's (control's) data
+             * @description True when an arm view serves Production's data (shared inputs)
              * @default false
              */
             shared_from_control: boolean;
@@ -5705,7 +5822,7 @@ export interface components {
             scope?: components["schemas"]["ScopeInfo"];
             /**
              * Shared From Control
-             * @description True when an arm view serves Arc Investor's (control's) data
+             * @description True when an arm view serves Production's data (shared inputs)
              * @default false
              */
             shared_from_control: boolean;
@@ -6086,7 +6203,7 @@ export interface components {
             scope?: components["schemas"]["ScopeInfo"];
             /**
              * Shared From Control
-             * @description True when an arm view serves Arc Investor's (control's) data
+             * @description True when an arm view serves Production's data (shared inputs)
              * @default false
              */
             shared_from_control: boolean;
@@ -6142,6 +6259,39 @@ export interface components {
              * @description Start book's day P&L ($)
              */
             pnl: number;
+        };
+        /** StartRow */
+        StartRow: {
+            /** Cum D P C */
+            cum_d_p_c: number;
+            /** Cum Residual */
+            cum_residual: number;
+            /** Experiment Id */
+            experiment_id: string;
+            /** First Session */
+            first_session: string | null;
+            /** Ramp */
+            ramp?: components["schemas"]["RampPoint"][];
+            /** Ramped From */
+            ramped_from: string | null;
+            regime_at_start: components["schemas"]["SessionRegime"] | null;
+            /** Sessions */
+            sessions: number;
+            /**
+             * Start Regime
+             * @description trend_vol bucket at the first session
+             */
+            start_regime: string;
+            /**
+             * Status Verdict
+             * @description Latest report's verdict
+             */
+            status_verdict: string;
+            /**
+             * T0
+             * Format: date-time
+             */
+            t0: string;
         };
         /**
          * StaticStats
@@ -6476,7 +6626,7 @@ export interface components {
             scope?: components["schemas"]["ScopeInfo"];
             /**
              * Shared From Control
-             * @description True when an arm view serves Arc Investor's (control's) data
+             * @description True when an arm view serves Production's data (shared inputs)
              * @default false
              */
             shared_from_control: boolean;
@@ -6518,7 +6668,7 @@ export interface components {
             scope?: components["schemas"]["ScopeInfo"];
             /**
              * Shared From Control
-             * @description True when an arm view serves Arc Investor's (control's) data
+             * @description True when an arm view serves Production's data (shared inputs)
              * @default false
              */
             shared_from_control: boolean;
@@ -6552,7 +6702,7 @@ export interface components {
             scope?: components["schemas"]["ScopeInfo"];
             /**
              * Shared From Control
-             * @description True when an arm view serves Arc Investor's (control's) data
+             * @description True when an arm view serves Production's data (shared inputs)
              * @default false
              */
             shared_from_control: boolean;
@@ -6693,7 +6843,7 @@ export interface components {
             scope?: components["schemas"]["ScopeInfo"];
             /**
              * Shared From Control
-             * @description True when an arm view serves Arc Investor's (control's) data
+             * @description True when an arm view serves Production's data (shared inputs)
              * @default false
              */
             shared_from_control: boolean;
@@ -7159,7 +7309,7 @@ export interface components {
             scope?: components["schemas"]["ScopeInfo"];
             /**
              * Shared From Control
-             * @description True when an arm view serves Arc Investor's (control's) data
+             * @description True when an arm view serves Production's data (shared inputs)
              * @default false
              */
             shared_from_control: boolean;
@@ -7321,7 +7471,7 @@ export interface operations {
     experiments_api_experiments_get: {
         parameters: {
             query?: {
-                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
                 arm?: string | null;
             };
             header?: never;
@@ -7371,7 +7521,7 @@ export interface operations {
     experiment_api_experiments__experiment_id__get: {
         parameters: {
             query?: {
-                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
                 arm?: string | null;
             };
             header?: never;
@@ -7423,7 +7573,7 @@ export interface operations {
     health_api_health_get: {
         parameters: {
             query?: {
-                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
                 arm?: string | null;
             };
             header?: never;
@@ -7464,7 +7614,7 @@ export interface operations {
     meta_api_meta_get: {
         parameters: {
             query?: {
-                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
                 arm?: string | null;
             };
             header?: never;
@@ -7505,7 +7655,7 @@ export interface operations {
     alerts_api_ops_alerts_get: {
         parameters: {
             query?: {
-                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
                 arm?: string | null;
             };
             header?: never;
@@ -7555,7 +7705,7 @@ export interface operations {
     budget_api_ops_budget_get: {
         parameters: {
             query?: {
-                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
                 arm?: string | null;
             };
             header?: never;
@@ -7605,7 +7755,7 @@ export interface operations {
     config_api_ops_config_get: {
         parameters: {
             query?: {
-                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
                 arm?: string | null;
             };
             header?: never;
@@ -7655,7 +7805,7 @@ export interface operations {
     context_api_ops_context_get: {
         parameters: {
             query?: {
-                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
                 arm?: string | null;
             };
             header?: never;
@@ -7705,7 +7855,7 @@ export interface operations {
     context_entry_api_ops_context__entry_id__get: {
         parameters: {
             query?: {
-                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
                 arm?: string | null;
             };
             header?: never;
@@ -7757,7 +7907,7 @@ export interface operations {
     halts_api_ops_halts_get: {
         parameters: {
             query?: {
-                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
                 arm?: string | null;
             };
             header?: never;
@@ -7807,7 +7957,7 @@ export interface operations {
     health_api_ops_health_get: {
         parameters: {
             query?: {
-                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
                 arm?: string | null;
             };
             header?: never;
@@ -7858,7 +8008,7 @@ export interface operations {
         parameters: {
             query?: {
                 days?: number;
-                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
                 arm?: string | null;
             };
             header?: never;
@@ -7918,7 +8068,7 @@ export interface operations {
                 chain?: string | null;
                 page?: number;
                 size?: number;
-                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
                 arm?: string | null;
             };
             header?: never;
@@ -7968,7 +8118,7 @@ export interface operations {
     run_detail_api_ops_runs__run_id__get: {
         parameters: {
             query?: {
-                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
                 arm?: string | null;
             };
             header?: never;
@@ -8022,7 +8172,7 @@ export interface operations {
             query?: {
                 day?: string | null;
                 window?: "day" | "rolling";
-                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
                 arm?: string | null;
             };
             header?: never;
@@ -8072,7 +8222,7 @@ export interface operations {
     sources_api_ops_sources_get: {
         parameters: {
             query?: {
-                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
                 arm?: string | null;
             };
             header?: never;
@@ -8122,7 +8272,7 @@ export interface operations {
     universe_api_ops_universe_get: {
         parameters: {
             query?: {
-                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
                 arm?: string | null;
             };
             header?: never;
@@ -8175,7 +8325,7 @@ export interface operations {
                 range?: "1D" | "1W" | "1M" | "3M" | "YTD" | "ALL";
                 /** @description Recent Activity window in hours (default: config `tower.overview.activity_hours`, 24) */
                 activity_hours?: number | null;
-                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
                 arm?: string | null;
             };
             header?: never;
@@ -8231,7 +8381,7 @@ export interface operations {
                 from?: string | null;
                 to?: string | null;
                 sleeve?: string | null;
-                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
                 arm?: string | null;
             };
             header?: never;
@@ -8287,7 +8437,7 @@ export interface operations {
                 from?: string | null;
                 to?: string | null;
                 sleeve?: string | null;
-                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
                 arm?: string | null;
             };
             header?: never;
@@ -8340,7 +8490,7 @@ export interface operations {
                 range?: "1D" | "1W" | "1M" | "3M";
                 from?: string | null;
                 to?: string | null;
-                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
                 arm?: string | null;
             };
             header?: never;
@@ -8391,7 +8541,7 @@ export interface operations {
         parameters: {
             query?: {
                 status?: "open" | "closed" | "all";
-                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
                 arm?: string | null;
             };
             header?: never;
@@ -8442,7 +8592,7 @@ export interface operations {
         parameters: {
             query?: {
                 q?: string;
-                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
                 arm?: string | null;
             };
             header?: never;
@@ -8493,7 +8643,7 @@ export interface operations {
         parameters: {
             query?: {
                 lookback_days?: number | null;
-                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
                 arm?: string | null;
             };
             header?: never;
@@ -8561,7 +8711,7 @@ export interface operations {
                 size?: number;
                 sort?: "time" | "ticker" | "contracts" | "limit" | "net_ev" | "pop" | "slippage_bps" | "realized_pnl";
                 dir?: "asc" | "desc";
-                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
                 arm?: string | null;
             };
             header?: never;
@@ -8611,7 +8761,7 @@ export interface operations {
     trade_filters_api_trades_filters_get: {
         parameters: {
             query?: {
-                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
                 arm?: string | null;
             };
             header?: never;
@@ -8661,7 +8811,7 @@ export interface operations {
     trade_api_trades__proposal_hash__get: {
         parameters: {
             query?: {
-                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor. */
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
                 arm?: string | null;
             };
             header?: never;

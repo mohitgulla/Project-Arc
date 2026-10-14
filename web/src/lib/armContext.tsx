@@ -4,7 +4,7 @@
  * The URL is the source of truth (`?arm=XP-12:t1`; shareable). In-app links don't carry the
  * parameter, so the provider remembers the arm chosen in this page load and puts it back on
  * the URL after an in-app navigation drops it. Nothing is persisted: a fresh load without
- * `?arm` is always Arc Investor (owner). `?arm=control` is an explicit Arc Investor.
+ * `?arm` is always Production (owner). `?arm=control` is an explicit Production.
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
@@ -13,9 +13,9 @@ import { NavigationType, useLocation, useNavigate, useNavigationType } from "rea
 import { ARM_PARAM, parseArm, searchWithArm } from "./arm";
 
 interface ArmState {
-  /** `?arm=` value under view; `null` = Arc Investor. */
+  /** `?arm=` value under view; `null` = Production. */
   arm: string | null;
-  /** Switch to *arm* (`null` = back to Arc Investor), keeping the page and its other params. */
+  /** Switch to *arm* (`null` = back to Production), keeping the page and its other params. */
   setArm: (arm: string | null) => void;
 }
 
@@ -39,7 +39,7 @@ export function ArmProvider({ children }: { children: ReactNode }) {
   const keptRef = useRef(kept);
 
   // Runs on URL changes only (not on `kept` changes, so a switch can't race its navigation).
-  // Back/forward (POP) takes the URL as it is, so Back can return to Arc Investor.
+  // Back/forward (POP) takes the URL as it is, so Back can return to Production.
   useEffect(() => {
     if (explicitParam(location.search) || navType === NavigationType.Pop) {
       keptRef.current = parseArm(location.search);
@@ -69,7 +69,7 @@ export function useArmState(): ArmState {
   return useContext(ArmContext);
 }
 
-/** The `?arm=` value every API call carries (`null` = Arc Investor, no parameter). */
+/** The `?arm=` value every API call carries (`null` = Production, no parameter). */
 export function useArm(): string | null {
   return useContext(ArmContext).arm;
 }

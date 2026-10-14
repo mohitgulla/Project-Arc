@@ -7,9 +7,11 @@ the two surfaces and ``arc experiment report --json`` always show the same numbe
 (``tests/test_experiments_views.py`` pins the parity).
 
 Formatting (owner, 2026-10-03): percentages are of t0 equity, 2 dp, with a real
-minus sign (``−``). The daily line and the stop header lead with the experiment
-id and show each metric's delta with its p-value:
-``[XP-2] Day 14 • P&L ∆ +0.08%/day (p 0.21) • Sortino ∆ +0.35 (p 0.04)``.
+minus sign (``−``). The stop header leads with the experiment id and shows each
+metric's delta with its p-value:
+``[XP-2] Day 25 • Win • P&L ∆ +0.08%/day (p 0.21) • Sortino ∆ +0.35 (p 0.04)``.
+The daily status (D108, :func:`status_lines`) is a title, a headline and one
+``Ti − C`` line per treatment in the same metric shape.
 The primary p is the always-valid mSPRT p (dual of the CI); the Sortino p is the
 paired-bootstrap p (one-sided non-inferiority against the margin).
 """
@@ -17,6 +19,7 @@ paired-bootstrap p (one-sided non-inferiority against the margin).
 from __future__ import annotations
 
 import datetime as _dt  # noqa: TC003 - pydantic resolves field annotations
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -129,6 +132,181 @@ def secondary_state(r: ExperimentReport) -> SecondaryState:
 def daily_line(r: ExperimentReport) -> str:
     """``[XP-2] Day 14 • P&L ∆ +0.08%/day (p 0.21) • Sortino ∆ +0.35 (p 0.04)``."""
     return " • ".join([f"{label(r)} {progress_text(r)}", delta_text(r), sortino_text(r)])
+
+
+# ---------------------------------------------------------------------------
+# D108 (E25.6): the multi-line daily status, Ti − C per treatment
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ArmGap:
+    """One treatment's gap to the verdict's reference (control from spec v3)."""
+
+    arm: str  # display name, ``T1``
+    mean: float | None
+    ci: stats.Interval | None
+    p_value: float | None
+    holm: bool  # p_value is Holm-adjusted across the K treatments
+    sortino: float | None
+    sortino_p: float | None
+    verdict: str | None
+
+
+def arm_short(arm: str) -> str:
+    """``control`` -> ``Control``; ``treatment`` (v1) -> ``T1``; ``t3`` -> ``T3``."""
+    if arm == "treatment":
+        return "T1"
+    if len(arm) > 1 and arm[0] in "tT" and arm[1:].isdigit():
+        return arm.upper()
+    return arm.replace("_", " ").title()
+
+
+def reference_name(r: ExperimentReport) -> str:
+    """What the verdict compares against: ``control`` (spec v3, D108) or ``production``
+    (spec v1/v2, whose control series was the production account)."""
+    return "control" if r.reference == "control" else "production"
+
+
+def _ref_letter(r: ExperimentReport) -> str:
+    return "C" if r.reference == "control" else "P"
+
+
+def arm_gaps(r: ExperimentReport) -> list[ArmGap]:
+    """Every treatment vs the reference, in arm order (v1: the single treatment)."""
+    if r.pairwise is None:
+        t = next((a.arm for a in r.arms if a.arm != "control"), "treatment")
+        return [
+            ArmGap(
+                arm=arm_short(t),
+                mean=r.primary.mean,
+                ci=r.primary.ci,
+                p_value=r.primary.p_value,
+                holm=False,
+                sortino=sortino_delta(r),
+                sortino_p=r.secondary.p_value,
+                verdict=r.verdict,
+            )
+        ]
+    out: list[ArmGap] = []
+    for p in r.pairwise:
+        if p.kind != "control_vs_treatment":
+            continue
+        s = p.secondary
+        sd: float | None = None
+        if s is not None:
+            if s.diff_ci is not None:
+                sd = s.diff_ci.estimate
+            elif s.sortino_control is not None and s.sortino_treatment is not None:
+                sd = s.sortino_treatment - s.sortino_control
+        holm = p.holm_p is not None
+        out.append(
+            ArmGap(
+                arm=arm_short(p.b),
+                mean=p.mean,
+                ci=p.ci,
+                p_value=p.holm_p if holm else p.p_value,
+                holm=holm,
+                sortino=sd,
+                sortino_p=None if s is None else s.p_value,
+                verdict=p.verdict,
+            )
+        )
+    return out
+
+
+def _p_clause(g: ArmGap) -> str:
+    return f"p {p_text(g.p_value)}" + (" Holm" if g.holm else "")
+
+
+def gap_line(r: ExperimentReport, g: ArmGap) -> str:
+    """``T2 − C • P&L ∆ +0.08%/day (p 0.21 Holm) • Sortino ∆ +0.35 (p 0.04)``."""
+    mean = "n/a" if g.mean is None else f"{pct(g.mean)}/day"
+    return " • ".join(
+        [
+            f"{g.arm} {MINUS} {_ref_letter(r)}",
+            f"P&L ∆ {mean} ({_p_clause(g)})",
+            f"Sortino ∆ {ratio(g.sortino, sign=True)} (p {p_text(g.sortino_p)})",
+        ]
+    )
+
+
+def status_title(r: ExperimentReport) -> str:
+    """``[XP-12] Day 14/60`` (``[XP-12] A/A Day 14/60``): paired sessions / the spec's max."""
+    return f"{label(r)} Day {r.sessions}/{r.max_sessions}"
+
+
+def _names(xs: list[str]) -> str:
+    return xs[0] if len(xs) == 1 else ", ".join(xs[:-1]) + " and " + xs[-1]
+
+
+def _within_noise(g: ArmGap) -> bool:
+    return g.ci is None or g.ci.lo <= 0 <= g.ci.hi
+
+
+def status_headline(r: ExperimentReport) -> str:
+    """One sentence on where the treatments stand against the reference (D108, D109).
+
+    Deterministic from the stored report: decided arms first (beats / trails / no
+    difference), else the undecided arm with the largest gap (leads / trails), then the
+    rest (within noise, or ahead / behind so far), ending ``after N sessions``. Up to
+    ``RECAP_CHARS`` (2x a loop headline); never a sleeve stat (D109).
+    """
+    from arc.routines.headline import RECAP_CHARS, headline_points
+
+    ref, n = reference_name(r), r.sessions
+    gaps = arm_gaps(r)
+    after = f"after {n} session{'' if n == 1 else 's'}"
+    known = [g for g in gaps if g.mean is not None]
+    if not known:
+        main = "Waiting for the first paired session" if n == 0 else "No range yet " + after
+        return headline_points(main, limit=RECAP_CHARS)
+    points: list[str] = []
+    if r.verdict == "invalid":
+        worst = min(known, key=lambda g: g.p_value if g.p_value is not None else 1.0)
+        points.append(
+            f"A/A check failed: {worst.arm} differs from {ref} by {pct(worst.mean)}/day"
+            f" ({_p_clause(worst)})"
+        )
+    for g in known:
+        if g.verdict == "win":
+            points.append(f"{g.arm} beats {ref} by {pct(g.mean)}/day ({_p_clause(g)})")
+        elif g.verdict == "loss":
+            gap = pct(abs(g.mean or 0.0), sign=False)
+            points.append(f"{g.arm} trails {ref} by {gap}/day ({_p_clause(g)})")
+        elif g.verdict == "futility":
+            points.append(f"{g.arm} shows no difference from {ref}")
+    open_ = [g for g in known if g.verdict not in ("win", "loss", "futility")]
+    if open_ and r.verdict != "invalid":
+        lead = max(open_, key=lambda g: abs(g.mean or 0.0))
+        mean = lead.mean or 0.0
+        if mean > 0:
+            points.append(f"{lead.arm} leads {ref} by {pct(mean)}/day ({_p_clause(lead)})")
+        elif mean < 0:
+            gap = pct(abs(mean), sign=False)
+            points.append(f"{lead.arm} trails {ref} by {gap}/day ({_p_clause(lead)})")
+        else:
+            points.append(f"{lead.arm} is level with {ref}")
+        rest = [g for g in open_ if g is not lead]
+        noise = [g.arm for g in rest if _within_noise(g)]
+        for g in rest:
+            if not _within_noise(g):
+                side = "ahead" if (g.mean or 0.0) > 0 else "behind"
+                points.append(f"{g.arm} {side} so far ({pct(g.mean)}/day)")
+        if noise:
+            points.append(f"{_names(noise)} within noise")
+    missing = [g.arm for g in gaps if g.mean is None]
+    if missing:
+        points.append(f"{_names(missing)} without a range yet")
+    # the session count always closes the sentence: points that would push it past the
+    # limit are skipped, not the count
+    text = headline_points(points[0], *points[1:], limit=RECAP_CHARS - len(after) - 1)
+    return f"{text.rstrip('.…')} {after}."
+
+
+def status_lines(r: ExperimentReport) -> list[str]:
+    """The daily status (plain text): title, headline, then one ``Ti − C`` line per arm."""
+    return [status_title(r), status_headline(r), *(gap_line(r, g) for g in arm_gaps(r))]
 
 
 # ---------------------------------------------------------------------------

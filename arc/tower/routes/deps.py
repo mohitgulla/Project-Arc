@@ -51,7 +51,8 @@ ControlTower = Annotated[TowerConfig, Depends(tower_config)]
 _ARM_QUERY = Query(
     description=(
         "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. "
-        "'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Arc Investor."
+        "'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production "
+        "(the production account, D108)."
     ),
     max_length=64,
 )

@@ -1,6 +1,6 @@
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
-import { armColor, armShort, duelWinner, type DuelRow, type EquityView, type ForestRow, type SessionsView } from "../lib/experiments";
+import { armColor, armLabel, armShort, duelWinner, type DuelRow, type EquityView, type ForestRow, type SessionsView } from "../lib/experiments";
 import { formatAxisMoney, formatMoney } from "../lib/format";
 import { TooltipBox } from "./chartKit";
 
@@ -128,20 +128,20 @@ export function SessionsBar({ v, showCaption = true }: { v: SessionsView; showCa
   );
 }
 
-/** Arc Investor (left) vs the treatment (right), one mirrored bar pair per metric; the better side bold. */
-export function DuelBars({ rows, order }: { rows: DuelRow[]; order: string[] }) {
+/** The reference (left: Production, or Control in v3) vs the treatment (right), one mirrored bar pair per metric; the better side bold. */
+export function DuelBars({ rows, order, reference }: { rows: DuelRow[]; order: string[]; reference?: string | null }) {
   const a = order[0] ?? "control";
   const b = order[1] ?? "treatment";
   return (
     <div data-testid="duel-bars">
       <div className="mb-1 flex justify-between text-caption">
         <span className="flex items-center gap-1.5 text-secondary">
-          <span className="h-2 w-2 rounded-full" style={{ background: armColor(a, order) }} />
-          {armShort(a)}
+          <span className="h-2 w-2 rounded-full" style={{ background: armColor(a, order, reference) }} />
+          {armShort(a, reference)}
         </span>
         <span className="flex items-center gap-1.5 text-secondary">
-          {armShort(b)}
-          <span className="h-2 w-2 rounded-full" style={{ background: armColor(b, order) }} />
+          {armShort(b, reference)}
+          <span className="h-2 w-2 rounded-full" style={{ background: armColor(b, order, reference) }} />
         </span>
       </div>
       {rows.map((r) => {
@@ -155,11 +155,11 @@ export function DuelBars({ rows, order }: { rows: DuelRow[]; order: string[] }) 
           >
             <div className="flex min-w-0 items-center justify-end gap-2">
               <span className={`whitespace-nowrap tabular-nums ${w === "a" ? "font-semibold text-title" : "text-secondary"}`}>{r.aText}</span>
-              <span className="h-1.5 shrink-0 rounded-full" style={{ width: `${(Math.abs(r.a) / m) * 45}%`, background: armColor(a, order) }} />
+              <span className="h-1.5 shrink-0 rounded-full" style={{ width: `${(Math.abs(r.a) / m) * 45}%`, background: armColor(a, order, reference) }} />
             </div>
             <span className="whitespace-nowrap text-center text-caption text-muted">{r.label}</span>
             <div className="flex min-w-0 items-center gap-2">
-              <span className="h-1.5 shrink-0 rounded-full" style={{ width: `${(Math.abs(r.b) / m) * 45}%`, background: armColor(b, order) }} />
+              <span className="h-1.5 shrink-0 rounded-full" style={{ width: `${(Math.abs(r.b) / m) * 45}%`, background: armColor(b, order, reference) }} />
               <span className={`whitespace-nowrap tabular-nums ${w === "b" ? "font-semibold text-title" : "text-secondary"}`}>{r.bText}</span>
             </div>
           </div>
@@ -169,8 +169,18 @@ export function DuelBars({ rows, order }: { rows: DuelRow[]; order: string[] }) 
   );
 }
 
-/** Every arm's equity from t0 (legacy book excluded): Arc Investor in the accent, arms in series colours. */
-export function ArmEquityChart({ view, experimentId, height = 220 }: { view: EquityView; experimentId: string; height?: number }) {
+/** Every arm's equity from t0 (start book excluded): Production in the accent, a v3 Control and the treatments in series colours. */
+export function ArmEquityChart({
+  view,
+  experimentId,
+  reference,
+  height = 220,
+}: {
+  view: EquityView;
+  experimentId: string;
+  reference?: string | null;
+  height?: number;
+}) {
   return (
     <div style={{ height }} className="w-full" data-testid="arm-equity-chart">
       <ResponsiveContainer width="100%" height="100%">
@@ -194,7 +204,7 @@ export function ArmEquityChart({ view, experimentId, height = 220 }: { view: Equ
                 <TooltipBox title={String(p.label)}>
                   {view.arms.map((a, i) => (
                     <div key={a} className={i === 0 ? "" : "font-normal text-secondary"}>
-                      {a === "control" ? armShort(a) : `${experimentId} · ${armShort(a)}`} {formatMoney(Number(p[a]), "equity")}
+                      {armLabel(a, experimentId, reference)} {formatMoney(Number(p[a]), "equity")}
                     </div>
                   ))}
                 </TooltipBox>
@@ -204,9 +214,9 @@ export function ArmEquityChart({ view, experimentId, height = 220 }: { view: Equ
           {view.arms.map((a) => (
             <Line
               key={a}
-              name={armShort(a)}
+              name={armShort(a, reference)}
               dataKey={a}
-              stroke={armColor(a, view.arms)}
+              stroke={armColor(a, view.arms, reference)}
               strokeWidth={a === "control" ? 2.5 : 2}
               dot={false}
               isAnimationActive={false}
@@ -219,13 +229,23 @@ export function ArmEquityChart({ view, experimentId, height = 220 }: { view: Equ
 }
 
 /** Legend row (dot · label) under a multi-arm chart. */
-export function ArmLegend({ arms, experimentId, extra }: { arms: string[]; experimentId: string; extra?: string }) {
+export function ArmLegend({
+  arms,
+  experimentId,
+  reference,
+  extra,
+}: {
+  arms: string[];
+  experimentId: string;
+  reference?: string | null;
+  extra?: string;
+}) {
   return (
     <ul className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-caption" data-testid="arm-legend">
       {arms.map((a) => (
         <li key={a} className="flex items-center gap-2">
-          <span className="h-[3px] w-3.5 rounded-full" style={{ background: armColor(a, arms) }} />
-          <span className="text-secondary">{a === "control" ? armShort(a) : `${experimentId} · ${armShort(a)}`}</span>
+          <span className="h-[3px] w-3.5 rounded-full" style={{ background: armColor(a, arms, reference) }} />
+          <span className="text-secondary">{armLabel(a, experimentId, reference)}</span>
         </li>
       ))}
       {extra && <li className="text-muted">{extra}</li>}

@@ -232,6 +232,11 @@ export interface StatusSlot {
 }
 
 /** D92: the production account's display name (was "Control" in D69 specs). */
+/**
+ * The account slot is the account switcher's trigger, so it says "Arc Investor" for the
+ * production account: the owner's switcher exception (2026-10-14, E25.6) to D108's
+ * "Production" everywhere else.
+ */
 export const ARC_INVESTOR = "Arc Investor";
 
 export interface StatusContext {

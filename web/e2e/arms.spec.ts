@@ -4,8 +4,10 @@ import { PHONE_75, PHONE_75_TAG, expectNoOverflow, expectTouchTargets } from "./
 
 // E15.7 (D69, D92): the global arm switcher on the --arms store (the --ops fixture plus a
 // running K=3 experiment XP-12 with arm stores t1..t3; scripts/tower_fixture_arms.py).
-// Arc Investor is the default on every load (no localStorage), `?arm=` deep-links an arm,
+// Production is the default on every load (no localStorage), `?arm=` deep-links an arm,
 // the banner shows on every page while an arm is selected, and Back to Arc Investor works.
+// The switcher (trigger, production menu row, Back button) says "Arc Investor" (owner
+// exception, 2026-10-14); every other surface says "Production" (D108).
 const ARMS_URL = process.env.ARC_E2E_ARMS_URL ?? `http://127.0.0.1:${process.env.ARC_E2E_ARMS_PORT ?? "4185"}`;
 const ARM = "XP-12:t1";
 const PAGES = [
@@ -39,7 +41,7 @@ async function open(page: Page, path: string, theme: "light" | "dark" = "dark") 
 test.describe("arm switcher", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 
-  test("defaults to Arc Investor on load, with no arm on any API call", async ({ page }) => {
+  test("defaults to Production on load, with no arm on any API call", async ({ page }) => {
     const calls = apiLog(page);
     await open(page, "/");
     await expect(page.getByTestId("account-slot")).toHaveText("Paper Trade · Arc Investor");
@@ -72,7 +74,7 @@ test.describe("arm switcher", () => {
     await expect(page).toHaveURL(/[?&]arm=XP-12%3At2/);
     await expect(page.getByTestId("account-slot")).toHaveText("Paper Trade · XP-12 · T2");
     await expect(page.getByTestId("arm-banner")).toContainText("Viewing XP-12 · T2");
-    // The arm's own virtual account: $25k-ish, not Arc Investor's $100k book.
+    // The arm's own virtual account: $25k-ish, not Production's $100k book.
     await expect(page.getByTestId("overview")).toContainText("24,8");
     const scoped = calls.filter((r) => !/\/api\/meta$/.test(new URL(r.url()).pathname) || armOf(r) !== null);
     expect(scoped.length).toBeGreaterThan(0);
@@ -84,7 +86,7 @@ test.describe("arm switcher", () => {
     await open(page, `/?arm=${encodeURIComponent(ARM)}`);
     await expect(page.getByTestId("account-slot")).toHaveText("Paper Trade · XP-12 · T1");
     await expect(page.getByTestId("arm-banner")).toHaveText(
-      "Viewing XP-12 · T1 — virtual account, shared inputs from Arc InvestorBack to Arc Investor",
+      "Viewing XP-12 · T1Back to Arc Investor",
     );
     const overview = calls.filter((r) => new URL(r.url()).pathname === "/api/overview");
     expect(overview.length).toBeGreaterThan(0);
@@ -117,7 +119,7 @@ test.describe("arm switcher", () => {
     await expect(page).toHaveURL(/\/trades$/);
     await expect(page.getByTestId("arm-banner")).toHaveCount(0);
     await expect.poll(() => calls.some((r) => new URL(r.url()).pathname === "/api/trades" && armOf(r) === null)).toBe(true);
-    // Choose an arm, then load a URL without ?arm: Arc Investor (owner: no persistence).
+    // Choose an arm, then load a URL without ?arm: Production (owner: no persistence).
     await open(page, `/?arm=${encodeURIComponent(ARM)}`);
     await expect(page.getByTestId("arm-banner")).toBeVisible();
     await page.goto("/");
@@ -141,7 +143,7 @@ test.describe("arm switcher", () => {
     await expect(page.getByTestId("arm-menu")).toHaveCount(0);
     await page.getByTestId("account-switcher").press("Enter");
     await expect(page.getByTestId("arm-menu").getByRole("menuitemradio")).toHaveCount(4);
-    // Opening focuses the checked item (Arc Investor); arrows move, Enter picks.
+    // Opening focuses the checked item (Production); arrows move, Enter picks.
     await expect(page.getByTestId("arm-menu").getByRole("menuitemradio").first()).toBeFocused();
     await page.keyboard.press("ArrowDown");
     await expect(page.getByTestId("arm-menu").getByRole("menuitemradio").nth(1)).toBeFocused();
@@ -150,7 +152,7 @@ test.describe("arm switcher", () => {
   });
 });
 
-// Screenshots for the PR: Overview in Arc Investor and in an arm, phone and desktop, both
+// Screenshots for the PR: Overview in Production and in an arm, phone and desktop, both
 // themes; Experiments with the K=3 fixture.
 const SHOTS = [
   { name: "desktop", width: 1440, height: 900, tag: [] as string[] },
@@ -161,7 +163,7 @@ for (const vp of SHOTS) {
     test.describe(`arm switcher ${vp.name} ${theme}`, { tag: [...vp.tag] }, () => {
       if (vp.name === "desktop") test.use({ viewport: { width: vp.width, height: vp.height } });
 
-      test("overview in Arc Investor and in an arm", async ({ page }) => {
+      test("overview in Production and in an arm", async ({ page }) => {
         await open(page, "/", theme);
         await expect(page.getByTestId("overview")).toBeVisible();
         await expectNoOverflow(page);
