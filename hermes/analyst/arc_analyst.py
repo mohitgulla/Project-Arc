@@ -208,6 +208,9 @@ STOP_ADVICE = ("continue", "futility", "baseline-changed", "better-use-of-slot")
 # Daily effects (fraction of t0 equity) the gate sizes at K=3 with `arc experiment plan`.
 PLAN_EFFECTS = (0.0002, 0.0005, 0.001, 0.002)
 PLAN_VIEW = f"plan-k{K_TREATMENTS}"  # the RUN_DIR log name of the sessions-needed grid
+REGIME_VIEW = "regime-panel"  # E25.5 (D108): RUN_DIR log of `arc experiment regime-panel --json`
+REGIME_PANEL_VERSION = 1  # the regime_panel JSON shape this gate renders
+REGIME_SECTION_MAX = 3000  # chars of bucket lines inline; all lines in regime-buckets.log
 MAX_PARALLEL_ARMS_DEFAULT = 10
 MAX_ARMS_KEY = "experiments.runner.max_parallel_arms"
 # No A/A sigma in the store (e.g. after the D80 fresh start): size the grid with the sigma the
@@ -3077,6 +3080,47 @@ def plan_lines(text: str) -> list[str]:
     return out
 
 
+def regime_panel_lines(text: str, run_dir: Path) -> list[str]:
+    """E25.5 (D108 (c)): the pooled P - C / Ti - C by regime across v3 XPs, compact.
+
+    Descriptive context only: never a verdict, stop or promotion input, and a ``thin``
+    bucket (n < 10) is not evidence for a proposal on its own."""
+    try:
+        d = json.loads(text)
+    except ValueError:
+        return [f"- unavailable: {clip(text, 400)}"]
+    if not isinstance(d, dict) or d.get("panel_version") != REGIME_PANEL_VERSION:
+        return [f"- unsupported regime panel shape (want v{REGIME_PANEL_VERSION})"]
+    if not d.get("sessions"):
+        return ["- no v3 sessions yet"]
+    out = [
+        f"- XPs {', '.join(d.get('xps') or [])}; sessions {d['sessions']}; "
+        f"untagged (unknown) {d.get('unknown_sessions', 0)}; thin = n < {d.get('thin_n')}",
+    ]
+
+    def mc(m: dict | None) -> str:
+        if not m or m.get("mean") is None:
+            return "n/a"
+        ci = m.get("ci") or {}
+        return _pct(m["mean"]) + (f" [{_pct(ci.get('lo'))}, {_pct(ci.get('hi'))}]" if ci else "")
+
+    rows = [
+        f"- {b['grouping']}={b['key']}: n {b['n']}{' THIN' if b.get('thin') else ''} "
+        f"P-C {mc(b.get('d_p_c'))} residual {mc(b.get('residual'))} "
+        f"Ti-C(all) {mc((b.get('ti_minus_c') or {}).get('all'))}"
+        for b in d.get("buckets") or []
+    ]
+    out += capped_section(rows, REGIME_SECTION_MAX, run_dir / "regime-buckets.log")
+    for s in d.get("starts") or []:
+        out.append(
+            f"- start {s['experiment_id']} t0 {str(s.get('t0'))[:10]} regime "
+            f"{s.get('start_regime')}: {s.get('sessions')} sessions, cum P-C "
+            f"{_pct(s.get('cum_d_p_c'))}, residual {_pct(s.get('cum_residual'))}, ramped "
+            f"{s.get('ramped_from') or 'not yet'} [{s.get('status_verdict')}]"
+        )
+    return out
+
+
 def merged_pr_lines(p: Paths, since: str | None, run_dir: Path) -> list[str]:
     """Strategy PRs merged since the last run with their XP-advisory / lane lines (D86): an
     advisory-flagged PR is a lead for a proposal. Read-only ``gh``; skipped without it."""
@@ -3230,6 +3274,9 @@ def build_context(
             "attribution-all",
         ),
         PLAN_VIEW: run_plan(p, db, run_dir),
+        REGIME_VIEW: run_arc(
+            p, ["experiment", "regime-panel", "--json", *db], run_dir, REGIME_VIEW
+        ),
         "scorecard-week": run_arc(
             p, ["journal", "scorecard", "--week", week_day, *db], run_dir, "scorecard-week"
         ),
@@ -3326,6 +3373,11 @@ def build_context(
         f"## Sessions needed at K={K_TREATMENTS} (arc experiment plan; read sessions_needed "
         "off this grid)",
         *plan_lines(views[PLAN_VIEW]),
+        "",
+        "## Regime panel (E25.5, D108: P - C and Ti - C pooled across v3 XPs by SPY regime "
+        "and start date; descriptive context, never a verdict, stop or promotion input; "
+        f"full JSON: {run_dir}/{REGIME_VIEW}.log)",
+        *regime_panel_lines(views[REGIME_VIEW], run_dir),
         "",
         f"## XP backlog (yours; {p.backlog}; ranked by value, owner pins first; "
         f"cap {BACKLOG_CAP} open, <= {MAX_NEW_PROPOSALS} new per run)",

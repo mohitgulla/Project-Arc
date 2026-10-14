@@ -1778,6 +1778,21 @@ The treatment arm is the same trading loop on its own paper account
   ≥ P's, sticky). It also tracks the start book to its last close and gives each
   arm − P CI on the `total`, `ex_start_book` and `post_ramp` bases. Verdict files
   of a v3 carry `reference: control`. v1/v2 reports are byte-unchanged.
+- Regime panel (E25.5, D108 (c)): every v3 production-panel session carries
+  `regime` (the SPY `regime` context entry valid at that session's close: trend,
+  vol state, run length / margin z, `transitional` at the E17.2 reference run 3 /
+  margin z 0.10; `null` = no entry) and control's `c_deployed` (held max-loss
+  capital / its virtual equity); the panel carries `regime_at_start`.
+  `arc experiment regime-panel [--json] [--db …]` (opens the store `mode=ro`, never
+  creates or migrates it) pools the latest v3 report of every XP (running and
+  concluded) by `trend`, `vol`, `trend_vol` and `transitional`: n sessions, the XPs,
+  mean + 95% normal CI of `d_p_c`, `residual` and each `XP-<n>:<ti>` − C (plus `all`).
+  Untagged sessions go to `unknown` (counted, never dropped); buckets with n < 10 are
+  marked `thin`. It also lists each XP's start (t0, regime at start, cum P − C /
+  residual) and control's ramp curve (open structures, deployed %) by session index,
+  averaged per regime at start. With no v3 report it prints `no v3 sessions yet`.
+  Descriptive only: no verdict, stop or promotion path imports it. The weekly
+  Analyst gets it as the `## Regime panel` context section (`regime-panel.log`).
 - The arm sizes and gates from its virtual account (`VirtualBroker`): equity
   moves only with its own fills/marks, buying power = min(broker, virtual −
   legacy), and under a cash profile only settled cash (T+1) counts. Control's

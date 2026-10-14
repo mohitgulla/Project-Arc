@@ -138,6 +138,13 @@ def add_experiment_parser(sub: argparse._SubParsersAction[argparse.ArgumentParse
     ad.add_argument("--no-pr", action="store_true", help="Register only; no spec PR")
     ad.add_argument("--no-slack", action="store_true", help="No #arc-investor line")
     ad.add_argument("--no-fetch", action="store_true", help="Do not read origin/main")
+    common(
+        esub.add_parser(
+            "regime-panel",
+            help="E25.5 (D108): P - C and Ti - C pooled across v3 XPs by regime "
+            "(descriptive, read-only)",
+        )
+    )
     vd = common(esub.add_parser("verdict", help="E21.4: a concluded experiment's verdict PR"))
     vd.add_argument("experiment_id")
     vd.add_argument("--dry-run", action="store_true", help="Print the verdict file only")
@@ -707,6 +714,32 @@ def _run_adopt(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
     return 0
 
 
+def run_regime_panel(args: argparse.Namespace) -> int:
+    """``arc experiment regime-panel``: the store is opened ``mode=ro`` (never migrated)."""
+    from arc.experiments.regime_panel import (
+        build_regime_panel,
+        load_v3_reports,
+        panel_json,
+        panel_lines,
+    )
+    from arc.store.db import connect_ro
+
+    try:
+        conn = connect_ro(args.db)
+    except FileNotFoundError as exc:
+        _err(f"arc experiment regime-panel: {exc}")
+        return 2
+    try:
+        panel = build_regime_panel(load_v3_reports(conn))
+    finally:
+        conn.close()
+    if args.json:
+        _out(panel_json(panel))
+    else:
+        panel_lines(panel, out=_out)
+    return 0
+
+
 def _run_verdict(args: argparse.Namespace, store: Any, conn: sqlite3.Connection) -> int:
     from arc.experiments.evaluate import latest_report
     from arc.experiments.publish import GitPublisher
@@ -744,6 +777,8 @@ def run_experiment(args: argparse.Namespace) -> int:
         from arc.experiments.cli_arms import run_arm_tick
 
         return run_arm_tick(args)
+    if cmd == "regime-panel":  # E25.5: read-only view, never opens the store read-write
+        return run_regime_panel(args)
     conn = _open(args.db)
     try:
         from arc.control.effective import effective_settings, experiments_config
