@@ -26,7 +26,7 @@ log = structlog.get_logger(__name__)
 class TimeoutSession(requests.Session):
     """``requests.Session`` whose every request carries ``timeout=(connect_s, read_s)``.
 
-    D69 (E15.3): with a *bucket* (:class:`arc.broker.ratelimit.AccountRateBucket`) every
+    D69 (E15.3): with a *bucket* (:class:`arc.utils.ratelimit.AccountRateBucket`) every
     request first takes a token from the account's shared bucket (order submits ahead
     of reads), and a 429 answer empties it and is logged with the bucket state.
     """
@@ -48,7 +48,7 @@ class TimeoutSession(requests.Session):
             kwargs["timeout"] = self.timeout
         if self.bucket is None:
             return super().request(method, url, *args, **kwargs)
-        from arc.broker.ratelimit import request_kind
+        from arc.utils.ratelimit import request_kind
 
         kind = request_kind(method, url)
         waited = self.bucket.acquire(kind)

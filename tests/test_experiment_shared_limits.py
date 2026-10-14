@@ -26,7 +26,6 @@ from structlog.testing import capture_logs
 
 from arc.broker.base import BrokerOrderRef, MlegLeg, MlegOrder
 from arc.broker.http import TimeoutSession
-from arc.broker.ratelimit import AccountRateBucket, bucket_path, request_kind
 from arc.budget import OrderBudgetConfig, Tier, budget_state, can_submit, count_orders
 from arc.budget.orders import MAX_SHARED_ARMS
 from arc.config import ArcSettings
@@ -45,6 +44,7 @@ from arc.journal.reasons import REASON_LABELS, ReasonCode
 from arc.store.db import connect
 from arc.store.migrate import migrate
 from arc.utils.calendar import ET
+from arc.utils.ratelimit import AccountRateBucket, bucket_path, request_kind
 from tests import test_execution_ladder as L
 from tests import test_experiment_shared_attribution as A
 

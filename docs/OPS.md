@@ -759,6 +759,16 @@ rate/10. Order submits (`POST /v2/orders`) take a token whenever one is left; re
 quarter of the burst for submits. A 429 empties the bucket (every arm backs off) and logs
 `alpaca.rate_limited` with the bucket state.
 
+**Market-data read retry (D114).** Every market-data GET (`AlpacaMarketData`: chains,
+snapshots, contracts list, quotes, bars), in production and in every arm, is sent again
+after a transient failure (HTTP 500/502/503, DNS `no such host`, connection reset, timeout):
+at most `alpaca_read_retries` (2) retries, ~0.5 s then ~1.5 s (±25% jitter), at most
+`alpaca_read_retry_budget_s` (3 s) of sleep in total. Each retry takes a read token from
+this bucket. 4xx (auth, 403 subscription), 429/504 (alpaca-py retries those) and every
+non-GET (order submits, cancels) are never retried. Grep `arc.jsonl` for
+`marketdata.retry` / `marketdata.retry_exhausted`; on exhaustion the job fails exactly as
+before. Off: `ARC_ALPACA_READ_RETRIES=0`.
+
 **Cross-arm conflicts (D69).** Before each submit a shared-mode arm checks the account:
 an order opposite to another arm's working order on the same contract (Alpaca rejects it
 as a wash trade, 403 `40310000`), or one that would cross another arm's position beyond
