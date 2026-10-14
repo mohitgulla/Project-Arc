@@ -5020,6 +5020,8 @@ export interface components {
              * @description First ramped session
              */
             ramped_from?: string | null;
+            /** @description E25.5: SPY regime at the first session's close (the XP's start) */
+            regime_at_start?: components["schemas"]["SessionRegime"] | null;
             /** Sessions */
             sessions?: components["schemas"]["ProductionSession"][];
             start_book: components["schemas"]["StartBook"];
@@ -5029,6 +5031,11 @@ export interface components {
          * @description One session of the production panel ($ amounts; fractions of t0 equity).
          */
         ProductionSession: {
+            /**
+             * C Deployed
+             * @description Control's held max-loss capital / its virtual equity at EOD; None = unknown
+             */
+            c_deployed?: number | null;
             /**
              * C Open
              * @description Control's open structures at EOD
@@ -5074,6 +5081,8 @@ export interface components {
              * @default false
              */
             ramped: boolean;
+            /** @description SPY regime at the session close; None = no entry (bucket unknown) */
+            regime?: components["schemas"]["SessionRegime"] | null;
             /**
              * Residual
              * @description (p_ex_start_pnl - c_pnl) / t0
@@ -5610,6 +5619,46 @@ export interface components {
             sortino_control: number | null;
             /** Sortino Treatment */
             sortino_treatment: number | null;
+        };
+        /**
+         * SessionRegime
+         * @description The SPY regime read visible at a session's close (D77 v2; v1 rows: trend only).
+         */
+        SessionRegime: {
+            /**
+             * As Of
+             * @description The read's as_of session
+             */
+            as_of?: string | null;
+            /**
+             * Entry Id
+             * @description context_entries id the tag was read from
+             */
+            entry_id: string;
+            /** Margin Z */
+            margin_z?: number | null;
+            /**
+             * Model
+             * @description Regime labelling model (v1 / v2)
+             */
+            model?: string | null;
+            /** Run Length */
+            run_length?: number | null;
+            /**
+             * Transitional
+             * @description run_length < 3 or margin_z < 0.10 (E17.2 reference); None without both
+             */
+            transitional?: boolean | null;
+            /**
+             * Trend
+             * @enum {string}
+             */
+            trend: "bull" | "bear" | "sideways";
+            /**
+             * Vol State
+             * @description v2 realised-vol state; None on v1
+             */
+            vol_state?: ("low" | "mid" | "high") | null;
         };
         /** SessionResponse */
         SessionResponse: {

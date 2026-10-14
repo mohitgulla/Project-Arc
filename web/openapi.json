@@ -11354,6 +11354,17 @@
             "description": "First ramped session",
             "title": "Ramped From"
           },
+          "regime_at_start": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionRegime"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "E25.5: SPY regime at the first session's close (the XP's start)"
+          },
           "sessions": {
             "items": {
               "$ref": "#/components/schemas/ProductionSession"
@@ -11375,6 +11386,18 @@
         "additionalProperties": false,
         "description": "One session of the production panel ($ amounts; fractions of t0 equity).",
         "properties": {
+          "c_deployed": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Control's held max-loss capital / its virtual equity at EOD; None = unknown",
+            "title": "C Deployed"
+          },
           "c_open": {
             "anyOf": [
               {
@@ -11433,6 +11456,17 @@
             "default": false,
             "title": "Ramped",
             "type": "boolean"
+          },
+          "regime": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionRegime"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "SPY regime at the session close; None = no entry (bucket unknown)"
           },
           "residual": {
             "description": "(p_ex_start_pnl - c_pnl) / t0",
@@ -13132,6 +13166,107 @@
           "sortino_treatment"
         ],
         "title": "Secondary",
+        "type": "object"
+      },
+      "SessionRegime": {
+        "additionalProperties": false,
+        "description": "The SPY regime read visible at a session's close (D77 v2; v1 rows: trend only).",
+        "properties": {
+          "as_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The read's as_of session",
+            "title": "As Of"
+          },
+          "entry_id": {
+            "description": "context_entries id the tag was read from",
+            "title": "Entry Id",
+            "type": "string"
+          },
+          "margin_z": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Margin Z"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Regime labelling model (v1 / v2)",
+            "title": "Model"
+          },
+          "run_length": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Length"
+          },
+          "transitional": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "run_length < 3 or margin_z < 0.10 (E17.2 reference); None without both",
+            "title": "Transitional"
+          },
+          "trend": {
+            "enum": [
+              "bull",
+              "bear",
+              "sideways"
+            ],
+            "title": "Trend",
+            "type": "string"
+          },
+          "vol_state": {
+            "anyOf": [
+              {
+                "enum": [
+                  "low",
+                  "mid",
+                  "high"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "v2 realised-vol state; None on v1",
+            "title": "Vol State"
+          }
+        },
+        "required": [
+          "trend",
+          "entry_id"
+        ],
+        "title": "SessionRegime",
         "type": "object"
       },
       "SessionResponse": {

@@ -30,12 +30,21 @@ Per session ``t`` (an ET session after t0 with production's and control's EOD ro
 ``compare`` holds, per treatment (and control), the always-valid CI of ``(arm - P)/t0``
 on three bases: ``total``, ``ex_start_book`` (production without its start book) and
 ``post_ramp`` (total over the ramped sessions only). Descriptive: no Holm, no verdict.
+
+**Regime tag (D108 (c), card E25.5).** Every session carries ``regime``: the SPY regime
+v2 read (D77) from the ``regime`` context entry visible at that session's close (trend
+label, vol state, run length / margin z and the ``transitional`` flag at the E17.2
+reference setting run 3 / margin z 0.10), or ``None`` when no entry was visible (the
+regime panel buckets it ``unknown``). Each session also carries control's ramp:
+``c_open`` and ``c_deployed`` (max-loss capital of its held structures as a fraction of
+its virtual equity). :mod:`arc.experiments.regime_panel` pools these across XPs.
 """
 
 from __future__ import annotations
 
 import datetime as _dt  # noqa: TC003 - pydantic resolves field annotations
 import json
+import math
 import statistics
 from typing import TYPE_CHECKING, Literal
 
@@ -52,20 +61,53 @@ if TYPE_CHECKING:
 
 __all__ = [
     "RAMP_WINDOW",
+    "REGIME_SUBJECT",
+    "TRANSITIONAL_MIN_MARGIN_Z",
+    "TRANSITIONAL_MIN_RUN",
     "ProductionCompare",
     "ProductionPanel",
     "ProductionSession",
+    "SessionRegime",
     "StartBook",
     "StartBookDay",
     "build_production_panel",
+    "parse_regime",
     "ramp_flags",
+    "regime_at",
 ]
 
 #: D108: trailing sessions whose median open-structure counts decide ``ramped``.
 RAMP_WINDOW = 5
+#: E25.5: the market regime every session is tagged with (the market guard's subject).
+REGIME_SUBJECT = "SPY"
+#: E25.5: ``transitional`` at the E17.2 named reference setting (run 3 / margin z 0.10,
+#: ``arc.backtest.regime_compare.reference_settings``), never the shipped-off guard
+#: defaults (run 1 / z 0, which flag nothing).
+TRANSITIONAL_MIN_RUN = 3
+TRANSITIONAL_MIN_MARGIN_Z = 0.10
 _FORBID = ConfigDict(extra="forbid", frozen=True)
 
 CompareBasis = Literal["total", "ex_start_book", "post_ramp"]
+Trend = Literal["bull", "bear", "sideways"]
+VolState = Literal["low", "mid", "high"]
+
+
+class SessionRegime(BaseModel):
+    """The SPY regime read visible at a session's close (D77 v2; v1 rows: trend only)."""
+
+    model_config = _FORBID
+
+    trend: Trend
+    vol_state: VolState | None = Field(None, description="v2 realised-vol state; None on v1")
+    transitional: bool | None = Field(
+        None,
+        description="run_length < 3 or margin_z < 0.10 (E17.2 reference); None without both",
+    )
+    run_length: int | None = None
+    margin_z: float | None = None
+    model: str | None = Field(None, description="Regime labelling model (v1 / v2)")
+    as_of: str | None = Field(None, description="The read's as_of session")
+    entry_id: str = Field(..., description="context_entries id the tag was read from")
 
 
 class ProductionSession(BaseModel):
@@ -87,6 +129,14 @@ class ProductionSession(BaseModel):
     p_open: int | None = Field(None, description="Production's open structures at EOD")
     c_open: int | None = Field(None, description="Control's open structures at EOD")
     ramped: bool = False
+    # -- E25.5 (D108 (c)): descriptive regime study inputs ------------------------
+    c_deployed: float | None = Field(
+        None,
+        description="Control's held max-loss capital / its virtual equity at EOD; None = unknown",
+    )
+    regime: SessionRegime | None = Field(
+        None, description="SPY regime at the session close; None = no entry (bucket unknown)"
+    )
 
 
 class StartBookDay(BaseModel):
@@ -142,6 +192,9 @@ class ProductionPanel(BaseModel):
     cum_residual: float = 0.0
     start_book: StartBook
     compare: list[ProductionCompare] = Field(default_factory=list)
+    regime_at_start: SessionRegime | None = Field(
+        None, description="E25.5: SPY regime at the first session's close (the XP's start)"
+    )
 
 
 def ramp_flags(
@@ -168,12 +221,12 @@ def ramp_flags(
     return out
 
 
-def _open_counts(conn: sqlite3.Connection, aid: str | None) -> dict[_dt.date, int]:
-    """ET day -> held structures in the arm's latest EOD positions snapshot that day."""
+def _held_ids(conn: sqlite3.Connection, aid: str | None) -> dict[_dt.date, list[str]]:
+    """ET day -> held structure ids in the arm's latest EOD positions snapshot that day."""
     from arc.experiments.evaluate import _arm_clause  # noqa: PLC0415 - cycle
 
     where, args = _arm_clause(aid)
-    out: dict[_dt.date, int] = {}
+    out: dict[_dt.date, list[str]] = {}
     for r in conn.execute(
         f"""SELECT positions_json FROM positions_snapshots
             WHERE {where} AND json_extract(positions_json, '$.day') IS NOT NULL
@@ -181,9 +234,128 @@ def _open_counts(conn: sqlite3.Connection, aid: str | None) -> dict[_dt.date, in
         args,
     ):
         snap = json.loads(r[0])
-        out[_dt.date.fromisoformat(snap["day"])] = sum(
-            1 for s in snap.get("structures", []) if s.get("held")
-        )
+        out[_dt.date.fromisoformat(snap["day"])] = [
+            str(s.get("structure_id")) for s in snap.get("structures", []) if s.get("held")
+        ]
+    return out
+
+
+def _open_counts(conn: sqlite3.Connection, aid: str | None) -> dict[_dt.date, int]:
+    """ET day -> held structures in the arm's latest EOD positions snapshot that day."""
+    return {d: len(ids) for d, ids in _held_ids(conn, aid).items()}
+
+
+def _deployed(
+    conn: sqlite3.Connection,
+    aid: str,
+    held: dict[_dt.date, list[str]],
+    equity: dict[_dt.date, float],
+) -> dict[_dt.date, float | None]:
+    """E25.5: ET day -> the arm's held max-loss capital / its equity that day.
+
+    Per held structure: ``max_loss`` per contract (the open proposal's structure) x
+    contracts still open at that day's end (filled opens - filled closes finished by
+    then, from the arm's ``executions``). ``None`` when a held structure's max loss or
+    the day's equity is unknown (never a silent 0)."""
+    from arc.context.ttl import from_db
+    from arc.experiments.evaluate import _arm_clause  # noqa: PLC0415 - cycle
+
+    where, args = _arm_clause(aid, "e.arm_id")
+    unit: dict[str, float | None] = {}
+    fills: dict[str, list[tuple[_dt.date, int]]] = {}
+    for r in conn.execute(
+        f"""SELECT e.structure_id, e.kind, e.filled_qty, e.finished_at,
+                   json_extract(p.structure_json, '$.max_loss')
+            FROM executions e LEFT JOIN proposals p
+              ON p.proposal_hash = e.proposal_hash AND p.arm_id IS e.arm_id
+            WHERE {where} AND e.structure_id IS NOT NULL AND e.filled_qty > 0
+              AND e.finished_at IS NOT NULL AND e.kind IN ('open', 'close')""",  # noqa: S608
+        args,
+    ):
+        sid, kind, qty, at, max_loss = str(r[0]), r[1], int(r[2]), r[3], r[4]
+        sign = 1 if kind == "open" else -1
+        fills.setdefault(sid, []).append((from_db(at).date(), sign * qty))
+        if kind == "open":
+            try:
+                ml = float(max_loss) if max_loss is not None else None
+            except (TypeError, ValueError):
+                ml = None
+            unit[sid] = ml if ml is not None and math.isfinite(ml) else unit.get(sid)
+    out: dict[_dt.date, float | None] = {}
+    for day, ids in held.items():
+        eq = equity.get(day)
+        total: float | None = 0.0
+        for sid in ids:
+            ml = unit.get(sid)
+            n = sum(q for d, q in fills.get(sid, []) if d <= day)
+            if ml is None or n <= 0:
+                total = None
+                break
+            total += ml * n  # type: ignore[operator]
+        out[day] = None if total is None or not eq else total / eq
+    return out
+
+
+def parse_regime(entry_id: str, payload: dict[str, object]) -> SessionRegime | None:
+    """The :class:`SessionRegime` of a stored ``regime`` payload (None if unreadable)."""
+    reg = payload.get("regime")
+    if not isinstance(reg, dict) or reg.get("current") not in ("bull", "bear", "sideways"):
+        return None
+
+    def num(v: object) -> float | None:
+        if isinstance(v, bool) or not isinstance(v, int | float) or not math.isfinite(v):
+            return None
+        return float(v)
+
+    run = num(reg.get("run_length"))
+    margin = num(reg.get("margin_z"))
+    vol = reg.get("vol_state")
+    return SessionRegime(
+        trend=reg["current"],
+        vol_state=vol if vol in ("low", "mid", "high") else None,
+        transitional=(
+            None
+            if run is None or margin is None
+            else (run < TRANSITIONAL_MIN_RUN or margin < TRANSITIONAL_MIN_MARGIN_Z)
+        ),
+        run_length=int(run) if run is not None else None,
+        margin_z=margin,
+        model=str(reg["model"]) if reg.get("model") is not None else None,
+        as_of=str(reg.get("as_of") or payload.get("as_of") or "") or None,
+        entry_id=entry_id,
+    )
+
+
+def regime_at(
+    conn: sqlite3.Connection, days: Sequence[_dt.date], *, subject: str = REGIME_SUBJECT
+) -> dict[_dt.date, SessionRegime | None]:
+    """ET session -> the *subject* ``regime`` entry valid at that session's close.
+
+    Valid = ``valid_from <= close`` and not expired at the close, any status (a row
+    superseded or expired since was still the read in force then); the latest
+    ``valid_from`` wins. Read-only (no context snapshot is recorded)."""
+    from arc.context.ttl import to_db
+    from arc.utils.calendar import session_close
+
+    out: dict[_dt.date, SessionRegime | None] = {}
+    for day in days:
+        at = to_db(session_close(day))
+        row = conn.execute(
+            """SELECT id, payload FROM context_entries
+               WHERE kind = 'regime' AND subject = ? AND valid_from <= ?
+                 AND (expires_at IS NULL OR expires_at >= ?)
+               ORDER BY valid_from DESC, created_at DESC, rowid DESC LIMIT 1""",
+            (subject, at, at),
+        ).fetchone()
+        reg = None
+        if row is not None:
+            try:
+                payload = json.loads(row[1])
+            except ValueError:
+                payload = None
+            if isinstance(payload, dict):
+                reg = parse_regime(str(row[0]), payload)
+        out[day] = reg
     return out
 
 
@@ -268,7 +440,11 @@ def build_production_panel(
         for name, aid in arm_ids.items()
     }
     p_open = _open_counts(conn, None)
-    c_open = _open_counts(conn, control_arm)
+    c_eq = ev._eod_equity(conn, control_arm, field)  # noqa: SLF001
+    c_held = _held_ids(conn, control_arm)
+    c_open = {d: len(ids) for d, ids in c_held.items()}
+    c_deployed = _deployed(conn, control_arm, c_held, c_eq)
+    regimes = regime_at(conn, days)  # E25.5: descriptive tag, read by no verdict
 
     def book_value(day: _dt.date) -> float | None:
         if not book_set:
@@ -305,6 +481,8 @@ def build_production_panel(
                 "residual": residual,
                 "p_open": p_open.get(day),
                 "c_open": c_open.get(day),
+                "c_deployed": c_deployed.get(day),
+                "regime": regimes.get(day),
             }
         )
     flags = ramp_flags([r["p_open"] for r in rows], [r["c_open"] for r in rows])  # type: ignore[misc]
@@ -363,4 +541,5 @@ def build_production_panel(
         cum_residual=sum(s.residual for s in sessions),
         start_book=StartBook(ids=book, close_dates=closes, days=sb_days, cum_pnl=cum),
         compare=[compare(a, pnl, b) for a, pnl in arms.items() for b in bases],
+        regime_at_start=regimes.get(first),
     )

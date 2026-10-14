@@ -260,6 +260,9 @@ def test_context_contains_scorecard_and_ledger(
         "a K=3 experiment needs 4 (control + 3 treatments, D108)"
     ) in out
     assert "## Sessions needed at K=3" in out
+    # E25.5 (D108): the regime panel, from `arc experiment regime-panel --json`
+    assert "## Regime panel (E25.5, D108" in out and "- no v3 sessions yet" in out
+    assert json.loads((run_dir / "regime-panel.log").read_text())["sessions"] == 0
     # no A/A sigma in the fixture store: the grid uses the documented XP-1 A/A sigma
     assert "- sigma +0.036%/day (docs/RESEARCH/experiments/XP-1-aa.md (no A/A sigma" in out
     assert "- effect +0.020%/day -> 60 sessions\n" in out  # K=3 (D108): 63 at K=4
@@ -911,6 +914,45 @@ def test_v3_report_lines_show_verdicts_vs_control_and_production_as_context() ->
     v2 = {"pairwise": payload["pairwise"][:1]}
     assert aa._production_lines(v2) == []
     assert "C = control (production, v2)" in aa._verdict_pair_lines(v2)[0]
+
+
+def test_regime_panel_lines_render_buckets_and_starts(tmp_path: Path) -> None:
+    """E25.5 (D108): the pooled regime panel as compact, descriptive context lines."""
+    ci = {"estimate": 0.001, "lo": -0.001, "hi": 0.003, "level": 0.95}
+    mc = {"n": 4, "mean": 0.001, "ci": ci}
+    panel = {
+        "panel_version": 1, "descriptive": True, "thin_n": 10, "xps": ["XP-20", "XP-21"],
+        "sessions": 16, "unknown_sessions": 1,
+        "buckets": [
+            {"grouping": "trend", "key": "bull", "n": 12, "thin": False, "xps": ["XP-20"],
+             "d_p_c": mc, "residual": mc, "ti_minus_c": {"all": mc}},
+            {"grouping": "trend", "key": "unknown", "n": 1, "thin": True, "xps": ["XP-21"],
+             "d_p_c": {"n": 1, "mean": -0.002, "ci": None}, "residual": mc,
+             "ti_minus_c": {}},
+        ],
+        "starts": [{"experiment_id": "XP-20", "t0": "2026-10-05T09:00:00-04:00",
+                    "start_regime": "bull/low", "sessions": 12, "cum_d_p_c": 0.0072,
+                    "cum_residual": 0.0072, "ramped_from": None, "status_verdict": "win"}],
+    }  # fmt: skip
+    lines = aa.regime_panel_lines(json.dumps(panel), tmp_path)
+    assert lines[0] == "- XPs XP-20, XP-21; sessions 16; untagged (unknown) 1; thin = n < 10"
+    assert lines[1] == (
+        "- trend=bull: n 12 P-C +0.100% [-0.100%, +0.300%] residual +0.100% "
+        "[-0.100%, +0.300%] Ti-C(all) +0.100% [-0.100%, +0.300%]"
+    )
+    assert lines[2].startswith("- trend=unknown: n 1 THIN P-C -0.200% residual")
+    assert lines[2].endswith("Ti-C(all) n/a")
+    assert lines[3] == (
+        "- start XP-20 t0 2026-10-05 regime bull/low: 12 sessions, cum P-C +0.720%, "
+        "residual +0.720%, ramped not yet [win]"
+    )
+    assert (tmp_path / "regime-buckets.log").read_text().count("trend=") == 2
+    empty = {**panel, "sessions": 0, "buckets": [], "starts": []}
+    assert aa.regime_panel_lines(json.dumps(empty), tmp_path) == ["- no v3 sessions yet"]
+    assert aa.regime_panel_lines("(exit 2; boom)", tmp_path)[0].startswith("- unavailable:")
+    assert aa.regime_panel_lines(json.dumps({"panel_version": 9}), tmp_path) == [
+        "- unsupported regime panel shape (want v1)"
+    ]
 
 
 @pytest.fixture(scope="module")
