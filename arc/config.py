@@ -525,22 +525,15 @@ class ArcSettings(BaseSettings):
             "use the rest up to daily_max."
         ),
     )
-    # -- D69 shared experiment account (E15.3) ------------------------------------
-    order_budget_per_arm: Annotated[int, Field(ge=0, le=200)] = Field(
-        default=0,
-        description=(
-            "D69: one shared-account arm's daily order budget slice. 0 = "
-            "floor(order_budget_daily_max / experiments.runner.max_parallel_arms). The "
-            "restrictive tier and close reserve scale by the same fraction."
-        ),
-    )
+    # -- D69 shared experiment account (E15.3; D108: no per-arm slice) -------------
     order_budget_account_max: int | None = Field(
         default=None,
         ge=1,
-        le=200,
+        le=3200,
         description=(
-            "D69 account guard (set only on a shared arm's effective settings): every "
-            "arm on the account stops once the account's option orders reach this."
+            "D69/D108 account guard (set only on a shared arm's effective settings, = "
+            "arms on the account x order_budget_daily_max, at most 16 x 200): every arm "
+            "on the account stops once the account's option orders reach this."
         ),
     )
     alpaca_rate_per_min: Annotated[int, Field(ge=1, le=200)] = Field(

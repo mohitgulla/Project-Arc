@@ -7,8 +7,8 @@ calls the paper account's order list unless ``--no-broker`` is given.
 ``--arm <name>`` (D69, E15.3): the budget of one experiment arm. The arm store is
 looked up in the control store (``--db``) by ``<experiment id>:<arm>`` or a bare arm
 name that only one experiment uses. On a shared account it prints the arm line (its
-slice of the budget, counted from its tagged orders) and the account line (every
-option order on the account against the account guard).
+full D108 budget, counted from its tagged orders) and the account line (every
+option order on the account against the guard, arms on the account x daily max).
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ def add_budget_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) 
         "--arm",
         default=None,
         help="Experiment arm (<experiment id>:<arm> or a unique arm name): its budget "
-        "slice and the shared account's guard (D69)",
+        "and the shared account's guard (D69, D108)",
     )
     s.add_argument("--json", action="store_true", help="Emit the OrderBudget as JSON")
 
@@ -116,7 +116,7 @@ def run_budget(args: argparse.Namespace) -> int:
     if arm_name:
         _out(
             f"  arm {arm_name}: used {budget.used} of {budget.limit} "
-            f"(slice; restrictive at {budget.restrict_at}, opens stop at {budget.open_limit})"
+            f"(own budget; restrictive at {budget.restrict_at}, opens stop at {budget.open_limit})"
         )
         if cfg.account_max is None:
             _out("  account: dedicated (the arm's own account; no shared guard)")

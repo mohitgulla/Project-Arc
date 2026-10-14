@@ -693,7 +693,8 @@ def _fresh_band(
 def _budget_blocks(c: _Ctx, kind: str) -> str | None:
     """D32: re-count the day's orders; the reason the next attempt may not be sent, or None.
 
-    D69: on a shared-account arm the count is the arm's slice plus the account guard.
+    D69/D108: on a shared-account arm the count is the arm's own orders plus the account
+    guard (arms on the account x daily max).
     """
     cfg = OrderBudgetConfig.from_settings(c.config)
     day = c.clock().astimezone(ET).date()
