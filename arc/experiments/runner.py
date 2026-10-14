@@ -65,6 +65,8 @@ from arc.experiments.arms import (
     read_identity,
     write_identity,
 )
+from arc.experiments.config import CONTROL_RUNNER
+from arc.experiments.models import CONTROL_ARM, spec_arm_name
 from arc.experiments.reference import sync_reference_tables
 
 if TYPE_CHECKING:
@@ -390,9 +392,7 @@ def arm_plan(routines: RoutinesConfig, overlay: Mapping[str, Any], runner: Runne
     from arc.experiments.models import ArmPlan
 
     personas = sorted(_with_companions(arm_owned_personas(overlay) | set(runner.arm_personas)))
-    loop = routines.loop.job
-    found = routines.job(loop)
-    chain = [loop, *(found[1].chain if found else [])]
+    chain = _loop_chain(routines)
     return ArmPlan(
         fork_step=fork_step(chain, overlay, personas),
         arm_personas=personas,  # type: ignore[arg-type] - validated Literal
@@ -420,15 +420,44 @@ def plans_at_start(
     routines_path: str | None = None,
 ) -> dict[str, ArmPlan]:
     """Runner arm -> its plan for experiment *st*, from control's effective routines plus
-    the spec arm's overlay (what the arm store will resolve once it exists)."""
+    the spec arm's overlay (what the arm store will resolve once it exists).
+
+    D108: a spec v3's control arm forks at the **earliest** fork among the experiment's
+    treatments (:func:`control_fork`), so control and every treatment run the same
+    harness path from the same step (or control from an earlier one).
+    """
     from arc.control.effective import routines_for_overlay
 
     out: dict[str, ArmPlan] = {}
+    chains: dict[str, list[str]] = {}
     for name, arm in runner.arms_for(st.spec).items():
         overlay = st.spec.arms.arm(arm.spec_arm).overlay
         routines = routines_for_overlay(control, overlay, routines_path)
         out[name] = arm_plan(routines, overlay, runner)
+        chains[name] = _loop_chain(routines)
+    if st.spec.control_runs and CONTROL_RUNNER in out:
+        treatments = [n for n in out if n != CONTROL_RUNNER]
+        fork = control_fork(
+            chains[CONTROL_RUNNER],
+            out[CONTROL_RUNNER].fork_step,
+            [out[n].fork_step for n in treatments],
+        )
+        out[CONTROL_RUNNER] = out[CONTROL_RUNNER].model_copy(update={"fork_step": fork})
     return out
+
+
+def _loop_chain(routines: RoutinesConfig) -> list[str]:
+    loop = routines.loop.job
+    found = routines.job(loop)
+    return [loop, *(found[1].chain if found else [])]
+
+
+def control_fork(chain: list[str], own: str, treatment_forks: Iterable[str]) -> str:
+    """D108: the control arm's fork = the earliest (by *chain* order) of its own fork
+    and every treatment's, so no treatment forks before control. A treatment fork
+    missing from *chain* is ignored (the pair step needs a step of this chain)."""
+    forks = [own, *(f for f in treatment_forks if f in chain)]
+    return min(forks, key=lambda s: chain.index(s) if s in chain else -1)
 
 
 def _overlay_targets(overlay: Mapping[str, Any]) -> set[str]:
@@ -644,7 +673,11 @@ def start_arms(
         )
         raise ArmStartError(msg)
     taken = {p.resolve() for p in arm_stores(control).values()}
-    legacy = legacy_reservations(control)
+    # D108: a spec v3 starts every arm (control + treatments) flat: production's open
+    # book is recorded as the start book, never reserved. v1/v2 keep the legacy hold.
+    flat = st.spec.control_runs
+    legacy: dict[str, Decimal] = {} if flat else legacy_reservations(control)
+    production_book = _open_book(control) if flat else sorted(legacy)
     paths: dict[str, Path] = {}
     for name, arm in arms.items():
         p = Path(arm.db_path(experiment_id, name))
@@ -712,7 +745,7 @@ def start_arms(
         detail = RunningDetail(
             t0=now,
             t0_equity=float(t0_equity),
-            legacy_book=sorted(legacy),
+            production_book=sorted(production_book),
             control_sha=sha if len(sha) >= 7 else sha.ljust(7, "0"),
             config_hashes=config_hashes(),
             arm_plans=plans,
@@ -735,6 +768,7 @@ def start_arms(
         plans={n: pl.model_dump(mode="json") for n, pl in plans.items()},
         t0_equity=str(t0_equity),
         legacy=len(legacy),
+        production_book=len(production_book),
     )
     return out
 
@@ -1282,6 +1316,9 @@ def pair_chain(
     plan = plan_of(ident, routines, runner)
     personas = list(plan.arm_personas)
     fork = fork_step(chain, ident.overlay, personas)
+    if ident.arm == CONTROL_RUNNER and spec_arm_name(ident.spec_arm) == CONTROL_ARM:
+        # D108: the control arm forks at the earliest treatment fork stored at t0
+        fork = control_fork(chain, fork, [plan.fork_step])
     planned = fork
     book = _open_book(arm)
     fork = book_fork(chain, fork, book)

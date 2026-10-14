@@ -216,7 +216,7 @@ def _start(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
         "status": st.status.value,
         "t0": None if st.running is None else st.running.t0.isoformat(),
         "t0_equity": str(t0_equity),
-        "legacy_book": [] if st.running is None else st.running.legacy_book,
+        "production_book": [] if st.running is None else st.running.production_book,
         "arms": {n: str(p) for n, p in arm_stores(conn, st.experiment_id).items()},
         "plans": {}
         if st.running is None
@@ -227,7 +227,7 @@ def _start(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
     else:
         _out(
             f"{st.experiment_id} running from {payload['t0']} at t0 equity ${t0_equity} "
-            f"({len(payload['legacy_book'])} legacy structure(s))"
+            f"(production book: {len(payload['production_book'])} structure(s))"
         )
         for n, p in payload["arms"].items():
             plan = payload["plans"].get(n) or {}
@@ -339,6 +339,15 @@ class _FixtureBroker:
         return []
 
     def fills(self, since: _dt.datetime) -> list[Any]:
+        _ = since
+        return []
+
+    def raw_activities(self, since: _dt.date, **_: Any) -> list[dict[str, Any]]:
+        """D69 shared-account attribution reads (the fixture account never trades)."""
+        _ = since
+        return []
+
+    def raw_orders(self, since: _dt.datetime) -> list[dict[str, Any]]:
         _ = since
         return []
 

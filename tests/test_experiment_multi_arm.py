@@ -297,13 +297,35 @@ def test_template_expands_one_arm_per_treatment() -> None:
         ).arms_for(_spec("XP-20", k=3))
 
 
-def test_shipped_experiments_yaml_is_dedicated_with_new_defaults() -> None:
+def test_shipped_experiments_yaml_is_shared_with_new_defaults() -> None:
     from arc.experiments.config import load_experiments_config
 
     r = load_experiments_config().runner
-    assert r.account_mode == "dedicated"
+    assert r.account_mode == "shared"  # D108 (E25.1)
     assert r.max_parallel_arms == 10 and r.shared_capacity_frac == 0.9
-    assert r.enabled is True and list(r.arms) == ["treatment"]
+    assert r.enabled is True and list(r.arms) == ["t", "control"]
+    t = r.arms["t"]
+    assert t.is_template and t.keys_env == "ALPACA_EXP"
+    assert t.db == "data/arc-exp-{experiment_id}-{arm}.db"
+    # a v2 K=4 spec expands to t1..t4 (its control is production: no control arm)
+    arms = r.arms_for(_spec("XP-20", k=4))
+    assert list(arms) == ["t1", "t2", "t3", "t4"]
+    assert [a.db_path("XP-20") for a in arms.values()] == [
+        f"data/arc-exp-XP-20-t{i}.db" for i in range(1, 5)
+    ]
+    assert {a.keys_env for a in arms.values()} == {"ALPACA_EXP"}
+
+
+def test_shipped_template_still_runs_a_v1_one_treatment_spec() -> None:
+    from arc.experiments.config import load_experiments_config
+    from arc.experiments.overlay import load_spec
+
+    spec = load_spec(REPO / "config/experiments/live/xp1_aa_baseline.yaml")
+    assert spec.spec_version == 1 and spec.arms.names == ["t1"]
+    arms = load_experiments_config().runner.arms_for(spec)
+    assert list(arms) == ["t1"]
+    assert arms["t1"].spec_arm == "t1"
+    assert arms["t1"].db_path("XP-1") == "data/arc-exp-XP-1-t1.db"
 
 
 def test_new_runner_knobs_are_registered_with_ceilings() -> None:

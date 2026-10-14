@@ -23,6 +23,7 @@ __all__ = [
     "EACH_TREATMENT",
     "FORBIDDEN_ARM_KEYS",
     "MAX_PARALLEL_ARMS_CEILING",
+    "CONTROL_RUNNER",
     "AccountMode",
     "ArmRunner",
     "AutostartConfig",
@@ -78,6 +79,8 @@ FORBIDDEN_ARM_KEYS: frozenset[str] = frozenset({"ALPACA", "ALPACA_TEST"})
 #: D69: an arm entry with this ``spec_arm`` is a template, expanded at t0 into one
 #: runner arm per spec treatment (named t1..tK); shared account mode only.
 EACH_TREATMENT = "treatments"
+#: D108: the runner arm that runs a spec v3's ``control`` (arm id ``XP-<n>:control``).
+CONTROL_RUNNER = "control"
 #: D69 / D26: code ceiling of ``max_parallel_arms`` (the registry's hard ceiling too).
 MAX_PARALLEL_ARMS_CEILING = 16
 AccountMode = Literal["dedicated", "shared"]
@@ -87,8 +90,12 @@ class ArmRunner(BaseModel):
     """One experiment arm the runner executes (E10.2): keys + store + which spec overlay.
 
     N-arm by configuration: a treatment arm, a paper shadow-control for a future
-    live control (``spec_arm: control`` on its own paper keys), or both. The
-    production control is never listed here: it is the normal tick on ``data/arc.db``.
+    live control (``spec_arm: control`` on its own paper keys), or both. Production
+    is never listed here: it is the normal tick on ``data/arc.db``.
+
+    D108: the runner arm named ``control`` (``spec_arm: control``) is the spec v3
+    control arm ``XP-<n>:control``: production's config, flat, on the experiment
+    account. Specs up to v2 never run it (their control is production).
 
     D69 (shared account mode): ``spec_arm: treatments`` makes the entry a template,
     expanded per spec treatment; its ``db`` must carry ``{arm}`` (e.g.
@@ -212,8 +219,14 @@ class RunnerConfig(BaseModel):
 
         dbs: set[str] = set()
         for name, arm in self.arms.items():
-            if not re.match(_ARM_RE, name) or name == "control":
-                msg = f"runner arm name {name!r}: lowercase identifier, never 'control'"
+            if not re.match(_ARM_RE, name):
+                msg = f"runner arm name {name!r}: lowercase identifier"
+                raise ValueError(msg)
+            if name == CONTROL_RUNNER and arm.spec_arm != "control":
+                msg = (
+                    f"runner arm {CONTROL_RUNNER!r} is the D108 control arm: its spec_arm "
+                    f"must be 'control' (not {arm.spec_arm!r})"
+                )
                 raise ValueError(msg)
             if arm.db in dbs:
                 msg = f"runner arms share a store ({arm.db}); each arm needs its own"
@@ -241,12 +254,33 @@ class RunnerConfig(BaseModel):
         Every returned arm names a concrete spec arm. Raises ``ValueError`` when an arm
         names a spec arm the spec lacks, a template name collides with a listed arm, or
         a spec treatment has no runner arm (it would silently never run).
+
+        D108: a spec v3 runs the :data:`CONTROL_RUNNER` arm first (``XP-<n>:control``,
+        required), then its treatments; a v1/v2 spec never runs it (its control is
+        production), so it yields only the treatments (and any other listed arm).
         """
-        from arc.experiments.models import spec_arm_name
+        from arc.experiments.models import CONTROL_ARM, spec_arm_name
 
         out: dict[str, ArmRunner] = {}
+        if spec.control_runs:
+            ctl = self.arms.get(CONTROL_RUNNER)
+            if ctl is None:
+                msg = (
+                    f"{spec.id} is a spec v{spec.spec_version}: its control runs as arm "
+                    f"{CONTROL_RUNNER!r} (D108), and experiments.runner.arms lists none"
+                )
+                raise ValueError(msg)
+            out[CONTROL_RUNNER] = ctl
         for name, arm in self.arms.items():
+            if name == CONTROL_RUNNER:
+                continue  # D108: added above for v3; production is control up to v2
             if not arm.is_template:
+                if spec.control_runs and spec_arm_name(arm.spec_arm) == CONTROL_ARM:
+                    msg = (
+                        f"runner arm {name!r} runs spec arm control, which a spec "
+                        f"v{spec.spec_version} runs as arm {CONTROL_RUNNER!r} (D108)"
+                    )
+                    raise ValueError(msg)
                 try:
                     spec.arms.arm(arm.spec_arm)
                 except KeyError as exc:
@@ -261,11 +295,20 @@ class RunnerConfig(BaseModel):
                     msg = f"template arm {name!r} expands to {t!r}, which is already an arm"
                     raise ValueError(msg)
                 out[t] = arm.model_copy(update={"spec_arm": t, "db": arm.db.replace("{arm}", t)})
+        if spec.control_runs:
+            # D108: control and every treatment trade one account side by side
+            keys = sorted({a.keys_env for a in out.values()})
+            if len(keys) > 1:
+                msg = (
+                    f"{spec.id} (spec v{spec.spec_version}): control and the treatments "
+                    f"must share one account (D108), not {', '.join(keys)}"
+                )
+                raise ValueError(msg)
         covered = {spec_arm_name(a.spec_arm) for a in out.values()}
         missing = [t for t in spec.arms.names if t not in covered]
-        # a one-treatment spec may run without its treatment (e.g. a shadow control
-        # only, pre-D69 behaviour); a multi-arm spec must run every treatment
-        if missing and len(spec.arms.names) > 1:
+        # a one-treatment v1/v2 spec may run without its treatment (e.g. a shadow control
+        # only, pre-D69 behaviour); a multi-arm or v3 spec must run every treatment
+        if missing and (len(spec.arms.names) > 1 or spec.control_runs):
             msg = (
                 f"{spec.id}: treatment(s) {', '.join(missing)} have no runner arm; list one "
                 f"per treatment or use account_mode: shared with a {EACH_TREATMENT!r} template"

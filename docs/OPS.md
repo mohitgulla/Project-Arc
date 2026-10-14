@@ -1745,6 +1745,18 @@ The treatment arm is the same trading loop on its own paper account
   control's open structures are the legacy book, their max loss is reserved in
   the arm until each closes on control. The arm account must have no positions
   or open orders: close them in the Alpaca dashboard (no auto-flatten).
+- Spec v3 (E25.1, D108): `control` is its own arm `XP-<n>:control` (runner arm
+  `control` in `config/experiments.yaml`, store `data/arc-exp-<id>-control.db`) that
+  runs production's config (empty overlay) on the shared `ALPACA_EXP_*` account next
+  to t1..tK. Every v3 arm (control included) starts **flat** at production's t0
+  equity: no `legacy_hold` rows. Production's open structures at t0 are recorded
+  as the start book (`running.production_book`, `start --json` `production_book`),
+  for reporting only. Control's fork step is the earliest fork among the
+  treatments (`ArmPlan.fork_step`). The shipped runner is `account_mode: shared`
+  with a `t` treatments template plus the `control` arm; v1/v2 specs never run the
+  control arm (their control is production) and keep the legacy-book reservation.
+  A K=3 v3 experiment is 4 arms: `max_parallel_arms` and the shared capacity check
+  (4 × t0 equity ≤ account equity × `shared_capacity_frac`) count control.
 - The arm sizes and gates from its virtual account (`VirtualBroker`): equity
   moves only with its own fills/marks, buying power = min(broker, virtual −
   legacy), and under a cash profile only settled cash (T+1) counts. Control's
@@ -1897,6 +1909,11 @@ dev drafts) into `P-<n>` proposals with 4 treatments.
   --head HEAD --body-file <body.md>` (exit 0 pass, 1 fail, 2 config error).
 
 ### 5.21 A/A calibration run XP-1: runbook for E10.8 (E10.4, D44)
+
+> **D108 (E25.1):** the shipped runner is `account_mode: shared` with a `t`
+> treatments template and a `control` arm. A new A/A is a spec v3 (control + t1–t3,
+> empty overlays, every arm flat on `ALPACA_EXP_*`; E15.9). XP-1 below is the
+> historical v1 runbook; its dry run pins a dedicated-mode copy of the config.
 
 XP-1 (`config/experiments/live/xp1_aa_baseline.yaml`) runs the production config on
 both paper accounts (empty overlay on both arms) for `experiments.aa_sessions` (10)

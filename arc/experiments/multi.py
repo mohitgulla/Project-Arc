@@ -220,7 +220,7 @@ def build_multi_report(
     known = None if is_aa else aa_sigma
     q = cfg.stats.sigma_upper_q
     t0_eq = run.t0_equity
-    legacy = set(run.legacy_book)
+    legacy = set(run.production_book)
     legacy_hashes = ev._legacy_hashes(conn, legacy)  # noqa: SLF001
 
     # -- pairs -----------------------------------------------------------------
