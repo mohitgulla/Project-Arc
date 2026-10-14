@@ -7,9 +7,8 @@ Pure rendering. One of three states, then the same facts every time:
     :hourglass_flowing_sand: … • PENDING: SPY
     :heavy_multiplication_x: … • HOLD
 
-D100: a sleeved profile's root that shows an open (BUY / PENDING / WIP) ends with
-``• Sleeves: Short 3/5 · Swing 0/5``: open positions per sleeve (by entry
-DTE, every open position, not just this loop's) against each sleeve's slot cap.
+D109: no ``Sleeves:`` fact (D100's ``• Sleeves: Short 3/5 · Swing 0/5`` is no longer
+rendered; ``sleeves`` / ``allocated`` stay on the model so stored roots still load).
 
 D65: the line is followed by a bold-italic *headline* (``_*…*_``): ONE sentence
 of at most two lines on a laptop (``HEADLINE_MAX`` chars), ``<main point>; <why>.``
@@ -138,14 +137,13 @@ def loop_status_line(root: LoopRoot) -> str:
         elif root.no_change:
             hold = "HOLD (skip)"
         action.append(hold)
-    if root.sleeves and root.allocated:  # D100: totals over all open positions
-        action.append("Sleeves: " + " · ".join(a.text() for a in root.allocated))
     line = f"{_EMOJI[root.outcome]} " + " • ".join([*facts, *action])
     head = [h for h in (root.headline or _flag_headline(root)) if h.strip()][:1]
     return "\n".join([line, *(bold_italic(h) for h in head)])
 
 
 HEADLINE_MAX = 150  # the whole headline: two lines of a Slack message on a laptop
+RECAP_MAX = 2 * HEADLINE_MAX  # D109: Day Recap and experiment readout headlines
 
 
 def _flag_headline(root: LoopRoot) -> list[str]:
@@ -159,18 +157,22 @@ def _flag_headline(root: LoopRoot) -> list[str]:
     return []
 
 
-def bold_italic(text: str) -> str:
-    """``_*text*_``: Slack bold + italic, with the marker characters made safe."""
+def bold_italic(text: str, limit: int = HEADLINE_MAX) -> str:
+    """``_*text*_``: Slack bold + italic, with the marker characters made safe.
+
+    Clipped with ``…`` at *limit* characters (D109: :data:`RECAP_MAX` for the Day Recap).
+    """
     clean = " ".join(text.split())
     clean = clean.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     clean = clean.replace("*", "∗").replace("_", " ").replace("~", "-").replace("`", "'")
-    if len(clean) > HEADLINE_MAX:
-        clean = clean[: HEADLINE_MAX - 1].rstrip(" ,;·") + "…"
+    if len(clean) > limit:
+        clean = clean[: limit - 1].rstrip(" ,;·") + "…"
     return f"_*{clean}*_"
 
 
 __all__ = [
     "HEADLINE_MAX",
+    "RECAP_MAX",
     "LoopOutcome",
     "bold_italic",
     "LoopRoot",

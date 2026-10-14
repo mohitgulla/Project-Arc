@@ -30,6 +30,8 @@ __all__ = [
     "day_recap",
     "first_sentence",
     "HEADLINE_CHARS",
+    "RECAP_CHARS",
+    "headline_points",
     "headline_sentence",
     "loop_headline",
     "names",
@@ -303,6 +305,9 @@ def chain_facts(conn: sqlite3.Connection, chain_run_id: str) -> ChainFacts:
 
 #: The whole headline in characters (the Slack renderer's ``HEADLINE_MAX``).
 HEADLINE_CHARS = 150
+#: D109: the Day Recap and experiment readout headlines get twice the room
+#: (the Slack renderer's ``RECAP_MAX``).
+RECAP_CHARS = 2 * HEADLINE_CHARS
 
 
 def _bias(f: ChainFacts, t: str) -> str:
@@ -430,6 +435,26 @@ def headline_sentence(main: str, *more: str, limit: int = HEADLINE_CHARS) -> str
     return f"{main}."
 
 
+def headline_points(main: str, *more: str, limit: int = RECAP_CHARS) -> str:
+    """D109: ``Main; second; third.``: every point of *more* that still fits *limit*.
+
+    Like :func:`headline_sentence`, but a longer recap keeps each extra point that fits
+    (in order) instead of only the first; a point that would overflow is skipped.
+    """
+    main = main.strip().rstrip(" .")
+    if not main:
+        return ""
+    main = main[:1].upper() + main[1:]
+    if len(main) + 1 > limit:
+        return main[: limit - 1].rstrip(" ,;") + "…"
+    out = main
+    for extra in more:
+        point = _clause(extra) if extra else ""
+        if point and len(out) + len(point) + 3 <= limit:
+            out = f"{out}; {point}"
+    return f"{out}."
+
+
 def loop_headline(conn: sqlite3.Connection, chain_run_id: str) -> list[str]:
     """The loop's headline: one sentence, ``<main point>; <second point>.`` (or ``[]``).
 
@@ -484,8 +509,10 @@ def day_recap(
 ) -> list[str]:
     """ET *day* in one headline sentence: ``<P&L and trades>; <what drove it>.``
 
-    The second point is the biggest closed P&L, else the reason that kept the most
-    ranked picks from opening across the day's full loops.
+    D109: up to :data:`RECAP_CHARS` (2× a loop headline). After the main point come,
+    in order and only while they fit: the biggest closed P&L, the opposite extreme
+    (best win on a day led by a hit, or the reverse), and the reason that kept the
+    most ranked picks from opening across the day's full loops.
     """
     lo, hi = _utc_bounds(day)
     fills = conn.execute(
@@ -535,14 +562,16 @@ def day_recap(
         pct = f" ({day_pnl / equity_start:+.1%})" if equity_start else ""
         mood = "Green day" if day_pnl > 0 else "Red day" if day_pnl < 0 else "Flat day"
         main = f"{mood}: {_money(day_pnl)}{pct}{on}"
-    biggest = ""
+    biggest = other = ""
     if realized:
         worst = min(realized, key=lambda kv: kv[1])
         best = max(realized, key=lambda kv: kv[1])
-        pick = worst if abs(worst[1]) >= abs(best[1]) else best
+        pick, rest = (worst, best) if abs(worst[1]) >= abs(best[1]) else (best, worst)
         biggest = f"{'biggest hit' if pick[1] < 0 else 'best win'} {pick[0]} {_money(pick[1])}"
+        if rest[0] != pick[0] and (rest[1] < 0) != (pick[1] < 0) and rest[1] != 0:
+            other = f"{'biggest hit' if rest[1] < 0 else 'best win'} {rest[0]} {_money(rest[1])}"
     blocker = ""
     if blockers:
         key, n = max(blockers.items(), key=lambda kv: kv[1])
         blocker = f"{BLOCKER_LABELS.get(key, key)} blocked {n} of {ranked} picks"
-    return [headline_sentence(main, biggest, blocker)]
+    return [headline_points(main, biggest, other, blocker, limit=RECAP_CHARS)]

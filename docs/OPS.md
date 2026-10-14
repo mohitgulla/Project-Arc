@@ -1440,12 +1440,14 @@ D31) get a fixed one-liner.
 
 After the 16:30 `broker.reconcile`, a `:rolled_up_newspaper: Thu Oct 8 · Day Recap` reply
 posts in the day's Session Notes thread with "Also send to #arc-investor" ticked
-(`reply_broadcast`): the bold title, a blank line, then the headline, e.g.:
+(`reply_broadcast`): the bold title, a blank line, then the headline. D109: the recap
+headline may run to 300 chars (2× a loop headline) and keeps, in order, every point that
+fits: the biggest closed P&L, the opposite extreme, the main blocker. No per-sleeve lines.
 
 ```
 :rolled_up_newspaper: *Thu Oct 8 · Day Recap*
 
-_*Red day: -$1,946 (-2.0%) on 2 opens and 5 closes; biggest hit META -$8,765.*_
+_*Red day: -$1,946 (-2.0%) on 2 opens and 5 closes; biggest hit META -$8,765; best win VST +$160; Net EV floor blocked 2 of 2 picks.*_
 ```
 
 The thread under it, in order: `[Sweep] Context: N Candidates • run <stamp>`
@@ -1537,9 +1539,9 @@ first; `keep` if mean net P&L (realised − cost-model fees) ≥ 0, `shrink` (to
 bootstrap 90% CI of the mean is entirely below 0, otherwise `collect`. The Tower has
 the same split: a `Sleeve` filter (All · Short · Swing) on Trades and Performance
 (`?sleeve=`), a Sleeves card and a Sleeve breakdown tab on Performance, and
-`Short n/5 · Swing n/5` on the Overview Positions card. The Day Recap adds one line per
-sleeve (`Short 10–29: 2 opened · 1 closed +$84 · 3/5 open`), and the Analyst's
-realised-vs-model tables split by sleeve.
+`Short n/5 · Swing n/5` on the Overview Positions card, and the Analyst's
+realised-vs-model tables split by sleeve. Slack shows no sleeve stats (D109: the Day
+Recap's per-sleeve lines and the loop root's `Sleeves:` fact were dropped).
 
 **What would have been better?**
 
