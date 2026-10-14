@@ -256,18 +256,15 @@ def test_day_recap_line_format() -> None:
     ]
 
 
-def test_reconcile_recap_appends_sleeve_lines(layout: SimpleNamespace, conn) -> None:  # noqa: ANN001
+def test_reconcile_recap_has_no_sleeve_lines(layout: SimpleNamespace, conn) -> None:  # noqa: ANN001
     from arc.broker.reconcile_job import _day_recap
 
     report = SimpleNamespace(day=NOW.date(), day_pnl=120.0, baseline=SimpleNamespace(value=25000))
     ctx = SimpleNamespace(conn=conn, settings=_settings(), now=NOW)
     view = _day_recap(ctx, report)  # type: ignore[arg-type]
     assert view is not None
-    lines = view.text.split("\n")
-    assert lines[-2].startswith("Short 10–29: ") and lines[-1].startswith("Swing 30–60: ")
-    # no settings on the context: the recap still posts, without sleeve lines
-    bare = _day_recap(SimpleNamespace(conn=conn, now=NOW), report)  # type: ignore[arg-type]
-    assert bare is not None and "Short 10–29" not in bare.text
+    # D109: the Day Recap no longer carries per-sleeve lines
+    assert "Short 10–29" not in view.text and "Swing 30–60" not in view.text
 
 
 # ---------------------------------------------------------------------------
