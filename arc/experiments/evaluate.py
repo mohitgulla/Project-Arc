@@ -706,14 +706,9 @@ def _evaluator_sha() -> str | None:
     return _git()[0]
 
 
-#: config sections that are no input to an evaluation (E21.4: the pre-open auto-start),
-#: kept out of the report so stored reports and their hashes stay comparable
-REPORT_CONFIG_EXCLUDE = frozenset({"autostart"})
-
-
 def report_config(cfg: ExperimentsConfig) -> dict[str, Any]:
     """The experiments config a report records: everything that can change a verdict."""
-    return cfg.model_dump(mode="json", exclude=set(REPORT_CONFIG_EXCLUDE))
+    return cfg.model_dump(mode="json")
 
 
 def config_hash(cfg: ExperimentsConfig) -> str:

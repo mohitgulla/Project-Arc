@@ -26,7 +26,6 @@ __all__ = [
     "CONTROL_RUNNER",
     "AccountMode",
     "ArmRunner",
-    "AutostartConfig",
     "ExperimentDefaults",
     "RunnerConfig",
     "ExperimentsConfig",
@@ -317,27 +316,12 @@ class RunnerConfig(BaseModel):
         return out
 
 
-class AutostartConfig(BaseModel):
-    """E21.4 (D86): the pre-open ``experiments.autostart`` routine."""
-
-    model_config = _FORBID
-
-    enabled: bool = Field(
-        default=True,
-        description="Start the oldest registered (owner-approved) experiment at the pre-open",
-    )
-    max_per_day: int = Field(
-        default=1, ge=1, le=4, description="Experiments the routine starts per trading day"
-    )
-
-
 class ExperimentsConfig(BaseModel):
     model_config = _FORBID
 
     defaults: ExperimentDefaults = Field(default_factory=lambda: ExperimentDefaults())
     stats: StatsConfig = Field(default_factory=lambda: StatsConfig())
     runner: RunnerConfig = Field(default_factory=lambda: RunnerConfig())
-    autostart: AutostartConfig = Field(default_factory=lambda: AutostartConfig())
 
 
 def load_experiments_config(

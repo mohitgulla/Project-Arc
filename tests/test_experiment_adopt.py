@@ -1,7 +1,7 @@
-"""E21.4 (D86): approve -> register -> auto-start, and a verdict file for every outcome.
+"""E21.4 (D86): approve -> register (owner starts by hand, D112), and a verdict file per outcome.
 
 ``arc experiment adopt`` (ids across three namespaces, validation, idempotency, queueing,
-the spec file and PR text), the pre-open ``experiments.autostart`` decision, the verdict
+the spec file and PR text), the owner's manual start command (D112), the verdict
 files per outcome, and that both PR bodies pass the strategy-lane check (E21.1).
 """
 
@@ -19,7 +19,6 @@ import pytest
 import yaml
 
 from arc.experiments import adopt as ad
-from arc.experiments.autostart import AUTOSTART_ACTOR, aa_calibration, autostart, decide
 from arc.experiments.cli import add_experiment_parser, run_experiment
 from arc.experiments.config import ExperimentsConfig, load_experiments_config
 from arc.experiments.models import (
@@ -49,7 +48,6 @@ if TYPE_CHECKING:
 
 REPO = Path(__file__).resolve().parent.parent
 NOW = dt.datetime(2026, 10, 12, 20, 0, tzinfo=ET)  # Monday evening
-PREOPEN = dt.datetime(2026, 10, 13, 9, 5, tzinfo=ET)  # Tuesday 09:05
 APPROVAL = "slack:1791668051.305679"
 
 
@@ -76,11 +74,8 @@ def conn() -> sqlite3.Connection:
     return c
 
 
-def _cfg(**autostart: Any) -> ExperimentsConfig:
-    cfg = load_experiments_config()
-    return cfg.model_copy(
-        update={"autostart": cfg.autostart.model_copy(update=autostart)}, deep=True
-    )
+def _cfg() -> ExperimentsConfig:
+    return load_experiments_config()
 
 
 def _store(conn: sqlite3.Connection, cfg: ExperimentsConfig | None = None) -> ExperimentStore:
@@ -334,9 +329,10 @@ def test_adopt_registers_with_proposal_ref_and_publishes(
     assert res.experiment_id == "XP-1" and res.status == "registered" and res.created
     assert st.status is ExperimentStatus.REGISTERED and proposal_ref_of(st) == "P-1"
     assert all(e.detail.get("proposal_ref") == "P-1" for e in st.events)
-    assert res.starts == "2026-10-13"  # the next pre-open (Tue)
+    assert res.start_cmd == "arc experiment start XP-1"  # D112: the owner starts it
     assert posted == [
-        "XP-1 registered (P-1), control + 3 treatments, area exits, starts Tue Oct 13 pre-open"
+        "XP-1 registered (P-1), control + 3 treatments, area exits, "
+        "owner to start after the spec PR merges: `arc experiment start XP-1`"
     ]
     (call,) = pub.calls
     assert call["branch"] == "xp/1"
@@ -388,7 +384,7 @@ def test_adopt_queues_behind_a_busy_area_and_promotes_after_stop(
     _adopt(conn, tmp_path)
     second = _adopt(conn, tmp_path, _proposal("P-2"), post=posted.append)
     assert second.status == "queued" and second.queued_behind == ["XP-1"]
-    assert second.queue_reason == "area exits held by XP-1" and second.starts is None
+    assert second.queue_reason == "area exits held by XP-1" and second.start_cmd is None
     assert posted == [
         "XP-1 registered (P-2), control + 3 treatments, area exits, queued behind XP-1".replace(
             "XP-1 registered", "XP-2 registered"
@@ -415,13 +411,17 @@ def test_dry_run_writes_nothing(conn: sqlite3.Connection, tmp_path: Path) -> Non
     assert res.file_text.startswith("# XP-1: adopted from Arc Analyst proposal P-1")
 
 
-def test_start_estimate_skips_weekends_and_late_days() -> None:
-    reg = ExperimentStatus.REGISTERED
-    fri_eve = dt.datetime(2026, 10, 9, 18, 0, tzinfo=ET)
-    assert ad.start_estimate(fri_eve, reg) == dt.date(2026, 10, 12)
-    early = dt.datetime(2026, 10, 13, 8, 0, tzinfo=ET)
-    assert ad.start_estimate(early, reg) == dt.date(2026, 10, 13)
-    assert ad.start_estimate(early, ExperimentStatus.QUEUED) is None
+def test_no_autostart_routine_or_knobs() -> None:
+    """D112: no pre-open auto-start; a registered XP waits for the owner's manual start."""
+    from arc.control.registry import REGISTRY
+    from arc.routines.config import load_routines
+    from arc.routines.handlers import DRY_RUN_PREVIEWS
+
+    assert "experiments.autostart" not in load_routines().jobs()
+    assert "experiments.autostart" not in DRY_RUN_PREVIEWS
+    assert not any(k.startswith("experiments.autostart") for k in REGISTRY)
+    assert not hasattr(load_experiments_config(), "autostart")
+    assert importlib.util.find_spec("arc.experiments.autostart") is None
 
 
 # -- the PR bodies pass the strategy-lane check (E21.1) -------------------------------------
@@ -546,184 +546,6 @@ def test_failed_verdict_publish_is_reported_and_retried(
     assert errors == [] and len(lines) == 1
 
 
-# -- autostart ------------------------------------------------------------------------------
-
-
-def _ready(conn: sqlite3.Connection, tmp_path: Path) -> tuple[ExperimentStore, FakeMain]:
-    """An A/A calibration with a committed verdict + an adopted XP whose spec is merged."""
-    store = _store(conn)
-    _aa(store, "XP-1")
-    res = _adopt(conn, tmp_path)
-    st = store.require(res.experiment_id)
-    main = FakeMain({**_merged(st.spec), verdict_path("XP-1"): "experiment_id: XP-1\n"})
-    return store, main
-
-
-def _decide(store: ExperimentStore, main: FakeMain, **kw: Any) -> Any:
-    args: dict[str, Any] = {"now": PREOPEN, "halted": False, "session": True, "main": main}
-    args.update(kw)
-    cfg = args.pop("cfg", _cfg())
-    return decide(store, cfg, **args)
-
-
-def test_autostart_picks_the_adopted_experiment_when_ready(
-    conn: sqlite3.Connection, tmp_path: Path
-) -> None:
-    store, main = _ready(conn, tmp_path)
-    d, chosen = _decide(store, main)
-    assert [s.experiment_id for s in chosen] == ["XP-2"] and d.blocked == {}
-
-
-def test_autostart_refuses_without_aa_calibration(conn: sqlite3.Connection, tmp_path: Path) -> None:
-    store = _store(conn)
-    res = _adopt(conn, tmp_path)
-    main = FakeMain(_merged(store.require(res.experiment_id).spec))
-    d, chosen = _decide(store, main)
-    assert chosen == [] and "no A/A calibration yet" in d.blocked["XP-1"]
-    # an A/A that stopped without sigma does not count either
-    _aa(store, "XP-9", sigma=None)
-    assert aa_calibration(store) is None
-
-
-def test_autostart_refuses_an_uncommitted_aa_verdict(
-    conn: sqlite3.Connection, tmp_path: Path
-) -> None:
-    store, main = _ready(conn, tmp_path)
-    del main.data[verdict_path("XP-1")]
-    d, chosen = _decide(store, main)
-    assert chosen == [] and "calibration verdict is not committed" in d.blocked["XP-2"]
-
-
-@pytest.mark.parametrize(
-    ("kw", "why"),
-    [
-        ({"halted": True}, "trading is halted"),
-        ({"session": False}, "is not a trading session"),
-    ],
-)
-def test_autostart_refuses_halted_or_closed(
-    conn: sqlite3.Connection, tmp_path: Path, kw: dict[str, Any], why: str
-) -> None:
-    store, main = _ready(conn, tmp_path)
-    d, chosen = _decide(store, main, **kw)
-    assert chosen == [] and why in d.blocked["XP-2"]
-
-
-def test_autostart_refuses_an_unmerged_or_different_spec(
-    conn: sqlite3.Connection, tmp_path: Path
-) -> None:
-    store, main = _ready(conn, tmp_path)
-    path = next(p for p in main.data if p.startswith(f"{EXPERIMENTS_DIR}/xp2_"))
-    text = main.data.pop(path)
-    d, chosen = _decide(store, main)
-    assert chosen == [] and "spec PR not merged" in d.blocked["XP-2"]
-    main.data[path] = text.replace(
-        "take_profit_pct_of_max_gain: 0.35", "take_profit_pct_of_max_gain: 0.36"
-    )
-    d, chosen = _decide(store, main)
-    assert chosen == [] and "differs from the registered lock" in d.blocked["XP-2"]
-
-
-def test_autostart_off_and_nothing_to_do(conn: sqlite3.Connection, tmp_path: Path) -> None:
-    store, main = _ready(conn, tmp_path)
-    d, chosen = _decide(store, main, cfg=_cfg(enabled=False))
-    assert chosen == [] and d.lines() == ["autostart: off (experiments.autostart.enabled false)"]
-    empty = connect(":memory:")
-    migrate(empty)
-    d, chosen = _decide(_store(empty), FakeMain())
-    assert d.lines() == ["autostart: no registered (adopted) experiment"]
-
-
-def test_hand_registered_experiments_are_never_auto_started(conn: sqlite3.Connection) -> None:
-    store = _store(conn)
-    from tests.experiment_fixtures import spec as fixture_spec
-
-    store.create(fixture_spec("XP-4"), actor="local", owner_approval="owner:manual")
-    store.register("XP-4", actor="local", owner_approval="owner:manual")
-    d, chosen = _decide(store, FakeMain())
-    assert chosen == [] and d.skipped == "no registered (adopted) experiment"
-
-
-def test_autostart_starts_at_most_max_per_day(conn: sqlite3.Connection, tmp_path: Path) -> None:
-    store, main = _ready(conn, tmp_path)
-    res = _adopt(conn, tmp_path, _proposal("P-2", area="ranking"))
-    main.data.update(_merged(store.require(res.experiment_id).spec, proposal="P-2"))
-    started: list[str] = []
-
-    at_open = ExperimentStore.for_runner(conn, _cfg().runner, now=lambda: PREOPEN)
-
-    def start(xid: str) -> None:
-        started.append(xid)
-        at_open.start(
-            xid,
-            RunningDetail(t0=PREOPEN, t0_equity=25_000.0, control_sha="abc1234"),
-            actor=AUTOSTART_ACTOR,
-        )
-
-    args = {"now": PREOPEN, "halted": False, "session": True, "main": main}
-    d = autostart(store, _cfg(), start=start, **args)
-    assert d.started == ["XP-2"] and d.blocked == {"XP-3": "max_per_day 1 reached"}
-    assert d.lines() == [
-        "XP-2 started (pre-open auto-start)",
-        "XP-3 blocked: max_per_day 1 reached",
-    ]
-    d = autostart(store, _cfg(), start=start, **args)
-    assert d.started == [] and "already started today" in d.blocked["XP-3"]
-    d = autostart(store, _cfg(max_per_day=2), start=start, **args)
-    assert d.started == ["XP-3"] and started == ["XP-2", "XP-3"]
-
-
-def test_a_refused_start_stays_registered(conn: sqlite3.Connection, tmp_path: Path) -> None:
-    from arc.experiments.runner import ArmStartError
-
-    store, main = _ready(conn, tmp_path)
-
-    def start(xid: str) -> None:
-        msg = "the experiment account is not flat"
-        raise ArmStartError(msg)
-
-    d = autostart(store, _cfg(), now=PREOPEN, halted=False, session=True, main=main, start=start)
-    assert d.started == [] and d.blocked == {
-        "XP-2": "start refused: the experiment account is not flat"
-    }
-    assert store.require("XP-2").status is ExperimentStatus.REGISTERED
-
-
-def test_dry_autostart_reports_would_start(conn: sqlite3.Connection, tmp_path: Path) -> None:
-    store, main = _ready(conn, tmp_path)
-    d = autostart(store, _cfg(), now=PREOPEN, halted=False, session=True, main=main, start=None)
-    assert d.lines() == ["XP-2 would start (all t0 checks pass)"]
-    assert store.require("XP-2").status is ExperimentStatus.REGISTERED
-
-
-# -- wiring -------------------------------------------------------------------------------
-
-
-def test_routine_and_knobs_are_wired() -> None:
-    from arc.control.registry import REGISTRY
-    from arc.routines.config import load_routines
-    from arc.routines.handlers import DRY_RUN_PREVIEWS, resolve_handler
-
-    _, job = load_routines().jobs()["experiments.autostart"]
-    assert job.schedule == [dt.time(9, 5)]
-    assert resolve_handler("experiments.autostart", job) is not None  # type: ignore[arg-type]
-    assert "experiments.autostart" in DRY_RUN_PREVIEWS
-    cfg = load_experiments_config()
-    assert cfg.autostart.enabled is True and cfg.autostart.max_per_day == 1
-    keys = set(REGISTRY)
-    assert {"experiments.autostart.enabled", "experiments.autostart.max_per_day"} <= keys
-
-
-def test_autostart_runs_before_the_first_loop_and_after_premarket() -> None:
-    from arc.routines.config import load_routines
-
-    _, auto = load_routines().jobs()["experiments.autostart"]
-    slot = auto.schedule[0]
-    assert auto.ttl is not None and auto.ttl.duration is not None
-    last = (dt.datetime.combine(dt.date(2026, 10, 13), slot) + auto.ttl.duration).time()
-    assert last < dt.time(9, 40)  # the first trading-loop slot
-
-
 def _cli(*argv: str) -> argparse.Namespace:
     p = argparse.ArgumentParser()
     add_experiment_parser(p.add_subparsers(dest="cmd"))
@@ -774,45 +596,3 @@ def test_cli_adopt_from_a_backlog_file(tmp_path: Path, capsys: pytest.CaptureFix
     assert "name the proposal" in capsys.readouterr().err
     assert run_experiment(_cli("adopt", "P-2", *args, "--dry-run")) == 0
     assert "P-2 -> XP-" in capsys.readouterr().out
-
-
-# -- the routines -------------------------------------------------------------------------
-
-
-def test_dispatcher_dry_run_previews_the_autostart(
-    conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from arc.experiments import publish
-    from arc.routines.config import load_routines
-    from arc.routines.dispatcher import Dispatcher
-
-    store, main = _ready(conn, tmp_path)
-    monkeypatch.setattr(publish, "GitMainView", lambda **_: main)
-    d = Dispatcher(conn, load_routines(), is_halted=lambda: False)
-    report = d.tick(PREOPEN, dry_run=True, since=PREOPEN - dt.timedelta(minutes=5))
-    (o,) = [o for o in report.outcomes if o.job == "experiments.autostart"]
-    assert o.status == "planned" and "XP-2 would start (all t0 checks pass)" in o.reason
-    assert store.require("XP-2").status is ExperimentStatus.REGISTERED
-    del main.data[verdict_path("XP-1")]
-    report = d.tick(PREOPEN, dry_run=True, since=PREOPEN - dt.timedelta(minutes=5))
-    (o,) = [o for o in report.outcomes if o.job == "experiments.autostart"]
-    assert "XP-2 blocked: A/A XP-1's calibration verdict is not committed" in o.reason
-
-
-def test_autostart_step_is_dry_without_slack(
-    conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A ``--no-slack`` / manual run never starts arms (no broker, no git fetch)."""
-    from types import SimpleNamespace
-
-    from arc.experiments import publish
-    from arc.routines.experiments import experiments_autostart_step
-    from arc.routines.handlers import RunEnv
-
-    store, main = _ready(conn, tmp_path)
-    monkeypatch.setattr(publish, "GitMainView", lambda **_: main)
-    ctx = SimpleNamespace(conn=conn, now=PREOPEN, settings=None, run_env=RunEnv(slack=False))
-    res = experiments_autostart_step(ctx)  # type: ignore[arg-type]
-    assert res.summary == "XP-2 would start (all t0 checks pass)"
-    assert res.notice == res.summary and res.metrics == {"started": 0, "blocked": 0}
-    assert store.require("XP-2").status is ExperimentStatus.REGISTERED
