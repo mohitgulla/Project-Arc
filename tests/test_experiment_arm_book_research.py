@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 T0 = FIXTURE_NOW - dt.timedelta(hours=1)
-SPEC = "config/experiments/live/xp1_aa_baseline.yaml"
+SPEC = "tests/fixtures/experiments/xp1_aa_baseline.yaml"
 FULL = ["research", *AUTO_CHAINS["research"]]
 
 

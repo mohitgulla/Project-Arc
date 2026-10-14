@@ -1,6 +1,6 @@
 # XP-1 A/A calibration
 
-Status: **pending live run (E10.8)**. The live A/A (about 10 sessions on the production and experiment paper accounts) has not run yet. The section below is the **fixture dry run** (synthetic sessions on scratch stores, no orders) that shows the layout; E10.8 replaces this file with the live report:
+Status: **pending live run (E15.9)**. XP-1 is the K=3 calibration A/A (control arm plus t1–t3, every arm flat on the shared experiment account; `config/experiments/live/xp1_aa_k3.yaml`, PLAN D108/D111) and has not run yet. The section below is the **fixture dry run** of the v1 two-account layout (synthetic sessions on scratch stores, no orders); E15.9 replaces this file with the live report:
 
     arc experiment report XP-1 --db data/arc.db --stored --format md --out docs/RESEARCH/experiments/XP-1-aa.md
 

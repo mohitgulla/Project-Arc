@@ -1,9 +1,0 @@
-# XP-10: stopped by the owner, never promoted. Committed at the D80 cutover (E19.3, owner 2026-10-11)
-# so the registry history survives the store reset. Not a promotion verdict: no leaves change.
-# Stop event 2026-10-09T22:32:07.697802Z reason=owner: Owner stop after 3-session smoke (Oct 7-9): harness defects E10.2b/c/d (arm exit path, ledger double-count, stale-quote gate) make arm vs control not comparable; D69 account swap pending.
-# Last stored report: continue after 3 session(s), as of 2026-10-09.
-# Registered spec (hash-locked): history/xp10.registered.json, spec_hash 5cfcefe1d462a711ef01cafc4751e0290b4d59a069a44a32f407c791ee684797.
-# Rows: data/archive/20261011-1315-pre-d80/xp-registry-pre-clear-20261010/arc.db (gitignored).
-experiment_id: XP-10
-verdict: stopped
-report_hash: 6f24774ac740bc26377f35624e68ab02cf6a5df011290568c8e16ce96e1e4975

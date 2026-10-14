@@ -154,8 +154,8 @@ Trading stays halted afterwards: resume only after the cutover checks (E19.3).
   bypassed. Pre-deletion copies are in
   `data/archive/20261011-1315-pre-d80/xp-registry-pre-clear-20261010/` (XP-10 plus its arm
   store `arc-exp-XP-10.db`) and `.../xp-registry-pre-clear-20261006/` (XP-3). Their
-  `verdict: stopped` files and registered specs are in `config/experiments/live/verdicts/`
-  and `history/`.
+  `verdict: stopped` files and registered specs were removed from the repo by the D111
+  registry reset (2026-10-13); `git log -- config/experiments/live/` still has them.
 - 2026-10-11 13:15 ET: `arc store reset --apply` swapped in the fresh store. Production is
   …63Y6 with $25,000 (`store:epoch`), the archive is `data/archive/20261011-1315-pre-d80/`,
   carry-over was 0 overrides, and the Analyst state is archived under
@@ -1641,7 +1641,7 @@ Specs live in `config/experiments/live/<id>.yaml`; defaults (alpha 0.05, power
 tunable as `experiments.*` (`!arc config experiments`). The treatment overlay uses
 the same deep-merge format as the backtest overlays in `config/experiments/*.yaml`.
 
-    arc experiment create --spec config/experiments/live/xp1_aa_baseline.yaml --owner-approval P-<n>
+    arc experiment create --spec config/experiments/live/xp1_aa_k3.yaml --owner-approval P-<n>
     arc experiment register XP-1 --owner-approval P-<n>   # locks sha256(canonical spec); queued if the area is busy
     arc experiment show XP-1 [--json]
     arc experiment verify XP-1          # exit 1 when the stored spec no longer matches the lock
@@ -1933,16 +1933,20 @@ dev drafts) into `P-<n>` proposals with 3 treatments (D108).
 
 > **D108 (E25.1):** the shipped runner is `account_mode: shared` with a `t`
 > treatments template and a `control` arm. A new A/A is a spec v3 (control + t1–t3,
-> empty overlays, every arm flat on `ALPACA_EXP_*`; E15.9). XP-1 below is the
-> historical v1 runbook; its dry run pins a dedicated-mode copy of the config.
+> empty overlays, every arm flat on `ALPACA_EXP_*`; E15.9). Since the D111 registry
+> reset (2026-10-13) XP-1 *is* that K=3 A/A: `config/experiments/live/xp1_aa_k3.yaml`,
+> run in-session under card E15.9. The text below is the historical v1 runbook; the
+> v1 spec it describes now lives as a test fixture
+> (`tests/fixtures/experiments/xp1_aa_baseline.yaml`), and the dry run still uses it
+> with a dedicated-mode copy of the config.
 
-XP-1 (`config/experiments/live/xp1_aa_baseline.yaml`) runs the production config on
+The v1 A/A (`tests/fixtures/experiments/xp1_aa_baseline.yaml`) runs the production config on
 both paper accounts (empty overlay on both arms) for `experiments.aa_sessions` (10)
 sessions. It measures sigma of the paired daily difference d_t, the achievable MDE at
 20/40/60 sessions, the slippage and fill-rate gap between the two accounts and the
 LLM-divergence rate. alpha 0.05 and min 20 / max 60 sessions are owner policy (D44)
 and are not changed by the A/A. The report template is
-`docs/RESEARCH/experiments/XP-1-aa.md` (header "pending live run (E10.8)").
+`docs/RESEARCH/experiments/XP-1-aa.md` (header "pending live run (E15.9)").
 
 Dry run (scratch stores, fixtures, no broker, no orders), any time:
 
@@ -1969,7 +1973,7 @@ Dry run (scratch stores, fixtures, no broker, no orders), any time:
 
 **Start (before the 09:30 ET open, so the first session is the same day):**
 
-    arc experiment create --spec config/experiments/live/xp1_aa_baseline.yaml --owner-approval slack:<ts> --db data/arc.db
+    arc experiment create --spec config/experiments/live/xp1_aa_k3.yaml --owner-approval slack:<ts> --db data/arc.db
     arc experiment register XP-1 --owner-approval slack:<ts> --db data/arc.db
     arc experiment start XP-1 --db data/arc.db
 

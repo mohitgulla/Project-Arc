@@ -1,9 +1,0 @@
-# XP-3: stopped by the owner, never promoted. Committed at the D80 cutover (E19.3, owner 2026-10-11)
-# so the registry history survives the store reset. Not a promotion verdict: no leaves change.
-# Stop event 2026-10-07T04:05:18.049356Z reason=owner: E10.2a smoke: never traded (candidate FK bug, fixed by E13.12 #155); restarting as a fresh smoke on current code
-# Last stored report: continue after 1 session(s), as of 2026-10-06.
-# Registered spec (hash-locked): history/xp3.registered.json, spec_hash f82360082f6db9875b5de9b64a58838ff760143bfca10725b8f428c399709cb2.
-# Rows: data/archive/20261011-1315-pre-d80/xp-registry-pre-clear-20261006/arc.db (gitignored).
-experiment_id: XP-3
-verdict: stopped
-report_hash: 6e4483ae35230999b9c65d41ba6510252dac0ad0bd6d7c09fba7ddc849222abb

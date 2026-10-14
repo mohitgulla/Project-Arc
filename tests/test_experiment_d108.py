@@ -44,7 +44,7 @@ from arc.structures import credit_vertical
 from arc.utils.calendar import ET
 
 REPO = Path(__file__).resolve().parents[1]
-XP1 = REPO / "config" / "experiments" / "live" / "xp1_aa_baseline.yaml"
+XP1 = REPO / "tests" / "fixtures" / "experiments" / "xp1_aa_baseline.yaml"
 XP1_HASH = "7d02a85573156876e3b8d0a4e57e195d9ce04f6399966103843224d8749d8d20"
 T0 = FIXTURE_NOW - dt.timedelta(hours=1)
 ACCT = "PA3EXP0001"

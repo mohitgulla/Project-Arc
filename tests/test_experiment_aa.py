@@ -44,10 +44,44 @@ def identical(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
 
 
 def test_committed_spec_is_the_aa_baseline() -> None:
-    sp = load_spec(REPO / "config" / "experiments" / "live" / "xp1_aa_baseline.yaml")
+    sp = load_spec(REPO / "tests" / "fixtures" / "experiments" / "xp1_aa_baseline.yaml")
     assert sp.id == "XP-1" and sp.kind.value == "aa"
     assert sp.arms.control.overlay == {} and sp.arms.treatment.overlay == {}
     assert load_experiments_config(EXPERIMENTS_YAML).defaults.aa_sessions == 10
+
+
+LIVE = REPO / "config" / "experiments" / "live"
+
+
+def test_committed_xp1_is_the_k3_aa_of_d108() -> None:
+    """E15.9 (D108, D111): XP-1 = flat control arm + t1..t3, all empty, 10 sessions."""
+    sp = load_spec(LIVE / "xp1_aa_k3.yaml")
+    assert (sp.id, sp.spec_version, sp.kind.value, sp.area.value) == ("XP-1", 3, "aa", "other")
+    assert sp.proposed_by == "owner" and sp.control_runs
+    assert sp.arms.control.overlay == {}
+    assert list(sp.arms.treatments) == ["t1", "t2", "t3"]
+    assert all(a.overlay == {} for a in sp.arms.treatments.values())
+    assert (sp.min_sessions, sp.max_sessions) == (10, 10)
+    cfg = load_experiments_config(EXPERIMENTS_YAML)
+    arms = cfg.runner.arms_for(sp)
+    assert list(arms) == ["control", "t1", "t2", "t3"]
+    assert {a.keys_env for a in arms.values()} == {"ALPACA_EXP"}
+    assert [sp.arm_id_for(a) for a in arms] == ["XP-1:control", "XP-1:t1", "XP-1:t2", "XP-1:t3"]
+
+
+def test_registry_reset_leaves_xp1_as_the_only_committed_id() -> None:
+    """D111: no verdicts / history left; the next adopted experiment is XP-2."""
+    from arc.experiments import adopt as ad
+    from arc.experiments.store import ExperimentStore
+    from arc.store.migrate import migrate
+
+    assert sorted(p.name for p in LIVE.iterdir()) == ["README.md", "xp1_aa_k3.yaml"]
+    texts = ad.committed_texts(REPO)
+    assert ad._xp_numbers(texts) == {1}
+    conn = connect(":memory:")
+    migrate(conn)
+    assert ad.next_free_id(ExperimentStore(conn), texts) == "XP-2"
+    conn.close()
 
 
 def test_identical_arms_end_to_end(identical: dict[str, Any]) -> None:
