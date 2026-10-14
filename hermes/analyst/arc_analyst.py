@@ -25,7 +25,7 @@ Cron pre-run gate (no args):
      context (<= 30k chars; full text in ``RUN_DIR/context.md``).
      E21.3 (D86) adds: the XP backlog (``P-<n>``, statuses synced against the
      registry by ``proposal_ref``), ranked by value; arm capacity per area; the
-     sessions-needed grid at K=4 (``arc experiment plan --k 4``); the idea-seed leads
+     sessions-needed grid at K=3 (``arc experiment plan --k 3``, D108); the idea-seed leads
      not yet proposed or dropped; quick changes shipped since the last run (to
      review); and strategy PRs merged since the last run with their XP-advisory line.
      E7.15 (D84) adds, read-only: the backtest studies (``data/backtest/ledger.jsonl`` +
@@ -169,8 +169,12 @@ BACKLOG_OPEN = ("proposed", "approved", "registered", "running")
 BACKLOG_RANKED = ("proposed", "approved")  # not in the DB yet: what next_experiment picks from
 BACKLOG_CAP = 12  # open entries; the Analyst drops the weakest with a reason
 MAX_NEW_PROPOSALS = 2  # per run
-K_TREATMENTS = 4  # D86: control + exactly 4 treatments
+K_TREATMENTS = 3  # D108 (revises D86's 4): control + exactly 3 treatments
 TREATMENT_NAMES = tuple(f"t{i}" for i in range(1, K_TREATMENTS + 1))
+#: D108: an XP runs control as its own arm on the experiment account: C + K runner arms.
+ARMS_PER_XP = K_TREATMENTS + 1
+#: D108: the spec version an approved proposal is written in (control is a runnable arm).
+PROPOSAL_SPEC_VERSION = 3
 # A proposal's spec: the live v2 format minus what approval fills (id, proposed_by) and what
 # `arc experiment create` fills from config/experiments.yaml (alpha, power, mde, sessions).
 PROPOSAL_SPEC_FORBIDDEN = {
@@ -201,8 +205,9 @@ PROPOSAL_FIELDS = (
 )
 PROPOSAL_EVIDENCE = ("live", "backtest")  # backtest = a BT-<n> holdout study (E7.15, option A)
 STOP_ADVICE = ("continue", "futility", "baseline-changed", "better-use-of-slot")
-# Daily effects (fraction of t0 equity) the gate sizes at K=4 with `arc experiment plan`.
+# Daily effects (fraction of t0 equity) the gate sizes at K=3 with `arc experiment plan`.
 PLAN_EFFECTS = (0.0002, 0.0005, 0.001, 0.002)
+PLAN_VIEW = f"plan-k{K_TREATMENTS}"  # the RUN_DIR log name of the sessions-needed grid
 MAX_PARALLEL_ARMS_DEFAULT = 10
 MAX_ARMS_KEY = "experiments.runner.max_parallel_arms"
 # No A/A sigma in the store (e.g. after the D80 fresh start): size the grid with the sigma the
@@ -605,11 +610,13 @@ def _loads(text, default):
 
 
 def _treatment_count(spec: dict) -> int:
-    """Treatment arms of a spec (v1 ``treatment`` = 1): what it holds of max_parallel_arms."""
+    """Runner arms of a spec: what it holds of max_parallel_arms. v1 ``treatment`` = 1; a
+    multi-treatment spec its treatments, plus the control arm from spec v3 (D108)."""
     arms = spec.get("arms") or {}
     if "treatment" in arms:
         return 1
-    return max(1, len(arms.get("treatments") or {}))
+    control = 1 if int(spec.get("spec_version") or 2) >= PROPOSAL_SPEC_VERSION else 0
+    return max(1, len(arms.get("treatments") or {})) + control
 
 
 def _proposal_ref(detail) -> str | None:
@@ -807,6 +814,7 @@ def experiment_lines(overview: list[dict]) -> list[str]:
                 + f" | slippage gap {_num(cal.get('slippage_gap_bps'), '+.1f')} bps"
             )
         rows = p.get("breakdowns") or []
+        out += _verdict_pair_lines(p) + _production_lines(p)
         if rows:
             out.append("- breakdowns (closed trades; per arm):")
             out += [
@@ -822,6 +830,52 @@ def experiment_lines(overview: list[dict]) -> list[str]:
         out.append(
             f"- {area}: holder {', '.join(q['holder']) or '-'} | queued "
             f"{', '.join(q['queued']) or '-'}"
+        )
+    return out
+
+
+def _ci_text(ci) -> str:
+    return f"[{_pct(ci.get('lo'))}, {_pct(ci.get('hi'))}]" if isinstance(ci, dict) else "n/a"
+
+
+def _verdict_pair_lines(p: dict) -> list[str]:
+    """The per-treatment verdicts of a multi-arm report: Ti vs C (D108: C = the control arm
+    from report v3, production up to v2). These are the verdicts; nothing else is."""
+    pairs = [pr for pr in p.get("pairwise") or [] if pr.get("kind") == "control_vs_treatment"]
+    if not pairs:
+        return []
+    ref = "control arm" if p.get("reference") == "control" else "control (production, v2)"
+    out = [f"- verdicts (Ti vs C, C = {ref}; Holm across K={len(pairs)}):"]
+    for pr in pairs:
+        out.append(
+            f"  - {pr.get('b')} vs {pr.get('a')}: {str(pr.get('verdict') or '-').upper()} "
+            f"n={pr.get('n')} mean {_pct(pr.get('mean'))}/day CI {_ci_text(pr.get('ci'))} "
+            f"holm p {_num(pr.get('holm_p'), '.3f')}"
+        )
+    return out
+
+
+def _production_lines(p: dict) -> list[str]:
+    """D108 production panel (report v3): context only, never a verdict. Ti vs P, the
+    P - C decomposition (start book + residual) and the ramp flag."""
+    prod = p.get("production")
+    if not isinstance(prod, dict):
+        return []
+    book = prod.get("start_book") or {}
+    still = sum(1 for d in (book.get("close_dates") or {}).values() if d is None)
+    out = [
+        "- production panel (DESCRIPTIVE, never a winner: verdicts are Ti vs C above): "
+        f"P {_num(prod.get('cum_p_pnl'), '+,.2f')} C {_num(prod.get('cum_c_pnl'), '+,.2f')} | "
+        f"P - C {_pct(prod.get('cum_d_p_c'))} = start book {_pct(prod.get('cum_start_book'))} "
+        f"+ residual {_pct(prod.get('cum_residual'))} | start book {len(book.get('ids') or [])} "
+        f"structures, {still} still open | ramped from {prod.get('ramped_from') or 'not yet'}"
+    ]
+    for c in prod.get("compare") or []:
+        if c.get("arm") == "control" and c.get("basis") != "post_ramp":
+            continue
+        out.append(
+            f"  - {c.get('arm')} - P ({c.get('basis')}): n={c.get('n')} mean "
+            f"{_pct(c.get('mean'))}/day CI {_ci_text(c.get('ci'))}"
         )
     return out
 
@@ -868,12 +922,13 @@ def _is_num(v) -> bool:
 
 
 def validate_proposal_spec(spec, where: str = "proposal.spec") -> list[str]:
-    """A ``P-<n>`` draft spec (D86): the ``config/experiments/live/`` v2 format, no ``id``.
+    """A ``P-<n>`` draft spec (D86, D108): the ``config/experiments/live/`` format, no ``id``.
 
     Mirrors ``arc.experiments.models.ExperimentSpec`` (extra=forbid, ab, control empty), plus
-    D86's shape: control + exactly 4 treatments ``t1..t4``, every overlay on the SAME leaf set
-    (one variable at 4 levels, or 4 alternatives of one mechanism), no two arms alike. The
-    owner's ``approve P-<n>`` assigns the id; ``arc experiment create`` re-validates it in full.
+    D108's shape: control + exactly 3 treatments ``t1..t3``, every overlay on the SAME leaf set
+    (one variable at 3 levels, or 3 alternatives of one mechanism), no two arms alike. The
+    owner's ``approve P-<n>`` assigns the id and writes it as spec v3 (control runs as its
+    own flat arm); ``arc experiment adopt`` re-validates it in full.
     """
     if not isinstance(spec, dict):
         return [f"{where} must be an object in the config/experiments/live v2 format"]
@@ -887,8 +942,11 @@ def validate_proposal_spec(spec, where: str = "proposal.spec") -> list[str]:
     missing = [k for k in PROPOSAL_SPEC_REQUIRED if spec.get(k) in (None, "", {})]
     if missing:
         errs.append(f"{where} missing {missing}")
-    if spec.get("spec_version", 2) != 2:
-        errs.append(f"{where}.spec_version must be 2 (multi-treatment, D69)")
+    if spec.get("spec_version", PROPOSAL_SPEC_VERSION) not in (2, PROPOSAL_SPEC_VERSION):
+        errs.append(
+            f"{where}.spec_version must be {PROPOSAL_SPEC_VERSION} (D108: control runs as its "
+            "own arm; a v2 draft is written as v3 at approval)"
+        )
     if spec.get("kind", "ab") != "ab":
         errs.append(f"{where}.kind must be 'ab' (the owner runs A/A calibrations)")
     if spec.get("area") is not None and spec["area"] not in EXPERIMENT_AREAS:
@@ -910,8 +968,8 @@ def validate_proposal_spec(spec, where: str = "proposal.spec") -> list[str]:
     if not isinstance(ts, dict) or sorted(ts) != sorted(TREATMENT_NAMES):
         got = sorted(ts) if isinstance(ts, dict) else ts
         errs.append(
-            f"FOUR-TREATMENTS: {where}.arms.treatments must be exactly "
-            f"{', '.join(TREATMENT_NAMES)} (D86: control + {K_TREATMENTS}); got {got}"
+            f"THREE-TREATMENTS: {where}.arms.treatments must be exactly "
+            f"{', '.join(TREATMENT_NAMES)} (D108: control + {K_TREATMENTS}); got {got}"
         )
         return errs
     leafsets: dict[str, list[str]] = {}
@@ -939,7 +997,7 @@ def validate_proposal_spec(spec, where: str = "proposal.spec") -> list[str]:
         detail = "; ".join(f"{n}: {', '.join(v)}" for n, v in leafsets.items())
         errs.append(
             f"SAME-LEAVES: {where} treatments set different leaf sets ({detail}); every arm "
-            "must set the same leaves (one variable at 4 levels, or 4 alternatives of one "
+            "must set the same leaves (one variable at 3 levels, or 3 alternatives of one "
             "mechanism)"
         )
     return errs
@@ -1039,7 +1097,7 @@ def validate_proposal(
             errs.append(f"{where}.{key} must be a number in (0, 1]")
     s = p.get("sessions_needed")
     if not isinstance(s, int) or isinstance(s, bool) or s < 1:
-        errs.append(f"{where}.sessions_needed must be an int >= 1 (read it off the K=4 plan grid)")
+        errs.append(f"{where}.sessions_needed must be an int >= 1 (read it off the K=3 plan grid)")
     want = proposal_value(p)
     got = p.get("value_score")
     if want is not None and (not _is_num(got) or abs(got - want) > max(1e-9, abs(want) * 0.01)):
@@ -1059,7 +1117,12 @@ def validate_proposal(
     if sref is not None and sref not in seed_ids:
         errs.append(f"{where}.seed_ref {sref!r} is not a lead in the idea seed")
     it = (backlog.get("items") or {}).get(f.get("key"))
-    if it and it["status"] not in ("proposed",) and it.get("spec") != p.get("spec"):
+    if (
+        it
+        and it["status"] not in ("proposed",)
+        and not it.get("needs_rewrite")  # D108: a K=4 entry is rewritten, then re-approved
+        and it.get("spec") != p.get("spec")
+    ):
         errs.append(
             f"findings[{i}] {it['id']} is {it['status']}: its spec is frozen (the owner "
             "approved it); propose a new key for a changed design"
@@ -1128,11 +1191,12 @@ def validate_quick_change(f: dict, i: int) -> list[str]:
 
 
 def slot_check(area: str, overview: list[dict], max_arms: int) -> list[str]:
-    """Why a K=4 experiment in *area* cannot start now (empty = a slot is free).
+    """Why a K=3 experiment in *area* cannot start now (empty = a slot is free).
 
     One registered/running/queued experiment per area holds it (the registry's queue rule),
-    and its 4 treatment arms must fit under ``max_parallel_arms`` with the arms already
-    registered/running (D69).
+    and its control + 3 treatment arms (D108: control is its own arm on the experiment
+    account) must fit under ``max_parallel_arms`` with the arms already registered/running
+    (D69).
     """
     out = []
     holders = [
@@ -1144,21 +1208,24 @@ def slot_check(area: str, overview: list[dict], max_arms: int) -> list[str]:
         out.append(f"area {area} held by {', '.join(holders)}")
     busy = [e for e in overview if e["status"] in ("registered", "running")]
     used = sum(int(e.get("arms") or 1) for e in busy)
-    if used + K_TREATMENTS > max_arms:
+    if used + ARMS_PER_XP > max_arms:
         ids = ", ".join(e["experiment_id"] for e in busy)
-        out.append(f"arms {used} + {K_TREATMENTS} > max_parallel_arms {max_arms} ({ids})")
+        out.append(
+            f"arms {used} + {ARMS_PER_XP} (control + {K_TREATMENTS}) > max_parallel_arms "
+            f"{max_arms} ({ids})"
+        )
     return out
 
 
 def blockers_of(area: str, overview: list[dict], max_arms: int) -> list[str]:
-    """The XP ids whose end frees the slot a K=4 experiment in *area* waits for."""
+    """The XP ids whose end frees the slot a K=3 experiment in *area* waits for."""
     ids = [
         e["experiment_id"]
         for e in overview
         if e["area"] == area and e["status"] in ("registered", "running", "queued")
     ]
     busy = [e for e in overview if e["status"] in ("registered", "running")]
-    if sum(int(e.get("arms") or 1) for e in busy) + K_TREATMENTS > max_arms:
+    if sum(int(e.get("arms") or 1) for e in busy) + ARMS_PER_XP > max_arms:
         ids += [e["experiment_id"] for e in busy]
     return sorted(set(ids))
 
@@ -1301,8 +1368,13 @@ def backlog_by_id(backlog: dict, pid: str) -> dict | None:
 
 
 def ranked_backlog(backlog: dict, statuses: tuple = BACKLOG_RANKED) -> list[dict]:
-    """Open proposals in order: owner pins first (newest pin first), then effective score."""
-    items = [e for e in backlog["items"].values() if e.get("status") in statuses]
+    """Open proposals in order: owner pins first (newest pin first), then effective score.
+    An entry flagged ``needs_rewrite`` (D108: a K=4 spec) is not ranked until rewritten."""
+    items = [
+        e
+        for e in backlog["items"].values()
+        if e.get("status") in statuses and not e.get("needs_rewrite")
+    ]
     return sorted(
         items,
         key=lambda e: (
@@ -1317,6 +1389,35 @@ def ranked_backlog(backlog: dict, statuses: tuple = BACKLOG_RANKED) -> list[dict
 def _neg_text(s: str) -> str:
     """Sort key that orders ISO timestamps newest first."""
     return "".join(chr(0x10FFFF - ord(c)) for c in s)
+
+
+def _spec_treatments(spec) -> list[str]:
+    arms = (spec or {}).get("arms") if isinstance(spec, dict) else None
+    ts = arms.get("treatments") if isinstance(arms, dict) else None
+    return sorted(ts) if isinstance(ts, dict) else []
+
+
+def flag_needs_rewrite(backlog: dict, when: str) -> list[str]:
+    """D108: a proposed/approved entry whose spec is not control + exactly ``t1..t3`` (e.g. a
+    D86 four-treatment draft) is flagged ``needs_rewrite``, never silently trimmed: it leaves
+    the ranking, cannot be ``next_experiment`` or approved, and the Analyst re-proposes the
+    same key with three treatments (which clears the flag). Returns change lines."""
+    out = []
+    for e in sorted(backlog["items"].values(), key=lambda e: int(e["id"][2:])):
+        if e.get("status") not in BACKLOG_RANKED or e.get("needs_rewrite"):
+            continue
+        got = _spec_treatments(e.get("spec"))
+        if got == sorted(TREATMENT_NAMES):
+            continue
+        reason = (
+            f"{len(got)} treatment(s) ({', '.join(got) or 'none'}); D108 proposals are "
+            f"control + exactly {K_TREATMENTS} ({', '.join(TREATMENT_NAMES)}): re-propose "
+            f"key {e.get('key')} with {K_TREATMENTS} treatments"
+        )
+        e["needs_rewrite"] = {"at": when, "reason": reason}
+        _hist(e, when, "needs_rewrite", reason=reason)
+        out.append(f"{e['id']}: needs_rewrite ({reason})")
+    return out
 
 
 def sync_backlog(backlog: dict, overview: list[dict], when: str) -> list[str]:
@@ -1361,7 +1462,12 @@ def backlog_lines(backlog: dict, overview: list[dict], max_arms: int) -> list[st
     """Context: every open proposal ranked, its formula and inputs, and slot readiness."""
     ranked = ranked_backlog(backlog)
     live = [e for e in backlog["items"].values() if e.get("status") in ("registered", "running")]
-    if not ranked and not live:
+    rewrite = [
+        e
+        for e in backlog["items"].values()
+        if e.get("status") in BACKLOG_RANKED and e.get("needs_rewrite")
+    ]
+    if not ranked and not live and not rewrite:
         return ["- empty (no P-<n> yet: propose from the seed leads or live buckets n >= 20)"]
     out = []
     for rank, e in enumerate(ranked, 1):
@@ -1379,6 +1485,12 @@ def backlog_lines(backlog: dict, overview: list[dict], max_arms: int) -> list[st
             out.append(f"  {name}: {json.dumps(ov, sort_keys=True)}")
     for e in live:
         out.append(f"- {e['id']} [{e['status']}] -> {e.get('experiment_id')} (in the registry)")
+    for e in sorted(rewrite, key=lambda e: int(e["id"][2:])):
+        spec = e.get("spec") or {}
+        out.append(
+            f"- {e['id']} [{e['status']}, NEEDS REWRITE, not ranked] {spec.get('area')}: "
+            f"{spec.get('title')} (key {e['key']}): {e['needs_rewrite'].get('reason')}"
+        )
     return out
 
 
@@ -1388,7 +1500,8 @@ def capacity_lines(overview: list[dict], max_arms: int) -> list[str]:
     held = ", ".join("%s=%s" % (e["experiment_id"], e.get("arms") or 1) for e in busy)
     out = [
         f"- max_parallel_arms {max_arms}: {used} arm(s) registered/running "
-        f"({held or 'none'}); a K={K_TREATMENTS} experiment needs {K_TREATMENTS}"
+        f"({held or 'none'}); a K={K_TREATMENTS} experiment needs {ARMS_PER_XP} "
+        f"(control + {K_TREATMENTS} treatments, D108)"
     ]
     for area in EXPERIMENT_AREAS:
         why = slot_check(area, overview, max_arms)
@@ -1501,6 +1614,12 @@ def _validate_experiment_lines(
             errs.append("next_experiment 'none' needs a reason ('none: <why>')")
         return errs
     entry = backlog_by_id(backlog_after, nxt)
+    if entry is not None and entry.get("needs_rewrite"):
+        errs.append(
+            f"next_experiment {nxt} needs a rewrite (D108: control + exactly {K_TREATMENTS} "
+            f"treatments); re-propose its key first, or name another P-<n>"
+        )
+        return errs
     if entry is None or entry.get("status") not in BACKLOG_RANKED:
         errs.append(
             f"next_experiment {nxt!r} must be a proposed/approved P-<n> in the backlog "
@@ -1668,6 +1787,16 @@ def apply_backlog(
                 entry.update(fields)
                 _hist(entry, when, "edit", run=run, fields=changed)
                 out["updated"].append(entry["id"])
+            if entry.get("needs_rewrite") and _spec_treatments(p["spec"]) == sorted(
+                TREATMENT_NAMES
+            ):
+                # D108: rewritten with K=3; an approval of the old K=4 spec does not carry over
+                entry.pop("needs_rewrite")
+                if entry["status"] == "approved":
+                    entry["status"] = "proposed"
+                _hist(entry, when, "rewritten", run=run, status=entry["status"])
+                if entry["id"] not in out["updated"]:
+                    out["updated"].append(entry["id"])
         if p.get("seed_ref"):
             backlog["seed"][p["seed_ref"]] = {"status": "proposed", "proposal": entry["id"]}
     for d in doc.get("backlog_drops", []) or []:
@@ -2447,14 +2576,17 @@ def write_study_spec(run_dir: Path, sid: str, spec: dict, f: dict, aid: str, now
 def write_proposal_spec(p: Paths, entry: dict) -> Path:
     """An approved ``P-<n>``'s spec, the input of ``arc experiment adopt`` (E21.4). JSON is
     valid YAML (stdlib only: no YAML writer). The id stays a placeholder: adopt takes the
-    next free ``XP-<n>``."""
+    next free ``XP-<n>``. D108: written as spec v3, control an empty overlay (its own arm)."""
     spec = {
         "id": "XP-<next>",
         "kind": "ab",
-        "spec_version": 2,
-        "proposed_by": entry.get("finding_id") or "owner",
         **entry["spec"],
+        "spec_version": PROPOSAL_SPEC_VERSION,
+        "proposed_by": entry.get("finding_id") or "owner",
     }
+    arms = dict(spec.get("arms") or {})
+    arms["control"] = arms.get("control") or {"overlay": {}}
+    spec["arms"] = arms
     path = p.home / PROPOSALS_DIR / f"{entry['id']}.yaml"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -2488,6 +2620,7 @@ def cmd_record(p: Paths, run_dir: Path, now: dt.datetime) -> int:
         [{**e, "experiment_id": e["id"]} for e in experiments],
         iso(now),
     )
+    flag_needs_rewrite(backlog, iso(now))  # D108: K=4 drafts leave the ranking
     errs = validate_findings(
         doc,
         ledger,
@@ -2672,6 +2805,14 @@ def cmd_approve(p: Paths, pid: str, note: str, approval: str, now: dt.datetime) 
     if entry["status"] not in ("proposed", "approved"):
         print(f"{pid} is {entry['status']} ({entry.get('experiment_id') or '-'}); nothing to do")
         return 2
+    flag_needs_rewrite(backlog, iso(now))
+    if entry.get("needs_rewrite"):
+        save_json(p.backlog, backlog)
+        print(
+            f"{pid} needs a rewrite before approval: {entry['needs_rewrite'].get('reason')}. "
+            "The Analyst re-proposes it on its next run (or `drop` it)."
+        )
+        return 2
     if entry["status"] == "proposed":
         entry["status"] = "approved"
         _hist(entry, iso(now), "approved", by="owner", note=note, approval=approval)
@@ -2752,6 +2893,7 @@ def cmd_reprioritise(p: Paths, pid: str, why: str, score: float | None, now: dt.
 
 def cmd_backlog(p: Paths) -> int:
     backlog = load_backlog(p.backlog)
+    flag_needs_rewrite(backlog, "")  # in memory: show a K=4 draft as needing a rewrite
     ranked = ranked_backlog(backlog)
     if not ranked:
         print("backlog: no open proposals")
@@ -2759,9 +2901,14 @@ def cmd_backlog(p: Paths) -> int:
         spec = e.get("spec") or {}
         print(f"#{i} {e['id']} [{e['status']}] {spec.get('area')}: {spec.get('title')}")
         print(f"   {value_formula(e)}")
-    others = [e for e in backlog["items"].values() if e.get("status") not in BACKLOG_RANKED]
+    others = [
+        e
+        for e in backlog["items"].values()
+        if e.get("status") not in BACKLOG_RANKED or e.get("needs_rewrite")
+    ]
     for e in sorted(others, key=lambda e: int(e["id"][2:])):
-        print(f"   {e['id']} [{e['status']}] {(e.get('spec') or {}).get('title')}")
+        flag = " NEEDS REWRITE (D108: 3 treatments)" if e.get("needs_rewrite") else ""
+        print(f"   {e['id']} [{e['status']}]{flag} {(e.get('spec') or {}).get('title')}")
     return 0
 
 
@@ -2880,8 +3027,8 @@ def aa_doc_sigma(repo: Path) -> float | None:
 
 
 def run_plan(p: Paths, db: list[str], run_dir: Path) -> str:
-    """``arc experiment plan --k 4 --effects … --json`` at the stored A/A sigma; with none
-    stored, at the sigma ``AA_DOC`` documents (its source labelled in the output)."""
+    """``arc experiment plan --k 3 --effects … --json`` (K_TREATMENTS, D108) at the stored
+    A/A sigma; with none stored, at the sigma ``AA_DOC`` documents (source labelled)."""
     argv = [
         "experiment",
         "plan",
@@ -2891,13 +3038,13 @@ def run_plan(p: Paths, db: list[str], run_dir: Path) -> str:
         ",".join(str(e) for e in PLAN_EFFECTS),
         "--json",
     ]
-    text = run_arc(p, [*argv, *db], run_dir, "plan-k4")
+    text = run_arc(p, [*argv, *db], run_dir, PLAN_VIEW)
     if "no A/A sigma" not in text:
         return text
     sigma = aa_doc_sigma(p.repo)
     if sigma is None:
         return text
-    out = run_arc(p, [*argv, "--sigma", repr(sigma), *db], run_dir, "plan-k4")
+    out = run_arc(p, [*argv, "--sigma", repr(sigma), *db], run_dir, PLAN_VIEW)
     try:
         d = json.loads(out)
     except ValueError:
@@ -2907,7 +3054,7 @@ def run_plan(p: Paths, db: list[str], run_dir: Path) -> str:
 
 
 def plan_lines(text: str) -> list[str]:
-    """The K=4 sessions-needed grid from ``arc experiment plan --k 4 --effects … --json``."""
+    """The K=3 sessions-needed grid from ``arc experiment plan --k 3 --effects … --json``."""
     try:
         d = json.loads(text)
     except ValueError:
@@ -3082,7 +3229,7 @@ def build_context(
             run_dir,
             "attribution-all",
         ),
-        "plan-k4": run_plan(p, db, run_dir),
+        PLAN_VIEW: run_plan(p, db, run_dir),
         "scorecard-week": run_arc(
             p, ["journal", "scorecard", "--week", week_day, *db], run_dir, "scorecard-week"
         ),
@@ -3123,6 +3270,7 @@ def build_context(
     seed, seed_errs = load_seed(p.idea_seed)
     backlog = load_backlog(p.backlog)
     synced = sync_backlog(backlog, overview, iso(now))
+    synced += flag_needs_rewrite(backlog, iso(now))  # D108: K=4 drafts are flagged, not trimmed
     if synced:
         save_json(p.backlog, backlog)  # registry is the truth for registered/running/concluded
     merged = merged_pr_lines(p, state.get("last_run_at"), run_dir)
@@ -3171,12 +3319,13 @@ def build_context(
         f"full: sqlite3 'file:{copy}?mode=ro' or arc experiment report <id> --stored --db {copy})",
         *experiment_lines(overview),
         "",
-        f"## Experiment capacity (D69/D86: one experiment per area; K={K_TREATMENTS} arms each)",
+        f"## Experiment capacity (D69/D108: one experiment per area; control + K={K_TREATMENTS} "
+        f"treatments = {ARMS_PER_XP} arms each)",
         *capacity_lines(overview, max_arms),
         "",
         f"## Sessions needed at K={K_TREATMENTS} (arc experiment plan; read sessions_needed "
         "off this grid)",
-        *plan_lines(views["plan-k4"]),
+        *plan_lines(views[PLAN_VIEW]),
         "",
         f"## XP backlog (yours; {p.backlog}; ranked by value, owner pins first; "
         f"cap {BACKLOG_CAP} open, <= {MAX_NEW_PROPOSALS} new per run)",

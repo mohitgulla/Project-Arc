@@ -325,6 +325,89 @@ def test_committed_verdict_is_matched_to_the_stored_report(tmp_path: Path) -> No
 
 
 # ---------------------------------------------------------------------------
+# 5. P - C residual (D108, E25.4)
+# ---------------------------------------------------------------------------
+
+
+def _panel(residuals: list[float], *, ramp_at: int = 0, book_closed: bool = True) -> dict:
+    """A stored v3 production panel: start book of one structure closed on day 0 (or open)."""
+    day0 = _dt.date(2026, 10, 1)
+    days = [(day0 + _dt.timedelta(days=i + 1)).isoformat() for i in range(len(residuals))]
+    sessions = [
+        {"day": d, "residual": r, "ramped": i >= ramp_at}
+        for i, (d, r) in enumerate(zip(days, residuals, strict=True))
+    ]
+    return {
+        "ramped_from": days[ramp_at] if ramp_at < len(days) else None,
+        "sessions": sessions,
+        "start_book": {
+            "ids": ["sb1"],
+            "close_dates": {"sb1": day0.isoformat() if book_closed else None},
+        },
+    }
+
+
+def test_residual_check_fires_on_a_non_converging_residual() -> None:
+    # a steady +0.05%/day gap with small noise: the CI excludes 0 from session 2 on
+    gap = [0.0005 + (0.00005 if i % 2 else -0.00005) for i in range(14)]
+    r = se.residual_check("XP-13", _panel(gap))
+    assert r["warn"] and r["streak"] == 13 and r["n"] == 14
+    assert r["lo"] > 0
+    assert r["state"].startswith("WARN: running-mean CI excludes 0 for 13 sessions (>= 10)")
+    # one session short of the threshold is not yet a warn
+    assert not se.residual_check("XP-13", _panel(gap[: se.RESIDUAL_STREAK]))["warn"]
+    assert se.residual_check("XP-13", _panel(gap[: se.RESIDUAL_STREAK + 1]))["warn"]
+
+
+def test_residual_check_quiet_on_a_converging_residual() -> None:
+    # noise around 0: the running-mean CI keeps covering 0
+    noise = [(0.001 if i % 2 else -0.001) * (1 + 0.1 * (i % 3)) for i in range(30)]
+    r = se.residual_check("XP-13", _panel(noise))
+    assert not r["warn"] and r["n"] == 30 and r["lo"] < 0 < r["hi"]
+    assert r["state"].startswith("converging")
+
+
+def test_residual_check_waits_for_the_start_book_and_the_ramp() -> None:
+    gap = [0.0005 + (0.00005 if i % 2 else -0.00005) for i in range(14)]
+    held = se.residual_check("XP-13", _panel(gap, book_closed=False))
+    assert not held["warn"] and held["n"] == 0 and "start book still open" in held["state"]
+    flat = se.residual_check("XP-13", _panel(gap, ramp_at=99))
+    assert not flat["warn"] and flat["state"] == "control not ramped yet: not checked"
+    # only ramped sessions count: 14 - 6 = 8 converged sessions (7 excluding) < 10
+    late = se.residual_check("XP-13", _panel(gap, ramp_at=6))
+    assert late["n"] == 8 and not late["warn"]
+
+
+def test_residual_section_reads_the_latest_v3_report(tmp_path: Path) -> None:
+    db, _ = _registry(tmp_path)
+    gap = [0.0005 + (0.00005 if i % 2 else -0.00005) for i in range(14)]
+    with sqlite3.connect(db) as w:
+        row = w.execute(
+            "SELECT * FROM experiment_reports WHERE experiment_id = 'XP-1' ORDER BY id DESC"
+        ).fetchone()
+        cols = [c[1] for c in w.execute("PRAGMA table_info(experiment_reports)")]
+        rec = dict(zip(cols, row, strict=True))
+        payload = json.loads(rec["payload"])
+        payload["production"] = _panel(gap)
+        rec.update(id=None, payload=json.dumps(payload), report_hash="f" * 64)
+        w.execute(
+            f"INSERT INTO experiment_reports ({', '.join(cols)}) "
+            f"VALUES ({', '.join('?' * len(cols))})",
+            [rec[c] for c in cols],
+        )
+    conn = _ro(db)
+    exps = se.experiments(conn)
+    res = se.residual_checks(conn, exps)
+    conn.close()
+    assert [(r["id"], r["warn"]) for r in res] == [("XP-1", True)]
+    text = se.render(exps, [], [], "x", [], [], residuals=res)
+    assert "### 5. P - C residual (D108" in text
+    assert "- XP-1: start book 0 open (last close 2026-10-01), ramped from 2026-10-02" in text
+    assert "WARN: running-mean CI excludes 0" in text
+    assert "no stored report with a production panel" in se.render(exps, [], [], "x", [], [])
+
+
+# ---------------------------------------------------------------------------
 # 4. A/A before A/B
 # ---------------------------------------------------------------------------
 
@@ -417,6 +500,8 @@ def test_install_dry_run_copies_the_lens_script(tmp_path: Path) -> None:
         "Strategy-lane audit (D86, E21.1)",
         "`XP-advisory` honesty",
         "A/A before A/B",
+        "P − C residual (D108, E25.4)",
+        "harness/account gap",
         "never PR review threads or comments",
         "Never run `arc experiment` write verbs",
         "*Experiments:*",

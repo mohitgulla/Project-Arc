@@ -1598,8 +1598,8 @@ token; they are stripped from every command it runs). It:
    Quant's cost bps) by structure kind × regime, lists halts, the newest
    `docs/RESEARCH/*.md` and the A-id ledger, and prints it (≤ 30k chars).
    E21.3 (D86) adds the XP backlog (`xp_backlog.json`, P-ids, statuses synced
-   from the registry by `proposal_ref`), arm capacity per area, the K=4
-   sessions-needed grid (`arc experiment plan --k 4 --effects …`), the open
+   from the registry by `proposal_ref`), arm capacity per area, the K=3
+   sessions-needed grid (`arc experiment plan --k 3 --effects …`, D108), the open
    idea-seed leads, quick changes shipped since the last run, and strategy PRs
    merged since the last run with their `XP-advisory` lines (`gh pr list`).
 
@@ -1620,7 +1620,9 @@ python3 …/arc_analyst.py reset                                # next run revie
 `record` rejects findings that break the strategy gates (D86): a live-evidence
 quick change or XP proposal from a bucket with fewer than 20 closed trades
 (MIN-SAMPLE; a `BT-<n>` holdout study may back a proposal, never a quick
-change), a proposal that is not control + exactly 4 treatments on one leaf set,
+change), a proposal that is not control + exactly 3 treatments on one leaf set (D108;
+an open 4-treatment backlog entry is flagged `needs_rewrite`, unranked and unapprovable
+until re-proposed with 3),
 carries an `id`, or whose `value_score` ≠ effect × share × p ÷ sessions, more
 than 3 quick changes or 2 new proposals, a shipped quick change left
 unreviewed, a backlog over 12 open entries, a `next_experiment` that is not a
@@ -1699,13 +1701,16 @@ the owner approves a proposal:
 
 - **adopt** (the Analyst's `approve P-<n>` runs it on the live store): picks the next free
   `XP-<n>` across the DB, the committed specs and `origin/main`, fills the defaults from
-  `config/experiments.yaml`, and validates the spec. It must be v2 `ab`, with exactly 4
-  treatments, overlays that validate, and arms that fit `max_parallel_arms`. Then it runs
+  `config/experiments.yaml`, and validates the spec. It must be `ab` with exactly 3
+  treatments (D108; any other count is refused, never trimmed), overlays that validate,
+  and arms (control + 3) that fit `max_parallel_arms`. A v2- or v3-shaped proposal is
+  always written as spec v3 (`spec_version: 3`, `arms.control: {overlay: {}}`), so control
+  runs as the flat-start arm `XP-<n>:control`. Then it runs
   `create` + `register` with `proposal_ref: P-<n>`, which leaves the experiment
   `registered`, or `queued` with the reason. It commits
   `config/experiments/live/xp<n>_<slug>.yaml` on branch `xp/<n>` through a PR with
   `gh pr merge --auto --squash`, and posts one #arc-investor line ("XP-11 registered
-  (P-2), 4 arms, area entries, starts Tue Oct 13 pre-open" or "… queued behind XP-9").
+  (P-2), control + 3 treatments, area entries, starts Tue Oct 13 pre-open" or "… queued behind XP-9").
   Re-running for the same P-id only retries what is missing, such as a failed PR.
 - **`experiments.autostart`** (trading days 09:05 ET, ttl 30m, so before the 09:40
   loop) takes the oldest `registered` experiment that carries a `proposal_ref`, and starts
@@ -1914,7 +1919,7 @@ cards may use `Lane: fast — <reason>` instead. Cards never add files to
 `--owner-approval`), and never add a default-off flag just so an experiment can flip
 it. An idea worth testing goes in the `XP-advisory:` line; the weekly Analyst turns
 leads (those lines, plus `hermes/analyst/idea_seed.yaml`, which holds the retired
-dev drafts) into `P-<n>` proposals with 4 treatments.
+dev drafts) into `P-<n>` proposals with 3 treatments (D108).
 
 - `arc experiment report XP-<n>` lists the strategy-path commits that landed since the
   experiment's t0 under "Changes shipped to all arms during this run" (local
