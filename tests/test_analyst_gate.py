@@ -1054,7 +1054,7 @@ def test_owner_approve_drop_reprioritise_backlog(
         calls.append((pid, spec_path, approval))
         return 0, {
             "experiment_id": "XP-3", "status": "registered", "area": "exits", "arms": 4,
-            "pr_url": "https://github.com/o/r/pull/9", "starts": "2026-10-05",
+            "pr_url": "https://github.com/o/r/pull/9", "start_cmd": "arc experiment start XP-3",
             "queued_behind": [], "queue_reason": None,
         }  # fmt: skip
 
@@ -1066,7 +1066,7 @@ def test_owner_approve_drop_reprioritise_backlog(
     assert calls == [("P-1", spec_path, "slack:1791668051.305679")]
     assert "P-1 -> XP-3 [registered], area exits, 4 arms" in out
     assert "Spec PR: https://github.com/o/r/pull/9" in out
-    assert "starts 2026-10-05 pre-open" in out
+    assert "owner to start: `arc experiment start XP-3`" in out
     spec = yaml.safe_load(spec_path.read_text())
     assert spec["id"] == "XP-<next>" and spec["kind"] == "ab" and spec["spec_version"] == 3
     assert spec["arms"]["control"] == {"overlay": {}}  # D108: control runs as its own arm

@@ -2840,13 +2840,13 @@ def cmd_approve(p: Paths, pid: str, note: str, approval: str, now: dt.datetime) 
     if res["status"] == "queued":
         when = f"queued: {res.get('queue_reason') or 'behind ' + ', '.join(res['queued_behind'])}"
     else:
-        when = f"starts {res.get('starts')} pre-open (experiments.autostart 09:05 ET)"
+        when = f"owner to start: `{res.get('start_cmd')}` (D112, manual)"
     print(
         f"{pid} -> {res['experiment_id']} [{res['status']}], area {res['area']}, "
         f"{res['arms']} arms\n"
         f"Spec PR: {res.get('pr_url') or res.get('pr_status') or '-'} "
         "(auto-merges when CI is green)\n"
-        f"{when}. The start needs the spec merged and the A/A calibration committed."
+        f"{when}. Start it once the spec PR is merged and the A/A calibration is committed."
     )
     return 0
 

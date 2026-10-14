@@ -14,7 +14,6 @@
 #   06:00          earnings calendar; rss / edgar every 15 min until 20:00
 #   08:00 / 08:30  options_slow / market_health catch-ups (only if the evening slot missed; D96)
 #   06:30-20:00    Scalp every 30 min (D91; no overnight run)
-#   09:05          experiments.autostart: start an owner-approved registered XP (E21.4, D86)
 #   09:30-16:00    monitor every 10 min; broker.reattach 09:30-16:10 (D72)
 #   09:40-15:50    trading loop every 10 min (D52, D56): research -> exits.mandatory ->
 #                  quant.exit -> risk.exit -> quant.open -> risk.open -> quant.revise ->
@@ -757,17 +756,6 @@ personas:
     notify: quiet               # E10.5: posts its own [XP-n] line per running experiment
                                 #   and a stop card per stopped one (arc/slack/experiments.py)
     writes: []                  # experiment_reports + experiment_events, no context
-  experiments.autostart:        # E21.4 (D86): pre-open start of an owner-approved (adopted) XP
-    label: Experiment auto-start
-    about: "Starts the oldest registered experiment the owner approved, once its t0 checks pass (A/A calibration, spec merged, no halt, capacity)"
-    group: trading_loop
-    schedule: ["09:05"]         # after the pre-market sources (last 07:20), before the 09:40 loop
-    days: trading
-    llm: false                  # deterministic: store + origin/main + the arm-account probe
-    halt_exempt: true           # runs while halted only to post "blocked: halted" (never starts)
-    ttl: 30m                    # a missed 09:05 still runs until 09:35, before the first loop
-    notify: quiet               # posts started / blocked (with the reason) as one notice
-    writes: []                  # experiment_events (+ arm stores), no context
   broker:                       # E6.2 / D56: works an approved proposal through its D24 price band
     label: Broker orders
     about: "Works an approved proposal through its price band (event-driven)"

@@ -15,9 +15,8 @@ folded (``notify: quiet``).
 
 E21.4 (D86): after the evaluation, every concluded experiment without a published
 verdict gets its ``verdicts/XP-<n>.yaml`` PR (auto-merged; :mod:`arc.experiments.verdicts`),
-on a live tick only. ``experiments.autostart`` (09:05 ET) starts the oldest registered
-adopted experiment once its t0 checks pass (:mod:`arc.experiments.autostart`) and posts
-started / blocked with the reason once per day.
+on a live tick only. Starting the next registered experiment is the owner's manual
+``arc experiment start XP-<n>`` (D112: no pre-open auto-start).
 """
 
 from __future__ import annotations
@@ -29,18 +28,12 @@ import structlog
 from arc.routines.handlers import JobResult
 
 if TYPE_CHECKING:
-    import datetime as _dt
-    import sqlite3
-    from collections.abc import Callable
-
     from arc.experiments.evaluate import ExperimentReport
     from arc.routines.handlers import JobContext
     from arc.slack.blocks import CardView
 
 __all__ = [
-    "autostart_preview",
     "experiment_posts",
-    "experiments_autostart_step",
     "experiments_evaluate_step",
 ]
 
@@ -109,90 +102,3 @@ def _live(ctx: JobContext) -> bool:
     """Side effects outside the store (git, GitHub, broker) only on a live tick."""
     env = getattr(ctx, "run_env", None)
     return bool(env is not None and env.slack)
-
-
-def _halted(conn: sqlite3.Connection) -> bool:
-    from arc.gate.halt import HaltSwitch
-    from arc.store.repos import HaltRepo
-
-    try:
-        return HaltSwitch(HaltRepo(conn)).opens_blocked()  # any halt stops new arms
-    except Exception:  # noqa: BLE001 - fails closed, like the dispatcher
-        return True
-
-
-def experiments_autostart_step(ctx: JobContext) -> JobResult:
-    """E21.4: start the oldest registered adopted experiment (t0 checks first)."""
-    from arc.control.effective import experiments_config
-    from arc.experiments.autostart import autostart
-    from arc.experiments.publish import GitMainView, PublishError
-    from arc.experiments.store import ExperimentStore
-    from arc.utils.calendar import is_session
-
-    cfg = experiments_config(ctx.settings)
-    store = ExperimentStore.for_runner(ctx.conn, cfg.runner, now=lambda: ctx.now)
-    start = _live_start(ctx) if _live(ctx) else None
-    try:
-        d = autostart(
-            store,
-            cfg,
-            now=ctx.now,
-            halted=_halted(ctx.conn),
-            session=is_session(ctx.now.date()),
-            main=GitMainView(fetch=_live(ctx)),
-            start=start,
-        )
-    except PublishError as exc:  # git could not read origin/main: nothing started
-        return JobResult(summary=f"autostart: origin/main unreadable: {exc}", notice=str(exc))
-    lines = d.lines()
-    # once per day: the routine runs once (09:05 + ttl); quiet unless it looked at one
-    notice = "" if d.skipped else "; ".join(lines)
-    return JobResult(
-        summary="; ".join(lines),
-        notice=notice,
-        metrics={"started": len(d.started), "blocked": len(d.blocked)},
-    )
-
-
-def _live_start(ctx: JobContext) -> Callable[[str], object]:
-    """``arc experiment start`` (live): control's equity, the arm account probe."""
-    from arc.experiments.autostart import AUTOSTART_ACTOR
-    from arc.experiments.broker import trading_broker
-    from arc.experiments.runner import live_account_probe, runner_config, start_arms
-
-    def start(experiment_id: str) -> object:
-        return start_arms(
-            ctx.conn,
-            experiment_id,
-            actor=AUTOSTART_ACTOR,
-            now=ctx.now,
-            t0_equity=trading_broker(ctx.conn).account().equity,
-            runner=runner_config(ctx.conn),
-            routines_path=ctx.run_env.config_path,
-            probe=live_account_probe(),
-        )
-
-    return start
-
-
-def autostart_preview(conn: sqlite3.Connection, now: _dt.datetime) -> str:
-    """``tick --dry-run``: what ``experiments.autostart`` would do at *now* (read-only;
-    origin/main as last fetched, no broker checks)."""
-    from arc.control.effective import effective_settings, experiments_config
-    from arc.experiments.autostart import autostart
-    from arc.experiments.publish import GitMainView
-    from arc.experiments.store import ExperimentStore
-    from arc.utils.calendar import is_session
-
-    cfg = experiments_config(effective_settings(conn))
-    store = ExperimentStore.for_runner(conn, cfg.runner, now=lambda: now)
-    d = autostart(
-        store,
-        cfg,
-        now=now,
-        halted=_halted(conn),
-        session=is_session(now.date()),
-        main=GitMainView(fetch=False),
-        start=None,
-    )
-    return "; ".join(d.lines())

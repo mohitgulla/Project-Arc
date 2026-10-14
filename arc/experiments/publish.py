@@ -13,8 +13,8 @@ xp<n>_<slug>.yaml``) and every concluded experiment commits its verdict
 Idempotent: an open or merged PR for the branch is reused (its URL returned), and a
 file already on ``origin/main`` with the same content needs no PR at all.
 
-:class:`MainView` reads ``origin/main`` (the autostart's "spec merged" check and the
-next-free-id scan). Both are I/O at the edge; tests inject fakes.
+:class:`MainView` reads ``origin/main`` (the next-free-id scan). Both are I/O at the edge;
+tests inject fakes.
 """
 
 from __future__ import annotations

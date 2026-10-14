@@ -4,7 +4,7 @@ Every spec v3 XP starts a fresh, flat control arm on a different date. Pooled, t
 sessions say how the production strategy (control runs production's exact config)
 behaves by market regime and by start date. **Descriptive only:** nothing here is a
 verdict, stop or promotion input. No module on the verdict path (``evaluate``,
-``multi``, ``verdicts``, ``autostart``, ``adopt``) imports this one, and the session
+``multi``, ``verdicts``, ``adopt``) imports this one, and the session
 regime tag lives in the descriptive production panel, which the verdict ignores
 (``tests/test_experiment_regime_panel.py``).
 

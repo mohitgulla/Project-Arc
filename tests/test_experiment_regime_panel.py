@@ -205,7 +205,7 @@ def test_regime_tag_never_moves_a_verdict() -> None:
 
 def test_verdict_path_never_imports_the_regime_panel() -> None:
     """D108: the regime study is descriptive. No verdict/stop/promotion module imports it."""
-    for mod in ("evaluate", "multi", "verdicts", "autostart", "adopt", "stats", "runner",
+    for mod in ("evaluate", "multi", "verdicts", "adopt", "stats", "runner",
                 "production"):  # fmt: skip
         tree = ast.parse((REPO / "arc" / "experiments" / f"{mod}.py").read_text())
         names = {n.module or "" for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)} | {

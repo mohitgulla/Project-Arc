@@ -1006,7 +1006,6 @@ def test_yaml_comment_overview_matches_config() -> None:
         "scout", "scalp", "research", "monitor", "broker.reconcile", "scorecard",
         "broker",
         "positions.evaluate", "experiments.evaluate",
-        "experiments.autostart",  # E21.4 (D86): pre-open start of an adopted XP
         "reconcile.intraday",  # E11.1 (D71): event-driven
         "broker.reattach",  # E11.2 (D72): every tick in RTH
     }  # fmt: skip
