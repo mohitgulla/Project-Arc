@@ -2,17 +2,20 @@
 
 Every ``/api/*`` GET takes an optional ``?arm=<experiment id>:<arm>`` (e.g.
 ``XP-12:t1``). Without it, or with ``arm=control``, the request reads the tower's
-own store (production, shown as "Arc Investor", D92) exactly as before. With a
-running arm it reads that arm's store, ``mode=ro``, at the path control recorded at
-t0 (:func:`arc.experiments.arms.arm_stores`). The same loaders run on it, so
+own store: the production account, shown as "Production" (D108; was "Arc Investor",
+D92), exactly as before. With a
+running arm it reads that arm's store, ``mode=ro``, at the path production recorded at
+t0 (:func:`arc.experiments.arms.arm_stores`). A spec v3 XP's control arm
+(``XP-<n>:control``, D108) is one of those arms. The same loaders run on it, so
 equity, positions, trades and performance come from the arm's virtual account and
 its attributed fills (E15.2: the arm's ``pnl_snapshots`` / ``monitor`` rows carry
 the virtual equity), never the shared broker account.
 
-Pages fed by control-only data (sources, universe, context, Scout/Scalp LLM spend,
-ops, experiments) keep reading control and say so with ``shared_from_control``.
+Pages fed by production-only data (sources, universe, context, Scout/Scalp LLM spend,
+ops, experiments) keep reading production and say so with ``shared_from_control``
+(the field name predates D108; it means "shared from production").
 
-Every response carries ``scope: {arm_id}`` (``null`` = control) and
+Every response carries ``scope: {arm_id}`` (``null`` = production) and
 ``shared_from_control``. Unknown or not-running arms are a 404 listing the arms
 that can be viewed. Read-only throughout: no broker, no network, no writes.
 """
@@ -41,7 +44,8 @@ __all__ = [
     "scoped",
 ]
 
-#: The ``?arm=`` value for the production account (also the default).
+#: The ``?arm=`` value for the production account (also the default). A spec v3
+#: XP's control arm is ``XP-<n>:control`` (D108), never this bare value.
 CONTROL = "control"
 
 _STRICT = ConfigDict(extra="forbid", frozen=True)
@@ -53,7 +57,7 @@ class ScopeInfo(BaseModel):
     model_config = _STRICT
 
     arm_id: str | None = Field(
-        default=None, description="'<experiment id>:<arm>' for an arm; null = Arc Investor"
+        default=None, description="'<experiment id>:<arm>' for an arm; null = Production"
     )
 
 
@@ -104,7 +108,8 @@ def arm_short(arm: str) -> str:
 
 
 def arm_label(experiment_id: str, arm: str) -> str:
-    """``XP-12 · T1`` (D92: arms show their treatment name, never "Control")."""
+    """``XP-12 · T1``; a spec v3 control arm is ``XP-12 · Control`` (D108). The production
+    account is never an arm (it is "Production", the default view)."""
     return f"{experiment_id} · {arm_short(arm)}"
 
 
@@ -250,7 +255,7 @@ def scoped[M: BaseModel](model: type[M]) -> type[M]:
             bool,
             Field(
                 default=False,
-                description="True when an arm view serves Arc Investor's (control's) data",
+                description="True when an arm view serves Production's data (shared inputs)",
             ),
         ),
     }

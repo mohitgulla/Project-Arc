@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING
 
 from arc.experiments import view
 from arc.slack import blocks as B
+from arc.slack.loop import RECAP_MAX, bold_italic
 
 if TYPE_CHECKING:
     from arc.experiments.evaluate import ArmSummary, ExperimentReport
@@ -40,8 +41,20 @@ _VERDICT_LABEL = {
 
 
 def experiment_line(report: ExperimentReport) -> B.CardView:
-    """The daily one-line status of a running experiment (text only, no blocks)."""
-    return B.CardView(text=view.daily_line(report), blocks=[])
+    """The daily status of a running experiment (D108, E25.6; text only, no blocks).
+
+    ``[XP-12] Day 14/60``, a bold-italic one-sentence headline (≤ ``RECAP_MAX``, D109),
+    then one ``Ti − C`` line per treatment (all K): P&L ∆ %/day with its Holm p and
+    Sortino ∆ with its p. No production (Ti − P) line and no sleeve stats: those stay
+    on the Tower. Posted in the day thread and also sent to #arc-investor (D65).
+    """
+    r = report
+    lines = [
+        view.status_title(r),
+        bold_italic(view.status_headline(r), RECAP_MAX),
+        *(view.gap_line(r, g) for g in view.arm_gaps(r)),
+    ]
+    return B.CardView(text="\n".join(lines), blocks=[], broadcast=True)
 
 
 def stop_title(report: ExperimentReport) -> str:
@@ -155,8 +168,41 @@ def verdict_sentence(r: ExperimentReport) -> str:
     return f"{pnl} {where} {n}, the maximum."
 
 
+def _production(r: ExperimentReport) -> str | None:
+    """D108 Production block (spec v3): P total and P − C = start book + residual."""
+    pp = r.production
+    if pp is None:
+        return None
+    t0 = r.t0_equity
+    ret = pp.cum_p_pnl / t0 if t0 > 0 else None
+    book = pp.start_book
+    held = book.days[-1].open if book.days else len(book.ids)
+    return "\n".join(
+        [
+            f"P&L {_money(pp.cum_p_pnl)} ({view.pct(ret)})",
+            f"P {view.MINUS} C {view.pct(pp.cum_d_p_c)}",
+            f"= start book {view.pct(pp.cum_start_book)}",
+            f"+ residual {view.pct(pp.cum_residual)}",
+            f"Start book {held}/{len(book.ids)} open",
+        ]
+    )
+
+
+def _arm_title(r: ExperimentReport, name: str) -> str:
+    """``Control`` (the spec v3 control arm), ``Production`` (v1/v2's reference, which was
+    the production account, D108 naming), or the treatment's short name ``T2``."""
+    if name == "control":
+        return "Control" if r.reference == "control" else "Production"
+    return view.arm_short(name)
+
+
 def experiment_stop_card(report: ExperimentReport) -> B.CardView:
-    """The card posted once when the daily evaluation stops an experiment."""
+    """The card posted once when the daily evaluation stops an experiment.
+
+    D108 (E25.6): a bold-italic headline under the title, arm blocks Control, T1..T3,
+    a Production block (spec v3), ``Start book`` (was ``Legacy book``); also sent to
+    #arc-investor (D65).
+    """
     r = report
     pairs: list[tuple[str, str]] = [
         ("Paired Daily P&L", _primary(r)),
@@ -166,7 +212,11 @@ def experiment_stop_card(report: ExperimentReport) -> B.CardView:
     # control first, then every treatment arm (D69: t1..tK) in report order
     for name in ["control", *(a for a in arms if a != "control")]:
         if name in arms:
-            pairs.append((name.capitalize(), _arm(arms[name], r.t0_equity)))
+            pairs.append((_arm_title(r, name), _arm(arms[name], r.t0_equity)))
+    prod = _production(r)
+    if prod is not None:
+        pairs.append(("Production", prod))
+    book = len(r.production.start_book.ids) if r.production is not None else len(r.legacy_book)
     pairs.append(
         (
             "Sessions",
@@ -174,7 +224,7 @@ def experiment_stop_card(report: ExperimentReport) -> B.CardView:
                 [
                     view.progress_text(r, bounds=True),
                     f"{r.t0:%b %-d} (t0) • Equity ${r.t0_equity:,.0f}",
-                    f"Legacy book {len(r.legacy_book)}",
+                    f"Start book {book}",
                     f"Missing {len(r.missing_sessions)}",
                 ]
             ),
@@ -189,6 +239,10 @@ def experiment_stop_card(report: ExperimentReport) -> B.CardView:
     title = stop_title(r)
     out: list[B.Block] = [
         B.header(title),
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": bold_italic(view.status_headline(r), RECAP_MAX)},
+        },
         B.summary(
             f"Area {r.area}",
             "A/A" if r.kind.value == "aa" else "A/B",
@@ -210,4 +264,4 @@ def experiment_stop_card(report: ExperimentReport) -> B.CardView:
             evaluated=f"{r.evaluated_at:%Y-%m-%d %H:%M %Z}",
         )
     )
-    return B.CardView(text=title, blocks=out)
+    return B.CardView(text=title, blocks=out, broadcast=True)

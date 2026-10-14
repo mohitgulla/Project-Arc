@@ -120,7 +120,7 @@ class MetaResponse(BaseModel):
     arms: list[ArmMeta] = Field(
         default_factory=list,
         description="E15.6 (D69): experiment arms the tower can be scoped to with ?arm=<id>, "
-        "running first (the default view is Arc Investor, never listed here)",
+        "running first (the default view is Production, never listed here)",
     )
     scope: ScopeInfo = Field(default_factory=ScopeInfo, description="E15.6 (D69)")
     shared_from_control: bool = False

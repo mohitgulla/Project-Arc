@@ -29,6 +29,11 @@ from arc.experiments.models import (  # noqa: TC001 - pydantic resolves field an
     StopDetail,
     StopReason,
 )
+from arc.experiments.regime_panel import (  # noqa: TC001 - pydantic resolves field annotations
+    RegimePanel,
+    build_regime_panel,
+    load_v3_reports,
+)
 from arc.experiments.store import ExperimentStore
 
 if TYPE_CHECKING:
@@ -79,7 +84,9 @@ class ExperimentListItem(BaseModel):
     verdict_reason: str | None = None
     evaluated_at: _dt.datetime | None = None
     as_of_day: _dt.date | None = None
-    line: str | None = Field(None, description="The daily [XP-n] Slack line, verbatim")
+    line: str | None = Field(
+        None, description="The daily [XP-n] Slack status (D108), plain text, one line per row"
+    )
     # D95: list-row visuals (variant count, headline arm, per-arm verdicts).
     variants: int = Field(1, description="Treatment arms in the spec (K)")
     headline_arm: str | None = Field(
@@ -115,6 +122,11 @@ class ExperimentDetailResponse(BaseModel):
     report_hash: str | None = Field(None, description="sha256 of the report's canonical JSON")
     curves: list[view.CurvePoint] = Field(default_factory=list)
     cumulative: list[view.CumulativePoint] = Field(default_factory=list)
+    regime_panel: RegimePanel | None = Field(
+        None,
+        description="E25.5 (D108 c): P − C and Ti − C pooled across every v3 XP by regime; "
+        "descriptive only. Present when this experiment's latest report is v3.",
+    )
 
 
 def _item(st: ExperimentState, rep: ExperimentReport | None) -> ExperimentListItem:
@@ -161,7 +173,7 @@ def _item(st: ExperimentState, rep: ExperimentReport | None) -> ExperimentListIt
         verdict_reason=rep.verdict_reason,
         evaluated_at=rep.evaluated_at,
         as_of_day=rep.as_of_day,
-        line=view.daily_line(rep),
+        line="\n".join(view.status_lines(rep)),
         headline_arm=headline,
         arm_verdicts=verdicts,
     )
@@ -185,6 +197,9 @@ def load_experiment(
     if st is None:
         return None
     rep = latest_report(conn, experiment_id)
+    panel = None
+    if rep is not None and rep.production is not None:
+        panel = build_regime_panel(load_v3_reports(conn))
     return ExperimentDetailResponse(
         as_of=now,
         experiment=_item(st, rep),
@@ -199,4 +214,5 @@ def load_experiment(
         report_hash=None if rep is None else rep.report_hash(),
         curves=[] if rep is None else view.curves(rep),
         cumulative=[] if rep is None else view.cumulative(rep, mde=st.spec.mde),
+        regime_panel=panel,
     )
