@@ -10,7 +10,6 @@ import { KeyValueList } from "../components/KeyValueList";
 import { Money } from "../components/Money";
 import { Section } from "../components/Section";
 import {
-  ACCOUNT_NAME,
   armColor,
   armLabel,
   armPlanRows,
@@ -33,12 +32,18 @@ import {
   leaderRows,
   longDay,
   pct,
+  productionGapRows,
+  productionView,
   pText,
   ratioText,
+  refName,
+  regimeRows,
   resultRows,
   resultSentences,
   sessionsView,
+  shortDay,
   spanDomain,
+  startBookRows,
   statusPill,
   variantRows,
   verdictCounts,
@@ -137,6 +142,7 @@ function ExperimentListRow({ r }: { r: ExperimentRow }) {
     : 1;
   const counts = verdictCounts(r);
   const head = r.headline_arm ? armShort(r.headline_arm) : "T1";
+  const ref = refName(r);
   return (
     <button
       type="button"
@@ -163,7 +169,7 @@ function ExperimentListRow({ r }: { r: ExperimentRow }) {
       </div>
       <div className="min-w-0">
         <p className="text-caption text-muted">
-          {r.variants > 1 ? `Best · ${head}` : head} vs {ACCOUNT_NAME}
+          {r.variants > 1 ? `Best · ${head}` : head} vs {ref}
         </p>
         <div className="flex flex-wrap items-baseline gap-x-2">
           <span className={`text-title font-semibold tabular-nums ${TONE_TEXT[tone]}`}>{deltaText(r)}</span>
@@ -309,6 +315,8 @@ export function ExperimentBody({ d }: { d: ExperimentDetail }) {
             <DetectableCard d={d} />
           </div>
           <BreakdownCard d={d} />
+          {r.production && <ProductionCard d={d} />}
+          {d.regime_panel && <RegimeCard d={d} />}
         </>
       )}
       <MoreCard d={d} />
@@ -322,6 +330,7 @@ function ResultCard({ d }: { d: ExperimentDetail }) {
   const rows = resultRows(r);
   const multi = controlPairs(r).length > 0;
   const head = e.headline_arm ? armShort(e.headline_arm) : "T1";
+  const ref = refName(r);
   const tone = ciTone(e);
   return (
     <Card
@@ -330,14 +339,14 @@ function ResultCard({ d }: { d: ExperimentDetail }) {
       freshness={{ at: e.evaluated_at ?? null, cadenceS: DAY_S, label: "EOD evaluation" }}
       headerExtra={
         <Tip about="the result">
-          Paired daily net P&amp;L gap (arm minus {ACCOUNT_NAME}) as a share of t0 equity, with an always-valid
+          Paired daily net P&amp;L gap (arm minus {ref}) as a share of t0 equity, with an always-valid
           {e.ci_level ? ` ${Math.round(e.ci_level * 100)}%` : ""} range that stays valid however often it is checked.
           {multi ? " Each arm is Holm-adjusted across the variants." : ""}
         </Tip>
       }
     >
       <p className="text-caption text-muted">
-        {multi ? `Best · ${head}` : head} vs {ACCOUNT_NAME} · paired daily P&amp;L
+        {multi ? `Best · ${head}` : head} vs {ref} · paired daily P&amp;L
       </p>
       <div className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <span className={`text-hero font-semibold tabular-nums ${TONE_TEXT[tone]}`} data-testid="result-hero">
@@ -383,7 +392,7 @@ function RiskCard({ d }: { d: ExperimentDetail }) {
         </Tip>
       }
     >
-      <p className="text-caption text-muted">Sortino ∆ · {armShort(arms[1] ?? "treatment")} − {ACCOUNT_NAME}</p>
+      <p className="text-caption text-muted">Sortino ∆ · {armShort(arms[1] ?? "treatment")} − {refName(r)}</p>
       <div className="mt-1 flex flex-wrap items-baseline gap-x-3">
         <span className="text-hero font-semibold tabular-nums text-title">{ratioText(e.sortino_delta, true)}</span>
         <Pill
@@ -402,7 +411,7 @@ function RiskCard({ d }: { d: ExperimentDetail }) {
         {dci ? `${Math.round(dci.level * 100)}% range [${ratioText(dci.lo, true)}, ${ratioText(dci.hi, true)}] · ` : ""}p {pText(e.sortino_p)}
       </p>
       <div className="mt-4">
-        <DuelBars rows={rows} order={arms} />
+        <DuelBars rows={rows} order={arms} reference={r.reference} />
       </div>
     </Card>
   );
@@ -414,7 +423,7 @@ function LeaderboardCard({ d }: { d: ExperimentDetail }) {
   const order = r.arms.map((a) => a.arm);
   const max = Math.max(...rows.map((x) => Math.abs(x.cum)), 1e-9);
   return (
-    <Card title="Leaderboard" testid="leaderboard-card" headerExtra={<Tip about="the leaderboard">Every arm ranked by net P&amp;L since t0 as a share of t0 equity. Verdicts come from each arm's own comparison with {ACCOUNT_NAME}.</Tip>}>
+    <Card title="Leaderboard" testid="leaderboard-card" headerExtra={<Tip about="the leaderboard">Every arm ranked by net P&amp;L since t0 as a share of t0 equity. Verdicts come from each arm's own comparison with {refName(r)}.</Tip>}>
       <div className="grid text-body tabular-nums">
         <div className="grid grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_72px_72px] gap-3 pb-1 text-caption text-muted tablet:grid-cols-[minmax(0,1.4fr)_minmax(0,1.2fr)_88px_88px_72px_120px]">
           <span>Arm</span>
@@ -432,9 +441,9 @@ function LeaderboardCard({ d }: { d: ExperimentDetail }) {
           >
             <span className="flex min-w-0 items-center gap-2">
               <span className="w-5 text-caption text-muted">#{x.rank}</span>
-              <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: armColor(x.arm, order) }} />
-              <span className="truncate max-tablet:hidden">{armLabel(x.arm, d.experiment.experiment_id)}</span>
-              <span className="truncate tablet:hidden">{armShort(x.arm)}</span>
+              <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: armColor(x.arm, order, r.reference) }} />
+              <span className="truncate max-tablet:hidden">{armLabel(x.arm, d.experiment.experiment_id, r.reference)}</span>
+              <span className="truncate tablet:hidden">{armShort(x.arm, r.reference)}</span>
             </span>
             <span className="flex h-full items-center max-tablet:hidden">
               <span className="relative h-1.5 w-full rounded-full bg-track">
@@ -485,6 +494,7 @@ function EquityCard({ d }: { d: ExperimentDetail }) {
   const v = equityView(d);
   const last = v.points.at(-1);
   const t0 = d.report?.t0_equity ?? 0;
+  const ref = d.report?.reference;
   return (
     <Card title="Equity Since t0" testid="equity-card">
       <div className="mb-3 flex flex-wrap gap-x-6 gap-y-2">
@@ -494,8 +504,8 @@ function EquityCard({ d }: { d: ExperimentDetail }) {
           return (
             <div key={a} className="min-w-0">
               <p className="flex items-center gap-1.5 text-caption text-muted">
-                <span className="h-2 w-2 rounded-full" style={{ background: armColor(a, v.arms) }} />
-                {armShort(a)}
+                <span className="h-2 w-2 rounded-full" style={{ background: armColor(a, v.arms, ref) }} />
+                {armShort(a, ref)}
               </p>
               <p className="flex items-baseline gap-2">
                 <span className="text-stat font-semibold tabular-nums text-title">
@@ -507,8 +517,8 @@ function EquityCard({ d }: { d: ExperimentDetail }) {
           );
         })}
       </div>
-      <ArmEquityChart view={v} experimentId={d.experiment.experiment_id} />
-      <ArmLegend arms={v.arms} experimentId={d.experiment.experiment_id} extra="legacy book excluded" />
+      <ArmEquityChart view={v} experimentId={d.experiment.experiment_id} reference={ref} />
+      <ArmLegend arms={v.arms} experimentId={d.experiment.experiment_id} reference={ref} extra={ref === "control" ? undefined : "start book excluded"} />
     </Card>
   );
 }
@@ -521,7 +531,7 @@ function DailyDiffCard({ d }: { d: ExperimentDetail }) {
     <Card
       title="Daily Difference"
       testid="daily-diff-card"
-      headerExtra={<Tip about="the daily difference">{head} minus {ACCOUNT_NAME} each session, as a share of t0 equity. Green: {head} ahead that day. The dashed line is the running total.</Tip>}
+      headerExtra={<Tip about="the daily difference">{head} minus {refName(d.report)} each session, as a share of t0 equity. Green: {head} ahead that day. The dashed line is the running total.</Tip>}
     >
       <div className="mb-3 flex flex-wrap gap-x-8 gap-y-2">
         <div>
@@ -572,8 +582,8 @@ function ExecutionCard({ d }: { d: ExperimentDetail }) {
             <tr key={a.arm} className="border-t border-line">
               <td className="py-2">
                 <span className="flex items-center gap-2">
-                  <span className="h-2 w-2 rounded-full" style={{ background: armColor(a.arm, order) }} />
-                  {armShort(a.arm)}
+                  <span className="h-2 w-2 rounded-full" style={{ background: armColor(a.arm, order, r.reference) }} />
+                  {armShort(a.arm, r.reference)}
                 </span>
               </td>
               <td className="text-right">{a.orders}</td>
@@ -628,7 +638,7 @@ function BreakdownCard({ d }: { d: ExperimentDetail }) {
                 <th className="py-1 text-left font-normal" />
                 {arms.map((a) => (
                   <th key={a} className="whitespace-nowrap text-right font-normal">
-                    {armShort(a)}
+                    {armShort(a, r.reference)}
                   </th>
                 ))}
               </tr>
@@ -658,6 +668,133 @@ function BreakdownCard({ d }: { d: ExperimentDetail }) {
                       </td>
                     );
                   })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/** D108 (E25.6): production next to the control arm and the treatments. Descriptive only. */
+function ProductionCard({ d }: { d: ExperimentDetail }) {
+  const r = d.report!;
+  const v = productionView(r);
+  const rows = productionGapRows(r);
+  const book = startBookRows(r);
+  if (!v) return null;
+  const tone = (x: number) => (x > 0 ? "text-pos-text" : x < 0 ? "text-neg-text" : "text-title");
+  return (
+    <Card
+      title="Production"
+      testid="production-card"
+      headerExtra={
+        <>
+          <Pill v={{ label: "Descriptive", tone: "neutral" }} />
+          <Tip about="production">
+            The production account next to this experiment. Verdicts measure each treatment against the control arm only.
+            P − C splits into the start book (production's open book at t0) and the residual. Ti − P is shown in total,
+            excluding the start book, and from the session the control arm ramped up to production's open count.
+          </Tip>
+        </>
+      }
+    >
+      <div className="grid grid-cols-2 gap-x-6 gap-y-3 tablet:grid-cols-4" data-testid="production-stats">
+        <div className="min-w-0">
+          <p className="text-caption text-muted">P&amp;L Since t0</p>
+          <p className={`text-stat font-semibold tabular-nums ${tone(v.pnl)}`}>
+            <Money value={v.pnl} kind="pnl" />
+          </p>
+          <p className="text-micro tabular-nums text-muted">{pct(v.ret)}</p>
+        </div>
+        <div className="min-w-0">
+          <p className="text-caption text-muted">P − C</p>
+          <p className={`text-stat font-semibold tabular-nums ${tone(v.dPC)}`}>{pct(v.dPC)}</p>
+          <p className="text-micro tabular-nums text-muted">
+            start book {pct(v.startBook)} + residual {pct(v.residual)}
+          </p>
+        </div>
+        <div className="min-w-0">
+          <p className="text-caption text-muted">Start Book</p>
+          <p className="text-stat font-semibold tabular-nums text-title">
+            {v.bookOpen} <span className="text-body font-normal text-muted">of {v.bookTotal} open</span>
+          </p>
+        </div>
+        <div className="min-w-0">
+          <p className="text-caption text-muted">Control Ramped</p>
+          <p className="text-stat font-semibold tabular-nums text-title">{v.rampedFrom ? shortDay(v.rampedFrom) : "Not Yet"}</p>
+        </div>
+      </div>
+      {rows.length > 0 && (
+        <div className="mt-5">
+          <Eyebrow>Treatment − Production · Daily Gap</Eyebrow>
+          <ForestPlot rows={rows} domain={forestDomain(rows)} labelWidth={150} testid="production-forest" />
+        </div>
+      )}
+      {book.length > 0 && (
+        <div className="mt-5">
+          <Eyebrow>Start Book · {book.length}</Eyebrow>
+          <ul className="grid gap-0" data-testid="start-book-list">
+            {book.map((b) => (
+              <li key={b.id} className="flex min-h-[34px] items-center justify-between gap-4 border-t border-line first:border-t-0">
+                <code className="min-w-0 break-all text-micro">{b.id}</code>
+                <span className={`shrink-0 text-caption tabular-nums ${b.closed === "Open" ? "text-muted" : "text-secondary"}`}>{b.closed}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/** E25.5: P − C and pooled Ti − C by market regime across every v3 experiment. */
+function RegimeCard({ d }: { d: ExperimentDetail }) {
+  const p = d.regime_panel!;
+  const rows = regimeRows(p);
+  return (
+    <Card
+      title="By Regime"
+      testid="regime-card"
+      headerExtra={
+        <>
+          <Pill v={{ label: "Descriptive", tone: "neutral" }} />
+          <Tip about="by regime">
+            Every spec v3 experiment's sessions pooled by SPY trend and volatility at the close. Mean per session with a
+            95% range; buckets under {p.thin_n} sessions are marked thin. Context only, never a verdict input.
+          </Tip>
+        </>
+      }
+    >
+      <p className="mb-2 text-caption text-muted">
+        {(p.xps ?? []).length} experiment{(p.xps ?? []).length === 1 ? "" : "s"} · {p.sessions} sessions
+        {p.unknown_sessions ? ` · ${p.unknown_sessions} without a regime` : ""}
+      </p>
+      {rows.length === 0 ? (
+        <EmptyState caption="No pooled sessions yet." />
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-body tabular-nums" data-testid="regime-table">
+            <thead>
+              <tr className="text-caption text-muted">
+                <th className="py-1 text-left font-normal">Regime</th>
+                <th className="text-right font-normal">Sessions</th>
+                <th className="whitespace-nowrap text-right font-normal">P − C / Day</th>
+                <th className="whitespace-nowrap text-right font-normal">Ti − C / Day</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((b) => (
+                <tr key={b.key} className="border-t border-line" data-testid="regime-row">
+                  <td className="py-1.5">
+                    {b.label}
+                    {b.thin && <span className="ml-2 text-caption text-muted">thin</span>}
+                  </td>
+                  <td className="text-right">{b.n}</td>
+                  <td className="whitespace-nowrap text-right">{b.dPC}</td>
+                  <td className="whitespace-nowrap text-right">{b.tiC}</td>
                 </tr>
               ))}
             </tbody>
@@ -729,7 +866,7 @@ function MoreCard({ d }: { d: ExperimentDetail }) {
               label: "Pre-Registered Hash",
               value: <code className="text-micro">{d.registered_hash ? d.registered_hash.slice(0, 16) : "not registered"}</code>,
             },
-            { label: "Arc Investor Sha", value: <code className="text-micro">{d.running?.control_sha?.slice(0, 12) ?? "—"}</code> },
+            { label: "Production Sha", value: <code className="text-micro">{d.running?.control_sha?.slice(0, 12) ?? "—"}</code> },
             { label: "Treatment Sha", value: <code className="text-micro">{d.report?.treatment_sha?.slice(0, 12) ?? "—"}</code> },
             { label: "Evaluator Sha", value: <code className="text-micro">{d.report?.evaluator_sha?.slice(0, 12) ?? "—"}</code> },
             { label: "Report Hash", value: <code className="text-micro">{d.report_hash?.slice(0, 16) ?? "—"}</code> },

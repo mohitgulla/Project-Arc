@@ -4,15 +4,21 @@ Two shapes, both built from the stored E10.3
 :class:`~arc.experiments.evaluate.ExperimentReport` and the shared
 :mod:`arc.slack.blocks` layout (no hand-rolled Block Kit):
 
-- :func:`experiment_line`: one line per running experiment after the daily
-  evaluation, e.g.
-  ``[XP-2] Day 14 • P&L ∆ +0.08%/day (p 0.21) • Sortino ∆ +0.35 (p 0.04)``.
+- :func:`experiment_line`: the daily status of each running experiment (D108,
+  E25.6): ``[XP-12] Day 14/60``, a bold-italic one-sentence headline (where the
+  treatments stand against the reference, ≤ ``RECAP_MAX``), then one line per
+  treatment, e.g.
+  ``T2 − C • P&L ∆ +0.08%/day (p 0.21 Holm) • Sortino ∆ +0.35 (p 0.04)``
+  (``T1 − P`` for a v1/v2 report, whose reference was production). Also sent to
+  #arc-investor (D65). No production or sleeve stats: those stay on the Tower (D109).
 - :func:`experiment_stop_card`: one card when the evaluation stops an experiment
   (win, futility, invalid). Its header is the daily line with the verdict
   (``[XP-2] Day 25 • Win • P&L ∆ … • Sortino ∆ …``), then a fact grid with the
   two metrics in the same shape (∆, p, CI, control / treatment actuals, margin),
-  the per-arm blocks, sessions and calibration, and the verdict reason as one
-  plain sentence. Owner layout, 2026-10-03.
+  the per-arm blocks (Control, T1..T3; "Production" for a v1/v2 control series),
+  a Production block for spec v3 (P − C = start book + residual), sessions and
+  calibration, and the verdict reason as one plain sentence. Owner layout,
+  2026-10-03; headline, names and the Production block per D108 (E25.6).
 
 Every number is rendered by :mod:`arc.experiments.view`, the same helpers the
 tower API uses, so Slack and the tower show the same values. Pure: no DB, no

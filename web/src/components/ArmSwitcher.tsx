@@ -11,9 +11,9 @@ const GAP = 4;
 
 /**
  * E15.7 (D69, D92): the account switcher. A trigger showing the account under view
- * (Arc Investor by default, or an arm's treatment name) opens a menu of Arc Investor plus every
- * running arm (`/api/meta.arms`, always read from Arc Investor's store). Choosing one sets
- * `?arm=` (shareable); nothing is persisted, so a fresh load is Arc Investor.
+ * (Production by default, or an arm's treatment name) opens a menu of Production plus every
+ * running arm (`/api/meta.arms`, always read from Production's store). Choosing one sets
+ * `?arm=` (shareable); nothing is persisted, so a fresh load is Production.
  *
  * It lives only in the Overview status strip's account slot (its `children` are the trigger), the
  * Tower's one master account control: the choice applies to every page, which show the
@@ -207,7 +207,7 @@ function ArmItem({
 
 /**
  * Persistent banner on every page while an arm is under view: what is being shown and a
- * one-tap Back to Arc Investor. An arm the API refuses (stopped, unknown) says so instead.
+ * one-tap Back to Production. An arm the API refuses (stopped, unknown) says so instead.
  */
 export function ArmBanner() {
   const { arm, setArm } = useArmState();

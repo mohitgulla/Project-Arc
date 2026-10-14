@@ -6,7 +6,7 @@ Loaded by ``scripts/tower_fixture_db.py --arms``. Adds to the control store:
 - one arm store per treatment next to the control DB (``arc-exp-XP-12-t<n>.db``), each
   with its ``arm_identity`` row (shared account), two EOD ``pnl_snapshots`` and a fresh
   ``monitor`` heartbeat carrying the arm's virtual equity ($25k-ish, so an arm view is
-  visibly not Arc Investor's $100k book);
+  visibly not Production's $100k book);
 - the ``routine_state experiment_arm:XP-12:t<n>`` rows that point the tower at them.
 
 Test-only data; never point the builder at ``data/arc.db``.

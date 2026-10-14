@@ -1,6 +1,6 @@
 """E15.6 (D69): Tower API arm-scoped reads (``?arm=``), defaulting to control.
 
-Fixtures: the tests/test_tower.py control store (Arc Investor, $100.5k marks) plus
+Fixtures: the tests/test_tower.py control store (Production, $100.5k marks) plus
 experiment arm stores recorded in it at t0 (``routine_state experiment_arm:<xp>:<arm>``):
 
 * ``XP-2:treatment`` running, its own virtual-account marks ($25.3k) and a TSLA trade;

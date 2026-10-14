@@ -90,10 +90,15 @@ class ExperimentListItem(BaseModel):
     # D95: list-row visuals (variant count, headline arm, per-arm verdicts).
     variants: int = Field(1, description="Treatment arms in the spec (K)")
     headline_arm: str | None = Field(
-        None, description="Arm the headline numbers compare with Control (v2: best-ranked)"
+        None, description="Arm the headline numbers compare with the reference (v2+: best-ranked)"
     )
     arm_verdicts: dict[str, str] = Field(
-        default_factory=dict, description="Treatment arm -> its Control-vs-arm verdict"
+        default_factory=dict, description="Treatment arm -> its reference-vs-arm verdict"
+    )
+    reference: str | None = Field(
+        None,
+        description="D108: 'control' when the verdicts compare with the spec v3 control arm; "
+        "null when they compare with production (v1/v2) or before the first evaluation",
     )
 
 
@@ -176,6 +181,7 @@ def _item(st: ExperimentState, rep: ExperimentReport | None) -> ExperimentListIt
         line="\n".join(view.status_lines(rep)),
         headline_arm=headline,
         arm_verdicts=verdicts,
+        reference=rep.reference,
     )
 
 

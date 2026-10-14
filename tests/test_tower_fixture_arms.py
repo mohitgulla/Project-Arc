@@ -2,7 +2,7 @@
 
 The Playwright arm-switcher spec (``web/e2e/arms.spec.ts``) runs on this store; these tests
 pin what it relies on through the real API: ``/api/meta`` lists the three running arms, an
-arm-scoped read serves that arm's virtual account (not Arc Investor's book), and an unknown
+arm-scoped read serves that arm's virtual account (not Production's book), and an unknown
 arm is a 404.
 """
 

@@ -34,7 +34,7 @@ describe("E8.8b status row", () => {
     // D92: Account · Trading (sessions) · Orders · Tick (minutes) · Health · Alerts.
     expect(row.map((s) => s.key)).toEqual(["account", "trading", "orders", "tick", "health", "alerts"]);
     expect(row.map((s) => `${s.label} ${s.value}`.trim())).toEqual([
-      "Paper Trade · Arc Investor",
+      "Paper Trade · Production",
       "Trading Enabled (7)",
       "Orders 8/200",
       "Tick 3m",
@@ -50,7 +50,7 @@ describe("E8.8b status row", () => {
     const arm = statusRow(status(), { ...CTX, account: "XP-12 · T1" });
     expect(arm[0]?.value).toBe("Paper Trade · XP-12 · T1");
     expect(arm.some((s) => /Control/.test(`${s.label} ${s.value} ${s.title}`))).toBe(false);
-    expect(accountLabel("paper")).toBe("Paper Trade · Arc Investor");
+    expect(accountLabel("paper")).toBe("Paper Trade · Production");
     const none = statusRow(status({ sessions: null, sessions_since: null }), CTX);
     expect(none[1]?.value).toBe("Enabled");
     expect(statusRow(status({ sessions: 0 }), CTX)[1]?.value).toBe("Enabled (0)");
@@ -100,11 +100,11 @@ describe("E8.8b status row", () => {
     expect(missing[2]).toMatchObject({ value: "—", tone: "none" });
   });
 
-  it("account slot: `<Env> Trade · Arc Investor`, the account profile only in the tooltip", () => {
+  it("account slot: `<Env> Trade · Production`, the account profile only in the tooltip", () => {
     expect(envLabel("paper")).toBe("Paper Trade");
     expect(envLabel("live")).toBe("Live Trade");
     expect(envLabel(undefined)).toBe("");
-    expect(statusRow(status(), { now: NOW })[0]).toMatchObject({ key: "account", value: "Arc Investor", tone: "none" });
+    expect(statusRow(status(), { now: NOW })[0]).toMatchObject({ key: "account", value: "Production", tone: "none" });
   });
 
   it("heartbeat status words", () => {

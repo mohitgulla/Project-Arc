@@ -4,8 +4,8 @@ import { PHONE_75, PHONE_75_TAG, expectNoOverflow, expectTouchTargets } from "./
 
 // E15.7 (D69, D92): the global arm switcher on the --arms store (the --ops fixture plus a
 // running K=3 experiment XP-12 with arm stores t1..t3; scripts/tower_fixture_arms.py).
-// Arc Investor is the default on every load (no localStorage), `?arm=` deep-links an arm,
-// the banner shows on every page while an arm is selected, and Back to Arc Investor works.
+// Production is the default on every load (no localStorage), `?arm=` deep-links an arm,
+// the banner shows on every page while an arm is selected, and Back to Production works.
 const ARMS_URL = process.env.ARC_E2E_ARMS_URL ?? `http://127.0.0.1:${process.env.ARC_E2E_ARMS_PORT ?? "4185"}`;
 const ARM = "XP-12:t1";
 const PAGES = [
@@ -39,10 +39,10 @@ async function open(page: Page, path: string, theme: "light" | "dark" = "dark") 
 test.describe("arm switcher", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 
-  test("defaults to Arc Investor on load, with no arm on any API call", async ({ page }) => {
+  test("defaults to Production on load, with no arm on any API call", async ({ page }) => {
     const calls = apiLog(page);
     await open(page, "/");
-    await expect(page.getByTestId("account-slot")).toHaveText("Paper Trade · Arc Investor");
+    await expect(page.getByTestId("account-slot")).toHaveText("Paper Trade · Production");
     await expect(page.getByTestId("arm-banner")).toHaveCount(0);
     await expect(page.getByTestId("overview")).toBeVisible();
     // Scoped calls carry no ?arm (useControlMeta never does either).
@@ -55,7 +55,7 @@ test.describe("arm switcher", () => {
     await expect(page.getByTestId("arm-switcher")).toHaveCount(0);
   });
 
-  test("the menu lists Arc Investor and the running arms; choosing one scopes every call", async ({ page }) => {
+  test("the menu lists Production and the running arms; choosing one scopes every call", async ({ page }) => {
     const calls = apiLog(page);
     await open(page, "/");
     await page.getByTestId("account-switcher").click();
@@ -63,7 +63,7 @@ test.describe("arm switcher", () => {
     await expect(menu).toBeVisible();
     const items = menu.getByRole("menuitemradio");
     await expect(items).toHaveCount(4);
-    await expect(items.nth(0)).toContainText("Arc Investor");
+    await expect(items.nth(0)).toContainText("Production");
     await expect(items.nth(0)).toHaveAttribute("aria-checked", "true");
     for (const [i, t] of ["T1", "T2", "T3"].entries()) await expect(items.nth(i + 1)).toContainText(`XP-12 · ${t}`);
     await expect(menu).not.toContainText(/control/i);
@@ -72,7 +72,7 @@ test.describe("arm switcher", () => {
     await expect(page).toHaveURL(/[?&]arm=XP-12%3At2/);
     await expect(page.getByTestId("account-slot")).toHaveText("Paper Trade · XP-12 · T2");
     await expect(page.getByTestId("arm-banner")).toContainText("Viewing XP-12 · T2");
-    // The arm's own virtual account: $25k-ish, not Arc Investor's $100k book.
+    // The arm's own virtual account: $25k-ish, not Production's $100k book.
     await expect(page.getByTestId("overview")).toContainText("24,8");
     const scoped = calls.filter((r) => !/\/api\/meta$/.test(new URL(r.url()).pathname) || armOf(r) !== null);
     expect(scoped.length).toBeGreaterThan(0);
@@ -84,7 +84,7 @@ test.describe("arm switcher", () => {
     await open(page, `/?arm=${encodeURIComponent(ARM)}`);
     await expect(page.getByTestId("account-slot")).toHaveText("Paper Trade · XP-12 · T1");
     await expect(page.getByTestId("arm-banner")).toHaveText(
-      "Viewing XP-12 · T1 — virtual account, shared inputs from Arc InvestorBack to Arc Investor",
+      "Viewing XP-12 · T1 — virtual account, shared inputs from ProductionBack to Production",
     );
     const overview = calls.filter((r) => new URL(r.url()).pathname === "/api/overview");
     expect(overview.length).toBeGreaterThan(0);
@@ -105,11 +105,11 @@ test.describe("arm switcher", () => {
       await open(page, `${p.path}?arm=${encodeURIComponent(ARM)}`);
       await expect(page.getByRole("heading", { level: 1, name: p.heading })).toBeVisible();
       await expect(page.getByTestId("arm-banner"), p.path).toContainText("Viewing XP-12 · T1");
-      await expect(page.getByTestId("arm-back"), p.path).toHaveText("Back to Arc Investor");
+      await expect(page.getByTestId("arm-back"), p.path).toHaveText("Back to Production");
     }
   });
 
-  test("Back to Arc Investor clears the arm, and a fresh load never remembers it", async ({ page }) => {
+  test("Back to Production clears the arm, and a fresh load never remembers it", async ({ page }) => {
     await open(page, `/trades?arm=${encodeURIComponent(ARM)}`);
     await expect(page.getByTestId("arm-banner")).toBeVisible();
     const calls = apiLog(page);
@@ -117,11 +117,11 @@ test.describe("arm switcher", () => {
     await expect(page).toHaveURL(/\/trades$/);
     await expect(page.getByTestId("arm-banner")).toHaveCount(0);
     await expect.poll(() => calls.some((r) => new URL(r.url()).pathname === "/api/trades" && armOf(r) === null)).toBe(true);
-    // Choose an arm, then load a URL without ?arm: Arc Investor (owner: no persistence).
+    // Choose an arm, then load a URL without ?arm: Production (owner: no persistence).
     await open(page, `/?arm=${encodeURIComponent(ARM)}`);
     await expect(page.getByTestId("arm-banner")).toBeVisible();
     await page.goto("/");
-    await expect(page.getByTestId("account-slot")).toHaveText("Paper Trade · Arc Investor");
+    await expect(page.getByTestId("account-slot")).toHaveText("Paper Trade · Production");
     await expect(page.getByTestId("arm-banner")).toHaveCount(0);
     expect(await page.evaluate(() => JSON.stringify(localStorage))).not.toContain("XP-12");
   });
@@ -130,7 +130,7 @@ test.describe("arm switcher", () => {
     await open(page, "/?arm=XP-99:t1");
     await expect(page.getByTestId("arm-banner")).toContainText("XP-99 · T1 is not a running experiment arm");
     await page.getByTestId("arm-back").click();
-    await expect(page.getByTestId("account-slot")).toHaveText("Paper Trade · Arc Investor");
+    await expect(page.getByTestId("account-slot")).toHaveText("Paper Trade · Production");
   });
 
   test("Escape closes the menu and keyboard picks an arm", async ({ page }) => {
@@ -141,7 +141,7 @@ test.describe("arm switcher", () => {
     await expect(page.getByTestId("arm-menu")).toHaveCount(0);
     await page.getByTestId("account-switcher").press("Enter");
     await expect(page.getByTestId("arm-menu").getByRole("menuitemradio")).toHaveCount(4);
-    // Opening focuses the checked item (Arc Investor); arrows move, Enter picks.
+    // Opening focuses the checked item (Production); arrows move, Enter picks.
     await expect(page.getByTestId("arm-menu").getByRole("menuitemradio").first()).toBeFocused();
     await page.keyboard.press("ArrowDown");
     await expect(page.getByTestId("arm-menu").getByRole("menuitemradio").nth(1)).toBeFocused();
@@ -150,7 +150,7 @@ test.describe("arm switcher", () => {
   });
 });
 
-// Screenshots for the PR: Overview in Arc Investor and in an arm, phone and desktop, both
+// Screenshots for the PR: Overview in Production and in an arm, phone and desktop, both
 // themes; Experiments with the K=3 fixture.
 const SHOTS = [
   { name: "desktop", width: 1440, height: 900, tag: [] as string[] },
@@ -161,7 +161,7 @@ for (const vp of SHOTS) {
     test.describe(`arm switcher ${vp.name} ${theme}`, { tag: [...vp.tag] }, () => {
       if (vp.name === "desktop") test.use({ viewport: { width: vp.width, height: vp.height } });
 
-      test("overview in Arc Investor and in an arm", async ({ page }) => {
+      test("overview in Production and in an arm", async ({ page }) => {
         await open(page, "/", theme);
         await expect(page.getByTestId("overview")).toBeVisible();
         await expectNoOverflow(page);

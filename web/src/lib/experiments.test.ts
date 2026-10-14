@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   ACCOUNT_NAME,
+  CONTROL_COLOR,
+  CONTROL_NAME,
   armColor,
   armLabel,
   armPlanRows,
@@ -24,12 +26,17 @@ import {
   pairSentence,
   pct,
   pText,
+  productionGapRows,
+  productionView,
   ratioText,
+  refName,
+  regimeRows,
   resultRows,
   resultSentences,
   sessionsText,
   sessionsView,
   spanDomain,
+  startBookRows,
   statusPill,
   statusText,
   variantRows,
@@ -38,6 +45,7 @@ import {
   type ExperimentDetail,
   type ExperimentReport,
   type ExperimentRow,
+  type RegimePanel,
 } from "./experiments";
 
 const ROW = {
@@ -164,12 +172,12 @@ describe("number text (same as the Slack line)", () => {
 });
 
 describe("names, status and verdict pills (D92/D95)", () => {
-  it("names the production arm Arc Investor and arms by treatment", () => {
+  it("names the production arm Production and arms by treatment", () => {
     expect(armShort("control")).toBe(ACCOUNT_NAME);
     expect(armShort("treatment")).toBe("T1");
     expect(armShort("t3")).toBe("T3");
     expect(armLabel("t2", "XP-2")).toBe("XP-2 · T2");
-    expect(armLabel("control", "XP-2")).toBe("Arc Investor");
+    expect(armLabel("control", "XP-2")).toBe("Production");
     expect(armColor("control", ["control", "t1"])).toBe("var(--accent)");
     expect(armColor("t2", ["control", "t1", "t2"])).not.toBe(armColor("t1", ["control", "t1", "t2"]));
   });
@@ -243,8 +251,8 @@ describe("result: forest rows and sentences", () => {
 
   it("writes one sentence per variant for K=3", () => {
     expect(resultSentences({ report: K3 })).toEqual([
-      "T1 beats Arc Investor by 0.39%/day; the whole range is above 0.",
-      "T2 trails Arc Investor by 0.41%/day; the whole range is below 0.",
+      "T1 beats Production by 0.39%/day; the whole range is above 0.",
+      "T2 trails Production by 0.41%/day; the whole range is below 0.",
       "T3: no call yet: the range −0.07% to +0.05% a day still includes 0.",
     ]);
   });
@@ -311,7 +319,7 @@ describe("charts and tables", () => {
     ]);
   });
 
-  it("leaderboard ranks every arm; Arc Investor carries no verdict", () => {
+  it("leaderboard ranks every arm; Production carries no verdict", () => {
     const rows = leaderRows(K3);
     expect(rows.map((r) => [r.arm, r.rank, r.cumText, r.verdict?.label ?? null])).toEqual([
       ["t1", 1, "+8.86%", "Win"],
@@ -354,7 +362,7 @@ describe("arm plans (E13.12)", () => {
       },
     } as unknown as ExperimentDetail;
     expect(armPlanRows(d)).toEqual([
-      { arm: "Shadow Control", forkStep: "quant.propose", personas: "None (Arc Investor's)", jobs: "monitor" },
+      { arm: "Shadow Control", forkStep: "quant.propose", personas: "None (Production's)", jobs: "monitor" },
       { arm: "T1", forkStep: "research", personas: "Scout", jobs: "monitor, broker" },
     ]);
   });
@@ -362,5 +370,99 @@ describe("arm plans (E13.12)", () => {
   it("is empty before t0 and for pre-E13.12 runs", () => {
     expect(armPlanRows({ running: null } as unknown as ExperimentDetail)).toEqual([]);
     expect(armPlanRows(null)).toEqual([]);
+  });
+});
+
+// D108 (E25.6): spec v3 naming (Production / Control / T1..T3) and the Production panel.
+const V3 = {
+  reference: "control",
+  t0_equity: 100_000,
+  production: {
+    cum_p_pnl: -7289.19,
+    cum_d_p_c: -0.0416,
+    cum_start_book: 0.00435,
+    cum_residual: -0.04598,
+    ramped_from: null,
+    sessions: [{}, {}, {}],
+    start_book: {
+      ids: ["sb-1", "sb-2"],
+      close_dates: { "sb-1": null, "sb-2": "2026-10-09" },
+      days: [{ day: "2026-11-13", open: 1, closed: 1, pnl: 15, cum_pnl: 435 }],
+    },
+    compare: [
+      { arm: "control", basis: "total", n: 30, mean: 0.0014, ci: { lo: -0.01, hi: 0.013, estimate: 0.0014, level: 0.95 } },
+      { arm: "t1", basis: "total", n: 30, mean: 0.0054, ci: { lo: -0.0063, hi: 0.0171, estimate: 0.0054, level: 0.95 } },
+      { arm: "t1", basis: "ex_start_book", n: 30, mean: 0.0055, ci: { lo: -0.006, hi: 0.017, estimate: 0.0055, level: 0.95 } },
+      { arm: "t1", basis: "post_ramp", n: 0, mean: null, ci: null },
+    ],
+  },
+} as unknown as ExperimentReport;
+
+describe("D108 naming: Production vs a v3 Control arm", () => {
+  it("names control by the report's reference", () => {
+    expect(ACCOUNT_NAME).toBe("Production");
+    expect(refName(V3)).toBe(CONTROL_NAME);
+    expect(refName({ reference: null })).toBe("Production");
+    expect(refName(null)).toBe("Production");
+    expect(armShort("control", "control")).toBe("Control");
+    expect(armShort("control", null)).toBe("Production");
+    expect(armLabel("control", "XP-30", "control")).toBe("XP-30 · Control");
+    expect(armLabel("control", "XP-2", null)).toBe("Production");
+    expect(armColor("control", ["control", "t1"], "control")).toBe(CONTROL_COLOR);
+    expect(armColor("control", ["control", "t1"], null)).toBe("var(--accent)");
+  });
+
+  it("reads the pair sentence against the reference", () => {
+    const s = pairSentence({ arm: "T1", verdict: "win", mean: 0.0039, lo: 0.001, hi: 0.007, sessions: 30, minSessions: 20, mdeAtMin: null, aa: false }, CONTROL_NAME);
+    expect(s).toBe("T1 beats Control by 0.39%/day; the whole range is above 0.");
+  });
+});
+
+describe("Production panel (D108, E25.6)", () => {
+  it("splits P − C into start book + residual and counts the open start book", () => {
+    expect(productionView(V3)).toEqual({
+      pnl: -7289.19,
+      ret: -0.0728919,
+      dPC: -0.0416,
+      startBook: 0.00435,
+      residual: -0.04598,
+      bookOpen: 1,
+      bookTotal: 2,
+      rampedFrom: null,
+      sessions: 3,
+    });
+    expect(productionView({ ...V3, production: null } as unknown as ExperimentReport)).toBeNull();
+    expect(productionView(null)).toBeNull();
+  });
+
+  it("lists Ti − P rows by basis, skipping control and empty bases", () => {
+    const rows = productionGapRows(V3);
+    expect(rows.map((r) => r.label)).toEqual(["T1 − P · Total", "T1 − P · Ex Start Book"]);
+    expect(rows[0]?.est).toBeCloseTo(0.54);
+  });
+
+  it("lists the start book with close days", () => {
+    expect(startBookRows(V3)).toEqual([
+      { id: "sb-1", closed: "Open" },
+      { id: "sb-2", closed: "Oct 9" },
+    ]);
+  });
+
+  it("renders the regime table for one grouping", () => {
+    const panel = {
+      xps: ["XP-30"],
+      sessions: 30,
+      thin_n: 10,
+      buckets: [
+        { grouping: "trend_vol", key: "up/low", n: 4, xps: ["XP-30"], thin: true, d_p_c: { n: 4, mean: -0.0014, ci: { lo: -0.007, hi: 0.0045 } }, ti_minus_c: { all: { n: 12, mean: 0.0002, ci: null } } },
+        { grouping: "trend_vol", key: "unknown", n: 26, xps: ["XP-30"], thin: false, d_p_c: { n: 26, mean: null, ci: null }, ti_minus_c: {} },
+        { grouping: "trend", key: "up", n: 4, xps: ["XP-30"], thin: true },
+      ],
+    } as unknown as RegimePanel;
+    expect(regimeRows(panel)).toEqual([
+      { key: "up/low", label: "Up · Low", n: 4, xps: 1, thin: true, dPC: "−0.14% [−0.70%, +0.45%]", tiC: "+0.02%" },
+      { key: "unknown", label: "Unknown", n: 26, xps: 1, thin: false, dPC: "n/a", tiC: "n/a" },
+    ]);
+    expect(regimeRows(null)).toEqual([]);
   });
 });

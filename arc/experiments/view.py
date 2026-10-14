@@ -7,9 +7,11 @@ the two surfaces and ``arc experiment report --json`` always show the same numbe
 (``tests/test_experiments_views.py`` pins the parity).
 
 Formatting (owner, 2026-10-03): percentages are of t0 equity, 2 dp, with a real
-minus sign (``−``). The daily line and the stop header lead with the experiment
-id and show each metric's delta with its p-value:
-``[XP-2] Day 14 • P&L ∆ +0.08%/day (p 0.21) • Sortino ∆ +0.35 (p 0.04)``.
+minus sign (``−``). The stop header leads with the experiment id and shows each
+metric's delta with its p-value:
+``[XP-2] Day 25 • Win • P&L ∆ +0.08%/day (p 0.21) • Sortino ∆ +0.35 (p 0.04)``.
+The daily status (D108, :func:`status_lines`) is a title, a headline and one
+``Ti − C`` line per treatment in the same metric shape.
 The primary p is the always-valid mSPRT p (dual of the CI); the Sortino p is the
 paired-bootstrap p (one-sided non-inferiority against the margin).
 """

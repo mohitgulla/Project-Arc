@@ -3,8 +3,10 @@
  * Every number is the latest stored E10.3 report served by `/api/experiments*`; this module
  * only formats and reshapes it. The list row's `line` is the Slack daily line verbatim.
  *
- * Naming (D92): the production account is "Arc Investor" in every UI string; a treatment arm
- * is shown by its treatment name (`XP-10 · T1`). "control" stays the internal arm key.
+ * Naming (D108, revising D92): the production account is "Production" in every UI string. A
+ * spec v3 report (`reference: "control"`) measures each treatment with its own flat control
+ * arm, shown as "Control"; a v1/v2 report's "control" series was the production account, so
+ * there it reads "Production". A treatment arm is shown by its treatment name (`XP-10 · T1`).
  */
 import type { Schemas } from "./api";
 import { formatMoney, titleCase } from "./format";
@@ -19,7 +21,14 @@ export type BreakdownRow = Schemas["BreakdownRow"];
 export type PairReport = Schemas["PairReport"];
 
 const MINUS = "\u2212";
-export const ACCOUNT_NAME = "Arc Investor";
+export const ACCOUNT_NAME = "Production";
+/** D108: the spec v3 control arm (`XP-<n>:control`), never the production account. */
+export const CONTROL_NAME = "Control";
+
+/** What a report's verdicts are measured against: the v3 control arm, else production. */
+export function refName(r: { reference?: string | null } | null | undefined): string {
+  return r?.reference === "control" ? CONTROL_NAME : ACCOUNT_NAME;
+}
 
 // ---------------------------------------------------------------------------
 // Number text (same wording as the Slack line)
@@ -100,23 +109,33 @@ export function longDay(iso: string | null | undefined): string {
 // Arms: names and colours
 // ---------------------------------------------------------------------------
 
-/** "control" -> "Arc Investor"; "treatment" (v1) -> "T1"; "t3" -> "T3". */
-export function armShort(arm: string): string {
-  if (arm === "control") return ACCOUNT_NAME;
+/**
+ * "control" -> "Control" in a v3 report (*reference* "control"), else "Production" (v1/v2,
+ * whose control series was the production account); "treatment" (v1) -> "T1"; "t3" -> "T3".
+ */
+export function armShort(arm: string, reference?: string | null): string {
+  if (arm === "control") return reference === "control" ? CONTROL_NAME : ACCOUNT_NAME;
   if (arm === "treatment") return "T1";
   return /^t\d+$/.test(arm) ? arm.toUpperCase() : titleCase(arm.replace(/_/g, " "));
 }
 
-/** "control" -> "Arc Investor"; "t2" -> "XP-2 · T2". */
-export function armLabel(arm: string, experimentId: string): string {
-  return arm === "control" ? ACCOUNT_NAME : `${experimentId} · ${armShort(arm)}`;
+/** "control" -> "Production" (v1/v2) or "XP-2 · Control" (v3); "t2" -> "XP-2 · T2". */
+export function armLabel(arm: string, experimentId: string, reference?: string | null): string {
+  if (arm === "control" && reference !== "control") return ACCOUNT_NAME;
+  return `${experimentId} · ${armShort(arm, reference)}`;
 }
 
 const SERIES = ["var(--series-2)", "var(--series-1)", "var(--series-4)", "var(--series-3)", "var(--series-5)"];
 
-/** Arc Investor in the accent; treatments in the series colours by their order. */
-export function armColor(arm: string, order: readonly string[]): string {
-  if (arm === "control") return "var(--accent)";
+/** D108: a spec v3 control arm's colour (Production keeps the accent). */
+export const CONTROL_COLOR = "var(--series-3)";
+
+/**
+ * Production in the accent (a v1/v2 "control" series is production); a v3 control arm in
+ * {@link CONTROL_COLOR}; treatments in the series colours by their order.
+ */
+export function armColor(arm: string, order: readonly string[], reference?: string | null): string {
+  if (arm === "control") return reference === "control" ? CONTROL_COLOR : "var(--accent)";
   const treatments = order.filter((a) => a !== "control");
   const i = Math.max(0, treatments.indexOf(arm));
   return SERIES[i % SERIES.length] ?? "var(--series-5)";
@@ -256,7 +275,7 @@ export function treatmentArm(r: ExperimentReport | null | undefined): string {
   return r?.arms.find((a) => a.arm !== "control")?.arm ?? "treatment";
 }
 
-/** One row per treatment vs Arc Investor: the report's always-valid CI on the daily gap. */
+/** One row per treatment vs the reference (Control in v3): the always-valid CI on the daily gap. */
 export function resultRows(r: ExperimentReport | null | undefined): ForestRow[] {
   if (!r) return [];
   const pairs = controlPairs(r);
@@ -363,8 +382,8 @@ export interface PairFacts {
   aa: boolean;
 }
 
-/** The one-line reading of one comparison (Arc Investor vs *arm*), from the CI and verdict only. */
-export function pairSentence(p: PairFacts): string {
+/** The one-line reading of one comparison (*ref* vs *arm*), from the CI and verdict only. */
+export function pairSentence(p: PairFacts, ref: string = ACCOUNT_NAME): string {
   const who = p.arm;
   if (p.mean === null || p.mean === undefined || p.lo === null || p.lo === undefined || p.hi === null || p.hi === undefined) {
     return `${who}: not enough paired sessions for a range yet.`;
@@ -372,9 +391,9 @@ export function pairSentence(p: PairFacts): string {
   const gap = pct(Math.abs(p.mean), 2, { sign: false });
   switch (p.verdict) {
     case "win":
-      return `${who} beats ${ACCOUNT_NAME} by ${gap}/day; the whole range is above 0.`;
+      return `${who} beats ${ref} by ${gap}/day; the whole range is above 0.`;
     case "loss":
-      return `${who} trails ${ACCOUNT_NAME} by ${gap}/day; the whole range is below 0.`;
+      return `${who} trails ${ref} by ${gap}/day; the whole range is below 0.`;
     case "futility":
       return `${who}: no meaningful difference; the range is now too narrow to hide the target effect.`;
     case "invalid":
@@ -403,7 +422,7 @@ export function resultSentences(d: Pick<ExperimentDetail, "report">): string[] {
   const pairs = controlPairs(r);
   if (pairs.length > 0) {
     return pairs.map((p) => {
-      const s = pairSentence({ arm: armShort(p.b), verdict: p.verdict, mean: p.mean, lo: p.ci?.lo, hi: p.ci?.hi, sessions: p.n, minSessions: r.min_sessions, mdeAtMin, aa });
+      const s = pairSentence({ arm: armShort(p.b), verdict: p.verdict, mean: p.mean, lo: p.ci?.lo, hi: p.ci?.hi, sessions: p.n, minSessions: r.min_sessions, mdeAtMin, aa }, refName(r));
       return s.startsWith(armShort(p.b)) ? s : `${armShort(p.b)}: ${s.charAt(0).toLowerCase()}${s.slice(1)}`;
     });
   }
@@ -474,7 +493,7 @@ export interface DailyDiffView {
   days: number;
 }
 
-/** Daily paired difference (headline arm − Arc Investor, % of t0 equity) and its running sum. */
+/** Daily paired difference (headline arm − the reference, % of t0 equity) and its running sum. */
 export function dailyDiffView(r: ExperimentReport | null | undefined): DailyDiffView {
   let cum = 0;
   const bars = (r?.series ?? []).map((s) => {
@@ -498,7 +517,7 @@ export interface DuelRow {
   higherBetter: boolean;
 }
 
-/** Arc Investor vs the (single) treatment on the metrics read first. */
+/** The reference (Production in v1, Control in v3) vs the (single) treatment on the metrics read first. */
 export function duelRows(r: ExperimentReport | null | undefined): DuelRow[] {
   const c = r?.arms.find((a) => a.arm === "control");
   const t = r?.arms.find((a) => a.arm !== "control");
@@ -555,7 +574,7 @@ export interface LeaderRow {
   verdict: PillView | null;
 }
 
-/** All-arms view ranked by cumulative net P&L % (1 = best); Arc Investor carries no verdict. */
+/** All-arms view ranked by cumulative net P&L % (1 = best); the reference arm carries no verdict. */
 export function leaderRows(r: ExperimentReport | null | undefined): LeaderRow[] {
   if (!r) return [];
   const cumOf = (a: ArmSummary) => a.cum_pnl_pct ?? a.total_pnl / r.t0_equity;
@@ -656,16 +675,17 @@ export interface ArmPlanView {
 }
 
 /**
- * E13.12 (D56): where each runner arm forks from Arc Investor's loop and which non-loop
+ * E13.12 (D56): where each runner arm forks from Production's loop and which non-loop
  * personas (Scout / Scalp) it runs on its own store. Empty before t0 or for an
  * experiment started before E13.12 (no stored plans).
  */
-export function armPlanRows(d: Pick<ExperimentDetail, "running"> | null | undefined): ArmPlanView[] {
+export function armPlanRows(d: (Pick<ExperimentDetail, "running"> & { report?: ExperimentReport | null }) | null | undefined): ArmPlanView[] {
   const plans = d?.running?.arm_plans ?? {};
+  const ref = d?.report?.reference;
   return Object.entries(plans)
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .sort(([a], [b]) => (a === "control" ? -1 : b === "control" ? 1 : a < b ? -1 : a > b ? 1 : 0))
     .map(([arm, p]) => ({
-      arm: armShort(arm),
+      arm: armShort(arm, ref),
       forkStep: p.fork_step,
       personas: (p.arm_personas ?? []).length
         ? (p.arm_personas ?? []).map((x) => x.charAt(0).toUpperCase() + x.slice(1)).join(", ")
@@ -686,4 +706,116 @@ export function eventRows(d: Pick<ExperimentDetail, "events">): EventView[] {
     label: titleCase(e.status) + (e.reason ? ` · ${titleCase(e.reason)}` : ""),
     actor: e.actor,
   }));
+}
+
+// ---------------------------------------------------------------------------
+// D108 (E25.6): the Production panel (spec v3; descriptive, never a verdict)
+// ---------------------------------------------------------------------------
+
+export type ProductionPanel = Schemas["ProductionPanel"];
+export type RegimePanel = Schemas["RegimePanel"];
+export type RegimeBucket = Schemas["Bucket"];
+
+export interface ProductionView {
+  /** production's P&L since t0 ($) and as a share of t0 equity */
+  pnl: number;
+  ret: number;
+  /** P − C = start book + residual (cumulative, fractions of t0 equity) */
+  dPC: number;
+  startBook: number;
+  residual: number;
+  /** start-book structures still open / at t0 */
+  bookOpen: number;
+  bookTotal: number;
+  rampedFrom: string | null;
+  sessions: number;
+}
+
+export function productionView(r: ExperimentReport | null | undefined): ProductionView | null {
+  const pp = r?.production;
+  if (!r || !pp) return null;
+  const book = pp.start_book;
+  const lastDay = book.days?.at(-1);
+  return {
+    pnl: pp.cum_p_pnl,
+    ret: r.t0_equity > 0 ? pp.cum_p_pnl / r.t0_equity : 0,
+    dPC: pp.cum_d_p_c,
+    startBook: pp.cum_start_book,
+    residual: pp.cum_residual,
+    bookOpen: lastDay ? lastDay.open : book.ids.length,
+    bookTotal: book.ids.length,
+    rampedFrom: pp.ramped_from ?? null,
+    sessions: (pp.sessions ?? []).length,
+  };
+}
+
+export const GAP_BASIS: Record<string, string> = {
+  total: "Total",
+  ex_start_book: "Ex Start Book",
+  post_ramp: "Post-Ramp",
+};
+
+/** Ti − P per treatment and basis (total / ex start book / post-ramp), descriptive CIs. */
+export function productionGapRows(r: ExperimentReport | null | undefined): ForestRow[] {
+  const rows = (r?.production?.compare ?? []).filter((c) => c.arm !== "control");
+  return rows.flatMap((c) =>
+    c.ci && c.mean !== null && c.mean !== undefined
+      ? [
+          {
+            label: `${armShort(c.arm)} − P · ${GAP_BASIS[c.basis] ?? titleCase(c.basis)}`,
+            est: c.mean * 100,
+            lo: c.ci.lo * 100,
+            hi: c.ci.hi * 100,
+            tone: "dim" as const,
+            right: `n ${c.n}`,
+          },
+        ]
+      : [],
+  );
+}
+
+export interface StartBookRow {
+  id: string;
+  closed: string;
+}
+
+/** The start book: production's open structures at t0, each with its close day (or Open). */
+export function startBookRows(r: ExperimentReport | null | undefined): StartBookRow[] {
+  const book = r?.production?.start_book;
+  if (!book) return [];
+  return book.ids.map((id) => {
+    const d = book.close_dates?.[id];
+    return { id, closed: d ? shortDay(d) : "Open" };
+  });
+}
+
+export interface RegimeRow {
+  key: string;
+  label: string;
+  n: number;
+  xps: number;
+  thin: boolean;
+  dPC: string;
+  tiC: string;
+}
+
+function meanCiText(m: { mean?: number | null; ci?: { lo: number; hi: number } | null } | undefined): string {
+  if (!m || m.mean === null || m.mean === undefined) return "n/a";
+  const ci = m.ci ? ` [${pct(m.ci.lo)}, ${pct(m.ci.hi)}]` : "";
+  return `${pct(m.mean)}${ci}`;
+}
+
+/** E25.5 regime table (one grouping, default trend × vol): P − C and pooled Ti − C per bucket. */
+export function regimeRows(p: RegimePanel | null | undefined, grouping = "trend_vol"): RegimeRow[] {
+  return (p?.buckets ?? [])
+    .filter((b) => b.grouping === grouping)
+    .map((b) => ({
+      key: b.key,
+      label: b.key === "unknown" ? "Unknown" : b.key.split("/").map((x) => (x === "na" ? "n/a" : titleCase(x))).join(" · "),
+      n: b.n,
+      xps: (b.xps ?? []).length,
+      thin: b.thin,
+      dPC: meanCiText(b.d_p_c),
+      tiC: meanCiText(b.ti_minus_c?.all),
+    }));
 }
