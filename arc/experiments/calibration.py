@@ -83,6 +83,33 @@ def _arm_row(a: ArmSummary) -> str:
     )
 
 
+def _production_md(r: ExperimentReport, h: str) -> list[str]:
+    """D108: the descriptive production panel (v3 reports only; nothing for v1/v2)."""
+    pp = r.production
+    if pp is None:
+        return []
+    out = [
+        f"{h}# Production (descriptive; never a verdict, stop or promotion input)",
+        "",
+        f"- P − C = {view.pct(pp.cum_d_p_c, 3)} of t0 equity = start book "
+        f"{view.pct(pp.cum_start_book, 3)} + residual {view.pct(pp.cum_residual, 3)}",
+        f"- Start book: {len(pp.start_book.ids)} structure(s), cumulative P&L "
+        f"{_usd(pp.start_book.cum_pnl)}",
+        f"- Ramped (control's open structures ≥ production's, median of {pp.ramp_window} "
+        f"sessions) from: {pp.ramped_from or 'not yet'}",
+        "",
+        "| Arm − production | Basis | n | Mean/day | Always-valid CI | p |",
+        "|---|---|---:|---:|---:|---:|",
+    ]
+    for c in pp.compare:
+        ci = "n/a" if c.ci is None else f"[{view.pct(c.ci.lo, 3)}, {view.pct(c.ci.hi, 3)}]"
+        out.append(
+            f"| {c.arm} | {c.basis} | {c.n} | {view.pct(c.mean, 3)} | {ci} | "
+            f"{view.p_text(c.p_value)} |"
+        )
+    return [*out, ""]
+
+
 def calibration_markdown(r: ExperimentReport, *, level: int = 1) -> list[str]:
     """The calibration report of *r* as Markdown lines; ``level`` = top heading depth."""
     h = "#" * level
@@ -98,8 +125,14 @@ def calibration_markdown(r: ExperimentReport, *, level: int = 1) -> list[str]:
         "calibration report",
         "",
         f"- Evaluated: {r.evaluated_at:%Y-%m-%d %H:%M %Z}; "
-        f"t0 {r.t0:%Y-%m-%d %H:%M %Z} at {_usd(r.t0_equity)} (both arms); "
-        f"legacy book {len(r.legacy_book)} structure(s), excluded",
+        f"t0 {r.t0:%Y-%m-%d %H:%M %Z} at {_usd(r.t0_equity)} "
+        + (
+            f"(every arm, flat); reference: the control arm (D108); production start book "
+            f"{len(r.production.start_book.ids) if r.production else 0} structure(s), "
+            "in the production panel only"
+            if r.reference == "control"
+            else f"(both arms); legacy book {len(r.legacy_book)} structure(s), excluded"
+        ),
         f"- Sessions: {r.sessions} paired (window {r.min_sessions}–{r.max_sessions}); "
         f"as of {r.as_of_day or 'n/a'}"
         + (
@@ -148,6 +181,7 @@ def calibration_markdown(r: ExperimentReport, *, level: int = 1) -> list[str]:
         "|---|---:|---:|---:|---:|---:|---:|---:|",
         *(_arm_row(a) for a in r.arms),
         "",
+        *_production_md(r, h),
         f"{h}# Policy (fixed, not set from this A/A)",
         "",
         f"- alpha {r.config['defaults']['alpha']}, power {r.config['defaults']['power']}, "

@@ -76,6 +76,7 @@ from arc.experiments.models import (
     StopReason,
     arm_id,
 )
+from arc.experiments.production import ProductionPanel  # noqa: TC001 - pydantic field type
 from arc.experiments.store import ExperimentError
 from arc.journal.reasons import Choice, JournalPersona, ReasonCode, Stage
 from arc.journal.store import JournalStore
@@ -325,7 +326,10 @@ class ExperimentReport(BaseModel):
     """One evaluation of one experiment (stored append-only in ``experiment_reports``).
 
     ``report_version`` 1: one treatment (D44). ``report_version`` 2 (D69, E15.5): K > 1
-    treatments. A v2 report adds ``pairwise``, ``omnibus`` and ``headline_arm`` (omitted
+    treatments. ``report_version`` 3 (D108, E25.3): a spec v3 (any K), whose reference
+    is the control arm ``XP-<n>:control`` (``reference``) and which adds the descriptive
+    ``production`` panel; otherwise shaped like v2. A v2 report adds ``pairwise``,
+    ``omnibus`` and ``headline_arm`` (omitted
     from v1 JSON) and fills the all-arms fields of ``arms`` (Control first, then t1..tK).
     Its top-level ``primary`` / ``secondary`` / ``series`` are the **headline** pair
     (Control vs the best-ranked arm, ``headline_arm``) so one-line surfaces keep a
@@ -335,7 +339,7 @@ class ExperimentReport(BaseModel):
 
     model_config = _FORBID
 
-    report_version: Literal[1, 2] = REPORT_VERSION
+    report_version: Literal[1, 2, 3] = REPORT_VERSION
     experiment_id: str
     kind: ExperimentKind
     area: str
@@ -376,6 +380,17 @@ class ExperimentReport(BaseModel):
         description="v2: Control vs Ti (verdicts, Holm) then Ti vs Tj (descriptive)",
     )
     omnibus: Omnibus | None = Field(None, exclude_if=_absent, description="v2")
+    # -- v3 (D108) only: omitted from v1/v2 JSON ---------------------------------
+    reference: Literal["control"] | None = Field(
+        None,
+        exclude_if=_absent,
+        description="v3: the verdict's reference series is the control arm XP-<n>:control",
+    )
+    production: ProductionPanel | None = Field(
+        None,
+        exclude_if=_absent,
+        description="v3: production vs control vs treatments (descriptive, never a verdict)",
+    )
 
     @property
     def multi_arm(self) -> bool:
@@ -500,6 +515,12 @@ def _first_session(t0: _dt.datetime) -> _dt.date:
     return next_session(day)
 
 
+def control_arm_id(st: ExperimentState) -> str | None:
+    """The ``arm_id`` of the verdict's reference series: production (NULL) up to spec v2,
+    the control arm ``XP-<n>:control`` from spec v3 (D108)."""
+    return st.spec.arm_id_for(CONTROL_ARM)
+
+
 def _series(
     conn: sqlite3.Connection,
     st: ExperimentState,
@@ -507,14 +528,25 @@ def _series(
     now: _dt.datetime,
     t_arm: str | None = None,
 ) -> tuple[list[SessionRow], list[_dt.date]]:
-    """Control vs one treatment arm (*t_arm*; default the v1 ``XP-<n>:treatment``)."""
+    """Control vs one treatment arm (*t_arm*; default the v1 ``XP-<n>:treatment``).
+
+    D108 (spec v3): control is the flat arm ``XP-<n>:control``. Its series is read
+    on the treatments' basis (``virtual_equity``, t0 equity before its first EOD row)
+    and nothing is subtracted from it (no legacy book: production's start book is
+    reported in the descriptive production panel only).
+    """
     run = st.running
     assert run is not None  # noqa: S101 - caller checks
     if t_arm is None:
         t_arm = arm_id(st.experiment_id, TREATMENT_ARM)
-    ctrl = _eod_equity(conn, None)
+    v3 = st.spec.control_runs
+    ctrl = (
+        _eod_equity(conn, control_arm_id(st), TREATMENT_EQUITY_FIELD)
+        if v3
+        else _eod_equity(conn, None)
+    )
     treat = _eod_equity(conn, t_arm, TREATMENT_EQUITY_FIELD)
-    legacy = set(run.production_book)
+    legacy: set[str] = set() if v3 else set(run.production_book)
     marks = _legacy_marks(conn, legacy)
     cash = _legacy_cash(conn, legacy)
     first = _first_session(run.t0)
@@ -533,7 +565,8 @@ def _series(
     missing: list[_dt.date] = []
     for day in days:
         prev = previous_session(day)
-        c, c_prev, t = ctrl.get(day), ctrl.get(prev), treat.get(day)
+        c, t = ctrl.get(day), treat.get(day)
+        c_prev = ctrl.get(prev, t0_eq if v3 and day == first else None)
         # the arm's virtual equity is t0_equity at t0 by definition (module
         # docstring), so before its first EOD row the previous value is t0's
         t_prev = treat.get(prev, t0_eq if day == first else None)
@@ -843,7 +876,7 @@ def _treatment_arm_ids(conn: sqlite3.Connection, st: ExperimentState) -> dict[st
             out[spec_arm] = ident.arm_id
     for name in names:
         if name not in out:
-            runner_arm = TREATMENT_ARM if len(names) == 1 else name
+            runner_arm = TREATMENT_ARM if len(names) == 1 and not st.spec.control_runs else name
             out[name] = f"{st.experiment_id}:{runner_arm}"
     return {name: out[name] for name in names}
 
@@ -933,7 +966,8 @@ def build_report(
     assert sp.alpha is not None and sp.power is not None  # noqa: S101 - registered spec
     assert sp.min_sessions is not None and sp.max_sessions is not None  # noqa: S101
     arm_ids = _treatment_arm_ids(conn, st)
-    if len(arm_ids) > 1:
+    if len(arm_ids) > 1 or sp.control_runs:
+        # D69: K > 1 -> v2; D108: every spec v3 (any K) -> v3, control arm as reference
         from arc.experiments.multi import build_multi_report
 
         return build_multi_report(conn, st, cfg, now=now, aa_sigma=aa_sigma, arm_ids=arm_ids)

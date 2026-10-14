@@ -2691,7 +2691,10 @@ export interface components {
          * @description One evaluation of one experiment (stored append-only in ``experiment_reports``).
          *
          *     ``report_version`` 1: one treatment (D44). ``report_version`` 2 (D69, E15.5): K > 1
-         *     treatments. A v2 report adds ``pairwise``, ``omnibus`` and ``headline_arm`` (omitted
+         *     treatments. ``report_version`` 3 (D108, E25.3): a spec v3 (any K), whose reference
+         *     is the control arm ``XP-<n>:control`` (``reference``) and which adds the descriptive
+         *     ``production`` panel; otherwise shaped like v2. A v2 report adds ``pairwise``,
+         *     ``omnibus`` and ``headline_arm`` (omitted
          *     from v1 JSON) and fills the all-arms fields of ``arms`` (Control first, then t1..tK).
          *     Its top-level ``primary`` / ``secondary`` / ``series`` are the **headline** pair
          *     (Control vs the best-ranked arm, ``headline_arm``) so one-line surfaces keep a
@@ -2754,6 +2757,13 @@ export interface components {
             /** Power */
             power: number;
             primary: components["schemas"]["Primary"];
+            /** @description v3: production vs control vs treatments (descriptive, never a verdict) */
+            production?: components["schemas"]["ProductionPanel"] | null;
+            /**
+             * Reference
+             * @description v3: the verdict's reference series is the control arm XP-<n>:control
+             */
+            reference?: "control" | null;
             /** Registered Hash */
             registered_hash: string | null;
             /**
@@ -2761,7 +2771,7 @@ export interface components {
              * @default 1
              * @enum {integer}
              */
-            report_version: 1 | 2;
+            report_version: 1 | 2 | 3;
             secondary: components["schemas"]["Secondary"];
             /** Series */
             series: components["schemas"]["SessionRow"][];
@@ -4937,6 +4947,152 @@ export interface components {
             tau?: number | null;
         };
         /**
+         * ProductionCompare
+         * @description ``arm - production`` (fraction of t0 equity per session): descriptive CI only.
+         */
+        ProductionCompare: {
+            /** Arm */
+            arm: string;
+            /**
+             * Basis
+             * @enum {string}
+             */
+            basis: "total" | "ex_start_book" | "post_ramp";
+            /** @description Always-valid (mSPRT) CI, 1 - alpha */
+            ci?: components["schemas"]["Interval"] | null;
+            /** Mean */
+            mean: number | null;
+            /** N */
+            n: number;
+            /**
+             * P Value
+             * @description Always-valid p (descriptive, no Holm)
+             */
+            p_value?: number | null;
+        };
+        /**
+         * ProductionPanel
+         * @description D108: production vs control vs treatments. Never a verdict, stop or promotion input.
+         */
+        ProductionPanel: {
+            /** Compare */
+            compare?: components["schemas"]["ProductionCompare"][];
+            /**
+             * Cum C Pnl
+             * @default 0
+             */
+            cum_c_pnl: number;
+            /**
+             * Cum D P C
+             * @default 0
+             */
+            cum_d_p_c: number;
+            /**
+             * Cum P Pnl
+             * @default 0
+             */
+            cum_p_pnl: number;
+            /**
+             * Cum Residual
+             * @default 0
+             */
+            cum_residual: number;
+            /**
+             * Cum Start Book
+             * @default 0
+             */
+            cum_start_book: number;
+            /**
+             * Descriptive
+             * @default true
+             * @constant
+             */
+            descriptive: true;
+            /** Missing Sessions */
+            missing_sessions?: string[];
+            /**
+             * Ramp Window
+             * @default 5
+             */
+            ramp_window: number;
+            /**
+             * Ramped From
+             * @description First ramped session
+             */
+            ramped_from?: string | null;
+            /** Sessions */
+            sessions?: components["schemas"]["ProductionSession"][];
+            start_book: components["schemas"]["StartBook"];
+        };
+        /**
+         * ProductionSession
+         * @description One session of the production panel ($ amounts; fractions of t0 equity).
+         */
+        ProductionSession: {
+            /**
+             * C Open
+             * @description Control's open structures at EOD
+             */
+            c_open?: number | null;
+            /**
+             * C Pnl
+             * @description Control arm's virtual-equity delta ($)
+             */
+            c_pnl: number;
+            /**
+             * D P C
+             * @description start_book + residual (~ (p_pnl - c_pnl) / t0)
+             */
+            d_p_c: number;
+            /**
+             * Day
+             * Format: date
+             */
+            day: string;
+            /**
+             * P Ex Start Pnl
+             * @description p_pnl - p_start_book_pnl ($)
+             */
+            p_ex_start_pnl: number;
+            /**
+             * P Open
+             * @description Production's open structures at EOD
+             */
+            p_open?: number | null;
+            /**
+             * P Pnl
+             * @description Production broker equity delta ($)
+             */
+            p_pnl: number;
+            /**
+             * P Start Book Pnl
+             * @description Start book's day P&L ($)
+             */
+            p_start_book_pnl: number;
+            /**
+             * Ramped
+             * @default false
+             */
+            ramped: boolean;
+            /**
+             * Residual
+             * @description (p_ex_start_pnl - c_pnl) / t0
+             */
+            residual: number;
+            /**
+             * Start Book
+             * @description p_start_book_pnl / t0
+             */
+            start_book: number;
+            /**
+             * Ti Pnl
+             * @description Treatment -> virtual-equity delta ($); absent = missing
+             */
+            ti_pnl?: {
+                [key: string]: number;
+            };
+        };
+        /**
          * ProfitLock
          * @description E18.1 (D78) trailing take profit, in units of the take-profit basis.
          *
@@ -5885,6 +6041,56 @@ export interface components {
             shared_from_control: boolean;
             /** Sources */
             sources: components["schemas"]["SourceRow"][];
+        };
+        /**
+         * StartBook
+         * @description Production's open book at t0, tracked to its last close (reporting only).
+         */
+        StartBook: {
+            /**
+             * Close Dates
+             * @description Structure id -> ET close day (None = still open)
+             */
+            close_dates?: {
+                [key: string]: string | null;
+            };
+            /**
+             * Cum Pnl
+             * @default 0
+             */
+            cum_pnl: number;
+            /** Days */
+            days?: components["schemas"]["StartBookDay"][];
+            /** Ids */
+            ids: string[];
+        };
+        /** StartBookDay */
+        StartBookDay: {
+            /**
+             * Closed
+             * @description Start-book structures closed by this day
+             */
+            closed: number;
+            /**
+             * Cum Pnl
+             * @description Cumulative start-book P&L since t0 ($)
+             */
+            cum_pnl: number;
+            /**
+             * Day
+             * Format: date
+             */
+            day: string;
+            /**
+             * Open
+             * @description Start-book structures still held at EOD
+             */
+            open: number;
+            /**
+             * Pnl
+             * @description Start book's day P&L ($)
+             */
+            pnl: number;
         };
         /**
          * StaticStats

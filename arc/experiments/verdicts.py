@@ -94,6 +94,9 @@ def verdict_doc(st: ExperimentState, report: ExperimentReport | None) -> dict[st
     doc["kind"] = st.kind.value
     doc["area"] = st.spec.area.value
     doc["spec_hash"] = st.registered_hash
+    if st.spec.control_runs:
+        # D108: a spec v3's verdict is Ti vs the control arm (never vs production)
+        doc["reference"] = "control"
     if st.stop is not None:
         if st.stop.sessions is not None:
             doc["sessions"] = st.stop.sessions

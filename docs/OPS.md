@@ -1757,6 +1757,18 @@ The treatment arm is the same trading loop on its own paper account
   control arm (their control is production) and keep the legacy-book reservation.
   A K=3 v3 experiment is 4 arms: `max_parallel_arms` and the shared capacity check
   (4 × t0 equity ≤ account equity × `shared_capacity_frac`) count control.
+- v3 reports (E25.3, D108): `arc experiment report|evaluate` on a spec v3 writes
+  `report_version: 3` with `reference: control` for any K. Verdicts are Ti vs the
+  control arm (its `virtual_equity`, nothing subtracted), mSPRT per pair with Holm
+  across the K control pairs, in an A/B and an A/A alike (a v3 A/A is `invalid`
+  when any Ti vs C is rejected; Ti vs Tj stays descriptive). The `production` panel
+  follows the pair table and is descriptive only (never a verdict, stop or
+  promotion input). Per session it shows P P&L, the start book's P&L, P ex start
+  book, C P&L, `d_p_c = start_book + residual` (fractions of t0), the P/C
+  open-structure counts and `ramped` (trailing 5-session median of C's open count
+  ≥ P's, sticky). It also tracks the start book to its last close and gives each
+  arm − P CI on the `total`, `ex_start_book` and `post_ramp` bases. Verdict files
+  of a v3 carry `reference: control`. v1/v2 reports are byte-unchanged.
 - The arm sizes and gates from its virtual account (`VirtualBroker`): equity
   moves only with its own fills/marks, buying power = min(broker, virtual −
   legacy), and under a cash profile only settled cash (T+1) counts. Control's
