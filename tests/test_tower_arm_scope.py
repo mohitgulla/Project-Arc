@@ -237,6 +237,11 @@ def test_arm_routes_read_the_arm_store(client: TestClient, stores: dict[str, Pat
     assert D(ov["equity"]["value"]) == D("25321.5")  # the arm's monitor mark
     assert D(_get(client, "/api/overview").json()["equity"]["value"]) == D("100500")
     assert ov["positions"] == []
+    # D113: the arm's status strip shows production's tick (arms write no tick heartbeat)
+    ctl_status = _get(client, "/api/overview").json()["status"]
+    assert ctl_status["tick_at"] is not None
+    assert ov["status"]["tick_at"] == ctl_status["tick_at"]
+    assert ov["status"]["tick_status"] == ctl_status["tick_status"]
     assert _get(client, "/api/positions", ARM).json()["items"] == []
     trades = _get(client, "/api/trades", ARM).json()
     assert [t["ticker"] for t in trades["items"]] == ["TSLA"]

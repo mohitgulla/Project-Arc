@@ -6,7 +6,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query
 
-from arc.tower.data import monitor_stale_after
+from arc.tower.data import _latest_heartbeat, monitor_stale_after, parse_ts
 from arc.tower.data_overview import (
     ACTIVITY_MAX_HOURS,
     OverviewRange,
@@ -17,7 +17,7 @@ from arc.tower.data_overview import (
     load_positions,
 )
 from arc.tower.data_sleeves import named_sleeves
-from arc.tower.routes.deps import Conn, Scope, Tower, effective
+from arc.tower.routes.deps import Conn, ControlConn, Scope, Tower, effective
 from arc.tower.schemas import ErrorResponse
 from arc.tower.scope import scoped, wrap
 
@@ -35,6 +35,7 @@ PositionsOut = scoped(PositionsResponse)
 def overview(  # noqa: PLR0913 - one query parameter per control
     cfg: Tower,
     conn: Conn,
+    control: ControlConn,
     scope: Scope,
     range: Annotated[OverviewRange, Query()] = "1D",  # noqa: A002 - the URL parameter name
     activity_hours: Annotated[
@@ -50,7 +51,9 @@ def overview(  # noqa: PLR0913 - one query parameter per control
     """Status strip, equity (by range), day P&L, positions, Greeks vs caps, proposals,
     movers and recent activity (rolling window), read in one pass (SELECT only).
 
-    ``?arm=``: the arm's store, so equity / P&L are its virtual account (E15.2)."""
+    ``?arm=``: the arm's store, so equity / P&L are its virtual account (E15.2). The
+    status strip's Tick is production's (D113): arms run on production's 10-min tick
+    and write no ``tick`` heartbeat of their own."""
     settings, routines = effective(cfg)
     hours = activity_hours if activity_hours is not None else routines.tower.overview.activity_hours
     out = load_overview(
@@ -66,6 +69,15 @@ def overview(  # noqa: PLR0913 - one query parameter per control
         greek_advisory=routines.tower.overview.greek_advisory,
         sleeves=named_sleeves(settings),
     )
+    if scope.is_arm:
+        tick = _latest_heartbeat(control, "tick")
+        status = out.status.model_copy(
+            update={
+                "tick_at": parse_ts(tick["at"]) if tick else None,
+                "tick_status": tick["status"] if tick else None,
+            }
+        )
+        out = out.model_copy(update={"status": status})
     return wrap(OverviewOut, out, scope)
 
 
