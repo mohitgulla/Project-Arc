@@ -6,13 +6,80 @@ Schemas are referenced by the SKILL.md files and used in golden tests.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from arc.exits.model import ExitSummary
 from arc.models import CatalystType, Stance
 from arc.positions.exit_case import ThesisStatus3
+
+# ---------------------------------------------------------------------------
+# Deterministic reply hygiene (XP-1 day 1, 2026-10-14)
+# ---------------------------------------------------------------------------
+
+
+def _is_blank(v: object) -> bool:
+    """``None``, an empty/whitespace string, or an empty list/dict."""
+    if v is None:
+        return True
+    if isinstance(v, str):
+        return not v.strip()
+    return isinstance(v, (list, dict, tuple)) and not v
+
+
+def normalise_reply_keys(data: object, fields: set[str]) -> object:
+    """Fold whitespace/case variants of declared field names into the field.
+
+    The model sometimes emits a stray key such as ``" reason"`` next to the real
+    ``reason`` (live 2026-10-14, Research ``exit_watchlist``), which an
+    ``extra="forbid"`` model rejects, failing the whole persona step. A key whose
+    ``strip().casefold()`` equals a declared field name is folded into that field:
+
+    * the field is absent or blank -> the variant's value takes its place;
+    * the variant is blank, or equals the field's value -> the variant is dropped;
+    * both carry different non-blank values -> both are left, so validation fails.
+
+    Any other unknown key is left in place, so ``extra="forbid"`` still catches real
+    schema drift.
+    """
+    if not isinstance(data, dict):
+        return data
+    by_norm = {f.casefold(): f for f in fields}
+    out: dict[Any, Any] = dict(data)
+    for key in list(data):
+        if not isinstance(key, str) or key in fields:
+            continue
+        field = by_norm.get(key.strip().casefold())
+        if field is None:
+            continue
+        value = out.pop(key)
+        if field not in out or _is_blank(out[field]):
+            out[field] = value
+        elif not (_is_blank(value) or value == out[field]):
+            out[key] = value  # a real conflict: keep it so validation reports it
+    return out
+
+
+def clip_text(v: object, limit: int) -> object:
+    """Strip and cut an LLM-written string to *limit* chars (non-strings pass)."""
+    return v.strip()[:limit] if isinstance(v, str) else v
+
+
+class ReplyModel(BaseModel):
+    """Base of every ``extra="forbid"`` model parsed from an LLM reply.
+
+    Runs :func:`normalise_reply_keys` before validation. It adds no field and no
+    JSON Schema keyword, so prompts that embed a reply schema stay byte-identical.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalise_keys(cls, data: object) -> object:
+        return normalise_reply_keys(data, set(cls.model_fields))
+
 
 # ---------------------------------------------------------------------------
 # Scalp — surfaces Candidate objects from raw information sources
@@ -131,10 +198,8 @@ class ResearchRankedItem(BaseModel):
         return items[:_EVIDENCE_MAX_ITEMS]
 
 
-class ResearchExclusion(BaseModel):
+class ResearchExclusion(ReplyModel):
     """A candidate Research will not trade, with its one-line reason (E5.7)."""
-
-    model_config = ConfigDict(extra="forbid")
 
     ticker: str
     reason: str = Field(..., min_length=1, description="One line: why this candidate is excluded")
@@ -163,19 +228,15 @@ class PoolItem(BaseModel):
     catalyst_date: str | None = Field(None, description="YYYY-MM-DD, if any")
 
 
-class ResearchPortfolioView(BaseModel):
+class ResearchPortfolioView(ReplyModel):
     """Research's read of the open book (E5.9); ``notes`` is stored as a note."""
-
-    model_config = ConfigDict(extra="forbid")
 
     verdict: PortfolioVerdict
     notes: str = Field("", description="One or two lines on diversification and risk")
 
 
-class ResearchThesisCheck(BaseModel):
+class ResearchThesisCheck(ReplyModel):
     """Is an open position's original thesis still intact? Advisory for E6.4 (E5.9)."""
-
-    model_config = ConfigDict(extra="forbid")
 
     structure_id: str
     status: ThesisStatus
@@ -189,15 +250,13 @@ _WATCH_EVIDENCE_MAX_ITEMS = 4
 _WATCH_EVIDENCE_MAX_CHARS = 160
 
 
-class ExitWatchItem(BaseModel):
+class ExitWatchItem(ReplyModel):
     """One open position on Research's exit watchlist (E13.17, D56).
 
     ``review`` asks Quant for an exit case; ``hold`` keeps the position. Advisory only:
     a watchlist item never creates a proposal, and mandatory exits (stop, DTE exit,
     expiry) stay deterministic.
     """
-
-    model_config = ConfigDict(extra="forbid")
 
     structure_id: str
     ticker: str
@@ -326,10 +385,8 @@ class QuantStructureOut(BaseModel):
     )
 
 
-class QuantSkip(BaseModel):
+class QuantSkip(ReplyModel):
     """A budgeted ticker the Quant does not structure, with its reason (E5.7)."""
-
-    model_config = ConfigDict(extra="forbid")
 
     ticker: str
     reason: str = Field(..., min_length=1, description="One line: why no structure")
@@ -419,16 +476,21 @@ ReviseReason = Literal[
 ]
 
 
-class RiskReviseRequest(BaseModel):
+class RiskReviseRequest(ReplyModel):
     """What Risk wants Quant to change about one structure (advisory text + hints)."""
-
-    model_config = ConfigDict(extra="forbid")
 
     reason: ReviseReason
     instruction: str = Field(..., max_length=240, description="Advisory text for Quant")
     max_contracts: int | None = Field(None, ge=0)
     target_dte: tuple[int, int] | None = None
     preferred_structure_type: str | None = None
+
+    @field_validator("instruction", mode="before")
+    @classmethod
+    def _trim_instruction(cls, v: object) -> object:
+        """Deterministic trim to 240 chars (live 2026-10-14: an over-long instruction
+        failed the whole ``risk.open`` step)."""
+        return clip_text(v, 240)
 
 
 class RiskOpenAssessment(RiskAssessment):
@@ -476,14 +538,12 @@ type RiskExitReasonCode = Literal[
 ]
 
 
-class RiskExitVerdict(BaseModel):
+class RiskExitVerdict(ReplyModel):
     """Risk's verdict on one exit case (E13.18): ``close`` or ``hold``, with a reason.
 
     Advisory input to code: a ``close`` still goes through ``propose_close`` (gate
     ``closing=True``, price band, token, approval); a ``hold`` is journaled.
     """
-
-    model_config = ConfigDict(extra="forbid")
 
     structure_id: str = Field(..., description="The case's structure_id, copied verbatim")
     verdict: Literal["close", "hold"]
@@ -496,25 +556,21 @@ class RiskExitVerdict(BaseModel):
         return str(v).strip()[:240] if isinstance(v, str) else v
 
 
-class RiskExitOutput(BaseModel):
+class RiskExitOutput(ReplyModel):
     """Risk's reply on ``risk.exit`` (E13.18): one verdict per exit case.
 
     A case missing from ``verdicts`` is ``hold`` (fail closed); unknown ids are ignored.
     """
 
-    model_config = ConfigDict(extra="forbid")
-
     verdicts: list[RiskExitVerdict] = Field(default_factory=list)
 
 
-class QuantExitJudgement(BaseModel):
+class QuantExitJudgement(ReplyModel):
     """Quant's call on one exit case (E13.17, D56): hold or close, with why.
 
     The numbers come from code (``position_review`` + position facts); this is the
     judgement only. Roll is not an option in D56 (open decision 13).
     """
-
-    model_config = ConfigDict(extra="forbid")
 
     structure_id: str = Field(..., description="The case's structure_id, copied verbatim")
     recommendation: Literal["hold", "close"]
@@ -526,13 +582,11 @@ class QuantExitJudgement(BaseModel):
         return str(v).strip()[:400] if isinstance(v, str) else v
 
 
-class QuantExitOutput(BaseModel):
+class QuantExitOutput(ReplyModel):
     """Quant's reply on ``quant.exit`` (E13.17): one judgement per exit case.
 
     A case missing from ``cases`` fails closed to ``hold``.
     """
-
-    model_config = ConfigDict(extra="forbid")
 
     cases: list[QuantExitJudgement] = Field(default_factory=list)
 
@@ -604,10 +658,8 @@ class ReconcileOutput(BaseModel):
     reconciliation_status: str = Field(..., description="clean | discrepancies_found | pending")
 
 
-class ScoutTickerCall(BaseModel):
+class ScoutTickerCall(ReplyModel):
     """One Scout ticker call (E13.7, D56), backed by YouTube channel briefs only."""
-
-    model_config = ConfigDict(extra="forbid")
 
     ticker: str = Field(..., pattern=r"^[A-Z][A-Z0-9.]{0,9}$")
     stance: Stance
@@ -622,6 +674,12 @@ class ScoutTickerCall(BaseModel):
     thesis: str = Field(..., max_length=240)
     catalyst_type: CatalystType
     catalyst_date: str | None = Field(None, description="ISO-8601 date, if any")
+
+    @field_validator("thesis", mode="before")
+    @classmethod
+    def _trim_thesis(cls, v: object) -> object:
+        """Deterministic trim to 240 chars instead of failing the daily Scout run."""
+        return clip_text(v, 240)
 
     @field_validator("catalyst_type", mode="before")
     @classmethod
@@ -649,10 +707,8 @@ _BRIEF_KIND_TO_CATALYST: dict[str, str] = {
 SCOUT_PROSE_MAX = 600
 
 
-class ScoutOutput(BaseModel):
+class ScoutOutput(ReplyModel):
     """Scout reply (E13.7, D56): the daily slow-feed read, sections in fixed order."""
-
-    model_config = ConfigDict(extra="forbid")
 
     regime: str = Field(..., max_length=SCOUT_PROSE_MAX)
     options_sentiment: str = Field(..., max_length=SCOUT_PROSE_MAX)
@@ -679,11 +735,11 @@ class ScoutOutput(BaseModel):
             return cut + "…"
         return v
 
-    @field_validator("themes")
+    @field_validator("themes", mode="before")
     @classmethod
-    def _theme_lines(cls, v: list[str]) -> list[str]:
-        for t in v:
-            if len(t) > 160:
-                msg = "each theme is one line of at most 160 characters"
-                raise ValueError(msg)
-        return v
+    def _theme_lines(cls, v: object) -> object:
+        """Each theme is one line of at most 160 chars: whitespace is collapsed and an
+        over-long theme is cut, instead of failing the whole daily Scout run."""
+        if not isinstance(v, list):
+            return v
+        return [" ".join(t.split())[:160] if isinstance(t, str) else t for t in v]
