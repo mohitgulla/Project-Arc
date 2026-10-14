@@ -6,9 +6,11 @@ The one way a new experiment enters the registry. Deterministic, idempotent per 
 1. read the proposal (an ``xp_backlog.json`` entry, or the Analyst's approved
    ``proposals/P-<n>.yaml``), pick the next free ``XP-<n>`` across the DB, the specs
    committed in the working tree and ``origin/main`` (:func:`next_free_id`);
-2. fill the defaults from ``config/experiments.yaml`` and validate: v2 spec, ``kind: ab``,
-   exactly :data:`K_TREATMENTS` treatments, every overlay target loads, the arms fit
-   ``experiments.runner.max_parallel_arms``;
+2. fill the defaults from ``config/experiments.yaml`` and validate: ``kind: ab``, exactly
+   :data:`K_TREATMENTS` treatments, every overlay target loads, the arms (the treatments
+   plus the control arm) fit ``experiments.runner.max_parallel_arms``. The spec is always
+   written as v3 (D108): ``spec_version: 3`` and ``arms.control: {overlay: {}}``, so control
+   runs as its own flat arm ``XP-<n>:control`` on the experiment account;
 3. ``create`` + ``register`` with ``proposal_ref: P-<n>`` (``registered``, or ``queued``
    with the reason when its area or the arm cap is busy);
 4. commit ``config/experiments/live/xp<n>_<slug>.yaml`` through an auto-merged PR on
@@ -56,6 +58,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ADOPT_ACTOR",
+    "ADOPT_SPEC_VERSION",
     "K_TREATMENTS",
     "AdoptError",
     "AdoptResult",
@@ -72,7 +75,9 @@ __all__ = [
 log = structlog.get_logger(__name__)
 
 ADOPT_ACTOR = "arc.adopt"
-K_TREATMENTS = 4  # D86: control + exactly 4 treatments
+K_TREATMENTS = 3  # D108 (revises D86's 4): control + exactly 3 treatments
+#: D108: the spec version adopt writes (control is a runnable arm).
+ADOPT_SPEC_VERSION = 3
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _XP_NUM_RE = re.compile(r"\bXP-([1-9]\d*)\b")
 _TERMINAL = frozenset(
@@ -252,7 +257,8 @@ def adopt_pr_body(st: ExperimentState, proposal_id: str, approval: str) -> str:
         "XP-advisory: none — this PR is the experiment's registered spec\n\n"
         f"`arc experiment adopt` registered **{st.experiment_id}** ({st.spec.title}) from "
         f"Analyst proposal {proposal_id}, owner approval `{approval}`.\n\n"
-        f"- area `{st.spec.area.value}`, {len(st.spec.arms.treatments)} treatments\n"
+        f"- area `{st.spec.area.value}`, control + {len(st.spec.arms.treatments)} treatments "
+        f"(spec v{st.spec.spec_version}, PLAN D108)\n"
         f"- status `{st.status.value}`\n"
         f"- spec sha256 `{st.registered_hash}` (the pre-registration lock)\n\n"
         "Auto-merged once CI is green. `experiments.autostart` starts it at the first "
@@ -275,7 +281,8 @@ def start_estimate(now: _dt.datetime, status: ExperimentStatus) -> _dt.date | No
 
 def slack_line(st: ExperimentState, proposal_id: str, starts: _dt.date | None) -> str:
     k = len(st.spec.arms.treatments)
-    head = f"{st.experiment_id} registered ({proposal_id}), {k} arms, area {st.spec.area.value}"
+    arms = f"control + {k} treatments" if st.spec.control_runs else f"{k} arms"
+    head = f"{st.experiment_id} registered ({proposal_id}), {arms}, area {st.spec.area.value}"
     if starts is not None:
         return f"{head}, starts {starts:%a %b} {starts.day} pre-open"
     behind = _queued_detail(st)[0]
@@ -305,10 +312,24 @@ def _build_spec(proposal: Proposal, experiment_id: str, cfg: ExperimentsConfig) 
 
     from arc.experiments.overlay import fill_defaults, validate_arms
 
+    version = proposal.spec.get("spec_version", 2)
+    if version not in (2, ADOPT_SPEC_VERSION):
+        msg = (
+            f"{proposal.proposal_id}: adopt takes a multi-treatment spec (arms.treatments "
+            f"t1..t{K_TREATMENTS}) and writes it as v{ADOPT_SPEC_VERSION}; got spec_version "
+            f"{version!r}"
+        )
+        raise AdoptError(msg)
+    arms = proposal.spec.get("arms")
+    if isinstance(arms, dict):
+        # D108: control runs production's config as its own flat arm (empty overlay); a
+        # non-empty control overlay is left for the model to refuse
+        arms = {**arms, "control": arms.get("control") or {"overlay": {}}}
     data = {
-        "spec_version": 2,
         "kind": "ab",
         **proposal.spec,
+        "arms": arms,
+        "spec_version": ADOPT_SPEC_VERSION,  # D108: a v2 proposal is written as v3
         "id": experiment_id,
         "proposed_by": proposal.proposed_by,
     }
@@ -318,17 +339,14 @@ def _build_spec(proposal: Proposal, experiment_id: str, cfg: ExperimentsConfig) 
     except (ValidationError, ValueError) as exc:
         msg = f"{proposal.proposal_id}: invalid spec: {exc}"
         raise AdoptError(msg) from exc
-    if spec.spec_version != 2:
-        msg = f"{proposal.proposal_id}: adopt takes a v2 spec (arms.treatments t1..t{K_TREATMENTS})"
-        raise AdoptError(msg)
     if spec.kind is not ExperimentKind.AB:
         msg = f"{proposal.proposal_id}: adopt registers ab experiments only, not {spec.kind.value}"
         raise AdoptError(msg)
     k = len(spec.arms.treatments)
     if k != K_TREATMENTS:
         msg = (
-            f"{proposal.proposal_id}: {k} treatment(s); D86 proposals are control + exactly "
-            f"{K_TREATMENTS} treatments (FOUR-TREATMENTS)"
+            f"{proposal.proposal_id}: {k} treatment(s); D108 proposals are control + exactly "
+            f"{K_TREATMENTS} treatments (THREE-TREATMENTS)"
         )
         raise AdoptError(msg)
     return fill_defaults(spec, cfg.defaults)
@@ -401,7 +419,7 @@ def adopt(
         status=st.status.value,
         created=created,
         area=st.spec.area.value,
-        arms=len(st.spec.arms.treatments),
+        arms=store.arms_of(st.spec),  # runner arms on the account (D108: control + K)
         spec_hash=st.registered_hash or st.spec_hash,
         path=path,
         branch=branch,

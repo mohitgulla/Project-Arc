@@ -93,7 +93,7 @@ def _store(conn: sqlite3.Connection, cfg: ExperimentsConfig | None = None) -> Ex
     return ExperimentStore.for_runner(conn, (cfg or _cfg()).runner, now=now)
 
 
-def _treatments(k: int = 4) -> dict[str, Any]:
+def _treatments(k: int = 3) -> dict[str, Any]:
     return {
         f"t{i}": {
             "overlay": {
@@ -104,12 +104,12 @@ def _treatments(k: int = 4) -> dict[str, Any]:
     }
 
 
-def _proposal_spec(k: int = 4, area: str = "exits", **kw: Any) -> dict[str, Any]:
+def _proposal_spec(k: int = 3, area: str = "exits", **kw: Any) -> dict[str, Any]:
     return {
         "id": "XP-<next>",
         "kind": "ab",
         "spec_version": 2,
-        "title": "Take-profit level x4",
+        "title": "Take-profit level x3",
         "hypothesis": "an earlier take profit lifts net P&L per session",
         "area": area,
         "arms": {"treatments": _treatments(k)},
@@ -239,26 +239,54 @@ def test_refuses_a_missing_or_bad_owner_approval(conn: sqlite3.Connection, tmp_p
     assert _store(conn).all() == []
 
 
-@pytest.mark.parametrize("k", [1, 3])
-def test_refuses_other_than_four_treatments(
+@pytest.mark.parametrize("k", [1, 2, 4])
+def test_refuses_other_than_three_treatments(
     conn: sqlite3.Connection, tmp_path: Path, k: int
 ) -> None:
-    with pytest.raises(ad.AdoptError, match="exactly 4 treatments"):
+    """D108: K = 3 (was 4 under D86); a K=4 or K=2 proposal is refused, not trimmed."""
+    with pytest.raises(ad.AdoptError, match="exactly 3 treatments \\(THREE-TREATMENTS\\)"):
         _adopt(conn, tmp_path, _proposal(k=k))
     assert _store(conn).all() == []
+
+
+@pytest.mark.parametrize("version", [2, 3])
+def test_accepts_three_treatments_and_writes_spec_v3(
+    conn: sqlite3.Connection, tmp_path: Path, version: int
+) -> None:
+    """D108: a K=3 proposal (v2 or v3 shape) is registered and committed as spec v3 with
+    ``arms.control: {overlay: {}}``: control runs as its own flat arm, so it counts too."""
+    pub = FakePublisher()
+    res = _adopt(conn, tmp_path, _proposal(spec_version=version), publisher=pub)
+    st = _store(conn).require(res.experiment_id)
+    assert st.spec.spec_version == ad.ADOPT_SPEC_VERSION == 3 and st.spec.control_runs
+    assert sorted(st.spec.arms.treatments) == ["t1", "t2", "t3"]
+    assert st.spec.arm_id_for("control") == f"{res.experiment_id}:control"
+    assert res.arms == 4  # control + 3 treatments on the experiment account
+    doc = yaml.safe_load(pub.calls[0]["files"][res.path])
+    assert doc["spec_version"] == 3
+    assert doc["arms"]["control"] == {"overlay": {}}
+    assert spec_hash(ExperimentSpec.model_validate(doc)) == st.registered_hash
+    assert "control + 3 treatments (spec v3, PLAN D108)" in pub.calls[0]["body"]
+
+
+def test_refuses_a_control_overlay(conn: sqlite3.Connection, tmp_path: Path) -> None:
+    arms = {"control": {"overlay": {"exits": {"default": {"take_profit_pct": 0.4}}}}}
+    arms["treatments"] = _treatments()
+    with pytest.raises(ad.AdoptError, match="control arm runs production's config"):
+        _adopt(conn, tmp_path, _proposal(arms=arms))
 
 
 @pytest.mark.parametrize(
     ("patch", "match"),
     [
         (
-            {"kind": "aa", "arms": {"treatments": {f"t{i}": {"overlay": {}} for i in range(1, 5)}}},
+            {"kind": "aa", "arms": {"treatments": {f"t{i}": {"overlay": {}} for i in range(1, 4)}}},
             "ab experiments only",
         ),
         ({"area": "nope"}, "invalid spec"),
-        ({"spec_version": 1}, "invalid spec|v2 spec"),
+        ({"spec_version": 1}, "writes it as v3; got spec_version 1"),
         (
-            {"arms": {"treatments": {**_treatments(3), "t4": {"overlay": {"bogus": {"x": 1}}}}}},
+            {"arms": {"treatments": {**_treatments(2), "t3": {"overlay": {"bogus": {"x": 1}}}}}},
             "invalid spec",
         ),
     ],
@@ -307,10 +335,12 @@ def test_adopt_registers_with_proposal_ref_and_publishes(
     assert st.status is ExperimentStatus.REGISTERED and proposal_ref_of(st) == "P-1"
     assert all(e.detail.get("proposal_ref") == "P-1" for e in st.events)
     assert res.starts == "2026-10-13"  # the next pre-open (Tue)
-    assert posted == ["XP-1 registered (P-1), 4 arms, area exits, starts Tue Oct 13 pre-open"]
+    assert posted == [
+        "XP-1 registered (P-1), control + 3 treatments, area exits, starts Tue Oct 13 pre-open"
+    ]
     (call,) = pub.calls
     assert call["branch"] == "xp/1"
-    assert list(call["files"]) == ["config/experiments/live/xp1_take_profit_level_x4.yaml"]
+    assert list(call["files"]) == ["config/experiments/live/xp1_take_profit_level_x3.yaml"]
     assert call["body"].startswith("Lane: fast — register XP-1 (owner approved P-1, PLAN D86)\n")
     # the committed file re-parses to the registered lock
     doc = yaml.safe_load(call["files"][res.path])
@@ -360,7 +390,7 @@ def test_adopt_queues_behind_a_busy_area_and_promotes_after_stop(
     assert second.status == "queued" and second.queued_behind == ["XP-1"]
     assert second.queue_reason == "area exits held by XP-1" and second.starts is None
     assert posted == [
-        "XP-1 registered (P-2), 4 arms, area exits, queued behind XP-1".replace(
+        "XP-1 registered (P-2), control + 3 treatments, area exits, queued behind XP-1".replace(
             "XP-1 registered", "XP-2 registered"
         )
     ]
@@ -371,7 +401,7 @@ def test_adopt_queues_behind_a_busy_area_and_promotes_after_stop(
 
 def test_adopt_queues_on_the_arm_cap(conn: sqlite3.Connection, tmp_path: Path) -> None:
     _adopt(conn, tmp_path)
-    _adopt(conn, tmp_path, _proposal("P-2", area="ranking"))  # 8 of 10 arms
+    _adopt(conn, tmp_path, _proposal("P-2", area="ranking"))  # 8 of 10 arms (control + 3 each)
     third = _adopt(conn, tmp_path, _proposal("P-3", area="entries"))
     assert third.status == "queued" and "max_parallel_arms" in (third.queue_reason or "")
 
@@ -435,7 +465,7 @@ def _report(xid: str, headline: str, wins: list[str]) -> Any:
 
     pairs = [
         SimpleNamespace(kind="control_vs_treatment", b=t, verdict="win" if t in wins else None)
-        for t in ("t1", "t2", "t3", "t4")
+        for t in ("t1", "t2", "t3")
     ]
     digest = f"{xid}-{headline}".encode().hex().ljust(64, "0")[:64]
     return SimpleNamespace(headline_arm=headline, pairwise=pairs, report_hash=lambda: digest)

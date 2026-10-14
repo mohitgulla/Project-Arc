@@ -3,7 +3,7 @@
 # These are the never-adopted, dev-drafted forward-experiment specs that D86 retired from
 # config/experiments/live/. Each lead names the variable(s), the treatment values the old
 # draft tested, where it came from and the evidence so far. The Analyst decides, run by run,
-# whether a lead becomes a `P-<n>` proposal (one area, control + exactly 4 treatments) or is
+# whether a lead becomes a `P-<n>` proposal (one area, control + exactly 3 treatments, D108) or is
 # dropped with a reason (E21.3). The flags these drafts flipped keep their shipped values.
 #
 # install.sh copies this file to <profile>/analyst/idea_seed.yaml; `arc_analyst.py
@@ -24,7 +24,7 @@
       "hypothesis": "Ranking Reddit names by mention velocity (m + k) / (m24 + k) instead of the 24 h rank gain admits names a day earlier in their retail run-up, raising paired daily net P&L without a worse Sortino or max drawdown.",
       "source": "card E14.5 (PLAN D58, D60); flag universe.trending.scoring (default rank_gain)",
       "evidence_refs": ["docs/OPS.md (Reddit mention velocity, E14.5)"],
-      "notes": "No backtest: the E7.5 harness has no replayable retail_buzz history, so tier selection is forward-only. Was registered once, then cleared from the registry (owner, 2026-10-10). A 4-treatment version could vary velocity.smoothing / min_mentions with scoring: velocity.",
+      "notes": "No backtest: the E7.5 harness has no replayable retail_buzz history, so tier selection is forward-only. Was registered once, then cleared from the registry (owner, 2026-10-10). A 3-treatment version could vary velocity.smoothing / min_mentions with scoring: velocity.",
       "retired_spec": "d6f6d50:config/experiments/live/xp10_trending_velocity.yaml"
     },
     {
@@ -38,7 +38,7 @@
       "hypothesis": "Showing the Scalp which active-list or story-named stocks move on the tape helps it see which story drives a move and weigh candidates better, raising paired daily net P&L without a worse Sortino.",
       "source": "card E14.3 (PLAN D60); flag personas.scalp_movers_context (default off)",
       "evidence_refs": ["docs/OPS.md (Scalp block, E14.3)"],
-      "notes": "Persona prompt change: not backtestable (E7.5 replays no LLM); forward-only. The arm runs its own Scalp; the market_movers source is shared. A 4-treatment version could vary scalp_movers_context.max_lines.",
+      "notes": "Persona prompt change: not backtestable (E7.5 replays no LLM); forward-only. The arm runs its own Scalp; the market_movers source is shared. A 3-treatment version could vary scalp_movers_context.max_lines.",
       "retired_spec": "3093a45:config/experiments/live/xp11_scalp_movers.yaml"
     },
     {
@@ -73,7 +73,7 @@
       "hypothesis": "Directional long-premium opens lose partly because they buy moves that are already stretched; dropping stretched entries and/or showing Research the indicators improves paired daily net P&L without a worse Sortino or max drawdown, and the pre-D78 pipeline (t1) does no better than production.",
       "source": "cards E16.2/E16.3 (PLAN D76, D78); both switches ship on (D78)",
       "evidence_refs": ["docs/RESEARCH/anti-chase-backtest.md"],
-      "notes": "Backtest verdict (filter only, pre-declared rule): do not recommend the forward experiment; the filter cut max drawdown but cost net P&L on cash_debit (CI of the daily difference [-$32.3k, +$10.7k]). A t1 win would be a rollback signal for D78. Already 4 treatments; D78 parked variants until after E15.x.",
+      "notes": "Backtest verdict (filter only, pre-declared rule): do not recommend the forward experiment; the filter cut max drawdown but cost net P&L on cash_debit (CI of the daily difference [-$32.3k, +$10.7k]). A t1 win would be a rollback signal for D78. Drafted with 4 treatments: a D108 proposal keeps 3; D78 parked variants until after E15.x.",
       "retired_spec": "034073c:config/experiments/live/xp13_technicals.yaml"
     },
     {
