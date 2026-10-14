@@ -367,7 +367,9 @@ export interface paths {
          * @description Status strip, equity (by range), day P&L, positions, Greeks vs caps, proposals,
          *     movers and recent activity (rolling window), read in one pass (SELECT only).
          *
-         *     ``?arm=``: the arm's store, so equity / P&L are its virtual account (E15.2).
+         *     ``?arm=``: the arm's store, so equity / P&L are its virtual account (E15.2). The
+         *     status strip's Tick is production's (D113): arms run on production's 10-min tick
+         *     and write no ``tick`` heartbeat of their own.
          */
         get: operations["overview_api_overview_get"];
         put?: never;

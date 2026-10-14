@@ -18681,7 +18681,7 @@
     },
     "/api/overview": {
       "get": {
-        "description": "Status strip, equity (by range), day P&L, positions, Greeks vs caps, proposals,\nmovers and recent activity (rolling window), read in one pass (SELECT only).\n\n``?arm=``: the arm's store, so equity / P&L are its virtual account (E15.2).",
+        "description": "Status strip, equity (by range), day P&L, positions, Greeks vs caps, proposals,\nmovers and recent activity (rolling window), read in one pass (SELECT only).\n\n``?arm=``: the arm's store, so equity / P&L are its virtual account (E15.2). The\nstatus strip's Tick is production's (D113): arms run on production's 10-min tick\nand write no ``tick`` heartbeat of their own.",
         "operationId": "overview_api_overview_get",
         "parameters": [
           {
