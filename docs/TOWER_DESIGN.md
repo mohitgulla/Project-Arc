@@ -369,7 +369,12 @@ they are never dropped.
   Ops Config card): what can Arc trade today, and why each name is there.
   - Data: `GET /api/ops/universe` reads the **stored** `active_universe` resolve and the latest
     `universe_tier` entry per feed tier (`arc/tower/data_universe.py`); it never re-resolves.
-    No resolve today → the latest one with its age and a `Not Resolved Today` note; none at
+    No resolve today → the latest one with its age. Before the Scalp's first resolve of the
+    day is due (window start + one `every`, from the effective `scalp` job; overnight,
+    weekends, holidays) and while that is the previous session's resolve, the pill reads
+    `Awaiting Today's Resolve` in the neutral tone with a muted `Next resolve at 06:30 ET
+    (Scalp)` note (`state = pending`, `next_resolve_at`; E14.11 / D110). A missed, older or
+    expired resolve keeps the warn `Not Resolved Today` pill and note; none at
     all → the core list (`Never Resolved`). Never a blank page.
   - Pinned summary card: `Active 50/50 · Core 25 · Momentum 17 · Trending 0 · Discovery 8`,
     the resolve state, its age and config version.

@@ -5,8 +5,11 @@ entry, written by the Scalp every 30 min and by the tier jobs) and the latest
 ``universe_tier`` entry per feed tier. It never re-resolves: the dedupe and cap logic
 lives in :func:`arc.universe.tiers.resolve_active` only.
 
-When today has no resolve, the latest one is shown with its age and ``state`` says
-``stale``; with none at all the core list is shown (``state = none``), which is what every
+When today has no resolve, the latest one is shown with its age. ``state`` says
+``pending`` (E14.11, D110) while that is the previous session's resolve and the Scalp's
+first resolve of the day is not yet due (its window start + one ``every`` of grace on a
+run day), and ``stale`` once a resolve is due and missing, the stored one is older, or it
+has expired. With none at all the core list is shown (``state = none``), which is what every
 consumer reads before the first resolve of the day (:func:`~arc.universe.tiers.active_tickers`).
 """
 
@@ -43,8 +46,10 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from arc.config import ArcSettings
+    from arc.routines.config import JobSpec
 
 __all__ = [
+    "RESOLVE_JOB",
     "CoreOverrideIgnored",
     "UniverseActiveRow",
     "UniverseDroppedRow",
@@ -56,7 +61,10 @@ __all__ = [
 
 _STRICT = ConfigDict(extra="forbid", frozen=True)
 
-ResolveState = Literal["today", "stale", "none"]
+ResolveState = Literal["today", "pending", "stale", "none"]
+
+#: E14.11 (D110): the job whose first slot of the day is the resolve the page waits for.
+RESOLVE_JOB = "scalp"
 
 
 class UniverseActiveRow(BaseModel):
@@ -190,8 +198,16 @@ class UniverseResponse(BaseModel):
         "stored pre-cutover resolve reads d51 until the next resolve",
     )
     state: ResolveState = Field(
-        description="today = resolved today; stale = latest resolve is older (consumers use the "
-        "core list until the next one); none = never resolved (core list shown)"
+        description="today = resolved today; pending = the previous session's resolve and "
+        "today's first Scalp resolve is not due yet (window start + one `every`; D110); "
+        "stale = a resolve is due and missing, or the stored one is older or expired "
+        "(consumers use the core list until the next one); none = never resolved (core list "
+        "shown)"
+    )
+    next_resolve_at: _dt.datetime | None = Field(
+        None,
+        description="E14.11: the Scalp's next slot (ET) when state = pending; null otherwise "
+        "or when the Scalp job is disabled / missing",
     )
     resolved_for: _dt.date | None = Field(description="The stored resolve's as_of day")
     resolved_at: _dt.datetime | None = Field(description="When the stored resolve was written")
@@ -529,6 +545,37 @@ def _core_fallback(settings: ArcSettings, day: _dt.date) -> ActiveUniverse:
     )
 
 
+def awaiting_resolve(
+    resolved_for: _dt.date, now: _dt.datetime, job: JobSpec | None
+) -> _dt.datetime | None:
+    """E14.11 (D110): the resolve job's next slot when a not-today resolve is ``pending``.
+
+    Pending = *resolved_for* is the session before today (:func:`previous_session`) and
+    the job's first slot on its next run day (today or later; ``days`` decides, so a
+    weekend or holiday waits for the next session) plus one ``every`` of grace has not
+    passed. ``None`` (= ``stale``) otherwise, and when the job is disabled, missing or
+    trigger-only. The caller checks the stored entry has not expired."""
+    from arc.routines.schedule import default_catchup, next_slot
+    from arc.utils.calendar import previous_session
+
+    now = now.astimezone(ET)
+    today = now.date()
+    if job is None or not job.enabled or job.trigger:
+        return None
+    if resolved_for != previous_session(today):
+        return None
+    day_start = _dt.datetime.combine(today, _dt.time.min, tzinfo=ET)
+    first = next_slot(job, day_start - _dt.timedelta(microseconds=1))
+    if first is None or now >= first + (job.every or default_catchup(job)):
+        return None
+    return next_slot(job, now) if now >= first else first
+
+
+def _pending_note(next_at: _dt.datetime, today: _dt.date, label: str) -> str:
+    when = f"at {next_at:%H:%M}" if next_at.date() == today else f"{next_at:%a %H:%M}"
+    return f"Next resolve {when} ET ({label}). Until then consumers use the core list."
+
+
 def load_universe(
     conn: sqlite3.Connection,
     settings: ArcSettings,
@@ -537,18 +584,22 @@ def load_universe(
     director_diversification: str | None = None,
     velocity: VelocityOptions | None = None,
     channel_labels: Mapping[str, str] | None = None,
+    resolve_job: JobSpec | None = None,
 ) -> UniverseResponse:
     """The stored resolve + tier feeds + the effective core/market-reference settings.
 
     *velocity* (E14.5) = the ``universe.trending`` velocity knobs; each trending member
     gets its Reddit mention velocity (default knobs when ``None``). *channel_labels*
-    (E14.8) = youtube.briefs ``slug -> label``, for the discovery Sources column."""
+    (E14.8) = youtube.briefs ``slug -> label``, for the discovery Sources column.
+    *resolve_job* (E14.11) = the effective ``scalp`` job spec: a previous-session resolve
+    reads ``pending`` until its first slot + one ``every`` (``None`` = always ``stale``)."""
     now = now.astimezone(ET)
     today = now.date()
     has_ctx = _has_table(conn, "context_entries")
     stored = _stored_active(conn) if has_ctx else None
     resolved_at: _dt.datetime | None = None
     resolved_by: str | None = None
+    next_resolve_at: _dt.datetime | None = None
     if stored is not None:
         active, row = stored
         resolved_at = parse_ts(row["valid_from"])
@@ -556,18 +607,26 @@ def load_universe(
         expires = parse_ts(row["expires_at"])
         valid = expires is None or expires > now
         state: ResolveState = "today" if active.as_of == today and valid else "stale"
+        if state == "stale" and valid:
+            next_resolve_at = awaiting_resolve(active.as_of, now, resolve_job)
+            if next_resolve_at is not None:
+                state = "pending"
     else:
         active = _core_fallback(settings, today)
         state = "none"
-    note = {
-        "today": None,
-        "stale": (
-            f"Not resolved today: latest resolve is for {active.as_of.isoformat()}"
-            f"{'' if active.as_of != today else ' and has expired'}. Consumers use the core "
-            "list until the next resolve (Scalp, every 30 min)."
-        ),
-        "none": "No resolve stored yet: consumers use the core list (shown here).",
-    }[state]
+    if next_resolve_at is not None:
+        label = str((resolve_job.options if resolve_job else {}).get("label") or "Scalp")
+        note: str | None = _pending_note(next_resolve_at, today, label)
+    else:
+        note = {
+            "today": None,
+            "stale": (
+                f"Not resolved today: latest resolve is for {active.as_of.isoformat()}"
+                f"{'' if active.as_of != today else ' and has expired'}. Consumers use the "
+                "core list until the next resolve (Scalp, every 30 min)."
+            ),
+            "none": "No resolve stored yet: consumers use the core list (shown here).",
+        }[state]
 
     sizes: dict[Tier, int | None] = {Tier.CORE: MAX_CORE, **tier_sizes(settings)}
     core_source = next((m.source for m in active.members if m.tier is Tier.CORE), "settings")
@@ -644,6 +703,7 @@ def load_universe(
         as_of=now,
         model=active.model,
         state=state,
+        next_resolve_at=next_resolve_at,
         resolved_for=active.as_of if state != "none" else None,
         resolved_at=resolved_at,
         resolved_by=resolved_by,

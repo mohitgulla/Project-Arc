@@ -46,7 +46,7 @@ from arc.tower.data_ops import (
     load_sources,
     resolve_day,
 )
-from arc.tower.data_universe import UniverseResponse, load_universe
+from arc.tower.data_universe import RESOLVE_JOB, UniverseResponse, load_universe
 from arc.tower.routes.deps import (  # noqa: TC001 - FastAPI dependencies
     Conn,
     ControlConn,
@@ -279,6 +279,7 @@ def universe(control: ControlTower, scope: Scope) -> UniverseResponse:
         if isinstance(c, dict) and c.get("slug")
     }
     with open_ro(cfg) as conn:
+        resolve = routines.job(RESOLVE_JOB)  # E14.11: the Scalp's effective cadence
         out = load_universe(
             conn,
             settings,
@@ -286,6 +287,7 @@ def universe(control: ControlTower, scope: Scope) -> UniverseResponse:
             director_diversification=routines.director_diversification.mode,
             velocity=universe_config(settings).trending.velocity,  # E20.4: universe.yaml
             channel_labels=labels,
+            resolve_job=resolve[1] if resolve else None,
         )
     return wrap(UniverseOut, out, scope, shared=shared)
 

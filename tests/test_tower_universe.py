@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 from arc.config import ArcSettings
 from arc.context.store import ContextStore
 from arc.context.ttl import Ttl
+from arc.routines.config import load_routines
 from arc.store.db import connect
 from arc.store.migrate import migrate
 from arc.tower.api import create_app
@@ -196,6 +197,137 @@ def test_expired_tier_is_flagged(tmp_path: Path) -> None:
            at=NOW, ttl=dt.timedelta(hours=8))  # fmt: skip
     tiers = {t.name: t for t in _read(db).tiers}
     assert tiers["discovery"].expired and not tiers["momentum"].expired
+
+
+# -- E14.11 (D110): pending vs stale -----------------------------------------------------
+
+SCALP = load_routines(REPO / "config" / "routines.yaml").job("scalp")[1]  # type: ignore[index]
+WED = dt.date(2026, 10, 14)
+TUE = dt.date(2026, 10, 13)
+
+
+def _at(d: dt.date, h: int, m: int = 0) -> dt.datetime:
+    return dt.datetime(d.year, d.month, d.day, h, m, tzinfo=ET)
+
+
+def _resolve_for(tmp_path: Path, day: dt.date, at: dt.datetime, ttl: dt.timedelta) -> Path:
+    db = _db(tmp_path)
+    _write(db, "active_universe", "active", _small_active(day), at=at, ttl=ttl)
+    return db
+
+
+def _read_job(path: Path, now: dt.datetime, job=SCALP):  # noqa: ANN001, ANN202
+    c = connect_ro(path)
+    try:
+        return load_universe(c, ArcSettings(), now=now, resolve_job=job)
+    finally:
+        c.close()
+
+
+def test_scalp_config_is_what_the_pending_tests_assume() -> None:
+    assert SCALP.every == dt.timedelta(minutes=30)
+    assert SCALP.window is not None and SCALP.window.start == dt.time(6, 30)
+    assert SCALP.enabled
+
+
+def test_overnight_previous_session_resolve_is_pending(tmp_path: Path) -> None:
+    db = _resolve_for(tmp_path, TUE, _at(TUE, 20), dt.timedelta(hours=20))
+    r = _read_job(db, _at(WED, 2, 36))
+    assert r.state == "pending"
+    assert r.next_resolve_at == _at(WED, 6, 30)
+    assert r.resolved_for == TUE
+    assert r.note == "Next resolve at 06:30 ET (Scalp). Until then consumers use the core list."
+    assert len(r.active) == 5  # the stored list is still shown
+
+
+def test_inside_the_grace_is_still_pending(tmp_path: Path) -> None:
+    db = _resolve_for(tmp_path, TUE, _at(TUE, 20), dt.timedelta(hours=20))
+    r = _read_job(db, _at(WED, 6, 45))
+    assert r.state == "pending"
+    assert r.next_resolve_at == _at(WED, 7)
+
+
+def test_grace_edge_is_stale(tmp_path: Path) -> None:
+    db = _resolve_for(tmp_path, TUE, _at(TUE, 20), dt.timedelta(hours=20))
+    assert _read_job(db, _at(WED, 6, 59)).state == "pending"
+    assert _read_job(db, _at(WED, 7)).state == "stale"
+
+
+def test_missed_resolve_after_the_grace_is_stale(tmp_path: Path) -> None:
+    db = _resolve_for(tmp_path, TUE, _at(TUE, 20), dt.timedelta(hours=20))
+    r = _read_job(db, _at(WED, 7, 5))
+    assert r.state == "stale" and r.next_resolve_at is None
+    assert r.note and r.note.startswith("Not resolved today: latest resolve is for 2026-10-13")
+
+
+def test_weekend_waits_for_monday(tmp_path: Path) -> None:
+    fri, sat, mon = dt.date(2026, 10, 9), dt.date(2026, 10, 10), dt.date(2026, 10, 12)
+    db = _resolve_for(tmp_path, fri, _at(fri, 20), dt.timedelta(days=4))
+    r = _read_job(db, _at(sat, 12))
+    assert r.state == "pending"
+    assert r.next_resolve_at == _at(mon, 6, 30)
+    assert r.note == "Next resolve Mon 06:30 ET (Scalp). Until then consumers use the core list."
+
+
+def test_holiday_monday_waits_for_tuesday(tmp_path: Path) -> None:
+    # Labor Day 2026: Mon Sep 7 is not a session
+    fri, mon, tue = dt.date(2026, 9, 4), dt.date(2026, 9, 7), dt.date(2026, 9, 8)
+    db = _resolve_for(tmp_path, fri, _at(fri, 20), dt.timedelta(days=5))
+    r = _read_job(db, _at(mon, 12))
+    assert r.state == "pending"
+    assert r.next_resolve_at == _at(tue, 6, 30)
+    assert r.note and r.note.startswith("Next resolve Tue 06:30 ET")
+    # and Tuesday before the first slot: still pending (Fri is Tue's previous session)
+    assert _read_job(db, _at(tue, 5)).state == "pending"
+
+
+def test_early_close_day_keeps_the_morning_rule(tmp_path: Path) -> None:
+    # Fri 2026-11-27 closes at 13:00; the Scalp window start is unchanged
+    thu, fri = dt.date(2026, 11, 25), dt.date(2026, 11, 27)  # Thanksgiving Thu 26 closed
+    db = _resolve_for(tmp_path, thu, _at(thu, 20), dt.timedelta(days=3))
+    assert _read_job(db, _at(fri, 6)).state == "pending"
+    assert _read_job(db, _at(fri, 7, 5)).state == "stale"
+
+
+def test_resolve_two_sessions_old_is_stale(tmp_path: Path) -> None:
+    mon = dt.date(2026, 10, 12)
+    db = _resolve_for(tmp_path, mon, _at(mon, 20), dt.timedelta(days=3))
+    r = _read_job(db, _at(WED, 2, 36))
+    assert r.state == "stale" and r.next_resolve_at is None
+
+
+def test_expired_previous_resolve_is_stale(tmp_path: Path) -> None:
+    db = _resolve_for(tmp_path, TUE, _at(TUE, 20), dt.timedelta(hours=1))
+    assert _read_job(db, _at(WED, 2, 36)).state == "stale"
+
+
+def test_todays_expired_resolve_is_stale(tmp_path: Path) -> None:
+    db = _resolve_for(tmp_path, WED, _at(WED, 6, 30), dt.timedelta(hours=1))
+    r = _read_job(db, _at(WED, 8))
+    assert r.state == "stale"
+    assert r.note and "has expired" in r.note
+
+
+def test_disabled_or_missing_scalp_falls_back_to_stale(tmp_path: Path) -> None:
+    db = _resolve_for(tmp_path, TUE, _at(TUE, 20), dt.timedelta(hours=20))
+    off = SCALP.model_copy(update={"enabled": False})
+    assert _read_job(db, _at(WED, 2, 36), off).state == "stale"
+    assert _read_job(db, _at(WED, 2, 36), None).state == "stale"
+
+
+def test_today_and_none_are_unchanged_with_the_job(tmp_path: Path) -> None:
+    assert _read_job(_db(tmp_path / "a"), _at(WED, 2, 36)).state == "none"
+    db = _resolve_for(tmp_path, WED, _at(WED, 6, 30), dt.timedelta(hours=14))
+    r = _read_job(db, _at(WED, 9))
+    assert r.state == "today" and r.next_resolve_at is None and r.note is None
+
+
+def test_route_reads_pending_from_the_effective_scalp(tmp_path: Path) -> None:
+    db = _resolve_for(tmp_path, TUE, _at(TUE, 20), dt.timedelta(hours=20))
+    now = _at(WED, 2, 36)
+    with TestClient(create_app(db, clock=lambda: now)) as client:
+        body = UniverseOut.model_validate(client.get("/api/ops/universe").json())
+    assert body.state == "pending" and body.next_resolve_at == _at(WED, 6, 30)
 
 
 # -- ignored override ------------------------------------------------------------------
