@@ -390,13 +390,15 @@ Investor). No param, or `arm=control`, gives today's response. An unknown, stopp
 store-less arm returns 404 `unknown_arm`, listing the valid arms.
 
 **Arm switcher (E15.7, D69/D92).** The Tower shows one account at a time. On Overview the
-status strip's account slot (`Paper Trade · Production`) is the switcher; every other page
-has an account pill in the header. The menu lists Production plus each running arm from
+status strip's account slot (`Paper Trade · Arc Investor`) is the switcher; every other page
+has an account pill in the header. The switcher, its production row and the Back button
+say "Arc Investor" (owner exception, E25.6); every other surface says "Production"
+(D108). The menu lists Arc Investor plus each running arm from
 `/api/meta` `arms` (`XP-12 · T1`, …). Choosing an arm puts `?arm=XP-12:t1` on the URL (copy
 it to share the view) and on every API call; in-app links keep it. While an arm is under view,
 a banner on every page reads
-`Viewing XP-12 · T1 — virtual account, shared inputs from Production` with
-**Back to Production**. Nothing is remembered: any load without `?arm` is
+`Viewing XP-12 · T1` with
+**Back to Arc Investor**. Nothing is remembered: any load without `?arm` is
 Production. A stopped or unknown arm in the URL shows a red banner with the same way back.
 
 **D56 views (E13.14).**

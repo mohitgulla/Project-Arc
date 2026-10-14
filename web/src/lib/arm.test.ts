@@ -8,6 +8,7 @@ import {
   parseArm,
   searchWithArm,
   viewableArms,
+  switcherLabel,
   viewLabel,
   withArm,
   type ArmMeta,
@@ -67,8 +68,15 @@ describe("labels", () => {
   it("names the production account Production, never Control (D108)", () => {
     expect(viewLabel(null, ARMS)).toBe("Production");
     expect(viewLabel(null, undefined)).toBe("Production");
-    expect(bannerText("XP-12 · T1")).toBe("Viewing XP-12 · T1 — virtual account, shared inputs from Production");
-    expect(bannerText("XP-12 · T1")).not.toMatch(/control/i);
+  });
+  it("the switcher says Arc Investor for production (owner exception), else the arm", () => {
+    expect(switcherLabel(null, ARMS)).toBe("Arc Investor");
+    expect(switcherLabel(null, undefined)).toBe("Arc Investor");
+    expect(switcherLabel("XP-12:t2", ARMS)).toBe("XP-12 · T2");
+  });
+  it("the banner is just Viewing <arm>", () => {
+    expect(bannerText("XP-12 · T1")).toBe("Viewing XP-12 · T1");
+    expect(bannerText("XP-1 · Control")).toBe("Viewing XP-1 · Control");
   });
   it("uses the API label, else derives XP-n · Tn", () => {
     expect(viewLabel("XP-12:t2", ARMS)).toBe("XP-12 · T2");

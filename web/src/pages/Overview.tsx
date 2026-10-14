@@ -65,7 +65,7 @@ import {
 import { sleeveUsageLine } from "../lib/sleeves";
 import { useControlMeta, useMeta, useOps, useOverview } from "../lib/useApi";
 import { useArmState } from "../lib/armContext";
-import { viewLabel } from "../lib/arm";
+import { switcherLabel } from "../lib/arm";
 import { ArmSwitcher, Chevron } from "../components/ArmSwitcher";
 import { PositionsTable } from "./PositionsTable";
 
@@ -110,7 +110,7 @@ function SlotCell({ slot }: { slot: StatusSlot }) {
   );
 }
 
-/** Phone cells are tight (px-1, gap-1.5) so `Orders 0/200` and `Paper Trade · Production` fit at 390–520 px (D99). */
+/** Phone cells are tight (px-1, gap-1.5) so `Orders 0/200` and `Paper Trade · Arc Investor` fit at 390–520 px (D99). */
 const CELL = "flex min-h-[44px] min-w-0 items-center gap-1.5 rounded-control px-1 text-caption tablet:min-h-[32px] tablet:gap-2 tablet:px-2";
 /** D92 groups: Account ‖ Trading ‖ Orders · Tick · Health · Alerts (a divider before each group on desktop). */
 const GROUP_START = "tablet:border-l tablet:border-line tablet:pl-4";
@@ -122,7 +122,7 @@ const PHONE_SPAN: Partial<Record<StatusSlot["key"], string>> = { account: "min-[
 
 /**
  * Status row (D92; was D48/D50): fixed slots Account · Trading · Orders · Tick · Health · Alerts,
- * each `label value` with a status dot. The account slot (`Paper Trade · Production`) has a
+ * each `label value` with a status dot. The account slot (`Paper Trade · Arc Investor`, the switcher) has a
  * neutral dot; Trading carries the session count (`Enabled (7)`); Tick is `4m`. A 4-column
  * grid up to 768 px (row 1 Account | Trading, row 2 the four checks); one row above, with a
  * divider before Trading and before Orders. A halt replaces the Trading slot with HALTED +
@@ -141,7 +141,8 @@ function StatusStrip({ o, cad, now }: { o: Overview; cad: ReturnType<typeof useC
     healthS: cad.health,
     env: cad.env,
     accountProfile: cad.accountProfile,
-    account: viewLabel(arm, armsMeta),
+    // the account slot is the switcher's trigger: "Arc Investor" for production (owner exception)
+    account: switcherLabel(arm, armsMeta),
   });
   const border = tone === "neg" ? "border-neg" : tone === "warn" ? "border-warn" : "border-line";
   const groupStart = (key: StatusSlot["key"]) => (key === "trading" || key === "orders" ? GROUP_START : "");

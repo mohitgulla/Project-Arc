@@ -232,7 +232,12 @@ export interface StatusSlot {
 }
 
 /** D92: the production account's display name (was "Control" in D69 specs). */
-export const PRODUCTION = "Production";
+/**
+ * The account slot is the account switcher's trigger, so it says "Arc Investor" for the
+ * production account: the owner's switcher exception (2026-10-14, E25.6) to D108's
+ * "Production" everywhere else.
+ */
+export const ARC_INVESTOR = "Arc Investor";
 
 export interface StatusContext {
   now: number;
@@ -240,7 +245,7 @@ export interface StatusContext {
   healthS?: number;
   env?: string;
   accountProfile?: string;
-  /** Account being viewed: Production (default) or an arm's treatment name (E15.7). */
+  /** Account being viewed: Arc Investor (default) or an arm's treatment name (E15.7). */
   account?: string;
 }
 
@@ -262,22 +267,22 @@ export function envLabel(env?: string): string {
   return env ? `${titleWords(env)} Trade` : "";
 }
 
-/** D92 account slot: `Paper Trade · Production` (or an arm's treatment name). */
-export function accountLabel(env?: string, account: string = PRODUCTION): string {
+/** D92 account slot: `Paper Trade · Arc Investor` (or an arm's treatment name). */
+export function accountLabel(env?: string, account: string = ARC_INVESTOR): string {
   return [envLabel(env), account].filter(Boolean).join(" · ");
 }
 
 /**
  * Slot order (fixed, D92; was D50 Trading · env · Health · Orders · Tick · Alerts):
  * Account · Trading · Orders · Tick · Health · Alerts. The account slot reads
- * `Paper Trade · Production`; Trading carries the account's session count, `Enabled (7)`;
+ * `Paper Trade · Arc Investor`; Trading carries the account's session count, `Enabled (7)`;
  * Tick shows minutes (`4m`; D92 rev, owner dropped seconds). A halt replaces the Trading slot (`HALTED`, reason, age);
  * a stale or non-ok heartbeat turns its slot --warn. Values are Title Case.
  */
 export function statusRow(o: Pick<Overview, "status">, ctx: StatusContext): StatusSlot[] {
   const s = o.status;
   const slots: StatusSlot[] = [];
-  const account = ctx.account ?? PRODUCTION;
+  const account = ctx.account ?? ARC_INVESTOR;
   const envTitle = [account, ctx.env && `environment ${ctx.env}`, ctx.accountProfile && `account profile ${ctx.accountProfile}`]
     .filter(Boolean)
     .join(" · ");

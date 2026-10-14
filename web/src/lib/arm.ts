@@ -9,7 +9,7 @@
  * fresh load without `?arm` is Production (owner: no localStorage persistence).
  */
 import type { Schemas } from "./api";
-import { ACCOUNT_NAME, armColor } from "./experiments";
+import { ACCOUNT_NAME, armColor, SWITCHER_NAME } from "./experiments";
 
 export type ArmMeta = Schemas["ArmMeta"];
 
@@ -76,7 +76,12 @@ export function armDot(arm: ArmMeta | null, arms: readonly ArmMeta[]): string {
   return armColor(arm.arm, order);
 }
 
-/** Banner text while an arm is under view (D108: "Production", never "Control"). */
+/** Banner text while an arm is under view: `Viewing XP-1 · Control` (owner, 2026-10-14). */
 export function bannerText(label: string): string {
-  return `Viewing ${label} — virtual account, shared inputs from ${ACCOUNT_NAME}`;
+  return `Viewing ${label}`;
+}
+
+/** The switcher's label: "Arc Investor" for production (owner exception), else the arm. */
+export function switcherLabel(arm: string | null, arms: readonly ArmMeta[] | undefined): string {
+  return arm ? viewLabel(arm, arms) : SWITCHER_NAME;
 }

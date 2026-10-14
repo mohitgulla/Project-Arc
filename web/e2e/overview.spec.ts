@@ -41,8 +41,9 @@ for (const vp of VIEWPORTS) {
         await expect(strip).not.toContainText("Orders today");
         await expect(page.getByTestId("slot-tick")).toHaveText(/^Tick (\d+m|now|\d+h|\d+d)$/);
         await expect(page.getByTestId("slot-health")).toContainText("Health");
-        // D108: the account slot names the account (Production), never "Control".
-        await expect(page.getByTestId("account-slot")).toHaveText("Paper Trade · Production");
+        // The account slot is the switcher's trigger: "Arc Investor" (owner exception to D108),
+        // never "Control".
+        await expect(page.getByTestId("account-slot")).toHaveText("Paper Trade · Arc Investor");
         await expect(strip).not.toContainText("Control");
         await expect(page.getByTestId("alerts-toggle")).toContainText("Alerts 1");
         await page.getByTestId("alerts-toggle").click();
@@ -188,7 +189,7 @@ for (const vp of [PHONE_75, { name: "desktop", width: 1440, height: 900 }] as co
       );
       expect(texts).toHaveLength(6);
       // D92: Account · Trading (sessions) · Orders · Tick · Health · Alerts
-      expect(texts[0]).toBe("Paper Trade · Production");
+      expect(texts[0]).toBe("Paper Trade · Arc Investor");
       expect(texts[1]).toMatch(vp.name === "desktop" ? /^HALTED / : /^Trading Enabled \(\d+\)$/);
       expect(texts[2]).toMatch(/^Orders 31\/200/);
       expect(texts[3]).toMatch(/^Tick /);

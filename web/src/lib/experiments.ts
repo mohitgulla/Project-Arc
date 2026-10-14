@@ -22,6 +22,12 @@ export type PairReport = Schemas["PairReport"];
 
 const MINUS = "\u2212";
 export const ACCOUNT_NAME = "Production";
+/**
+ * Owner exception (2026-10-14, E25.6): the account switcher (its trigger while production is
+ * under view, its production menu row) and the banner's "Back to …" button say "Arc Investor".
+ * Used only by `ArmSwitcher`; every other surface says {@link ACCOUNT_NAME}.
+ */
+export const SWITCHER_NAME = "Arc Investor";
 /** D108: the spec v3 control arm (`XP-<n>:control`), never the production account. */
 export const CONTROL_NAME = "Control";
 

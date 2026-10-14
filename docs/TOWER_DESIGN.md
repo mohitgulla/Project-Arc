@@ -148,12 +148,12 @@ Charts: Recharts, wrapped so no page imports Recharts directly. Tooltips share o
   URL.
 - Switcher (D103): one master control, Overview's status-strip account slot. The choice
   applies to every page; other pages have no per-page account control (the header pill was
-  removed), and show the banner below while an arm is under view. Menu = Production, then an
+  removed), and show the banner below while an arm is under view. Menu = Arc Investor, then an
   `Experiment Arms` group of running arms (dot in the arm's Experiments-page colour,
   `Virtual account · updated 2m ago`), one checked item, 44 px rows on phones, Esc / outside
   tap closes, arrow keys move.
-- Banner under the header on every page while an arm is selected: `Viewing XP-12 · T1 —
-  virtual account, shared inputs from Production` + **Back to Production**. No per-panel
+- Banner under the header on every page while an arm is selected: `Viewing XP-12 · T1`
+  (owner 2026-10-14: no subtitle) + **Back to Arc Investor**. No per-panel
   "from Control" tags (owner). An arm the API refuses (stopped, unknown) gets a `--neg` banner
   `XP-n · Tn is not a running experiment arm` with the same way back.
 - Helpers: `web/src/lib/arm.ts` (pure, vitest); component `web/src/components/ArmSwitcher.tsx`.
@@ -247,10 +247,10 @@ they are never dropped.
 ### 10.1 Overview (E8.8b)
 
 - **Status row** (order and wording D92; was D50 `Trading · env · Health · Orders · Tick ·
-  Alerts`): fixed slots `● Paper Trade · Production` · `● Trading Enabled (7)` · `Orders 8/200`
+  Alerts`): fixed slots `● Paper Trade · Arc Investor` · `● Trading Enabled (7)` · `Orders 8/200`
   (+ tier when not normal; never "Orders today") · `Tick 4m` · `Health OK 1m` · `Alerts n`
   (button; expands the open alerts inline, capped). The account slot names the account under view:
-  **Production** for the production account (D108; was "Arc Investor" under D92; "Control" is only a v3 XP's control arm), an arm's treatment name (`XP-12 · T1`) in
+  **Production** for the production account (D108; was "Arc Investor" under D92; "Control" is only a v3 XP's control arm), except the account switcher (trigger, production menu row, Back button), which says **Arc Investor** (owner, 2026-10-14), an arm's treatment name (`XP-12 · T1`) in
   E15.7's arm view, which also has no "from Control" tag. On Overview this slot **is** the arm
   switcher (a button with a chevron opening the account menu) and the Tower's only account
   control (D103): the pick applies to every page, which carry no per-page switcher. The account profile (`cash_debit`) is

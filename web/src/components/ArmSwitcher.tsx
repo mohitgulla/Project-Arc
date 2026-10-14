@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
-import { armDot, bannerText, CONTROL, viewableArms, viewLabel, armIsViewable, type ArmMeta } from "../lib/arm";
+import { armDot, bannerText, CONTROL, viewableArms, viewLabel, switcherLabel, armIsViewable, type ArmMeta } from "../lib/arm";
 import { useArmState } from "../lib/armContext";
-import { ACCOUNT_NAME } from "../lib/experiments";
+import { SWITCHER_NAME } from "../lib/experiments";
 import { useControlMeta } from "../lib/useApi";
 
 const MARGIN = 8;
@@ -11,9 +11,10 @@ const GAP = 4;
 
 /**
  * E15.7 (D69, D92): the account switcher. A trigger showing the account under view
- * (Production by default, or an arm's treatment name) opens a menu of Production plus every
- * running arm (`/api/meta.arms`, always read from Production's store). Choosing one sets
- * `?arm=` (shareable); nothing is persisted, so a fresh load is Production.
+ * ("Arc Investor" for production, the owner's switcher exception to D108's "Production", or an
+ * arm's treatment name) opens a menu of Arc Investor plus every running arm (`/api/meta.arms`,
+ * always read from production's store). Choosing one sets `?arm=` (shareable); nothing is
+ * persisted, so a fresh load is production.
  *
  * It lives only in the Overview status strip's account slot (its `children` are the trigger), the
  * Tower's one master account control: the choice applies to every page, which show the
@@ -33,7 +34,7 @@ export function ArmSwitcher({
   const { arm, setArm } = useArmState();
   const meta = useControlMeta();
   const arms = viewableArms(meta.data?.arms);
-  const label = viewLabel(arm, meta.data?.arms);
+  const label = switcherLabel(arm, meta.data?.arms);
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
   const btn = useRef<HTMLButtonElement>(null);
@@ -131,7 +132,7 @@ export function ArmSwitcher({
           className="fixed z-[60] min-w-[220px] max-w-[calc(100vw-16px)] rounded-control border border-line bg-card py-1 shadow-lg"
           style={pos ? { left: pos.left, top: pos.top } : { left: 0, top: 0, visibility: "hidden" }}
         >
-          <ArmItem label={ACCOUNT_NAME} sub="Production account" dot={armDot(null, arms)} checked={!arm} onPick={() => choose(null)} />
+          <ArmItem label={SWITCHER_NAME} sub="Production account" dot={armDot(null, arms)} checked={!arm} onPick={() => choose(null)} />
           {arms.length > 0 && <div className="arc-micro-header mt-1 border-t border-line px-3 pb-1 pt-2">Experiment Arms</div>}
           {arms.map((a) => (
             <ArmItem
@@ -207,7 +208,7 @@ function ArmItem({
 
 /**
  * Persistent banner on every page while an arm is under view: what is being shown and a
- * one-tap Back to Production. An arm the API refuses (stopped, unknown) says so instead.
+ * one-tap Back to Arc Investor. An arm the API refuses (stopped, unknown) says so instead.
  */
 export function ArmBanner() {
   const { arm, setArm } = useArmState();
@@ -234,7 +235,7 @@ export function ArmBanner() {
         data-testid="arm-back"
         className="arc-press arc-touch -my-2 inline-flex items-center justify-center rounded-control px-2 font-semibold text-accent hover:bg-hover tablet:min-h-0"
       >
-        Back to {ACCOUNT_NAME}
+        Back to {SWITCHER_NAME}
       </button>
     </div>
   );
