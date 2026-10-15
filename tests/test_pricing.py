@@ -407,3 +407,22 @@ def test_ndtr_is_bit_identical_to_norm_cdf(x: list[float]) -> None:
 
     a = np.asarray(x, dtype=float)
     assert np.array_equal(ndtr(a), norm.cdf(a), equal_nan=True)
+
+
+@settings(max_examples=200, deadline=None)
+@given(
+    kind=st.sampled_from(["c", "p"]),
+    s=st.lists(st.floats(min_value=1.0, max_value=1000.0), min_size=1, max_size=50),
+    k=st.floats(min_value=1.0, max_value=1000.0),
+    t=st.floats(min_value=0.0, max_value=2.0),
+    sigma=st.floats(min_value=0.0, max_value=3.0),
+)
+def test_price_vectorized_scalar_flag_path_is_bit_identical(
+    kind: str, s: list[float], k: float, t: float, sigma: float
+) -> None:
+    """E7.14: a scalar flag skips the np.where select; prices must not move a bit."""
+    S = np.asarray(s)
+    fast = price_vectorized(np.asarray(kind), S, k, t, 0.045, sigma)
+    full = price_vectorized(np.full(len(s), kind), S, k, t, 0.045, sigma)
+    assert fast.shape == full.shape
+    assert np.array_equal(fast, full, equal_nan=True)
