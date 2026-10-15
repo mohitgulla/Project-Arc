@@ -79,6 +79,7 @@ from arc.control.effective import cost_model as cost_config
 from arc.control.effective import exit_config, ranking_config, scanner_filters
 from arc.exits import ExitSummary, model_exits, realized_vol_forecast
 from arc.gate.caps import AllocTier, alloc_tier, deployed_max_loss
+from arc.gate.delta import kind_of
 from arc.ingest.llm import ScalpLLMError
 from arc.ingest.scalp import extract_json_object
 from arc.iv.store import safe_store as safe_iv_store
@@ -4391,17 +4392,26 @@ def _with_position(
     spot: Decimal | None = None,
     beta: Decimal | None = None,
     entry_dte: int | None = None,
+    kind: Any = None,
 ) -> Portfolio:
     """The in-memory book with a gate-passed proposal added, so the next proposal in the
     same run sees it. D57: its dollar delta (Δ × n × spot) is carried forward too; a
     passed proposal always had a spot (the gate fails closed without one). D62: so is
-    its beta-weighted dollar delta (Δ × n × spot × β used; β floored at 1.0). E22.1:
-    its entry DTE too, so the gate's per-sleeve slot cap counts it (None: every sleeve)."""
+    its beta-weighted dollar delta (Δ × n × spot × β used; β floored at 1.0). D116
+    (E3.8): a debit vertical / long option (*kind*) carries sign(Δ) × *max_loss*
+    instead, the gate's own unit (:func:`arc.gate.delta.delta_exposure`); the raw
+    Δ × spot aggregates are carried for display. E22.1: its entry DTE too, so the
+    gate's per-sleeve slot cap counts it (None: every sleeve)."""
+    from arc.gate.delta import delta_exposure
     from arc.gate.inputs import Position
     from arc.models import Greeks
+    from arc.models import StructureKind as _Kind
 
     pg = portfolio.greeks
-    added = Decimal(str(g.delta)) * n * spot if spot is not None else Decimal(0)
+    total_delta = Decimal(str(g.delta)) * n
+    raw = total_delta * spot if spot is not None else Decimal(0)
+    term = delta_exposure(kind if kind is not None else _Kind.OTHER, total_delta, spot, max_loss)
+    added = term if term is not None else Decimal(0)
     beta_used = max(beta if beta is not None else Decimal(1), Decimal(1))
     new = Position(underlying=underlying, max_loss=max_loss, entry_dte=entry_dte)
     return portfolio.model_copy(
@@ -4409,6 +4419,8 @@ def _with_position(
             "positions": [*portfolio.positions, new],
             "dollar_delta": portfolio.dollar_delta + added,
             "beta_dollar_delta": portfolio.beta_dollar_delta + added * beta_used,
+            "dollar_delta_raw": portfolio.dollar_delta_raw + raw,
+            "beta_dollar_delta_raw": portfolio.beta_dollar_delta_raw + raw * beta_used,
             "greeks": Greeks(
                 delta=pg.delta + g.delta * n,
                 gamma=pg.gamma + g.gamma * n,
@@ -5128,6 +5140,7 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
                 market.underlying_spot.get(t),
                 market.underlying_beta.get(t),
                 st.dte,
+                kind_of(st.legs),  # D116: the gate's own delta-cap unit
             )
             if cash_left is not None and per_cash is not None:
                 # E22.3: the next open in this run sizes against the cash still free.

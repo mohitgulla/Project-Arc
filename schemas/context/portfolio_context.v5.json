@@ -2,7 +2,7 @@
   "$defs": {
     "GreekUsage": {
       "additionalProperties": false,
-      "description": "Net exposure against its gate cap. Delta (D57): net dollar delta and the dollar\ncap; vega: $ per vol point and its cap.",
+      "description": "Net exposure against its gate cap. Delta (D57): net dollar delta and the dollar\ncap; vega: $ per vol point and its cap. D116 (E3.8): the delta caps count debit\nverticals / long options at sign(\u0394) \u00d7 max loss; ``net_raw`` keeps \u03a3 \u0394 \u00d7 spot.",
       "properties": {
         "cap": {
           "title": "Cap",
@@ -11,6 +11,19 @@
         "net": {
           "title": "Net",
           "type": "number"
+        },
+        "net_raw": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "D116 (delta rows only): the plain \u03a3 \u0394 \u00d7 spot (\u00d7 \u03b2) before debit structures are counted at max loss. Display only; None for vega or when unknown.",
+          "title": "Net Raw"
         },
         "pct_used": {
           "anyOf": [
@@ -744,7 +757,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "E5.9 (D33): Research's deterministic view of the open book (subject ``session``).\n\nv2 (E13.17, additive): each position may carry ``facts`` (exit path only).\nv3 (E3.5, D57): ``aggregates.delta`` is net dollar delta vs the dollar cap (None when\na spot is unknown); ``aggregates.delta_shares`` keeps the share-equivalent net.\nv4 (E3.6, D62, additive): ``aggregates.beta_delta`` (beta-weighted $\u0394 vs its cap),\n``aggregates.betas`` (\u03b2 used per underlying) and the ``beta_delta_near_cap`` flag.",
+  "description": "E5.9 (D33): Research's deterministic view of the open book (subject ``session``).\n\nv2 (E13.17, additive): each position may carry ``facts`` (exit path only).\nv3 (E3.5, D57): ``aggregates.delta`` is net dollar delta vs the dollar cap (None when\na spot is unknown); ``aggregates.delta_shares`` keeps the share-equivalent net.\nv4 (E3.6, D62, additive): ``aggregates.beta_delta`` (beta-weighted $\u0394 vs its cap),\n``aggregates.betas`` (\u03b2 used per underlying) and the ``beta_delta_near_cap`` flag.\nv5 (E3.8, D116, additive): both delta rows count debit verticals / long options at\nsign(\u0394) \u00d7 max loss (the gate's unit); ``net_raw`` keeps the plain \u03a3 \u0394 \u00d7 spot.",
   "properties": {
     "account": {
       "$ref": "#/$defs/PortfolioAccount"

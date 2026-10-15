@@ -1018,6 +1018,11 @@ export interface components {
             /** Beta Dollar Delta */
             beta_dollar_delta: number;
             /**
+             * Beta Dollar Delta Raw
+             * @description D116: dollar_delta_raw × β used (None before E3.8)
+             */
+            beta_dollar_delta_raw?: number | null;
+            /**
              * Beta Source
              * @default default
              * @enum {string}
@@ -1025,6 +1030,11 @@ export interface components {
             beta_source: "stored" | "default";
             /** Dollar Delta */
             dollar_delta: number;
+            /**
+             * Dollar Delta Raw
+             * @description D116: plain Σ Δ × spot for this underlying (None before E3.8)
+             */
+            dollar_delta_raw?: number | null;
         };
         /** BreakdownItem */
         BreakdownItem: {
@@ -3275,9 +3285,14 @@ export interface components {
             beta_delta_cap?: number | null;
             /**
              * Beta Dollar Delta
-             * @description D62: beta-weighted net dollar delta Σ (Δ × spot × max(β vs SPY, 1)), $ (SPY-equivalent); None on a heartbeat written before D62 (rendered —)
+             * @description D62/D116: beta-weighted net dollar delta (the dollar_delta terms × max(β vs SPY, 1)), $ (SPY-equivalent); None on a heartbeat written before D62 (rendered —)
              */
             beta_dollar_delta?: number | null;
+            /**
+             * Beta Dollar Delta Raw
+             * @description D116: plain Σ (Δ × spot × max(β, 1)), $, display only; None on a heartbeat written before E3.8 (rendered —)
+             */
+            beta_dollar_delta_raw?: number | null;
             /** Delta */
             delta?: number | null;
             /**
@@ -3289,7 +3304,7 @@ export interface components {
             };
             /**
              * Dollar Delta
-             * @description D57: net dollar delta Σ (Δ share-eq × spot), $; None on a heartbeat written before D57 (rendered —)
+             * @description D57/D116: net dollar delta as the gate counts it: Σ (Δ share-eq × spot), debit verticals / long options at sign(Δ) × max loss (E3.8), $; None on a heartbeat written before D57 (rendered —)
              */
             dollar_delta?: number | null;
             /**
@@ -3297,6 +3312,11 @@ export interface components {
              * @description D57: |$Δ| cap, $ (portfolio_dollar_delta_cap_pct × equity)
              */
             dollar_delta_cap?: number | null;
+            /**
+             * Dollar Delta Raw
+             * @description D116: plain Σ (Δ share-eq × spot), $, display only; None on a heartbeat written before E3.8 (rendered —)
+             */
+            dollar_delta_raw?: number | null;
             /** Equity */
             equity?: number | null;
             /** Gamma */

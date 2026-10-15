@@ -26,6 +26,7 @@ from pydantic import BaseModel, ConfigDict
 from arc.account_profiles import BuyingPower, DayTradeRule, ShortLegPolicy
 from arc.gate.band import MAX_BAND_STEPS, PriceBand, as_grid, band_from_nbbo
 from arc.gate.caps import alloc_tier, deployed_max_loss
+from arc.gate.delta import MAX_LOSS_DELTA_KINDS, delta_exposure, kind_of
 from arc.gate.ticks import TickGrid, order_grid
 from arc.models import GateDecision, Leg, LegIntent, Proposal, QuoteClock
 from arc.models import StructureKind as ModelKind
@@ -575,22 +576,30 @@ def check_greek_caps(
 ) -> list[Violation]:
     """Post-trade |$Δ| ≤ pct × equity; |β$Δ| ≤ pct × equity; |ν| ≤ pct × equity ($/vol-pt).
 
-    Dollar delta (D57) = the book's ``dollar_delta`` + the proposal's Δ (share-eq) ×
-    contracts × its underlying's spot. Beta-weighted dollar delta (D62) = the book's
-    ``beta_dollar_delta`` + the same proposal term × β used, where β used is
+    Dollar delta (D57) = the book's ``dollar_delta`` + the proposal's term: Δ (share-eq)
+    × contracts × its underlying's spot, except that a ``vertical_debit`` /
+    ``long_call`` / ``long_put`` counts sign(Δ) × its total max loss (D116, E3.8;
+    :func:`arc.gate.delta.delta_exposure`). Beta-weighted dollar delta (D62) = the
+    book's ``beta_dollar_delta`` + the same proposal term × β used, where β used is
     ``market.underlying_beta[root]`` floored at 1.0 (a missing β is 1.0, never a
     rejection). A missing or non-positive spot fails closed (``missing_spot``) and
-    skips both delta caps; the vega check still runs.
+    skips both delta caps, whatever the kind; the vega check still runs.
     """
     out: list[Violation] = []
     n = proposal.sizing.contracts
+    legs = proposal.structure.legs
     g = proposal.structure.greeks
-    root = parse_occ(proposal.structure.legs[0].occ_symbol).root
+    root = parse_occ(legs[0].occ_symbol).root
     spot = market.underlying_spot.get(root)
     if spot is None or spot <= 0:
         out += _v(RuleCode.MISSING_SPOT, f"no spot for {root}: dollar delta unknown")
     else:
-        added = _d(g.delta) * n * spot
+        kind = kind_of(legs)
+        max_loss = max_gain_loss(legs)[1] if kind in MAX_LOSS_DELTA_KINDS else None
+        added = delta_exposure(
+            kind, _d(g.delta) * n, spot, None if max_loss is None else max_loss * n
+        )
+        assert added is not None  # spot is known
         dollar_delta = portfolio.dollar_delta + added
         delta_cap = _d(config.portfolio_dollar_delta_cap_pct) * account.equity
         if abs(dollar_delta) > delta_cap:

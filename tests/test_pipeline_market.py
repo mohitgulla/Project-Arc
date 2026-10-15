@@ -259,6 +259,33 @@ def test_build_portfolio_prices_greeks() -> None:
     assert build_portfolio(
         conn, [], FakeMarket({}), now=NOW, wash_sale_days=30, r=0.04
     ).dollar_delta == D(0)
+    # D116: a credit vertical keeps Δ × spot, so the cap measure equals the raw one
+    assert pf.dollar_delta_raw == pf.dollar_delta
+    assert pf.beta_dollar_delta_raw == pf.beta_dollar_delta
+
+
+def test_build_portfolio_debit_vertical_counts_signed_max_loss() -> None:
+    """D116 (E3.8): a held put debit (long 570 / short 565, paid 2.10 − 1.25) counts
+    −$85 (sign of its Δ × max loss) in both delta caps; the raw Δ × spot is kept apart
+    and in the monitor breakdown."""
+    conn = open_db(":memory:", copy=False)
+    debit = [
+        BrokerPosition(symbol=SP, qty=D("1"), side="long", avg_entry_price=D("2.10")),
+        BrokerPosition(symbol=LP, qty=D("-1"), side="short", avg_entry_price=D("1.25")),
+    ]
+    breakdown: dict[str, dict[str, float | str]] = {}
+    pf = build_portfolio(
+        conn, debit, FakeMarket({LP: 0.2, SP: 0.19}), now=NOW, wash_sale_days=30, r=0.04,
+        delta_breakdown=breakdown,
+    )  # fmt: skip
+    assert pf.greeks.delta < 0
+    assert pf.dollar_delta == D("-85.00") and pf.beta_dollar_delta == D("-85.00")
+    assert float(pf.dollar_delta_raw) == pytest.approx(pf.greeks.delta * 580.0)
+    assert pf.beta_dollar_delta_raw == pf.dollar_delta_raw  # no stored β: 1.0
+    row = breakdown["SPY"]
+    assert row["dollar_delta"] == -85.0 and row["beta_dollar_delta"] == -85.0
+    assert row["dollar_delta_raw"] == pytest.approx(round(pf.greeks.delta * 580.0, 2))
+    assert row["gamma"] == pytest.approx(pf.greeks.gamma)
 
 
 def test_build_portfolio_missing_iv_blocks() -> None:

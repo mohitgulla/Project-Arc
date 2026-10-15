@@ -301,7 +301,8 @@ class ArcSettings(BaseSettings):
         default=1.00,
         description=(
             "D57/D62: |net dollar delta| cap as a share of equity: post-trade "
-            "|Σ (net Δ share-eq × spot)| ≤ 1.00 × equity. Not beta-weighted."
+            "|Σ (net Δ share-eq × spot)| ≤ 1.00 × equity. Not beta-weighted. D116 (E3.8): "
+            "debit verticals and long options count sign(Δ) × max loss instead."
         ),
     )
     portfolio_beta_delta_cap_pct: Annotated[float, Field(ge=0.0, le=4.0)] = Field(
@@ -309,7 +310,8 @@ class ArcSettings(BaseSettings):
         description=(
             "D62: |beta-weighted net dollar delta| cap as a share of equity: post-trade "
             "|Σ (net Δ share-eq × spot × max(β, 1))| ≤ 2.00 × equity; β = 1y daily vs SPY "
-            "(betas routine), 1.0 when missing or stale."
+            "(betas routine), 1.0 when missing or stale. D116 (E3.8): debit verticals and "
+            "long options count sign(Δ) × max loss × max(β, 1) instead."
         ),
     )
     portfolio_vega_cap_pct: Annotated[float, Field(ge=0.0, le=1.0)] = Field(

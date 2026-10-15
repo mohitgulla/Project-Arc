@@ -229,6 +229,13 @@ class BetaDeltaRow(BaseModel):
     beta: float = Field(description="β used: max(1y β vs SPY, 1.0); 1.0 when missing/stale")
     beta_dollar_delta: float
     beta_source: Literal["stored", "default"] = "default"
+    dollar_delta_raw: float | None = Field(
+        default=None,
+        description="D116: plain Σ Δ × spot for this underlying (None before E3.8)",
+    )
+    beta_dollar_delta_raw: float | None = Field(
+        default=None, description="D116: dollar_delta_raw × β used (None before E3.8)"
+    )
 
 
 class GreeksView(BaseModel):
@@ -248,16 +255,28 @@ class GreeksView(BaseModel):
     equity: float | None = None
     dollar_delta: float | None = Field(
         default=None,
-        description="D57: net dollar delta Σ (Δ share-eq × spot), $; None on a heartbeat "
-        "written before D57 (rendered —)",
+        description="D57/D116: net dollar delta as the gate counts it: Σ (Δ share-eq × "
+        "spot), debit verticals / long options at sign(Δ) × max loss (E3.8), $; None on "
+        "a heartbeat written before D57 (rendered —)",
+    )
+    dollar_delta_raw: float | None = Field(
+        default=None,
+        description="D116: plain Σ (Δ share-eq × spot), $, display only; None on a "
+        "heartbeat written before E3.8 (rendered —)",
     )
     dollar_delta_cap: float | None = Field(
         default=None, description="D57: |$Δ| cap, $ (portfolio_dollar_delta_cap_pct × equity)"
     )
     beta_dollar_delta: float | None = Field(
         default=None,
-        description="D62: beta-weighted net dollar delta Σ (Δ × spot × max(β vs SPY, 1)), $ "
-        "(SPY-equivalent); None on a heartbeat written before D62 (rendered —)",
+        description="D62/D116: beta-weighted net dollar delta (the dollar_delta terms × "
+        "max(β vs SPY, 1)), $ (SPY-equivalent); None on a heartbeat written before D62 "
+        "(rendered —)",
+    )
+    beta_dollar_delta_raw: float | None = Field(
+        default=None,
+        description="D116: plain Σ (Δ × spot × max(β, 1)), $, display only; None on a "
+        "heartbeat written before E3.8 (rendered —)",
     )
     beta_delta_cap: float | None = Field(
         default=None, description="D62: |β$Δ| cap, $ (portfolio_beta_delta_cap_pct × equity)"
@@ -479,8 +498,10 @@ def _greeks(
         max_loss=m.get("max_loss"),
         equity=equity,
         dollar_delta=m.get("dollar_delta"),
+        dollar_delta_raw=m.get("dollar_delta_raw"),
         dollar_delta_cap=None if equity is None else dollar_delta_cap_pct * float(equity),
         beta_dollar_delta=m.get("beta_dollar_delta"),
+        beta_dollar_delta_raw=m.get("beta_dollar_delta_raw"),
         beta_delta_cap=None if equity is None else beta_delta_cap_pct * float(equity),
         delta_by_underlying=by_under,
         vega_usd=None if vega is None else float(vega) / 100.0,
