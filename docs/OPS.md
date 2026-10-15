@@ -456,7 +456,7 @@ Outside the session the pages show the last in-session monitor run, marked stale
 |---|---|
 | Status strip | active `halts`, latest `tick`/`health` heartbeats, open `ops_alerts` |
 | P&L / equity | latest `monitor` heartbeat (intraday equity, day P&L); `pnl_snapshots` (reconciled realized/unrealized, Day/MTD/YTD via `arc.reconcile.performance`) |
-| Greeks | latest `monitor` heartbeat: net dollar delta (Σ Δ × spot, D57) against the gate's `portfolio_dollar_delta_cap_pct` × equity (1.00), beta-weighted net dollar delta (Σ Δ × spot × max(β, 1), D62) against `portfolio_beta_delta_cap_pct` × equity (2.00) with the per-underlying β in its ⓘ, ν against `portfolio_vega_cap_pct` × equity, plus Γ Θ and max loss; every row has an ⓘ |
+| Greeks | latest `monitor` heartbeat: net dollar delta (Σ Δ × spot, D57) against the gate's `portfolio_dollar_delta_cap_pct` × equity (1.00), beta-weighted net dollar delta (Σ Δ × spot × max(β, 1), D62) against `portfolio_beta_delta_cap_pct` × equity (2.00) with the per-underlying β in its ⓘ, ν against `portfolio_vega_cap_pct` × equity, plus Γ Θ and max loss per underlying against the active D116 tier (`max_alloc_pct` 15% while deployed max loss — open + in-flight opens — is below `alloc_tier_threshold_pct` 60% of equity, else `max_alloc_pct_reduced` 10%), with a "Deployed N% of equity · Base/Reduced Tier" line; every row has an ⓘ |
 | Positions | `open_structures` + broker legs from the `monitor` heartbeat; "held at broker" from the last `positions_snapshots` |
 | Proposals / Trades | `proposals` + latest `gate_decisions` + `approval_requests` + `executions` |
 | Halts | `halts`, active first |
@@ -2226,7 +2226,7 @@ not recorded, so `arc journal replay` of older calls is unchanged. `relaxed`:
   expiry 0.70 (strict `portfolio.*_max_pct` 0.40 / 0.75 / 0.60; relaxed never goes
   below the strict value).
 
-Unchanged in both modes: the gate's per-underlying cap (`max_alloc_pct`), the
+Unchanged in both modes: the gate's per-underlying cap (D116 tiers), the
 8-position max, the Greek caps, the D33 idea dedupe, and Risk's advisory
 `concentration_warning`. Roll back with `!arc config
 personas.director_diversification strict` (safer, applied at once).
@@ -3009,3 +3009,30 @@ The same text is the approval card's `Levels` fact and the Tower trade detail's
 **Switch** (`config/strategy.yaml strike_levels:`, registry): `strike_levels.enabled` (on,
 D86/D98). Rollback: `!arc config set strike_levels off` (menu, card and stored analytics
 byte-identical to before E23.3).
+
+## E3.7 tiered per-underlying cap (D116)
+
+The gate rule `per_underlying_limit` caps Σ max loss on one underlying (existing + new) at
+the active tier × equity:
+
+- `max_alloc_pct` **15%** while the book's deployed max loss is below
+  `alloc_tier_threshold_pct` **60%** of equity;
+- `max_alloc_pct_reduced` **10%** at or above it (the exact boundary is reduced), and back
+  to 15% once deployed falls below 60% again.
+
+Deployed = Σ max loss of open positions + Σ max loss reserved by in-flight opens
+(`arc.store.execution.reserved_open_max_loss`: open proposals with a `pending`/`approved`
+approval request, unexpired and not yet executing, at full size; `working`/`unconfirmed`
+executions at their unfilled contracts and the band's worst price). It is measured before
+the trade, so one trade can move the book from 59% to at most 74% deployed. A re-gate
+excludes its own order. Missing or non-positive equity fails the rule (fail closed).
+
+One pure helper (`arc/gate/caps.py`) drives the gate rule, Quant/positions sizing, the
+Research/Risk prompt lines (`… 15% of equity max loss per underlying (15% tier, deployed
+12% < 60%)`), `portfolio_context.thresholds` (`max_alloc_pct` = active tier,
+`alloc_deployed_pct`, `alloc_tier_threshold_pct`, `alloc_tier_reduced`), the backtest and
+the Tower Overview Greeks card ("Deployed N% of equity · Base Tier / Reduced Tier").
+The reduced tier is never above the base tier: an older override that set
+`max_alloc_pct` below 10% caps both tiers at it. All three keys are registry knobs
+(`!arc config set max_alloc_pct_reduced 8%`, ceiling 20%; raising one is riskier and
+needs a confirm code).

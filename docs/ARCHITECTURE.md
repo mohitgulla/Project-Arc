@@ -16,7 +16,7 @@
                         +---------------------------+-----------------------------+
                                                     v
                           +------ RISK PROXY GATE [Deterministic Python, non-bypassable] --------+
-                          | 10% per-underlying, 3% daily loss halt, spread/tick, wash-sale 30d   |
+                          | 15%/10% per-underlying (D116), 3% loss halt, spread/tick, wash 30d   |
                           | portfolio D/v caps, defined-risk whitelist, earnings blackout, halt   |
                           +-----------------------------+----------------------------------------+
                                                         v

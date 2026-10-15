@@ -3116,6 +3116,21 @@ export interface components {
          */
         GateCaps: {
             /**
+             * Alloc Tier Threshold Pct
+             * @description D116: deployed max loss / equity at which the cap drops
+             */
+            alloc_tier_threshold_pct?: number | null;
+            /**
+             * Max Alloc Pct
+             * @description D116: per-underlying cap, base tier (deployed below the threshold)
+             */
+            max_alloc_pct?: number | null;
+            /**
+             * Max Alloc Pct Reduced
+             * @description D116: per-underlying cap, reduced tier (deployed at/above the threshold)
+             */
+            max_alloc_pct_reduced?: number | null;
+            /**
              * Portfolio Beta Delta Cap Pct
              * @description D62: |beta-weighted net dollar delta| cap as a fraction of equity
              */
@@ -3195,18 +3210,51 @@ export interface components {
         };
         /** GreeksSection */
         GreeksSection: {
+            /**
+             * Alloc Tier
+             * @description D116: active per-underlying tier (None: equity unknown)
+             */
+            alloc_tier?: ("base" | "reduced") | null;
+            /**
+             * Alloc Tier Threshold Pct
+             * @description D116: deployed share of equity at which the cap drops
+             */
+            alloc_tier_threshold_pct?: number | null;
+            /**
+             * Deployed Max Loss
+             * @description D116: Σ open max loss + max loss reserved by in-flight opens, dollars
+             */
+            deployed_max_loss?: string | null;
+            /**
+             * Deployed Pct
+             * @description D116: deployed_max_loss / equity (None: equity unknown)
+             */
+            deployed_pct?: number | null;
             /** @description D87: dollar gamma, $Δ change for a 1% move (Σ Γ × spot² / 100 per underlying; uncapped; advisory band only) */
             gamma?: components["schemas"]["GreekAdvisory"] | null;
             greeks: components["schemas"]["GreeksView"];
-            /** Max Alloc Pct */
+            /**
+             * Max Alloc Pct
+             * @description D116: the active tier's cap, share of equity
+             */
             max_alloc_pct: number;
+            /**
+             * Max Alloc Pct Base
+             * @description D116 base tier
+             */
+            max_alloc_pct_base?: number | null;
+            /**
+             * Max Alloc Pct Reduced
+             * @description D116 reduced tier
+             */
+            max_alloc_pct_reduced?: number | null;
             /** Max Loss By Underlying */
             max_loss_by_underlying?: {
                 [key: string]: string;
             };
             /**
              * Per Underlying Cap
-             * @description max_alloc_pct × equity (gate rule)
+             * @description active tier's cap × equity (gate rule, D116)
              */
             per_underlying_cap?: string | null;
             /** @description D87: Θ, $ per day (uncapped; advisory band only) */

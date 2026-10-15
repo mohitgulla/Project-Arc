@@ -88,6 +88,17 @@ class GateCaps(BaseModel):
         description="D62: |beta-weighted net dollar delta| cap as a fraction of equity"
     )
     portfolio_vega_cap_pct: float = Field(description="|ν| cap as a fraction of equity")
+    max_alloc_pct: float | None = Field(
+        default=None,
+        description="D116: per-underlying cap, base tier (deployed below the threshold)",
+    )
+    max_alloc_pct_reduced: float | None = Field(
+        default=None,
+        description="D116: per-underlying cap, reduced tier (deployed at/above the threshold)",
+    )
+    alloc_tier_threshold_pct: float | None = Field(
+        default=None, description="D116: deployed max loss / equity at which the cap drops"
+    )
 
 
 class MetaResponse(BaseModel):
