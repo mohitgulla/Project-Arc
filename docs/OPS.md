@@ -3041,6 +3041,31 @@ The scanner's `low_open_interest` / `low_volume` filters (`scanner_min_open_inte
   to `ops_alerts` per day (recorded resolved; Cboe is primary, nothing to do).
 - No switch: shipped on (D116, D86). Rollback is a revert PR.
 
+### Liquidity-aware strike and expiry choice (E2.6, D116)
+
+The delta bands (`scanner_*_delta_min/max`) and `scanner_debit_width` never move; inside
+them the scanner now prefers tradeable strikes. Each contract that passed the filters gets
+a score in [0, 1] relative to its expiry:
+`w_oi × norm(log1p OI) + w_vol × norm(log1p volume) + w_spread × (1 − min(spread% /
+scanner_spread_max_pct, 1))` (weights normalised by their sum; a flat chain scores the
+OI / volume terms 1). Strikes sort by `|Δ − target| / band half-width − λ × score` (debit
+verticals with a width: `|dist − width| / width − λ × score`), and a vertical scores by its
+thinner leg (`min` of the two). Example: band 0.20–0.35, target 0.30, λ 0.5 — a 0.27Δ strike
+with score 0.95 (key 0.40 − 0.475 = −0.075) beats the 0.30Δ strike with score 0.05
+(0 − 0.025). When two or more expiries of one DTE sleeve produce candidates, each candidate's
+scanner rank key gets `+ expiry_mu × that expiry's share of the sleeve's volume within 15%
+of spot` (reorders only, never drops an expiry; an expiry alone in its sleeve gets 0).
+
+Where to see it: the Quant menu's `liquidity` field (`score`, `min_leg_oi`,
+`min_leg_volume`, `spread_pct`), `arc chains <T>` (`liq 0.83 (OI … vol … spr …% exp+…)`;
+`--liquidity-rank on|off` forces it), the stored structure's `liquidity.score`.
+
+**Switch** (`config/strategy.yaml scanner.liquidity_rank:`, registry, risk none):
+`scanner.liquidity_rank.enabled` (on, D116/D86), `…weights.oi|volume|spread` (0.35 / 0.35 /
+0.30), `…lambda` (0.5, 0–2), `…expiry_mu` (0.25, 0–1). Rollback:
+`!arc config set scanner.liquidity_rank.enabled off` (selection, menus and proposal hashes
+byte-identical to before E2.6).
+
 ## E3.7 tiered per-underlying cap (D116)
 
 The gate rule `per_underlying_limit` caps Σ max loss on one underlying (existing + new) at

@@ -40,6 +40,7 @@ from arc.routines.config import (
     ResearchTechnicalsSettings,
     RetailSentimentContextSettings,
     ScalpMoversContextSettings,
+    ScannerStrategySettings,
     ScoutBuzzVelocitySettings,
     StrikeLevelsSettings,
     VolumeProfileSettings,
@@ -91,6 +92,7 @@ MOVED_BLOCKS: tuple[str, ...] = (
     "range_edges",  # E23.1 (D98)
     "pullback_watch",  # E23.2 (D98)
     "strike_levels",  # E23.3 (D98)
+    "scanner",  # E2.6 (D116): scanner.liquidity_rank
 )
 
 
@@ -135,6 +137,8 @@ class StrategyConfig(BaseModel):
     pullback_watch: PullbackWatchSettings = Field(default_factory=PullbackWatchSettings)
     # E23.3 (D98): strike vs level context on the Quant menu and trade card
     strike_levels: StrikeLevelsSettings = Field(default_factory=StrikeLevelsSettings)
+    # E2.6 (D116): liquidity-aware strike / expiry choice in the scanner
+    scanner: ScannerStrategySettings = Field(default_factory=ScannerStrategySettings)
 
     def routines_fields(self) -> dict[str, Any]:
         """The :class:`~arc.routines.config.RoutinesConfig` fields this file sets."""
@@ -155,6 +159,7 @@ class StrategyConfig(BaseModel):
             "range_edges": self.range_edges,
             "pullback_watch": self.pullback_watch,
             "strike_levels": self.strike_levels,
+            "scanner": self.scanner,
         }
 
 

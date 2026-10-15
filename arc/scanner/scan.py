@@ -50,10 +50,16 @@ import math
 from collections import Counter, defaultdict
 from decimal import Decimal
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import structlog
-from pydantic import BaseModel, Field, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+    model_validator,
+)
 from scipy.stats import norm
 
 from arc.backtest.costs import CostModel, load_cost_model
@@ -62,6 +68,13 @@ from arc.models import Liquidity, Structure
 from arc.pricing.bs import BSMInputs, price
 from arc.scanner.filters import FilterReport, LiquidityRules, apply_filters
 from arc.scanner.iv import IvStats, atm_iv, iv_stats
+from arc.scanner.liquidity import (
+    LiquidityRank,
+    expiry_bonus,
+    expiry_volume_shares,
+    liquidity_scores,
+    strike_key,
+)
 from arc.structures import (
     CONTRACT_MULTIPLIER,
     MarketInputs,
@@ -178,6 +191,19 @@ class ScanParams(BaseModel):
         default_factory=load_cost_model,
         description="Entry cost model for ev_proxy / cost (config/costs.yaml, shared, D23)",
     )
+    liquidity_rank: LiquidityRank | None = Field(
+        None,
+        description="E2.6 (D116): liquidity-aware strike / expiry choice inside the delta "
+        "bands (config/strategy.yaml scanner.liquidity_rank); None = off, the pre-E2.6 "
+        "selection. Left out of dumps when None.",
+    )
+
+    @model_serializer(mode="wrap")
+    def _drop_no_liquidity_rank(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        out: dict[str, Any] = handler(self)
+        if out.get("liquidity_rank") is None:
+            out.pop("liquidity_rank", None)
+        return out
 
     @model_validator(mode="after")
     def _check(self) -> ScanParams:
@@ -288,6 +314,19 @@ class ScanCandidate(BaseModel):
     leg_spreads: dict[str, float] = Field(
         default_factory=dict, description="Quoted ask − bid per share, by leg OCC symbol"
     )
+    expiry_bonus: float | None = Field(
+        None,
+        description="E2.6 (D116): scanner rank bonus expiry_mu x this expiry's share of its "
+        "DTE sleeve's near-spot volume (0 alone in its sleeve). None = liquidity_rank off; "
+        "left out of dumps when None.",
+    )
+
+    @model_serializer(mode="wrap")
+    def _drop_no_bonus(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        out: dict[str, Any] = handler(self)
+        if out.get("expiry_bonus") is None:
+            out.pop("expiry_bonus", None)
+        return out
 
 
 class NoSpotError(LookupError):
@@ -319,6 +358,19 @@ class ScanResult(BaseModel):
     filter_report: FilterReport
     candidates: list[ScanCandidate]
     inputs: ScanInputs = Field(default_factory=ScanInputs)
+    expiry_volume: dict[str, int] | None = Field(
+        None,
+        description="E2.6 (D116): per expiry that produced candidates, the traded volume of "
+        "its filtered contracts within 15% of spot (the expiry-bonus input). None = "
+        "liquidity_rank off; left out of dumps when None.",
+    )
+
+    @model_serializer(mode="wrap")
+    def _drop_no_expiry_volume(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        out: dict[str, Any] = handler(self)
+        if out.get("expiry_volume") is None:
+            out.pop("expiry_volume", None)
+        return out
 
 
 def _scan_inputs(chain: Sequence[OptionContract], min_today: int | None) -> ScanInputs:
@@ -351,14 +403,30 @@ def select_shorts(
     delta_min: float,
     delta_max: float,
     n: int,
+    scores: Mapping[str, float] | None = None,
+    lam: float = 0.0,
 ) -> list[OptionContract]:
     """Up to *n* contracts with |Δ| in ``[delta_min, delta_max]``, nearest *target* first.
 
     Ties on distance go to the lower |Δ| (further OTM), then the lower strike.
+
+    E2.6 (D116): with *scores* (liquidity score per symbol, :mod:`arc.scanner.liquidity`)
+    the distance becomes ``|Δ - target| / band half-width - lam x score``; the band
+    itself is unchanged, so a contract outside it never qualifies however liquid.
     """
     band = [c for c in contracts if delta_min <= _abs_delta(c) <= delta_max]
-    # Round the distance so float noise (|0.19-0.20| vs |0.21-0.20|) does not break ties.
-    band.sort(key=lambda c: (round(abs(_abs_delta(c) - target), 9), _abs_delta(c), c.strike))
+    if scores is None:
+        # Round the distance so float noise (|0.19-0.20| vs |0.21-0.20|) does not break ties.
+        band.sort(key=lambda c: (round(abs(_abs_delta(c) - target), 9), _abs_delta(c), c.strike))
+        return band[:n]
+    half = (delta_max - delta_min) / 2
+    band.sort(
+        key=lambda c: (
+            strike_key(abs(_abs_delta(c) - target), half, scores[c.symbol], lam),
+            _abs_delta(c),
+            c.strike,
+        )
+    )
     return band[:n]
 
 
@@ -371,14 +439,21 @@ def select_debit_short(
     delta_max: float,
     width: float | None,
     n: int,
+    scores: Mapping[str, float] | None = None,
+    lam: float = 0.0,
 ) -> list[OptionContract]:
     """Up to *n* shorts for a debit vertical on *long*: same type and expiry, further
     OTM (calls above, puts below), |Δ| in ``[delta_min, delta_max]``.
 
     Nearest *width* first when a width is set (only ``[width / 2, 2 * width]``
     qualifies), else nearest *target* |Δ|; ties go to the narrower spread.
+
+    E2.6 (D116): with *scores* the fit is normalised (by *width*, or by the band
+    half-width) and reduced by ``lam x min(score(long), score(short))``: the vertical
+    scores by its thinner leg.
     """
     sign = -1.0 if long.option_type == "put" else 1.0
+    half = (delta_max - delta_min) / 2
     pool: list[tuple[float, float, float, OptionContract]] = []
     for c in contracts:
         if c.option_type != long.option_type or c.expiration != long.expiration:
@@ -389,7 +464,12 @@ def select_debit_short(
         if width is not None and not width / 2 <= dist <= 2 * width:
             continue
         fit = abs(dist - width) if width is not None else abs(_abs_delta(c) - target)
-        pool.append((round(fit, 9), dist, c.strike, c))
+        if scores is None:
+            pool.append((round(fit, 9), dist, c.strike, c))
+            continue
+        leg = min(scores[long.symbol], scores[c.symbol])
+        scale = width if width is not None else half
+        pool.append((strike_key(fit, scale, leg, lam), dist, c.strike, c))
     pool.sort(key=lambda x: x[:3])
     return [x[3] for x in pool[:n]]
 
@@ -478,6 +558,7 @@ def _candidate(
     sigma: float,
     r: float,
     cost_model: CostModel | None = None,
+    scores: Mapping[str, float] | None = None,
 ) -> ScanCandidate:
     cm = cost_model or load_cost_model()
     legs = structure.legs
@@ -512,6 +593,10 @@ def _candidate(
                 spread_pct=max(spreads),
                 open_interest=min(c.open_interest or 0 for c in contracts),
                 volume=min(c.volume or 0 for c in contracts),
+                # E2.6: the thinnest leg's score; None (off) is left out of dumps
+                score=None
+                if scores is None
+                else round(min(scores[c.symbol] for c in contracts), 4),
             )
         }
     )
@@ -539,6 +624,37 @@ def _candidate(
     )
 
 
+def _sleeve_index(params: ScanParams, dte: int) -> int:
+    """The DTE window (sleeve) holding *dte*: its index in ``dte_windows`` (0 if single)."""
+    for i, (lo, hi) in enumerate(params.dte_windows or []):
+        if lo <= dte <= hi:
+            return i
+    return 0
+
+
+def _with_expiry_bonus(
+    cands: list[ScanCandidate],
+    liquid: Sequence[OptionContract],
+    spot: float,
+    params: ScanParams,
+    as_of: dt.date,
+    lr: LiquidityRank,
+) -> tuple[list[ScanCandidate], dict[dt.date, int]]:
+    """E2.6 rule 4: each candidate's ``expiry_bonus`` (and the near-spot volume per expiry).
+
+    Only expiries that produced candidates take part; an expiry alone in its sleeve
+    gets 0. Nothing is dropped: the bonus only moves candidates in :func:`_rank`.
+    """
+    sleeve_of = {
+        e: _sleeve_index(params, dte_calendar(as_of, e))
+        for e in sorted({c.expiration for c in cands})
+    }
+    vol, share = expiry_volume_shares(liquid, spot, sleeve_of)
+    bonus = expiry_bonus(share, sleeve_of, lr.expiry_mu)
+    out = [c.model_copy(update={"expiry_bonus": round(bonus[c.expiration], 6)}) for c in cands]
+    return out, vol
+
+
 def _put_first(c: OptionContract) -> tuple[bool, float]:
     return (c.option_type != "put", c.strike)
 
@@ -558,6 +674,8 @@ def _rank(cands: list[ScanCandidate], by: RankBy) -> list[ScanCandidate]:
             group, primary, secondary = 0, c.credit_width, c.ev_proxy
         else:
             group, primary, secondary = 0, c.ev_proxy, c.credit_width
+        if c.expiry_bonus:  # E2.6 (D116): only reorders; None/0 = the pre-E2.6 key
+            primary += c.expiry_bonus
         legs = ",".join(leg.occ_symbol for leg in c.structure.legs)
         return (group, -primary, -secondary, legs)
 
@@ -577,15 +695,31 @@ def _verticals(
     params: ScanParams,
     as_of: dt.date,
     market: MarketInputs,
+    scores: Mapping[str, float] | None = None,
 ) -> list[tuple[OptionContract, OptionContract, Structure]]:
-    """(short, long, structure) credit verticals for one option type."""
+    """(short, long, structure) credit verticals for one option type.
+
+    E2.6: with *scores* each short is ranked by its vertical's thinner leg (the short
+    and the wing :func:`select_wing` pairs it with)."""
     out: list[tuple[OptionContract, OptionContract, Structure]] = []
+    pair: dict[str, float] | None = None
+    if scores is not None:
+        pair = {}
+        for c in side:
+            if not params.delta_min <= _abs_delta(c) <= params.delta_max:
+                continue  # select_shorts drops it anyway
+            w = select_wing(c, side, params.wing_width)
+            own = scores[c.symbol]
+            pair[c.symbol] = own if w is None else min(own, scores[w.symbol])
+    lam = params.liquidity_rank.lam if params.liquidity_rank is not None else 0.0
     shorts = select_shorts(
         side,
         target=params.target_delta,
         delta_min=params.delta_min,
         delta_max=params.delta_max,
         n=params.shorts_per_side,
+        scores=pair,
+        lam=lam,
     )
     for s in shorts:
         wing = select_wing(s, side, params.wing_width)
@@ -621,14 +755,21 @@ def _debit_structures(
     *,
     singles: bool,
     verticals: bool,
+    scores: Mapping[str, float] | None = None,
 ) -> tuple[list[Structure], list[Structure]]:
-    """(long singles, debit verticals) for one option type and expiry."""
+    """(long singles, debit verticals) for one option type and expiry.
+
+    E2.6: with *scores* the long legs rank by their own score and each long's shorts
+    by the vertical's thinner leg (:func:`select_debit_short`)."""
+    lam = params.liquidity_rank.lam if params.liquidity_rank is not None else 0.0
     longs = select_shorts(  # same band/target selection, applied to the long leg
         side,
         target=params.long_target_delta,
         delta_min=params.long_delta_min,
         delta_max=params.long_delta_max,
         n=params.longs_per_side,
+        scores=scores,
+        lam=lam,
     )
     one: list[Structure] = []
     two: list[Structure] = []
@@ -652,6 +793,8 @@ def _debit_structures(
             delta_max=params.debit_short_delta_max,
             width=params.debit_width,
             n=params.debit_shorts_per_long,
+            scores=scores,
+            lam=lam,
         ):
             assert sh.mid is not None
             try:
@@ -744,15 +887,29 @@ def scan(
     )
 
     cands: list[ScanCandidate] = []
+    exp_volume: dict[dt.date, int] | None = None
+    lr = params.liquidity_rank
     for exp in expirations:
         exp_chain = [c for c in chain if c.expiration == exp]
         sigma = atm_iv(exp_chain, spot)
         if sigma is None:
             continue
-        puts = _verticals(ticker, exp, by_exp[(exp, "put")], params, as_of, market)
-        calls = _verticals(ticker, exp, by_exp[(exp, "call")], params, as_of, market)
+        scores: dict[str, float] | None = None
+        if lr is not None:  # E2.6: scores relative to this expiry's filtered contracts
+            scores = liquidity_scores(
+                [*by_exp[(exp, "put")], *by_exp[(exp, "call")]],
+                spread_max_pct=rules.spread_max_pct,
+                weights=lr.weights,
+            )
+        puts = _verticals(ticker, exp, by_exp[(exp, "put")], params, as_of, market, scores)
+        calls = _verticals(ticker, exp, by_exp[(exp, "call")], params, as_of, market, scores)
 
-        def add(strategy: ScanStrategy, st: Structure, sig: float = sigma) -> None:
+        def add(
+            strategy: ScanStrategy,
+            st: Structure,
+            sig: float = sigma,
+            sc: dict[str, float] | None = scores,
+        ) -> None:
             cands.append(
                 _candidate(
                     ticker,
@@ -763,6 +920,7 @@ def scan(
                     sigma=sig,
                     r=params.risk_free_rate,
                     cost_model=params.cost,
+                    scores=sc,
                 )
             )
 
@@ -812,12 +970,15 @@ def scan(
                 market,
                 singles=want_one,
                 verticals=want_two,
+                scores=scores,
             )
             for st in ones:
                 add(single, st)
             for st in twos:
                 add(vert, st)
 
+    if lr is not None and cands:
+        cands, exp_volume = _with_expiry_bonus(cands, liquid, spot, params, as_of, lr)
     ranked = _rank(cands, params.rank_by)
     if params.top is not None:
         ranked = ranked[: params.top]
@@ -844,4 +1005,7 @@ def scan(
         filter_report=report,
         candidates=ranked,
         inputs=inputs,
+        expiry_volume=None
+        if exp_volume is None
+        else {e.isoformat(): v for e, v in sorted(exp_volume.items())},
     )

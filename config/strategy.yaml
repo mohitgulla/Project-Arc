@@ -113,6 +113,22 @@ pullback_watch:
 strike_levels:
   enabled: on                   # key strike_levels.enabled
 
+# E2.6 (D116): liquidity-aware strike / expiry choice inside the UNCHANGED delta bands
+# (scanner_*_delta_min/max and scanner_debit_width never move). Each filtered contract
+# gets a score in [0,1] relative to its expiry: w_oi x norm(log1p OI) + w_vol x
+# norm(log1p volume) + w_spread x (1 - min(spread% / spread_max_pct, 1)). Strikes sort by
+# |delta - target| / band half-width (or width fit / width) - lambda x score; a vertical
+# scores by its thinner leg. When two or more expiries of one DTE sleeve produce
+# candidates, each candidate's scanner rank key gets + expiry_mu x that expiry's share of
+# the sleeve's volume within 15% of spot (reorders only, never drops an expiry). Shipped
+# on (D116); `enabled: off` = rollback (selection, menus and hashes byte-identical).
+scanner:
+  liquidity_rank:
+    enabled: on                 # key scanner.liquidity_rank.enabled
+    weights: {oi: 0.35, volume: 0.35, spread: 0.30}   # keys scanner.liquidity_rank.weights.<term>
+    lambda: 0.5                 # key scanner.liquidity_rank.lambda
+    expiry_mu: 0.25             # key scanner.liquidity_rank.expiry_mu
+
 # E16.4 (D76/D83): one code-rendered `Market health (…)` line in Research's market block.
 # The market_health job writes its daily read whatever this says. The thresholds only
 # label that line (never a gate or pipeline input). Percentiles are 1-year (252 prior

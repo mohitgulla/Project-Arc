@@ -1217,6 +1217,56 @@ class StrikeLevelsSettings(BaseModel):
         return parse_on_off(v, where="strike_levels.enabled")
 
 
+class LiquidityRankWeights(BaseModel):
+    """E2.6 (D116): weights of the scanner's liquidity score terms (normalised by their sum)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    oi: float = Field(0.35, ge=0.0, le=1.0)
+    volume: float = Field(0.35, ge=0.0, le=1.0)
+    spread: float = Field(0.30, ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def _some_weight(self) -> LiquidityRankWeights:
+        if self.oi + self.volume + self.spread <= 0:
+            msg = "scanner.liquidity_rank.weights: at least one weight must be > 0"
+            raise ValueError(msg)
+        return self
+
+
+class LiquidityRankSettings(BaseModel):
+    """E2.6 (D116): liquidity-aware strike / expiry choice inside the unchanged delta bands.
+
+    The scanner scores each filtered contract from log OI, log volume and spread %
+    (normalised within its expiry, :mod:`arc.scanner.liquidity`), picks strikes by
+    ``delta fit / band half-width - lambda x score`` (a vertical scores by its thinner
+    leg), and gives each candidate a ``expiry_mu x near-spot volume share`` rank bonus
+    when two or more expiries of one DTE sleeve produce candidates. Shipped **on**
+    (D116); ``enabled: off`` is the rollback: selection, menus and hashes byte-identical
+    to before E2.6. The delta bands and the debit width never change.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
+
+    enabled: bool = False
+    weights: LiquidityRankWeights = Field(default_factory=LiquidityRankWeights)
+    lam: float = Field(0.5, ge=0.0, le=2.0, alias="lambda")
+    expiry_mu: float = Field(0.25, ge=0.0, le=1.0)
+
+    @field_validator("enabled", mode="before")
+    @classmethod
+    def _enabled(cls, v: Any) -> bool:
+        return parse_on_off(v, where="scanner.liquidity_rank.enabled")
+
+
+class ScannerStrategySettings(BaseModel):
+    """``config/strategy.yaml`` ``scanner:`` (E2.6, D116)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    liquidity_rank: LiquidityRankSettings = Field(default_factory=LiquidityRankSettings)
+
+
 class RoutinesConfig(BaseModel):
     """Top-level ``config/routines.yaml``."""
 
@@ -1281,6 +1331,8 @@ class RoutinesConfig(BaseModel):
     pullback_watch: PullbackWatchSettings = Field(default_factory=PullbackWatchSettings)
     # E23.3 (D98): strike vs level context (strategy.yaml `strike_levels:`)
     strike_levels: StrikeLevelsSettings = Field(default_factory=StrikeLevelsSettings)
+    # E2.6 (D116): liquidity-aware strike / expiry choice (strategy.yaml `scanner:`)
+    scanner: ScannerStrategySettings = Field(default_factory=ScannerStrategySettings)
 
     @model_validator(mode="before")
     @classmethod
