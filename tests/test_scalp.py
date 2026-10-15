@@ -171,7 +171,12 @@ class TestHelpers:
         # first-{ .. last-} slice when the model appended text after the object.
         assert extract_json_object(text) == {"a": {"b": 1}}
 
-    @pytest.mark.parametrize("text", ["no json here", "} backwards {", "{not: json}"])
+    def test_extract_json_tolerates_trailing_commas(self) -> None:
+        # 2026-10-15 StockedUp brief: `"quote": "...",\n  },` -> "Expecting property
+        # name enclosed in double quotes". Same shared parser as the Scalp.
+        assert extract_json_object('{"a": {"b": [1, 2,],},}\nok') == {"a": {"b": [1, 2]}}
+
+    @pytest.mark.parametrize("text", ["no json here", "} backwards {", "{not: json}", '{"a": 1,,}'])
     def test_extract_json_errors(self, text: str) -> None:
         with pytest.raises(ValueError):
             extract_json_object(text)

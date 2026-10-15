@@ -194,7 +194,7 @@ def test_aliases_and_patterns() -> None:
 @pytest.mark.parametrize(
     ("key", "raw", "match"),
     [
-        ("max_alloc_pct", "11%", "hard ceiling"),
+        ("max_alloc_pct", "21%", "hard ceiling"),
         ("max_alloc_pct", "0.2%", "outside"),
         ("max_alloc_pct", "abc", "not a number"),
         ("max_alloc_pct", "nan", "finite"),
@@ -287,7 +287,7 @@ def test_format_value() -> None:
     )
     assert lookup("account_profile").bounds == "cash_long_only | cash_debit | margin"
     assert lookup("auto_approve.paper").bounds == "on | off"
-    assert lookup("max_alloc_pct").bounds == "0.5% – 10%"
+    assert lookup("max_alloc_pct").bounds == "0.5% – 20%"  # D116 (was 10%)
 
 
 # ---------------------------------------------------------------------------
@@ -371,7 +371,7 @@ def test_local_cli_is_owner_but_slack_local_is_not(svc: ControlService) -> None:
 
 
 def test_bounds_and_ceiling_refused(svc: ControlService) -> None:
-    r = svc.set("max_alloc_pct", "11%", actor=OWNER, source="slack")
+    r = svc.set("max_alloc_pct", "21%", actor=OWNER, source="slack")
     assert r.outcome == "refused" and "hard ceiling" in r.message
     r = svc.set("env", "live", actor=OWNER, source="slack")
     assert r.outcome == "refused" and "never tunable" in r.message
@@ -755,7 +755,7 @@ def test_cli_round_trip(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> N
 
     code, out = run("set", "pipeline_scan_top", "3", "--reason", "wider menu")
     assert code == 0 and out["result"]["outcome"] == "applied"
-    code, out = run("set", "max_alloc_pct", "11%")
+    code, out = run("set", "max_alloc_pct", "21%")
     assert code == 2 and out["result"]["outcome"] == "refused"
     code, out = run("set", "max_alloc_pct", "3%", "--actor", OTHER)
     assert code == 2 and "owner only" in out["result"]["message"]

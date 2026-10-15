@@ -260,8 +260,26 @@ class ArcSettings(BaseSettings):
 
     # -- Risk limits (PLAN.md §5) -------------------------------------------
     max_alloc_pct: Annotated[float, Field(gt=0.0, le=1.0)] = Field(
+        default=0.15,
+        description=(
+            "Max loss per underlying as a fraction of equity, base (upper) tier: applies "
+            "while the book's deployed max loss is below alloc_tier_threshold_pct "
+            "(15%, D116; was a flat 10%, D85; 5% before)."
+        ),
+    )
+    max_alloc_pct_reduced: Annotated[float, Field(gt=0.0, le=1.0)] = Field(
         default=0.10,
-        description="Max allocation per underlying as fraction of equity (10%, D85; was 5%).",
+        description=(
+            "D116 reduced tier: the per-underlying cap once deployed max loss is at or "
+            "above alloc_tier_threshold_pct of equity (10%). Never above max_alloc_pct."
+        ),
+    )
+    alloc_tier_threshold_pct: Annotated[float, Field(gt=0.0, le=1.0)] = Field(
+        default=0.60,
+        description=(
+            "D116: deployed max loss (open + in-flight opens, pre-trade) as a share of "
+            "equity at which the per-underlying cap drops to max_alloc_pct_reduced (60%)."
+        ),
     )
     daily_loss_halt_pct: Annotated[float, Field(gt=0.0, le=1.0)] = Field(
         default=0.03,

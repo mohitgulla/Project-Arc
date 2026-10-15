@@ -351,7 +351,7 @@ def test_tech_segment_rng_part() -> None:
 
 # Research prompt / journal of this fixture run on main 6989a93 (anti-chase on, under
 # tests/conftest.py env pins), captured before E23.1.
-MAIN_RESEARCH_SHA = "14af3b71bfa04014429ab853ef248390c32521c57eef512fa53c1602d8b1720a"
+MAIN_RESEARCH_SHA = "69c800bc1349099b3b0df71bfecc9aa156d004c7e0d00ef5541a223eea794a24"
 MAIN_JOURNAL_SHA = "7ae2e25a3ff6175ba23452f546ee8acd0c1a7ccfb69d824f8ed528385eea47dd"
 
 

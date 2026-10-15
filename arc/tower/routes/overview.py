@@ -64,6 +64,8 @@ def overview(  # noqa: PLR0913 - one query parameter per control
         beta_delta_cap_pct=settings.portfolio_beta_delta_cap_pct,
         vega_cap_pct=settings.portfolio_vega_cap_pct,
         max_alloc_pct=settings.max_alloc_pct,
+        max_alloc_pct_reduced=settings.max_alloc_pct_reduced,
+        alloc_tier_threshold_pct=settings.alloc_tier_threshold_pct,
         stale_after=monitor_stale_after(conn),
         activity_hours=hours,
         greek_advisory=routines.tower.overview.greek_advisory,

@@ -656,11 +656,26 @@ function GreeksCard({ o, monitorS, caps }: { o: Overview; monitorS?: number; cap
               <InfoTip
                 label="About max loss per underlying"
                 testid="greeks-info-max-loss"
-                formula={<>Σ max loss per ticker ≤ {formatPercent(o.greeks.max_alloc_pct)} × equity</>}
+                formula={
+                  <>
+                    Σ max loss per ticker ≤ {formatPercent(o.greeks.max_alloc_pct_base ?? o.greeks.max_alloc_pct)} ×
+                    equity while deployed &lt; {formatPercent(o.greeks.alloc_tier_threshold_pct ?? 1)}, else{" "}
+                    {formatPercent(o.greeks.max_alloc_pct_reduced ?? o.greeks.max_alloc_pct)}
+                  </>
+                }
               >
-                The most one ticker&apos;s open structures can lose together at their worst outcome.
+                The most one ticker&apos;s open structures can lose together at their worst outcome. The cap drops to the
+                reduced tier once the book&apos;s deployed max loss (open positions plus orders in flight) reaches the
+                threshold share of equity.
               </InfoTip>
             </p>
+            {o.greeks.deployed_pct != null && o.greeks.alloc_tier_threshold_pct != null && (
+              <p className="tabular-nums" data-testid="alloc-tier">
+                Deployed {formatPercent(o.greeks.deployed_pct)} of equity ·{" "}
+                {o.greeks.alloc_tier === "reduced" ? "Reduced Tier" : "Base Tier"} (drops at{" "}
+                {formatPercent(o.greeks.alloc_tier_threshold_pct)})
+              </p>
+            )}
             {byUnderlying.length === 0 ? (
               <p className="text-muted">No open structures.</p>
             ) : (

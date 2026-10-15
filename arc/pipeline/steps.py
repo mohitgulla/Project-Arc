@@ -78,6 +78,7 @@ from arc.context.store import ContextStore
 from arc.control.effective import cost_model as cost_config
 from arc.control.effective import exit_config, ranking_config, scanner_filters
 from arc.exits import ExitSummary, model_exits, realized_vol_forecast
+from arc.gate.caps import AllocTier, alloc_tier, deployed_max_loss
 from arc.ingest.llm import ScalpLLMError
 from arc.ingest.scalp import extract_json_object
 from arc.iv.store import safe_store as safe_iv_store
@@ -149,6 +150,7 @@ from arc.pipeline.market import (
     account_baseline,
     account_snapshot,
     build_portfolio,
+    deployed_book_max_loss,
     limit_price,
     live_gate_status,
     live_size_cap,
@@ -573,17 +575,49 @@ def _account_inputs(ctx: JobContext, env: PipelineEnv) -> tuple[AccountInfo, lis
     return info, positions
 
 
+def book_alloc_tier(
+    conn: sqlite3.Connection,
+    positions: Sequence[Any],
+    equity: Decimal,
+    settings: ArcSettings,
+    *,
+    now: _dt.datetime,
+) -> AllocTier:
+    """D116 (E3.7): the active per-underlying tier for the book, without valuing it.
+
+    Deployed = Σ open max loss (the gate's position groups) + in-flight opens. A book
+    that cannot be grouped (unbounded / unreadable legs) takes the reduced tier: the
+    gate refuses every open then anyway (build_portfolio fails closed).
+    """
+    try:
+        deployed = deployed_book_max_loss(conn, positions, now=now)
+    except PortfolioError as exc:
+        log.warning("pipeline.alloc_tier_unvalued", error=str(exc))
+        return alloc_tier(equity, equity, settings)._replace(deployed_pct=None)
+    return alloc_tier(deployed, equity, settings)
+
+
+def portfolio_alloc_tier(portfolio: Portfolio, equity: Decimal, settings: ArcSettings) -> AllocTier:
+    """D116: the active per-underlying tier for a valued gate ``Portfolio`` (the gate's
+    own computation, so sizing and ``per_underlying_limit`` always agree)."""
+    return alloc_tier(deployed_max_loss(portfolio), equity, settings)
+
+
+def _cap_text(tier: AllocTier) -> str:
+    return f"{tier.pct:.0%} of equity max loss per underlying ({tier.describe()})"
+
+
 def _portfolio_summary(
     ctx: JobContext, env: PipelineEnv, settings: ArcSettings
 ) -> tuple[str, Decimal]:
     info, positions = _account_inputs(ctx, env)
     opts = [p for p in positions if p.asset_class == "us_option"]
     roots = sorted({parse_occ(p.symbol).root for p in opts})
+    tier = book_alloc_tier(ctx.conn, positions, info.equity, settings, now=ctx.now)
     text = (
         f"Equity ${info.equity:,.2f}. {len(roots)} open option position(s)"
         + (f" on {', '.join(roots)}" if roots else "")
-        + f". Max {settings.max_open_positions} positions, {settings.max_alloc_pct:.0%} of "
-        "equity max loss per underlying."
+        + f". Max {settings.max_open_positions} positions, {_cap_text(tier)}."
     )
     return text, info.equity
 
@@ -2189,7 +2223,8 @@ def _free_slots(ctx: JobContext, env: PipelineEnv) -> FreeSlots | None:
         dtes,
         max_open_positions=settings.max_open_positions,
         single=not settings.profile.has_sleeves,
-        per_name_cap=Decimal(str(settings.max_alloc_pct)) * info.equity,
+        per_name_cap=book_alloc_tier(ctx.conn, positions, info.equity, settings, now=ctx.now).pct
+        * info.equity,
         settled_cash=cash,
         opens_today=_opens_today_by_sleeve(ctx),
     )
@@ -3979,7 +4014,9 @@ def quant_revise(ctx: JobContext, env: PipelineEnv) -> JobResult:
 # ---------------------------------------------------------------------------
 
 
-def _risk_rules(settings: ArcSettings, caps: Mapping[tuple[str, str], int]) -> list[str]:
+def _risk_rules(
+    settings: ArcSettings, caps: Mapping[tuple[str, str], int], tier: AllocTier
+) -> list[str]:
     return [
         _profile_rule(settings),
         "Exactly one assessment per proposed structure, with ticker and structure_type "
@@ -3988,7 +4025,7 @@ def _risk_rules(settings: ArcSettings, caps: Mapping[tuple[str, str], int]) -> l
         "policy (take profit / stop / DTE exit); positions will be managed, so weigh the "
         "managed PoP, net EV and stop probability.",
         "sizing_suggestion is advisory. The pipeline trades min(your suggestion, "
-        f"floor({settings.max_alloc_pct:.0%} × equity / max_loss)); caps per structure: "
+        f"floor({tier.pct:.0%} × equity / max_loss); {tier.describe()}); caps per structure: "
         + ", ".join(f"{t} {k}: {n}" for (t, k), n in sorted(caps.items()))
         + ". Suggest 0 to decline a trade.",
     ]
@@ -4073,7 +4110,8 @@ def risk_open(ctx: JobContext, env: PipelineEnv) -> JobResult:
         ],
         "expirations": sorted({s.legs[0].expiry for s in structures.structures}),
     }
-    budget = Decimal(str(settings.max_alloc_pct)) * info.equity
+    tier = portfolio_alloc_tier(portfolio, info.equity, settings)  # D116
+    budget = tier.pct * info.equity
     caps = {
         (s.ticker, s.structure_type): int(
             max(budget - existing_max_loss(portfolio, s.ticker), Decimal(0))
@@ -4088,7 +4126,7 @@ def risk_open(ctx: JobContext, env: PipelineEnv) -> JobResult:
         "account_equity": float(info.equity),
         "scan_date": today.isoformat(),
         "entry_terms": entry_terms(settings).model_dump(mode="json"),
-        "rules": _risk_rules(settings, caps),
+        "rules": _risk_rules(settings, caps, tier),
     }
     # E13.9: Risk also gives a verdict per structure.
     prompt_key = "risk_open"
@@ -4220,8 +4258,9 @@ def risk_open(ctx: JobContext, env: PipelineEnv) -> JobResult:
                 else Decimal(str(by_key[(a.ticker, a.structure_type)].max_loss))
             ),
             equity=info.equity,
-            cap_pct=settings.max_alloc_pct,
+            cap_pct=tier.pct,
             existing_max_loss=existing_max_loss(portfolio, a.ticker),
+            cap_label=tier.describe(),
         )
         for a in kept
     }
@@ -4247,7 +4286,7 @@ def risk_open(ctx: JobContext, env: PipelineEnv) -> JobResult:
             payload,
             sized=sized,
             max_gain={k: s.max_gain for k, s in by_key.items()},
-            cap_pct=settings.max_alloc_pct,
+            cap_pct=float(tier.pct),
             dropped=dropped,
             dropped_items=[
                 (f"{a.ticker.strip().upper()} {a.structure_type.strip().lower()}", r)
@@ -4846,14 +4885,17 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
         # D24: the gate checks the whole price band; size at its worst price (D18).
         band = band_for(st, limit, market, settings)
         per_cash = cash_per_contract(st, band, settings) if cash_left is not None else None
+        # D116: the tier from the in-run book (earlier passes in this run count as deployed)
+        tier = portfolio_alloc_tier(portfolio, info.equity, settings)
         size = size_contracts(
             suggestion=a.sizing_suggestion,
             max_loss_per_contract=worst_loss_per_contract(st, band),
             equity=info.equity,
-            cap_pct=settings.max_alloc_pct,
+            cap_pct=tier.pct,
             existing_max_loss=existing_max_loss(portfolio, t),  # S-7: remaining budget
             cash_available=cash_left,  # E22.3: settled cash left after this run's opens
             cash_per_contract=per_cash,
+            cap_label=tier.describe(),
         )
         live_cap = live_size_cap(settings, account)  # D70: None in paper / gate met
         size = apply_live_cap(size, live_cap, info.equity)
@@ -4863,7 +4905,10 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
                 str(worst) if (worst := worst_loss_per_contract(st, band)) is not None else None
             ),
             "equity": str(info.equity),
-            "cap_pct": settings.max_alloc_pct,
+            "cap_pct": float(tier.pct),
+            "cap_tier": tier.tier,  # D116
+            "deployed": str(tier.deployed),
+            "deployed_pct": float(tier.deployed_pct) if tier.deployed_pct is not None else None,
         }
         if live_cap is not None:
             sizing_payload["live_cap"] = live_cap
