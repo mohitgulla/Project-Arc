@@ -3010,6 +3010,37 @@ The same text is the approval card's `Levels` fact and the Tower trade detail's
 D86/D98). Rollback: `!arc config set strike_levels off` (menu, card and stored analytics
 byte-identical to before E23.3).
 
+### Scanner liquidity inputs: Cboe open interest + today-only volume (E2.5, D116)
+
+The scanner's `low_open_interest` / `low_volume` filters (`scanner_min_open_interest`
+100, `scanner_min_volume` 10) now read:
+
+- **Open interest:** Cboe's delayed chain first
+  (`cdn.cboe.com/api/global/delayed_quotes/options/<T>.json`, the same endpoint and parser
+  as `options_fast`, `arc/ingest/cboe_fast.py`), one GET per scanned ticker per run with
+  the D114 read retry, cached for the run (`arc/data/oi.py`, `CboeOpenInterestMarket`
+  wraps the live provider in `PipelineEnv.live` and `arc chains`; it sits inside the
+  experiment tape, so paired arms replay the merged chain). A contract missing from
+  Cboe falls back to Alpaca's contracts OI only when its `open_interest_date` is on or
+  after the previous session; otherwise OI is unknown and the filter fails it. A Cboe
+  failure (HTTP, non-chain body, empty chain) logs `scanner.oi_source
+  oi_source=alpaca_fallback` and never fails the scan. Each contract carries
+  `oi_source` (`cboe` | `alpaca`, omitted when unset).
+- **Volume** (`arc/data/volume.py`): before 10:00 ET (and on non-session days) the
+  previous session's full-day bar against the full minimum (`volume_source
+  prev_session`). From 10:00 ET today's `dailyBar` only (a bar dated any other day is
+  0; `prevDailyBar` never stands in) against `ceil(min_volume × elapsed)`, floor 1,
+  where elapsed = time since the open ÷ half the regular session (early closes from the
+  exchange calendar), so the full minimum applies from midday. At 10:00 on a normal day
+  the minimum is 2; at 11:15 it is 6.
+- **Log:** `scanner.scan` adds `oi_cboe`, `oi_alpaca`, `oi_unknown`, `volume_source`
+  (counts), `min_volume_today` and `rejected`. `arc chains <T>` prints the same line
+  (`open interest cboe N · alpaca N · unknown N  volume today N …`).
+- **Ops alert:** when Alpaca's modal `open_interest_date` in a Quant run is older than
+  the previous session, one informational `data:alpaca_oi_stale:<date>` row is written
+  to `ops_alerts` per day (recorded resolved; Cboe is primary, nothing to do).
+- No switch: shipped on (D116, D86). Rollback is a revert PR.
+
 ## E3.7 tiered per-underlying cap (D116)
 
 The gate rule `per_underlying_limit` caps Σ max loss on one underlying (existing + new) at

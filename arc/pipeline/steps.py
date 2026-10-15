@@ -3387,7 +3387,9 @@ def _quant_menus(ctx: JobContext, env: PipelineEnv, items: list[ResearchRankedIt
             top = None if open_sleeves is not None else pool
             params = ScanParams.from_settings(settings, strategies=strategies, top=top)
             history = iv_store.series(item.ticker, until=today) if iv_store is not None else {}
-            res = scan(env.market, item.ticker, params, as_of=today, iv_history=history)
+            res = scan(
+                env.market, item.ticker, params, as_of=today, iv_history=history, now=ctx.now
+            )
             ctx.record_input(
                 f"chain:{item.ticker}",
                 _source(env),
@@ -3455,7 +3457,45 @@ def _quant_menus(ctx: JobContext, env: PipelineEnv, items: list[ResearchRankedIt
             ],
         }
 
+    _alpaca_oi_alert(ctx, env, today)
     return m
+
+
+def _alpaca_oi_alert(ctx: JobContext, env: PipelineEnv, today: _dt.date) -> None:
+    """E2.5 (D116): one informational ``data:alpaca_oi_stale:<day>`` ops alert per day.
+
+    Raised when Alpaca's modal contracts ``open_interest_date`` this run is older than
+    the previous session. Informational only: Cboe's delayed chain is the primary OI
+    source (:mod:`arc.data.oi`). Recorded resolved (a one-off), never posted on its own.
+    """
+    from arc.data.oi import CboeOpenInterestMarket, stale_alpaca_oi
+
+    market = env.market
+    while not isinstance(market, CboeOpenInterestMarket):
+        market = getattr(market, "inner", None)
+        if market is None:
+            return
+    mode = stale_alpaca_oi(market.alpaca_dates, today)
+    if mode is None:
+        return
+    from arc.monitoring.store import AlertRepo
+
+    key = f"data:alpaca_oi_stale:{today.isoformat()}"
+    try:
+        repo = AlertRepo(ctx.conn)
+        if repo.seen(key):
+            return
+        repo.open(
+            key,
+            "data:alpaca_oi_stale",
+            f"Alpaca option open interest is dated {mode.isoformat()} (older than the "
+            "previous session); the scanner uses Cboe's delayed open interest first",
+            at=ctx.now,
+            correlation={"modal_oi_date": mode.isoformat(), "session": today.isoformat()},
+            resolved=True,
+        )
+    except sqlite3.Error as exc:  # an informational alert never fails the step
+        log.warning("pipeline.oi_alert_failed", error=str(exc))
 
 
 def quant_open(ctx: JobContext, env: PipelineEnv) -> JobResult:

@@ -136,7 +136,11 @@ class PipelineEnv:
             adapter: BrokerAdapter | None = paper
         else:
             account, positions, adapter = fixture_account, list, None
-        market: MarketDataProvider = AlpacaMarketData()
+        from arc.data.oi import CboeOpenInterestMarket
+
+        # E2.5 (D116): Cboe's delayed open interest first, Alpaca's as the fallback.
+        # Inside the tape, so a paired arm replays the merged chain control priced.
+        market: MarketDataProvider = CboeOpenInterestMarket(AlpacaMarketData())
         if conn is not None:
             from arc.experiments.tape import tape_market
 

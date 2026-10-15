@@ -37,6 +37,7 @@ from arc.data.base import (
     OptionGreeks,
     UnderlyingQuote,
 )
+from arc.data.volume import VolumeBasis, pick_volume, volume_basis
 from arc.utils.calendar import ET, now_et
 from arc.utils.http_retry import ReadRetryPolicy, install_read_retry
 from arc.utils.ratelimit import AccountRateBucket, bucket_path
@@ -153,6 +154,18 @@ def _get_keys(api_key: str | None = None, secret_key: str | None = None) -> tupl
         )
         raise RuntimeError(msg)
     return api_key, secret_key
+
+
+def _as_date(v: object) -> dt.date | None:
+    """A contracts-API date (``"2026-10-13"`` or a ``date``), else None."""
+    if isinstance(v, dt.date):
+        return v
+    if isinstance(v, str) and v:
+        try:
+            return dt.date.fromisoformat(v[:10])
+        except ValueError:
+            return None
+    return None
 
 
 def _parse_occ_symbol(symbol: str) -> dict[str, Any]:
@@ -313,9 +326,9 @@ class AlpacaMarketData:
         )
         snapshots = self._option_client.get_option_chain(req)
         open_interest, penny = self._contract_facts(underlying, exp_start, exp_end)
-        volume = self._daily_volume(req)
-
         now = now_et()
+        basis = volume_basis(now)
+        volume = self._daily_volume(req, basis)
         contracts: list[OptionContract] = []
 
         for symbol, snap in snapshots.items():
@@ -370,8 +383,10 @@ class AlpacaMarketData:
                     bid_size=bid_size,
                     ask_size=ask_size,
                     last_trade_price=last_trade_price,
-                    open_interest=open_interest.get(symbol),
+                    open_interest=open_interest.get(symbol, (None, None))[0],
+                    open_interest_date=open_interest.get(symbol, (None, None))[1],
                     volume=volume.get(symbol),
+                    volume_source=basis.source if symbol in volume else None,
                     penny_program=penny.get(symbol),
                     implied_volatility=snap.implied_volatility,
                     greeks=greeks,
@@ -390,8 +405,11 @@ class AlpacaMarketData:
 
     def _contract_facts(
         self, underlying: str, exp_start: dt.date, exp_end: dt.date
-    ) -> tuple[dict[str, int], dict[str, bool]]:
-        """OCC symbol → open interest, and → Penny Program flag (``ppind``, D66).
+    ) -> tuple[dict[str, tuple[int, dt.date | None]], dict[str, bool]]:
+        """OCC symbol → ``(open interest, open_interest_date)``, and → Penny Program flag.
+
+        E2.5 (D116): the OI date travels with the value so the scanner can tell a
+        stale Alpaca figure from a fresh one (:mod:`arc.data.oi`); ``ppind`` is D66.
 
         One paged walk of the paper Trading API contracts list (the same requests
         as before D66). The pinned alpaca-py ``OptionContract`` model has no
@@ -401,7 +419,7 @@ class AlpacaMarketData:
         """
         if self._contracts_client is None:
             return {}, {}
-        oi: dict[str, int] = {}
+        oi: dict[str, tuple[int, dt.date | None]] = {}
         penny: dict[str, bool] = {}
         page: str | None = None
         while True:
@@ -418,7 +436,7 @@ class AlpacaMarketData:
                 if not symbol:
                     continue
                 if c.get("open_interest") is not None:
-                    oi[symbol] = int(c["open_interest"])
+                    oi[symbol] = (int(c["open_interest"]), _as_date(c.get("open_interest_date")))
                 if isinstance(c.get("ppind"), bool):
                     penny[symbol] = c["ppind"]
             if not page:
@@ -441,23 +459,23 @@ class AlpacaMarketData:
             {
                 "symbol": c.symbol,
                 "open_interest": c.open_interest,
+                "open_interest_date": getattr(c, "open_interest_date", None),
                 "ppind": getattr(c, "ppind", None),
             }
             for c in getattr(resp, "option_contracts", None) or []
         ]
         return parsed, getattr(resp, "next_page_token", None)
 
-    def _daily_volume(self, req: OptionChainRequest) -> dict[str, int]:
-        """OCC symbol → latest daily-bar volume from the raw snapshots payload."""
+    def _daily_volume(self, req: OptionChainRequest, basis: VolumeBasis) -> dict[str, int]:
+        """OCC symbol → the *basis* session's daily-bar volume (0 when none is dated so).
+
+        E2.5 (D116): never ``prevDailyBar`` as a stand-in for today: from 10:00 ET a
+        contract with no print today has volume 0 (:mod:`arc.data.volume`).
+        """
         if self._raw_option_client is None:
             return {}
         raw = self._raw_option_client.get_option_chain(req)
-        out: dict[str, int] = {}
-        for symbol, snap in raw.items():  # type: ignore[union-attr]
-            bar = snap.get("dailyBar") or snap.get("prevDailyBar")
-            if bar and bar.get("v") is not None:
-                out[symbol] = int(bar["v"])
-        return out
+        return {symbol: pick_volume(snap, basis) for symbol, snap in raw.items()}  # type: ignore[union-attr]
 
     # -- underlying_quote ----------------------------------------------------
 
