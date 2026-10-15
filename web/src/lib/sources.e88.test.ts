@@ -76,3 +76,17 @@ describe("Greeks card: beta-weighted delta + an ⓘ on every row (D62)", () => {
     expect(src).not.toMatch(/≤ (100|200)% × equity/);
   });
 });
+
+describe("Greeks card: debit structures count at max loss (D116, E3.8)", () => {
+  const src = PAGES["../pages/Overview.tsx"]!;
+  it("explains the max-loss unit in the ⓘ", () => {
+    expect(src).toContain('data-testid="greeks-debit-max-loss-note"');
+    expect(src).toContain("Debit structures count at max loss");
+  });
+  it("shows the raw Σ Δ × spot, — on an old heartbeat", () => {
+    expect(src).toContain("g.dollar_delta_raw ?? null");
+    expect(src).toContain("g.beta_dollar_delta_raw ?? null");
+    expect(src).toContain('dollarDeltaRaw === null ? "—"');
+    expect(src).toContain('betaDeltaRaw === null ? "—"');
+  });
+});

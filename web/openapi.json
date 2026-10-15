@@ -976,6 +976,18 @@
             "title": "Beta Dollar Delta",
             "type": "number"
           },
+          "beta_dollar_delta_raw": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D116: dollar_delta_raw \u00d7 \u03b2 used (None before E3.8)",
+            "title": "Beta Dollar Delta Raw"
+          },
           "beta_source": {
             "default": "default",
             "enum": [
@@ -988,6 +1000,18 @@
           "dollar_delta": {
             "title": "Dollar Delta",
             "type": "number"
+          },
+          "dollar_delta_raw": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D116: plain \u03a3 \u0394 \u00d7 spot for this underlying (None before E3.8)",
+            "title": "Dollar Delta Raw"
           }
         },
         "required": [
@@ -6512,8 +6536,20 @@
                 "type": "null"
               }
             ],
-            "description": "D62: beta-weighted net dollar delta \u03a3 (\u0394 \u00d7 spot \u00d7 max(\u03b2 vs SPY, 1)), $ (SPY-equivalent); None on a heartbeat written before D62 (rendered \u2014)",
+            "description": "D62/D116: beta-weighted net dollar delta (the dollar_delta terms \u00d7 max(\u03b2 vs SPY, 1)), $ (SPY-equivalent); None on a heartbeat written before D62 (rendered \u2014)",
             "title": "Beta Dollar Delta"
+          },
+          "beta_dollar_delta_raw": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D116: plain \u03a3 (\u0394 \u00d7 spot \u00d7 max(\u03b2, 1)), $, display only; None on a heartbeat written before E3.8 (rendered \u2014)",
+            "title": "Beta Dollar Delta Raw"
           },
           "delta": {
             "anyOf": [
@@ -6543,7 +6579,7 @@
                 "type": "null"
               }
             ],
-            "description": "D57: net dollar delta \u03a3 (\u0394 share-eq \u00d7 spot), $; None on a heartbeat written before D57 (rendered \u2014)",
+            "description": "D57/D116: net dollar delta as the gate counts it: \u03a3 (\u0394 share-eq \u00d7 spot), debit verticals / long options at sign(\u0394) \u00d7 max loss (E3.8), $; None on a heartbeat written before D57 (rendered \u2014)",
             "title": "Dollar Delta"
           },
           "dollar_delta_cap": {
@@ -6557,6 +6593,18 @@
             ],
             "description": "D57: |$\u0394| cap, $ (portfolio_dollar_delta_cap_pct \u00d7 equity)",
             "title": "Dollar Delta Cap"
+          },
+          "dollar_delta_raw": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D116: plain \u03a3 (\u0394 share-eq \u00d7 spot), $, display only; None on a heartbeat written before E3.8 (rendered \u2014)",
+            "title": "Dollar Delta Raw"
           },
           "equity": {
             "anyOf": [

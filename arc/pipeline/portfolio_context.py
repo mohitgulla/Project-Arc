@@ -26,6 +26,7 @@ import yaml
 from pydantic import ConfigDict
 
 from arc.gate.caps import AllocTier, alloc_tier, deployed_max_loss
+from arc.gate.delta import delta_exposure, kind_of
 from arc.models import Greeks, Stance, Structure
 from arc.positions.evaluate import PositionReview
 from arc.positions.portfolio import (
@@ -459,10 +460,14 @@ def build_portfolio_context(
     positions: list[PortfolioPosition] = []
     warnings: list[str] = []
     opened_greeks = Greeks()
-    # D57: as-opened dollar delta (Δ × n × spot at open); None once any spot is unknown
+    # D57: as-opened dollar delta (Δ × n × spot at open; D116: sign(Δ) × max loss for a
+    # debit vertical / long option); None once a needed spot is unknown
     opened_dollar_delta: float | None = 0.0
-    # D62: as-opened beta-weighted $Δ (Δ × n × spot at open × current β used)
+    # D62: as-opened beta-weighted $Δ (the same terms × current β used)
     opened_beta_delta: float | None = 0.0
+    # D116: the plain Δ × spot sums (display only); None once any spot is unknown
+    opened_raw_delta: float | None = 0.0
+    opened_raw_beta_delta: float | None = 0.0
     from arc.betas.store import betas_used
 
     betas = betas_used(conn, sorted({str(r["ticker"]) for r in rows}), today)
@@ -496,14 +501,28 @@ def build_portfolio_context(
             vega=opened_greeks.vega + g.vega,
             theta=opened_greeks.theta + g.theta,
         )
+        spot_open = _open_spot(conn, row)
+        beta = betas[str(row["ticker"]).upper()].beta
         if opened_dollar_delta is not None:
-            spot_open = _open_spot(conn, row)
-            if spot_open is None:
+            term = delta_exposure(
+                kind_of(st.legs),
+                g.delta,
+                None if spot_open is None else Decimal(str(spot_open)),
+                Decimal(str(max_loss_total)) if st.max_loss is not None else None,
+            )
+            if term is None:
                 opened_dollar_delta = opened_beta_delta = None
             else:
-                opened_dollar_delta += g.delta * spot_open
-                beta = betas[str(row["ticker"]).upper()].beta
-                opened_beta_delta = (opened_beta_delta or 0.0) + g.delta * spot_open * beta
+                opened_dollar_delta += float(term)
+                opened_beta_delta = (opened_beta_delta or 0.0) + float(term) * beta
+        if opened_raw_delta is not None:
+            if spot_open is None:
+                opened_raw_delta = opened_raw_beta_delta = None
+            else:
+                opened_raw_delta += g.delta * spot_open
+                opened_raw_beta_delta = (opened_raw_beta_delta or 0.0) + (
+                    g.delta * spot_open * beta
+                )
         if review is not None:
             open_pnl += review.pnl_total
         positions.append(
@@ -559,6 +578,10 @@ def build_portfolio_context(
     beta_dollar_delta = (
         float(portfolio.beta_dollar_delta) if portfolio is not None else opened_beta_delta
     )
+    raw_delta = float(portfolio.dollar_delta_raw) if portfolio is not None else opened_raw_delta
+    raw_beta_delta = (
+        float(portfolio.beta_dollar_delta_raw) if portfolio is not None else opened_raw_beta_delta
+    )
     delta_cap = settings.portfolio_dollar_delta_cap_pct * equity
     beta_cap = settings.portfolio_beta_delta_cap_pct * equity
     vega_cap = settings.portfolio_vega_cap_pct * equity
@@ -570,6 +593,7 @@ def build_portfolio_context(
             net=round(dollar_delta, 2),
             cap=round(delta_cap, 2),
             pct_used=round(abs(dollar_delta) / delta_cap, 4) if delta_cap > 0 else None,
+            net_raw=None if raw_delta is None else round(raw_delta, 2),
         )
     )
     beta_delta = (
@@ -579,6 +603,7 @@ def build_portfolio_context(
             net=round(beta_dollar_delta, 2),
             cap=round(beta_cap, 2),
             pct_used=round(abs(beta_dollar_delta) / beta_cap, 4) if beta_cap > 0 else None,
+            net_raw=None if raw_beta_delta is None else round(raw_beta_delta, 2),
         )
     )
     vega = GreekUsage(
@@ -821,7 +846,8 @@ def render_portfolio_context(
         f"HHI {ag.hhi_underlying:.2f}.",
         f"Net Greeks ({ag.greeks_source}): "
         + (
-            f"$Δ ${d.net:+,.0f} of cap ${d.cap:,.0f} ({_pct(d.pct_used)} used)"
+            f"$Δ ${d.net:+,.0f} of cap ${d.cap:,.0f} ({_pct(d.pct_used)} used; debit "
+            f"verticals and long options count at signed max loss)"
             if d is not None
             else "$Δ n/a (spot unknown)"
         )

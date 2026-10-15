@@ -913,7 +913,9 @@ class TestProposeIntegrityError:
 
 
 def test_as_opened_dollar_delta_uses_the_stored_spot(settings: ArcSettings) -> None:
-    """as_opened: Δ (share-eq, × contracts) × proposals.spot (770), vs 1.00 × equity (D62)."""
+    """as_opened: Δ (share-eq, × contracts) × proposals.spot (770), vs 1.00 × equity (D62).
+    D116 (E3.8): a long call counts at sign(Δ) × max loss in the cap row; the plain
+    Δ × spot is kept as ``net_raw``."""
     conn = open_db(":memory:", copy=False)
     env = _env([])
     _open_structure(conn, env, LONG_CALL, stance="bullish", entry="12.10", contracts=2)
@@ -925,14 +927,19 @@ def test_as_opened_dollar_delta_uses_the_stored_spot(settings: ArcSettings) -> N
     assert ag is not None and ag.greeks_source == "as_opened" and ag.delta is not None
     shares = pc.positions[0].greeks.delta
     assert ag.delta_shares == pytest.approx(shares, abs=1e-3)
-    assert ag.delta.net == pytest.approx(shares * 770, abs=0.01)
+    assert shares > 0
+    assert ag.delta.net == pytest.approx(pc.positions[0].max_loss_total, abs=0.01)
+    assert ag.delta.net_raw == pytest.approx(shares * 770, abs=0.01)
     assert ag.delta.cap == pytest.approx(1.00 * pc.account.equity)
     assert ag.delta.pct_used == pytest.approx(abs(ag.delta.net) / ag.delta.cap, abs=1e-4)
     assert ag.vega.cap == pytest.approx(0.010 * pc.account.equity)
+    assert ag.vega.net_raw is None
     text = render_portfolio_context(pc, settings)
     assert f"$Δ ${ag.delta.net:+,.0f} of cap ${ag.delta.cap:,.0f}" in text
+    assert "debit verticals and long options count at signed max loss" in text
     # D62: no stored beta -> 1.0: β$Δ == $Δ, against the 2.00 × equity cap
     assert ag.beta_delta is not None and ag.beta_delta.net == pytest.approx(ag.delta.net)
+    assert ag.beta_delta.net_raw == pytest.approx(ag.delta.net_raw)
     assert ag.beta_delta.cap == pytest.approx(2.00 * pc.account.equity)
     assert set(ag.betas.values()) == {1.0}
     assert "β-weighted $Δ" in text
@@ -964,10 +971,12 @@ def test_as_opened_beta_delta_uses_the_stored_beta(settings: ArcSettings) -> Non
 
 
 def test_as_opened_dollar_delta_unknown_without_a_stored_spot(settings: ArcSettings) -> None:
-    """No spot on the opening proposal: delta usage is None (never guessed), no flag."""
+    """No spot on the opening proposal: a Δ × spot structure's delta usage is None (never
+    guessed), no flag. D116: a long call needs no spot (signed max loss), so it stays
+    known while its plain ``net_raw`` is None."""
     conn = open_db(":memory:", copy=False)
     env = _env([])
-    _open_structure(conn, env, LONG_CALL, stance="bullish", entry="12.10", contracts=2)
+    _open_structure(conn, env, IRON_CONDOR, contracts=2)
     conn.execute("UPDATE proposals SET spot = NULL")
     pc = build_portfolio_context(
         conn, env, settings.model_copy(update={"portfolio_greek_near_cap_pct": 0.0001}),
@@ -978,6 +987,17 @@ def test_as_opened_dollar_delta_unknown_without_a_stored_spot(settings: ArcSetti
     assert ag.beta_delta is None  # D62: unknown too, never guessed
     assert "delta_near_cap" not in ag.flags and "beta_delta_near_cap" not in ag.flags
     assert "$Δ n/a (spot unknown)" in render_portfolio_context(pc, settings)
+
+    conn = open_db(":memory:", copy=False)
+    _open_structure(conn, env, LONG_CALL, stance="bullish", entry="12.10", contracts=2)
+    conn.execute("UPDATE proposals SET spot = NULL")
+    pc = build_portfolio_context(
+        conn, env, settings, info=env.account(), now=FIXTURE_NOW, halted=False,
+        budget_tier="normal",
+    )  # fmt: skip
+    ag = pc.aggregates
+    assert ag is not None and ag.delta is not None and ag.delta.net_raw is None
+    assert ag.delta.net == pytest.approx(pc.positions[0].max_loss_total, abs=0.01)
 
 
 def test_market_book_dollar_delta_and_near_cap_flag(settings: ArcSettings) -> None:

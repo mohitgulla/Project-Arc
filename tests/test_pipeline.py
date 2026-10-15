@@ -1116,3 +1116,28 @@ def test_with_position_carries_dollar_delta() -> None:
     assert [p.underlying for p in out.positions] == ["AVGO"]
     same = _with_position(book, "AVGO", Decimal("500"), Greeks(delta=50.0), 2, None)
     assert same.dollar_delta == Decimal("18000")
+
+
+def test_with_position_carries_debit_structures_at_signed_max_loss() -> None:
+    """D116 (E3.8): a gate-passed debit vertical / long option is carried at sign(Δ) ×
+    max loss (× β for the β book), the gate's unit; the raw Δ × spot is kept apart."""
+    from arc.gate.inputs import Portfolio
+    from arc.models import Greeks
+    from arc.models import StructureKind as K
+    from arc.pipeline.steps import _with_position
+
+    book = Portfolio(dollar_delta=Decimal("100"), beta_dollar_delta=Decimal("100"))
+    g = Greeks(delta=-16.0)
+    for kind in (K.VERTICAL_DEBIT, K.LONG_PUT):
+        out = _with_position(
+            book, "MU", Decimal("1983.50"), g, 2, Decimal("942"), Decimal("3.2"), 30, kind
+        )
+        assert out.dollar_delta == Decimal("-1883.50")  # 100 − 1,983.50
+        assert out.beta_dollar_delta == Decimal("100") - Decimal("1983.50") * Decimal("3.2")
+        assert out.dollar_delta_raw == Decimal("-30144")  # −16 × 2 × 942
+        assert out.beta_dollar_delta_raw == Decimal("-30144") * Decimal("3.2")
+    credit = _with_position(
+        book, "MU", Decimal("500"), g, 2, Decimal("942"), None, 30, K.VERTICAL_CREDIT
+    )
+    assert credit.dollar_delta == Decimal("100") + Decimal("-30144")
+    assert credit.dollar_delta_raw == Decimal("-30144")

@@ -813,8 +813,8 @@ _STATIC: tuple[Tunable, ...] = (
         "portfolio_dollar_delta_cap_pct",
         Group.RISK,
         _F,
-        "D57/D62: |net dollar delta| (Σ Δ share-eq × spot) cap as a share of equity "
-        "(gate rule greek_caps).",
+        "D57/D62: |net dollar delta| (Σ Δ share-eq × spot; D116: debit verticals and long "
+        "options at sign(Δ) × max loss) cap as a share of equity (gate rule greek_caps).",
         Risk.UP,
         unit="pct",
         min=0.10,
@@ -825,7 +825,8 @@ _STATIC: tuple[Tunable, ...] = (
         "portfolio_beta_delta_cap_pct",
         Group.RISK,
         _F,
-        "D62: |beta-weighted net dollar delta| (Σ Δ share-eq × spot × max(β vs SPY, 1)) "
+        "D62: |beta-weighted net dollar delta| (Σ Δ share-eq × spot × max(β vs SPY, 1); "
+        "D116: debit verticals and long options at sign(Δ) × max loss × max(β, 1)) "
         "cap as a share of equity (gate rule greek_caps).",
         Risk.UP,
         unit="pct",
