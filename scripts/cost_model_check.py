@@ -160,7 +160,7 @@ def fit(df: pd.DataFrame) -> tuple[float, float, float]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     ap.add_argument("--data-dir", type=Path, default=ROOT / "data")
     ap.add_argument("--universe", default="c125")
     ap.add_argument("--provider", default="thetadata")
