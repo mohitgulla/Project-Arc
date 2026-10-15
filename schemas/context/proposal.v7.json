@@ -461,6 +461,21 @@
           "title": "Open Interest",
           "type": "integer"
         },
+        "score": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "E2.6 (D116): the scanner's liquidity score of the thinnest leg (0-1, relative to its expiry's filtered chain). Set only with scanner.liquidity_rank on; left out of dumps when None, so proposal hashes with it off are unchanged.",
+          "title": "Score"
+        },
         "spread_pct": {
           "default": 0.0,
           "description": "Bid-ask spread as % of mid",

@@ -150,6 +150,23 @@ class Liquidity(BaseModel):
     spread_pct: float = Field(0.0, description="Bid-ask spread as % of mid")
     open_interest: int = 0
     volume: int = 0
+    score: float | None = Field(
+        None,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "E2.6 (D116): the scanner's liquidity score of the thinnest leg (0-1, relative "
+            "to its expiry's filtered chain). Set only with scanner.liquidity_rank on; left "
+            "out of dumps when None, so proposal hashes with it off are unchanged."
+        ),
+    )
+
+    @model_serializer(mode="wrap")
+    def _drop_no_score(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        out: dict[str, Any] = handler(self)
+        if out.get("score") is None:
+            out.pop("score", None)
+        return out
 
 
 class StructureKind(StrEnum):

@@ -1012,8 +1012,8 @@ KINDS: Mapping[str, KindSpec] = _registry(
     KindSpec("shortlist", ShortlistPayload, schema_version=6),  # E17.2: market_guard run/margin z
     KindSpec("structures", StructuresPayload, schema_version=4),  # E18.1: profit_lock
     KindSpec("risk_review", RiskReviewPayload, schema_version=2),  # E13.9: verdicts
-    KindSpec("proposal", ProposalPayload, schema_version=6),  # E22.2: structure.sleeve
-    KindSpec("position_review", PositionReviewPayload, schema_version=5),  # E22.2: Structure.sleeve
+    KindSpec("proposal", ProposalPayload, schema_version=7),  # E2.6: liquidity.score
+    KindSpec("position_review", PositionReviewPayload, schema_version=6),  # E2.6: Liquidity.score
     KindSpec("portfolio_context", PortfolioContextPayload, schema_version=5),  # E3.8: D116
     KindSpec("journal", JournalPayload),
     KindSpec("note", NotePayload, schema_version=5),  # E13.13: sections, scalar facts

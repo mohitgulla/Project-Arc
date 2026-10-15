@@ -363,8 +363,12 @@ def _run(
     profile: str,
     monkeypatch: pytest.MonkeyPatch,
     profiles_file: Path | None = None,
+    *,
+    liquidity_rank: bool = False,
     **pipeline: object,
 ) -> Any:
+    """E2.6 (D116): *liquidity_rank* off by default, so the E7.5b goldens keep pinning the
+    pre-E2.6 menus (off = byte-identical); ``True`` runs the shipped config."""
     from arc.routines.config import load_routines
     from tests import test_pipeline as tp
 
@@ -377,7 +381,12 @@ def _run(
     monkeypatch.delenv("ARC_GATE_SECRET", raising=False)
     kw: dict[str, Any] = {} if profiles_file is None else {"account_profiles_file": profiles_file}
     s = ArcSettings(_env_file=None, account_profile=profile, **kw)  # type: ignore[call-arg]
-    return tp._recording_fixture_run(s, load_routines())
+    routines = load_routines()
+    if not liquidity_rank:
+        lr = routines.scanner.liquidity_rank.model_copy(update={"enabled": False})
+        sc = routines.scanner.model_copy(update={"liquidity_rank": lr})
+        routines = routines.model_copy(update={"scanner": sc})
+    return tp._recording_fixture_run(s, routines)
 
 
 @pytest.mark.parametrize("profile", ["margin", "cash_debit"])
