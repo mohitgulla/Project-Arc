@@ -47,7 +47,7 @@ from __future__ import annotations
 
 import datetime as dt
 import math
-from collections import defaultdict
+from collections import Counter, defaultdict
 from decimal import Decimal
 from enum import StrEnum
 from typing import TYPE_CHECKING
@@ -57,6 +57,7 @@ from pydantic import BaseModel, Field, model_validator
 from scipy.stats import norm
 
 from arc.backtest.costs import CostModel, load_cost_model
+from arc.data.volume import today_min_volume, volume_basis
 from arc.models import Liquidity, Structure
 from arc.pricing.bs import BSMInputs, price
 from arc.scanner.filters import FilterReport, LiquidityRules, apply_filters
@@ -86,6 +87,7 @@ __all__ = [
     "DEBIT_STRATEGIES",
     "RankBy",
     "ScanCandidate",
+    "ScanInputs",
     "ScanParams",
     "ScanResult",
     "ScanStrategy",
@@ -292,6 +294,18 @@ class NoSpotError(LookupError):
     """E4.12: the underlying has no usable spot (fail the ticker closed)."""
 
 
+class ScanInputs(BaseModel):
+    """E2.5 (D116): where the chain's liquidity inputs came from (counts per source)."""
+
+    oi_cboe: int = 0
+    oi_alpaca: int = 0
+    oi_unknown: int = 0
+    volume_source: dict[str, int] = Field(default_factory=dict)
+    min_volume_today: int | None = Field(
+        None, description="Pro-rated minimum for today's volume (None: no `now` given)"
+    )
+
+
 class ScanResult(BaseModel):
     """Everything :func:`scan` found for one underlying."""
 
@@ -304,6 +318,20 @@ class ScanResult(BaseModel):
     iv: IvStats
     filter_report: FilterReport
     candidates: list[ScanCandidate]
+    inputs: ScanInputs = Field(default_factory=ScanInputs)
+
+
+def _scan_inputs(chain: Sequence[OptionContract], min_today: int | None) -> ScanInputs:
+    """E2.5 counts of the chain's OI and volume sources."""
+    oi = Counter(c.oi_source for c in chain)
+    vol = Counter(c.volume_source or "unknown" for c in chain)
+    return ScanInputs(
+        oi_cboe=oi["cboe"],
+        oi_alpaca=oi["alpaca"],
+        oi_unknown=oi[None],
+        volume_source=dict(sorted(vol.items())),
+        min_volume_today=min_today,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -652,8 +680,13 @@ def scan(
     *,
     as_of: dt.date,
     iv_history: Mapping[dt.date, float] | None = None,
+    now: dt.datetime | None = None,
 ) -> ScanResult:
-    """Scan *ticker*'s chain and return ranked candidates for ``params.strategies``."""
+    """Scan *ticker*'s chain and return ranked candidates for ``params.strategies``.
+
+    E2.5 (D116): *now* pro-rates the volume minimum for contracts carrying today's
+    volume (:func:`arc.data.volume.volume_basis`); ``None`` keeps the full minimum.
+    """
     from arc.data.base import market_spot
 
     ticker = ticker.upper()
@@ -691,7 +724,13 @@ def scan(
         min_obs=params.iv_min_obs,
     )
 
-    liquid, report = apply_filters(chain, params.rules)
+    rules = params.rules
+    min_today = None
+    if now is not None:
+        rules = rules.model_copy(update={"volume_fraction": volume_basis(now).fraction})
+        min_today = today_min_volume(rules.min_volume, rules.volume_fraction)
+    liquid, report = apply_filters(chain, rules)
+    inputs = _scan_inputs(chain, min_today)
     # Builders emit compact OCC symbols; normalise chain symbols (padded or compact) to match.
     quotes = {parse_occ(c.symbol).format(): c for c in liquid}
     by_exp: dict[tuple[dt.date, str], list[OptionContract]] = defaultdict(list)
@@ -791,6 +830,8 @@ def scan(
         candidates=len(cands),
         atm_iv=iv.atm_iv,
         iv_rank=iv.iv_rank,
+        **inputs.model_dump(),
+        rejected=report.rejected,
     )
     return ScanResult(
         ticker=ticker,
@@ -802,4 +843,5 @@ def scan(
         iv=iv,
         filter_report=report,
         candidates=ranked,
+        inputs=inputs,
     )

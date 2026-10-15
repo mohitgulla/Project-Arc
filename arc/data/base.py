@@ -6,9 +6,9 @@ See PLAN.md §2.2 (arc/data/) and §4 (E1.4).
 from __future__ import annotations
 
 import datetime as dt  # noqa: TC003 — used at runtime in pydantic models
-from typing import Literal, NamedTuple, Protocol, runtime_checkable
+from typing import Any, Literal, NamedTuple, Protocol, runtime_checkable
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SerializerFunctionWrapHandler, model_serializer
 
 # ---------------------------------------------------------------------------
 # Data contracts
@@ -55,6 +55,17 @@ class OptionContract(BaseModel):
     volume: int | None = None
     # D66: Penny Program class (Alpaca contracts `ppind`); None = unknown
     penny_program: bool | None = None
+    # E2.5 (D116): where open_interest / volume came from. Left out of dumps when
+    # None, so recordings, tapes and hashes of contracts without them are unchanged.
+    open_interest_date: dt.date | None = Field(
+        None, description="Alpaca contracts `open_interest_date` (the provider's OI as-of)"
+    )
+    oi_source: Literal["cboe", "alpaca"] | None = Field(
+        None, description="Set by the scanner's OI merge (arc.data.oi); None = not merged"
+    )
+    volume_source: Literal["today", "prev_session"] | None = Field(
+        None, description="Which session's daily bar `volume` is (arc.data.volume)"
+    )
 
     # Volatility and Greeks
     implied_volatility: float | None = None
@@ -70,6 +81,17 @@ class OptionContract(BaseModel):
     def is_flagged(self) -> bool:
         """Return True if any data-quality issues were flagged."""
         return len(self.quality_flags) > 0
+
+    @model_serializer(mode="wrap")
+    def _drop_unset_sources(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        out: dict[str, Any] = handler(self)
+        for key in _OPTIONAL_SOURCE_FIELDS:
+            if out.get(key) is None:
+                out.pop(key, None)
+        return out
+
+
+_OPTIONAL_SOURCE_FIELDS = ("open_interest_date", "oi_source", "volume_source")
 
 
 class UnderlyingQuote(BaseModel):
