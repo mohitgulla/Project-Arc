@@ -36,16 +36,19 @@ Recent activity           ``fills``, ``executions``, close ``proposals``, ``halt
 from __future__ import annotations
 
 import datetime as _dt
+import sqlite3
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from arc.context.ttl import to_db
+from arc.gate.caps import alloc_tier
 from arc.models import Performance  # noqa: TC001 - pydantic field
 from arc.reconcile.baseline import BaselineSource  # noqa: TC001 - pydantic field
 from arc.reconcile.performance import DailyEquity, daily_equity, performance_from
 from arc.routines.config import AdvisoryBand, GreekAdvisorySettings
+from arc.store.execution import reserved_open_max_loss
 from arc.tower.data import (
     Direction,
     GreeksView,
@@ -74,10 +77,13 @@ from arc.tower.data_exits import (
     ExitWatchView,
     load_exit_path,
 )
-from arc.utils.calendar import ET
+from arc.tower.data_sleeves import SleeveUsage, sleeve_usage
+from arc.utils.calendar import ET, sessions_between
 
 if TYPE_CHECKING:
-    import sqlite3
+    from collections.abc import Sequence
+
+    from arc.account_profiles import DteSleeve
 
 __all__ = [
     "RANGES",
@@ -150,6 +156,16 @@ class StatusSection(BaseModel):
     alerts: list[AlertView] = Field(default_factory=list)
     order_budget: OrderBudgetView | None = Field(
         default=None, description="Absent until the monitor heartbeat carries it (E6.5)"
+    )
+    sessions: int | None = Field(
+        default=None,
+        description=(
+            "D92: trading sessions the account has traded since its start (``store:epoch`` "
+            "fresh start, else the first reconciled day); today counts from the 09:30 ET open"
+        ),
+    )
+    sessions_since: _dt.date | None = Field(
+        default=None, description="D92: the ET day the session count starts from"
     )
 
 
@@ -317,9 +333,24 @@ class GreeksSection(BaseModel):
     greeks: GreeksView
     max_loss_by_underlying: dict[str, Decimal] = Field(default_factory=dict)
     per_underlying_cap: Decimal | None = Field(
-        default=None, description="max_alloc_pct × equity (gate rule)"
+        default=None, description="active tier's cap × equity (gate rule, D116)"
     )
-    max_alloc_pct: float
+    max_alloc_pct: float = Field(description="D116: the active tier's cap, share of equity")
+    alloc_tier: Literal["base", "reduced"] | None = Field(
+        default=None, description="D116: active per-underlying tier (None: equity unknown)"
+    )
+    deployed_max_loss: Decimal | None = Field(
+        default=None,
+        description="D116: Σ open max loss + max loss reserved by in-flight opens, dollars",
+    )
+    deployed_pct: float | None = Field(
+        default=None, description="D116: deployed_max_loss / equity (None: equity unknown)"
+    )
+    alloc_tier_threshold_pct: float | None = Field(
+        default=None, description="D116: deployed share of equity at which the cap drops"
+    )
+    max_alloc_pct_base: float | None = Field(default=None, description="D116 base tier")
+    max_alloc_pct_reduced: float | None = Field(default=None, description="D116 reduced tier")
     theta: GreekAdvisory | None = Field(
         default=None, description="D87: Θ, $ per day (uncapped; advisory band only)"
     )
@@ -413,6 +444,10 @@ class OverviewResponse(BaseModel):
     activity: list[ActivityItem]
     activity_hours: int = Field(description="Recent Activity window (rolling hours)")
     activity_since: _dt.datetime = Field(description="as_of − activity_hours")
+    sleeves: list[SleeveUsage] = Field(
+        default_factory=list,
+        description="E22.5 (D97): open positions per entry-DTE sleeve vs its slots",
+    )
 
 
 class PositionsResponse(BaseModel):
@@ -677,6 +712,23 @@ def _daily_closes(
     return out
 
 
+#: D105: how far back a benchmark close may come from (a weekend / holiday run of days)
+_CLOSE_LOOKBACK_DAYS = 7
+
+
+def _close_on_or_before(closes: dict[_dt.date, Decimal], day: _dt.date) -> Decimal | None:
+    """D105: the benchmark's close on ``day``, else its last close within a week before it.
+
+    A portfolio day can fall on a non-session (the D80 store epoch was a Sunday); the
+    benchmark's value then is the prior session's close, so the line isn't dropped.
+    """
+    for back in range(_CLOSE_LOOKBACK_DAYS + 1):
+        c = closes.get(day - _dt.timedelta(days=back))
+        if c is not None:
+            return c
+    return None
+
+
 def _prev_session(day: _dt.date) -> _dt.date:
     from arc.utils.calendar import previous_session
 
@@ -718,10 +770,10 @@ def _benchmarks(
                 if live is not None and p.t == live.at:
                     if sym in live.benchmarks:
                         pts.append(EquityPoint(t=p.t, v=live.benchmarks[sym]))
-                elif day in closes:
-                    pts.append(EquityPoint(t=p.t, v=closes[day]))
+                elif (c := _close_on_or_before(closes, day)) is not None:
+                    pts.append(EquityPoint(t=p.t, v=c))
             if start_at is not None:
-                start = closes.get(start_at.astimezone(ET).date())
+                start = _close_on_or_before(closes, start_at.astimezone(ET).date())
         if start is None or start <= 0 or not pts:
             continue
         last = pts[-1]
@@ -916,6 +968,11 @@ def _position_rows(
                 )
             if all(leg.unrealized_pl is not None for leg in marked):
                 pl = sum((leg.unrealized_pl or Decimal(0) for leg in marked), start=Decimal(0))
+            elif mark is not None:
+                # D115: a shared-account arm's legs carry its own qty and the broker's mark,
+                # but no broker P&L (that is netted over every arm's lots): P&L since entry
+                # from the structure's own entry and mark.
+                pl = _pl_since_entry(mark, entry, n)
             prev = [_lastday(leg) for leg in marked]
             if all(leg.current_price is not None for leg in marked) and all(
                 x is not None for x in prev
@@ -1066,6 +1123,38 @@ def _underlying_changes(
     return out
 
 
+_CENT = Decimal("0.01")
+
+
+def _pl_since_entry(mark: Decimal, entry: Decimal, contracts: int) -> Decimal:
+    """(mark − entry) × 100 × contracts: equals Σ legs' broker P&L when the broker's
+    cost basis is the structure's fill (D115)."""
+    return ((mark - entry) * 100 * contracts).quantize(_CENT)
+
+
+def _spark_point(p: PositionRow, by: dict[str, LegView]) -> Decimal | None:
+    """P&L since entry at one mark: Σ legs' broker P&L, else (D115, shared-account arms)
+    from the legs' marks and the structure's entry."""
+    if not p.legs or any(s not in by for s in p.legs):
+        return None
+    vals = [by[s].unrealized_pl for s in p.legs]
+    if all(v is not None for v in vals):
+        return sum((v or Decimal(0) for v in vals), start=Decimal(0))
+    legs = [by[s] for s in p.legs]
+    if p.unrealized_pl is None or any(leg.current_price is None for leg in legs):
+        return None
+    # The leg is this structure's alone (else P&L is blank), so its qty is ratio × n;
+    # sign from `side` (Alpaca signs short qty, arm_positions() does not).
+    value = sum(
+        (
+            (-1 if leg.side == "short" else 1) * abs(leg.qty) * (leg.current_price or Decimal(0))
+            for leg in legs
+        ),
+        start=Decimal(0),
+    )
+    return ((value - p.entry_net * p.contracts) * 100).quantize(_CENT)
+
+
 def _movers(
     positions: list[PositionRow],
     marks: list[IntradayMark],
@@ -1077,10 +1166,9 @@ def _movers(
             continue
         spark: list[float] = []
         for m in marks:
-            by = {_occ_key(leg.symbol): leg for leg in m.legs}
-            vals = [by[s].unrealized_pl for s in p.legs if s in by]
-            if p.legs and len(vals) == len(p.legs) and all(v is not None for v in vals):
-                spark.append(float(sum((v or Decimal(0) for v in vals), start=Decimal(0))))
+            pt = _spark_point(p, {_occ_key(leg.symbol): leg for leg in m.legs})
+            if pt is not None:
+                spark.append(float(pt))
         change: float | None = None
         if p.day_change is not None and p.mark_net is not None:
             prev_value = p.mark_net * 100 * p.contracts - p.day_change
@@ -1246,7 +1334,37 @@ def _group_alerts(items: list[ActivityItem], groups: dict[int, str]) -> list[Act
     return out
 
 
-def _status(conn: sqlite3.Connection, monitor: sqlite3.Row | None) -> StatusSection:
+#: D92: a session counts toward the account's total from its regular open.
+SESSION_OPEN = _dt.time(9, 30)
+
+
+def _account_start(conn: sqlite3.Connection) -> _dt.date | None:
+    """The ET day the account's history starts: the D80 ``store:epoch`` fresh start, else
+    the first ``pnl_snapshots`` row (a store that was never reset)."""
+    if _has_table(conn, "routine_state"):
+        row = conn.execute("SELECT value FROM routine_state WHERE key = 'store:epoch'").fetchone()
+        if row is not None:
+            started = parse_ts(_json(row["value"], {}).get("started_at"))
+            if started is not None:
+                return started.astimezone(ET).date()
+    row = conn.execute("SELECT MIN(snapshot_at) AS t FROM pnl_snapshots").fetchone()
+    first = parse_ts(row["t"]) if row is not None else None
+    return first.astimezone(ET).date() if first is not None else None
+
+
+def _session_count(start: _dt.date | None, now_et: _dt.datetime) -> int | None:
+    """Sessions in [*start*, today]; today only once the 09:30 ET open has passed."""
+    if start is None:
+        return None
+    days = sessions_between(start, now_et.date())
+    if days and days[-1] == now_et.date() and now_et.time() < SESSION_OPEN:
+        days = days[:-1]
+    return len(days)
+
+
+def _status(
+    conn: sqlite3.Connection, monitor: sqlite3.Row | None, now_et: _dt.datetime
+) -> StatusSection:
     active = [h for h in _halts(conn, 50) if h.active]
     epoch = _dt.datetime.min.replace(tzinfo=_dt.UTC)
     active.sort(key=lambda h: h.at or epoch, reverse=True)
@@ -1276,7 +1394,15 @@ def _status(conn: sqlite3.Connection, monitor: sqlite3.Row | None) -> StatusSect
         health_status=health["status"] if health else None,
         alerts=alerts,
         order_budget=_order_budget(monitor),
+        sessions=_session_count(start := _account_start(conn), now_et),
+        sessions_since=start,
     )
+
+
+class _TierCfg(NamedTuple):
+    max_alloc_pct: float
+    max_alloc_pct_reduced: float
+    alloc_tier_threshold_pct: float
 
 
 def _greeks_section(
@@ -1289,6 +1415,9 @@ def _greeks_section(
     stale_after: _dt.timedelta,
     beta_delta_cap_pct: float = 2.00,
     advisory: GreekAdvisorySettings | None = None,
+    max_alloc_pct_reduced: float | None = None,
+    alloc_tier_threshold_pct: float | None = None,
+    reserved_max_loss: Decimal = Decimal(0),
 ) -> GreeksSection:
     advisory = advisory or GreekAdvisorySettings()
     g = _greeks(
@@ -1302,15 +1431,42 @@ def _greeks_section(
     for p in positions:
         if p.status == "open" and p.max_loss is not None:
             by[p.ticker] = by.get(p.ticker, Decimal(0)) + p.max_loss
-    cap = Decimal(str(max_alloc_pct)) * Decimal(str(g.equity)) if g.equity is not None else None
+    # D116: the gate's own tier helper on the same deployed sum (open + in-flight opens)
+    tier_cfg = _TierCfg(
+        max_alloc_pct,
+        max_alloc_pct if max_alloc_pct_reduced is None else max_alloc_pct_reduced,
+        1.0 if alloc_tier_threshold_pct is None else alloc_tier_threshold_pct,
+    )
+    deployed = sum(by.values(), Decimal(0)) + reserved_max_loss
+    tier = alloc_tier(deployed, Decimal(str(g.equity)), tier_cfg) if g.equity is not None else None
+    active = float(tier.pct) if tier is not None else max_alloc_pct
+    cap = tier.pct * Decimal(str(g.equity)) if tier is not None and g.equity is not None else None
     return GreeksSection(
         greeks=g,
         max_loss_by_underlying=dict(sorted(by.items(), key=lambda kv: kv[1], reverse=True)),
         per_underlying_cap=cap,
-        max_alloc_pct=max_alloc_pct,
+        max_alloc_pct=active,
+        alloc_tier=tier.tier if tier is not None and tier.deployed_pct is not None else None,
+        deployed_max_loss=deployed,
+        deployed_pct=(
+            round(float(tier.deployed_pct), 4)
+            if tier is not None and tier.deployed_pct is not None
+            else None
+        ),
+        alloc_tier_threshold_pct=alloc_tier_threshold_pct,
+        max_alloc_pct_base=max_alloc_pct,
+        max_alloc_pct_reduced=min(tier_cfg.max_alloc_pct_reduced, max_alloc_pct),
         theta=_advisory(g.theta, g.equity, advisory.theta, cost_only=True),
         gamma=_advisory(_dollar_gamma(monitor), g.equity, advisory.gamma),
     )
+
+
+def _reserved(conn: sqlite3.Connection, now: _dt.datetime) -> Decimal:
+    """D116: max loss reserved by in-flight opens (SELECT only; 0 on an older store)."""
+    try:
+        return reserved_open_max_loss(conn, now=now)
+    except sqlite3.Error:
+        return Decimal(0)
 
 
 def _dollar_gamma(monitor: sqlite3.Row | None) -> float | None:
@@ -1415,6 +1571,9 @@ def load_overview(
     activity_hours: int = ACTIVITY_HOURS,
     beta_delta_cap_pct: float = 2.00,
     greek_advisory: GreekAdvisorySettings | None = None,
+    sleeves: Sequence[DteSleeve] = (),
+    max_alloc_pct_reduced: float | None = None,
+    alloc_tier_threshold_pct: float | None = None,
 ) -> OverviewResponse:
     """Every Overview section read in one pass as of *now* (SELECT only).
 
@@ -1441,7 +1600,7 @@ def load_overview(
         stale_after_s=int(stale_after.total_seconds()),
         marks_at=latest.at if latest else None,
         marks_stale=latest is None or now_et - latest.at > stale_after,
-        status=_status(conn, monitor),
+        status=_status(conn, monitor, now_et),
         equity=_equity(conn, rng, today, daily, reconciled_at, marks, latest),
         day_pnl=_day_pnl(conn, daily, latest, positions),
         account=_account(monitor),
@@ -1455,6 +1614,9 @@ def load_overview(
             stale_after=stale_after,
             beta_delta_cap_pct=beta_delta_cap_pct,
             advisory=greek_advisory,
+            max_alloc_pct_reduced=max_alloc_pct_reduced,
+            alloc_tier_threshold_pct=alloc_tier_threshold_pct,
+            reserved_max_loss=_reserved(conn, now_et),
         ),
         proposals=_proposal_rows(conn, now_et),
         proposals_since=now_et - PROPOSAL_WINDOW,
@@ -1462,4 +1624,5 @@ def load_overview(
         activity=_activity(conn, activity_since),
         activity_hours=activity_hours,
         activity_since=activity_since,
+        sleeves=sleeve_usage(conn, sleeves),
     )

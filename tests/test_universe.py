@@ -351,6 +351,25 @@ class TestGuard:
         assert g.admit("PLTR") == REJECT_ILLIQUID
         assert not g.screens
 
+    def test_production_adv_reads_sip(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """E23.0a (D98): with no injected market (production wiring), the ADV read gets
+        its own SIP adapter (universe.yaml ``adv_feed: sip``) while quotes/chains use
+        the configured (IEX) one; both shipped screen profiles say sip."""
+        import arc.data.alpaca as alpaca_mod
+
+        made: list[Any] = []
+
+        class _Fake:
+            def __init__(self, data_feed: Any = None, **_: Any) -> None:
+                made.append(data_feed)
+
+        monkeypatch.setattr(alpaca_mod, "AlpacaMarketData", _Fake)
+        g = UniverseGuard.from_settings(_settings(), now=FIXTURE_NOW, load_master=False)
+        assert g.config.liquidity_screen.standard.adv_feed == "sip"
+        assert g.config.liquidity_screen.loose.adv_feed == "sip"
+        market, adv = g._markets()  # noqa: SLF001 - the production wiring under test
+        assert made == [None, "sip"] and market is not adv
+
     def test_gate_never_imports_universe(self) -> None:
         for path in Path("arc/gate").rglob("*.py"):
             assert "arc.universe" not in path.read_text(), path

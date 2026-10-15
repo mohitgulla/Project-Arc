@@ -25,6 +25,8 @@ from pydantic import BaseModel, ConfigDict
 
 from arc.account_profiles import BuyingPower, DayTradeRule, ShortLegPolicy
 from arc.gate.band import MAX_BAND_STEPS, PriceBand, as_grid, band_from_nbbo
+from arc.gate.caps import alloc_tier, deployed_max_loss
+from arc.gate.delta import MAX_LOSS_DELTA_KINDS, delta_exposure, kind_of
 from arc.gate.ticks import TickGrid, order_grid
 from arc.models import GateDecision, Leg, LegIntent, Proposal, QuoteClock
 from arc.models import StructureKind as ModelKind
@@ -64,6 +66,7 @@ __all__ = [
     "check_max_open_positions",
     "check_max_gain",
     "check_per_underlying",
+    "check_sleeve_positions",
     "check_spread_tick",
     "check_structure_whitelist",
     "check_wash_sale",
@@ -120,6 +123,8 @@ class RuleCode(StrEnum):
     DAY_TRADES = "account_profile_day_trades"
     # D70 (E11.3): live opens capped until the live scorecard gate is met
     LIVE_SIZE_CAP = "live_size_cap"
+    # E22.1 (D97): open positions per entry-DTE sleeve
+    SLEEVE_POSITIONS = "sleeve_max_positions"
     RULE_ERROR = "rule_error"
 
 
@@ -240,17 +245,25 @@ def check_max_gain(d: Derived) -> list[Violation]:
 def check_per_underlying(
     d: Derived, account: AccountSnapshot, portfolio: Portfolio, config: ArcSettings
 ) -> list[Violation]:
-    """Existing + new max loss on one underlying ≤ ``max_alloc_pct`` × equity."""
+    """Existing + new max loss on one underlying ≤ the D116 tiered cap × equity.
+
+    The cap (:func:`arc.gate.caps.alloc_tier`) is ``max_alloc_pct`` while the book's
+    deployed max loss (open + reserved in-flight opens, pre-trade) is below
+    ``alloc_tier_threshold_pct`` × equity, else ``max_alloc_pct_reduced``.
+    """
     if d.max_loss_total is None:
         return _v(RuleCode.PER_UNDERLYING, "max loss is unbounded")
+    if account.equity <= 0:
+        return _v(RuleCode.PER_UNDERLYING, f"invalid equity {account.equity}")
     existing = sum((p.max_loss for p in portfolio.positions if p.underlying == d.underlying), _ZERO)
     total = existing + d.max_loss_total
-    limit = _d(config.max_alloc_pct) * account.equity
+    tier = alloc_tier(deployed_max_loss(portfolio), account.equity, config)
+    limit = tier.pct * account.equity
     if total > limit:
         return _v(
             RuleCode.PER_UNDERLYING,
             f"{d.underlying} max loss {total} (existing {existing} + new {d.max_loss_total}) "
-            f"> {limit} ({config.max_alloc_pct:.2%} of equity {account.equity})",
+            f"> {limit} ({tier.describe()}; equity {account.equity})",
         )
     return []
 
@@ -563,22 +576,30 @@ def check_greek_caps(
 ) -> list[Violation]:
     """Post-trade |$Δ| ≤ pct × equity; |β$Δ| ≤ pct × equity; |ν| ≤ pct × equity ($/vol-pt).
 
-    Dollar delta (D57) = the book's ``dollar_delta`` + the proposal's Δ (share-eq) ×
-    contracts × its underlying's spot. Beta-weighted dollar delta (D62) = the book's
-    ``beta_dollar_delta`` + the same proposal term × β used, where β used is
+    Dollar delta (D57) = the book's ``dollar_delta`` + the proposal's term: Δ (share-eq)
+    × contracts × its underlying's spot, except that a ``vertical_debit`` /
+    ``long_call`` / ``long_put`` counts sign(Δ) × its total max loss (D116, E3.8;
+    :func:`arc.gate.delta.delta_exposure`). Beta-weighted dollar delta (D62) = the
+    book's ``beta_dollar_delta`` + the same proposal term × β used, where β used is
     ``market.underlying_beta[root]`` floored at 1.0 (a missing β is 1.0, never a
     rejection). A missing or non-positive spot fails closed (``missing_spot``) and
-    skips both delta caps; the vega check still runs.
+    skips both delta caps, whatever the kind; the vega check still runs.
     """
     out: list[Violation] = []
     n = proposal.sizing.contracts
+    legs = proposal.structure.legs
     g = proposal.structure.greeks
-    root = parse_occ(proposal.structure.legs[0].occ_symbol).root
+    root = parse_occ(legs[0].occ_symbol).root
     spot = market.underlying_spot.get(root)
     if spot is None or spot <= 0:
         out += _v(RuleCode.MISSING_SPOT, f"no spot for {root}: dollar delta unknown")
     else:
-        added = _d(g.delta) * n * spot
+        kind = kind_of(legs)
+        max_loss = max_gain_loss(legs)[1] if kind in MAX_LOSS_DELTA_KINDS else None
+        added = delta_exposure(
+            kind, _d(g.delta) * n, spot, None if max_loss is None else max_loss * n
+        )
+        assert added is not None  # spot is known
         dollar_delta = portfolio.dollar_delta + added
         delta_cap = _d(config.portfolio_dollar_delta_cap_pct) * account.equity
         if abs(dollar_delta) > delta_cap:
@@ -746,11 +767,48 @@ def check_dte_window(d: Derived, config: ArcSettings, now: dt.datetime) -> list[
 
     The window is the account profile's ``dte_min/dte_max`` override when it sets
     one (D25), else ``dte_min/dte_max`` (:attr:`ArcSettings.entry_dte_window`).
+    E22.1 (D97): a profile with named sleeves needs the DTE inside **some** sleeve
+    (the gap between two sleeves is outside); the message names every sleeve.
     """
-    lo, hi = config.entry_dte_window
     dte = (d.expiration - now.astimezone(ET).date()).days
+    if config.profile.has_sleeves:
+        sleeves = config.entry_sleeves
+        if dte < 1 or config.sleeve_for_dte(dte) is None:
+            names = ", ".join(s.label for s in sleeves)
+            return _v(RuleCode.DTE_WINDOW, f"DTE {dte} outside sleeves {names}")
+        return []
+    lo, hi = config.entry_dte_window
     if dte < 1 or not lo <= dte <= hi:
         return _v(RuleCode.DTE_WINDOW, f"DTE {dte} outside [{max(lo, 1)}, {hi}]")
+    return []
+
+
+def check_sleeve_positions(
+    portfolio: Portfolio, d: Derived, config: ArcSettings, now: dt.datetime
+) -> list[Violation]:
+    """E22.1 (D97): open positions in the proposal's sleeve + 1 ≤ the sleeve's ``max_positions``.
+
+    The proposal's sleeve is the one containing its DTE as of ``now`` (none: rule
+    ``dte_window`` reports it, this rule passes). A sleeve without ``max_positions``
+    is uncapped (every single-window profile). A held position belongs to the sleeve
+    containing its *entry* DTE; one with an unknown entry DTE counts toward every
+    sleeve (fail closed). The global ``max_open_positions`` still applies on top.
+    """
+    dte = (d.expiration - now.astimezone(ET).date()).days
+    sleeve = config.sleeve_for_dte(dte)
+    if sleeve is None or sleeve.max_positions is None:
+        return []
+    held = sum(
+        1
+        for p in portfolio.positions
+        if p.entry_dte is None or config.sleeve_for_dte(p.entry_dte) == sleeve
+    )
+    n = held + 1
+    if n > sleeve.max_positions:
+        return _v(
+            RuleCode.SLEEVE_POSITIONS,
+            f"{n} positions in sleeve {sleeve.label} > max {sleeve.max_positions}",
+        )
     return []
 
 
@@ -930,7 +988,8 @@ def evaluate(
     ``closing``: the proposal closes an open position (E6.2 exits). Every leg must
     reduce a held leg (:func:`check_closing`); rules that only limit *opening*
     risk are skipped — daily-loss entry block, max open positions, Greek caps,
-    per-underlying cap, structure whitelist, account profile (D25), wash sale, entry DTE window and
+    per-underlying cap, structure whitelist, account profile (D25), wash sale, entry DTE window,
+    DTE-sleeve slots (E22.1) and
     earnings blackout. The halt, TTL, data freshness, spread/NBBO/tick and band
     checks still run (fail closed). An opens-only halt (E11.4, D73) blocks opens
     only.
@@ -988,6 +1047,7 @@ def evaluate(
             violations += _run("account_profile", lambda: check_account_profile(p, risk_d, a, c))
             violations += _run("wash_sale", lambda: check_wash_sale(dd, pf, c, now))
             violations += _run("dte_window", lambda: check_dte_window(dd, c, now))
+            violations += _run("sleeve_positions", lambda: check_sleeve_positions(pf, dd, c, now))
             violations += _run("earnings", lambda: check_earnings_blackout(p, dd, m, c, now))
 
     return GateDecision(

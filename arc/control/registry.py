@@ -183,6 +183,10 @@ NEVER_TUNABLE: frozenset[str] = frozenset(
         "broker_transport",
         # D70 (E11.3): owner decision; live auto-approve always waits for the live gate.
         "live_auto_approve_requires_gate",
+        # D69 (E15.3) / D108: derived on a shared arm's effective settings (arms on the
+        # account x order_budget_daily_max), never set by hand.
+        "order_budget_account_max",
+        "alpaca_rate_lock_dir",
     }
 )
 
@@ -222,6 +226,10 @@ NOT_EXPOSED: dict[str, str] = {
     "iv_dividend_yields": "pricing input for the IV backfill",
     "spot_max_spread_pct": "data-quality guard on spot; change by PR",
     "alpaca_data_calls_per_minute": "data API plumbing",
+    # D114: transient market-data read retry; plumbing, change by PR.
+    "alpaca_read_retries": "data API plumbing (D114); change by PR",
+    "alpaca_read_retry_base_s": "data API plumbing (D114); change by PR",
+    "alpaca_read_retry_budget_s": "data API plumbing (D114); change by PR",
     "ingest_rss_timeout_seconds": "network plumbing",
     "yt_caption_grace_minutes": "ingestion plumbing",
     "yt_max_audio_minutes": "ingestion plumbing",
@@ -319,6 +327,11 @@ _USER_RE = re.compile(r"^[UW][A-Z0-9]{6,20}$")
 # `tick.after_sources_wait` are process topology, edited in routines.yaml only.
 _ROUTINE_KEY_RE = re.compile(r"^routines\.(?P<job>[a-z0-9_.]+)\.(?P<attr>enabled|cadence)$")
 _PROFILE_KEY_RE = re.compile(r"^profiles\.(?P<name>[a-z0-9_]+)\.(?P<attr>dte_min|dte_max)$")
+# E22.1 (D97): one named entry-DTE sleeve of a profile (config/account_profiles.yaml).
+_SLEEVE_KEY_RE = re.compile(
+    r"^profiles\.(?P<name>[a-z0-9_]+)\.sleeves\.(?P<sleeve>[a-z][a-z0-9_]*)"
+    r"\.(?P<attr>dte_min|dte_max|max_positions)$"
+)
 
 
 def _s(key: str, group: Group, typ: ValueType, desc: str, risk: Risk, **kw: Any) -> Tunable:
@@ -740,14 +753,40 @@ _STATIC: tuple[Tunable, ...] = (
         "max_alloc_pct",
         Group.RISK,
         _F,
-        "D18 cap: max loss per underlying (existing + new) as a share of equity; also the "
-        "sizing cap. Gate rule per_underlying_limit.",
+        "D116 base tier of the D18 cap: max loss per underlying (existing + new) as a share "
+        "of equity while deployed max loss (open + in-flight opens) is below "
+        "alloc_tier_threshold_pct; also the sizing cap. Gate rule per_underlying_limit.",
         Risk.UP,
         unit="pct",
         min=0.005,
-        max=0.10,
-        hard_ceiling=0.10,
+        max=0.20,
+        hard_ceiling=0.20,
         aliases=("per_underlying_cap",),
+    ),
+    _s(
+        "max_alloc_pct_reduced",
+        Group.RISK,
+        _F,
+        "D116 reduced tier: the per-underlying cap once deployed max loss is at or above "
+        "alloc_tier_threshold_pct of equity (never above max_alloc_pct).",
+        Risk.UP,
+        unit="pct",
+        min=0.005,
+        max=0.20,
+        hard_ceiling=0.20,
+        aliases=("per_underlying_cap_reduced",),
+    ),
+    _s(
+        "alloc_tier_threshold_pct",
+        Group.RISK,
+        _F,
+        "D116: deployed max loss (open + in-flight opens, pre-trade) as a share of equity "
+        "at which the per-underlying cap drops from max_alloc_pct to max_alloc_pct_reduced.",
+        Risk.UP,
+        unit="pct",
+        min=0.10,
+        max=1.0,
+        hard_ceiling=1.0,
     ),
     _s(
         "daily_loss_halt_pct",
@@ -774,8 +813,8 @@ _STATIC: tuple[Tunable, ...] = (
         "portfolio_dollar_delta_cap_pct",
         Group.RISK,
         _F,
-        "D57/D62: |net dollar delta| (Σ Δ share-eq × spot) cap as a share of equity "
-        "(gate rule greek_caps).",
+        "D57/D62: |net dollar delta| (Σ Δ share-eq × spot; D116: debit verticals and long "
+        "options at sign(Δ) × max loss) cap as a share of equity (gate rule greek_caps).",
         Risk.UP,
         unit="pct",
         min=0.10,
@@ -786,7 +825,8 @@ _STATIC: tuple[Tunable, ...] = (
         "portfolio_beta_delta_cap_pct",
         Group.RISK,
         _F,
-        "D62: |beta-weighted net dollar delta| (Σ Δ share-eq × spot × max(β vs SPY, 1)) "
+        "D62: |beta-weighted net dollar delta| (Σ Δ share-eq × spot × max(β vs SPY, 1); "
+        "D116: debit verticals and long options at sign(Δ) × max loss × max(β, 1)) "
         "cap as a share of equity (gate rule greek_caps).",
         Risk.UP,
         unit="pct",
@@ -813,6 +853,18 @@ _STATIC: tuple[Tunable, ...] = (
         Risk.FALSE,
     ),
     # -- entries -----------------------------------------------------------------
+    _s(
+        "data.alpaca_history_feed",
+        Group.ENTRIES,
+        ValueType.CHOICE,
+        "E23.0a (D98): stock feed for volume-weighted history reads (regime technicals' "
+        "daily bars, the anti-chase session VWAP). sip = consolidated tape, delayed 16 min "
+        "intraday (free tier); iex = one exchange (~5% of volume), the rollback. Live quotes "
+        "always stay on IEX.",
+        Risk.NONE,
+        field="alpaca_history_feed",
+        choices=("sip", "iex"),
+    ),
     _s(
         "dte_min",
         Group.ENTRIES,
@@ -980,6 +1032,18 @@ liquidity; a leg passes if within this OR spread_max_abs).",
         Risk.UP,
         field="pipeline_max_shortlist",
         min=1,
+        max=10,
+        hard_ceiling=10,
+    ),
+    _s(
+        "research.min_ranked",
+        Group.ENTRIES,
+        _I,
+        "E22.3 (D97): Research is asked to rank at least min(N, free slots x 2, pool) names "
+        "while slots are free (0 = off, the pre-E22.3 prompt). Never forces a trade.",
+        Risk.UP,
+        field="research_min_ranked",
+        min=0,
         max=10,
         hard_ceiling=10,
     ),
@@ -1271,6 +1335,34 @@ liquidity; a leg passes if within this OR spread_max_abs).",
         hard_ceiling=600,
         aliases=("execute.max_quote_age",),
     ),
+    # -- D101 (E24.1): re-gate on band move ------------------------------------------
+    _s(
+        "regate_max",
+        Group.EXECUTION,
+        _I,
+        "D101: re-gates per ladder when the market moves past its band (full gate at the "
+        "fresh mid, new band and token). 0 = no between-step check (rollback).",
+        Risk.UP,
+        field="execution_regate_max",
+        min=0,
+        max=3,
+        hard_ceiling=3,
+        aliases=("execution.regate_max",),
+    ),
+    _s(
+        "regate_max_move_pct",
+        Group.EXECUTION,
+        _F,
+        "D101: a re-gate is refused when the new band's worst price is more than this "
+        "share of the original mid above the original worst price.",
+        Risk.UP,
+        field="execution_regate_max_move_pct",
+        unit="pct",
+        min=0.0,
+        max=0.20,
+        hard_ceiling=0.20,
+        aliases=("execution.regate_max_move_pct",),
+    ),
     # -- close quote check (E6.2a) -------------------------------------------------
     _s(
         "close_quote.max_age_seconds",
@@ -1377,6 +1469,19 @@ liquidity; a leg passes if within this OR spread_max_abs).",
         min=0,
         max=199,
         hard_ceiling=0,
+    ),
+    # D69 (E15.3): shared experiment account limits. D108 removed order_budget.per_arm:
+    # every arm gets the full order_budget.* budget; the account guard is derived.
+    _s(
+        "alpaca_rate_per_min",
+        Group.EXECUTION,
+        _I,
+        "Alpaca requests per minute per account (token bucket shared by every arm).",
+        Risk.UP,
+        field="alpaca_rate_per_min",
+        min=1,
+        max=200,
+        hard_ceiling=200,
     ),
     _s(
         "order_budget.restrictive.research_max_shortlist",
@@ -1493,6 +1598,29 @@ liquidity; a leg passes if within this OR spread_max_abs).",
         min=0.0,
         max=1.0,
         hard_ceiling=0.0,
+    ),
+    _s(
+        "dedupe.missed_retry_after",
+        Group.ENTRIES,
+        _I,
+        "E24.2 (D101): minutes a missed open (no fill) waits before its same-day retry.",
+        Risk.DOWN,
+        field="dedupe_missed_retry_after_minutes",
+        unit="m",
+        min=5,
+        max=240,
+        hard_ceiling=5,
+    ),
+    _s(
+        "dedupe.missed_retry_max",
+        Group.ENTRIES,
+        _I,
+        "E24.2 (D101): same-day retries of a missed open (0 = off, the pre-E24.2 behaviour).",
+        Risk.UP,
+        field="dedupe_missed_retry_max",
+        min=0,
+        max=3,
+        hard_ceiling=3,
     ),
     _s(
         "portfolio.sector_max_pct",
@@ -1849,6 +1977,20 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         target=Target.ROUTINES,
         risk=Risk.UP,
         path=("loop", "max_idle"),
+        unit="m",
+        min=5,
+        max=240,
+        hard_ceiling=240,
+    ),
+    Tunable(
+        key="loop.max_idle_with_free_slots",
+        group=Group.ROUTINES,
+        type=_I,
+        description="E22.3 (D97): with a free slot in any sleeve and a sleeve with no opens "
+        "today, an unchanged loop still runs in full after this many minutes (else max_idle).",
+        target=Target.ROUTINES,
+        risk=Risk.UP,
+        path=("loop", "max_idle_with_free_slots"),
         unit="m",
         min=5,
         max=240,
@@ -2736,6 +2878,340 @@ _EXPERIMENT_TUNABLES += (
 )
 
 
+# E23.0 (D98): levels on regime technicals (strategy.yaml `volume_profile:` / `oi_walls:`).
+# Context only, never a gate input: no risk direction. Shipped on (D86); off = rollback.
+_LEVELS_TUNABLES: tuple[Tunable, ...] = (
+    Tunable(
+        key="volume_profile.enabled",
+        group=Group.ROUTINES,
+        type=ValueType.CHOICE,
+        description="E23.0: the pre-market 20-session SIP volume profile (POC, value area, "
+        "HVNs, vp_pos) on regime technicals and Research's tech segment. Context only. "
+        "off = rollback (nothing computed, prompt as before).",
+        target=Target.STRATEGY,
+        risk=Risk.NONE,
+        path=("volume_profile", "enabled"),
+        choices=("on", "off"),
+    ),
+    Tunable(
+        key="volume_profile.sessions",
+        group=Group.ROUTINES,
+        type=_I,
+        description="E23.0: completed sessions in the composite volume profile.",
+        target=Target.STRATEGY,
+        risk=Risk.NONE,
+        path=("volume_profile", "sessions"),
+        min=5,
+        max=60,
+    ),
+    Tunable(
+        key="volume_profile.bar",
+        group=Group.ROUTINES,
+        type=ValueType.CHOICE,
+        description="E23.0: intraday bar of the volume profile (regular hours only).",
+        target=Target.STRATEGY,
+        risk=Risk.NONE,
+        path=("volume_profile", "bar"),
+        choices=("5Min", "15Min", "1Hour"),
+    ),
+    Tunable(
+        key="volume_profile.value_area",
+        group=Group.ROUTINES,
+        type=_F,
+        description="E23.0: share of the profile's volume inside the value area.",
+        target=Target.STRATEGY,
+        risk=Risk.NONE,
+        path=("volume_profile", "value_area"),
+        min=0.5,
+        max=0.95,
+    ),
+    Tunable(
+        key="volume_profile.bin_atr",
+        group=Group.ROUTINES,
+        type=_F,
+        description="E23.0: profile bin width in ATR14 units (floor $0.01).",
+        target=Target.STRATEGY,
+        risk=Risk.NONE,
+        path=("volume_profile", "bin_atr"),
+        unit="ATR",
+        min=0.01,
+        max=1.0,
+    ),
+    Tunable(
+        key="volume_profile.hvn_min_share",
+        group=Group.ROUTINES,
+        type=_F,
+        description="E23.0: smallest smoothed volume share of a high-volume node.",
+        target=Target.STRATEGY,
+        risk=Risk.NONE,
+        path=("volume_profile", "hvn_min_share"),
+        min=0.005,
+        max=0.5,
+    ),
+    Tunable(
+        key="oi_walls.enabled",
+        group=Group.ROUTINES,
+        type=ValueType.CHOICE,
+        description="E23.0: options OI walls (max call OI above / put OI below spot, "
+        "swing-sleeve expiries) on regime technicals and Research's tech segment. Context "
+        "only. off = rollback (no chain call, prompt as before).",
+        target=Target.STRATEGY,
+        risk=Risk.NONE,
+        path=("oi_walls", "enabled"),
+        choices=("on", "off"),
+    ),
+    Tunable(
+        key="oi_walls.min_oi",
+        group=Group.ROUTINES,
+        type=_I,
+        description="E23.0: a strike whose summed open interest is below this is never a wall.",
+        target=Target.STRATEGY,
+        risk=Risk.NONE,
+        path=("oi_walls", "min_oi"),
+        min=0,
+        max=100_000,
+    ),
+)
+
+# E23.1 (D98): the range-edge entry filter (strategy.yaml `range_edges:`). Shipped on
+# (D86); off = rollback. A higher bull bar, a lower bear bar or a wider minimum range
+# keeps more mid-range entries: riskier.
+_RANGE_EDGES_TUNABLES: tuple[Tunable, ...] = (
+    Tunable(
+        key="personas.range_edges",
+        group=Group.ROUTINES,
+        type=ValueType.CHOICE,
+        description="E23.1: in a sideways regime, drop a bullish/bearish long-premium idea "
+        "that starts mid-range (bullish kept near the range bottom, bearish near the top; "
+        "range_edges.* thresholds; journaled mid_range_entry). Deterministic, never a gate "
+        "input. off = rollback (pipeline as before E23.1).",
+        target=Target.STRATEGY,
+        risk=Risk.ORDER,
+        path=("range_edges", "enabled"),
+        choices=("on", "off"),
+        aliases=("range_edges",),
+    ),
+    Tunable(
+        key="range_edges.levels",
+        group=Group.ROUTINES,
+        type=ValueType.CHOICE,
+        description="E23.1: the range the position is read in: value_area = E23.0 volume "
+        "profile VAL..VAH (vp_pos; falls back to high_low when missing), high_low = the "
+        "20-session low..high (range_pos_20d).",
+        target=Target.STRATEGY,
+        risk=Risk.ANY,
+        path=("range_edges", "levels"),
+        choices=("value_area", "high_low"),
+    ),
+    Tunable(
+        key="range_edges.bull_max_pos",
+        group=Group.ROUTINES,
+        type=_F,
+        description="E23.1: a bullish idea is kept only at or below this position in its "
+        "range (0 = the low edge).",
+        target=Target.STRATEGY,
+        risk=Risk.UP,
+        path=("range_edges", "bull_max_pos"),
+        min=0.1,
+        max=0.5,
+        hard_ceiling=0.5,
+    ),
+    Tunable(
+        key="range_edges.bear_min_pos",
+        group=Group.ROUTINES,
+        type=_F,
+        description="E23.1: a bearish idea is kept only at or above this position in its "
+        "range (1 = the high edge).",
+        target=Target.STRATEGY,
+        risk=Risk.DOWN,
+        path=("range_edges", "bear_min_pos"),
+        min=0.5,
+        max=0.9,
+        hard_ceiling=0.5,
+    ),
+    Tunable(
+        key="range_edges.min_range_atr",
+        group=Group.ROUTINES,
+        type=_F,
+        description="E23.1: a range narrower than this many ATR14 is noise: the rule is "
+        "skipped and the idea kept.",
+        target=Target.STRATEGY,
+        risk=Risk.UP,
+        path=("range_edges", "min_range_atr"),
+        unit="ATR",
+        min=0.5,
+        max=5.0,
+        hard_ceiling=5.0,
+    ),
+)
+
+# E23.2 (D98): the pullback watch for anti-chase drops (strategy.yaml `pullback_watch:`).
+# Shipped on (D86); off = rollback. A longer watch, a looser re-arm bar or a deeper
+# invalidation line re-surfaces more chased ideas: riskier.
+_PULLBACK_TUNABLES: tuple[Tunable, ...] = (
+    Tunable(
+        key="personas.pullback_watch",
+        group=Group.ROUTINES,
+        type=ValueType.CHOICE,
+        description="E23.2: keep each stretched_entry drop on watch and re-surface it to "
+        "Research (one code-built line) once price pulls back to its level "
+        "(pullback_watch.* thresholds); anti-chase and range edges still apply. "
+        "Deterministic, never a gate input. off = rollback (no writes, prompt as before).",
+        target=Target.STRATEGY,
+        risk=Risk.ORDER,
+        path=("pullback_watch", "enabled"),
+        choices=("on", "off"),
+        aliases=("pullback_watch",),
+    ),
+    Tunable(
+        key="pullback_watch.target",
+        group=Group.ROUTINES,
+        type=ValueType.CHOICE,
+        description="E23.2: what 'pulled back' means: value = within rearm_level_atr of the "
+        "nearest volume-profile support (POC/VAH/HVN; bears mirror; SMA20 when missing), "
+        "sma20 = SMA20 stretch <= rearm_stretch_atr.",
+        target=Target.STRATEGY,
+        risk=Risk.ANY,
+        path=("pullback_watch", "target"),
+        choices=("value", "sma20"),
+    ),
+    Tunable(
+        key="pullback_watch.ttl_sessions",
+        group=Group.ROUTINES,
+        type=_I,
+        description="E23.2: trading sessions after the drop session a dropped idea is watched.",
+        target=Target.STRATEGY,
+        risk=Risk.UP,
+        path=("pullback_watch", "ttl_sessions"),
+        unit="sessions",
+        min=1,
+        max=5,
+        hard_ceiling=5,
+    ),
+    Tunable(
+        key="pullback_watch.rearm_stretch_atr",
+        group=Group.ROUTINES,
+        type=_F,
+        description="E23.2 (target sma20): ready when the stance-signed (spot - SMA20) / "
+        "ATR14 is at or below this.",
+        target=Target.STRATEGY,
+        risk=Risk.UP,
+        path=("pullback_watch", "rearm_stretch_atr"),
+        unit="ATR",
+        min=0.0,
+        max=2.5,
+        hard_ceiling=2.5,
+    ),
+    Tunable(
+        key="pullback_watch.rearm_level_atr",
+        group=Group.ROUTINES,
+        type=_F,
+        description="E23.2 (target value): ready when spot is within this many ATR14 of "
+        "the nearest support level (or past it).",
+        target=Target.STRATEGY,
+        risk=Risk.UP,
+        path=("pullback_watch", "rearm_level_atr"),
+        unit="ATR",
+        min=0.0,
+        max=2.0,
+        hard_ceiling=2.0,
+    ),
+    Tunable(
+        key="pullback_watch.rearm_vwap_atr",
+        group=Group.ROUTINES,
+        type=_F,
+        description="E23.2 (anti_chase.vwap on): also need the stance-signed session VWAP "
+        "stretch at or below this.",
+        target=Target.STRATEGY,
+        risk=Risk.UP,
+        path=("pullback_watch", "rearm_vwap_atr"),
+        unit="ATR",
+        min=0.0,
+        max=1.0,
+        hard_ceiling=1.0,
+    ),
+    Tunable(
+        key="pullback_watch.invalidate_below_sma20_atr",
+        group=Group.ROUTINES,
+        type=_F,
+        description="E23.2: the stance-signed (spot - SMA20) / ATR14 below this ends the "
+        "watch (a pullback that became a reversal is not bought).",
+        target=Target.STRATEGY,
+        risk=Risk.DOWN,
+        path=("pullback_watch", "invalidate_below_sma20_atr"),
+        unit="ATR",
+        min=-5.0,
+        max=0.0,
+        hard_ceiling=-5.0,
+    ),
+    Tunable(
+        key="pullback_watch.max_ready_in_prompt",
+        group=Group.ROUTINES,
+        type=_I,
+        description="E23.2: ready pullback lines shown to Research (highest confidence first).",
+        target=Target.STRATEGY,
+        risk=Risk.UP,
+        path=("pullback_watch", "max_ready_in_prompt"),
+        min=0,
+        max=10,
+        hard_ceiling=10,
+    ),
+)
+
+# E23.3 (D98): strike vs level context (strategy.yaml `strike_levels:`). Context only
+# (no filter, no ranking change, never a gate input): no risk direction.
+_STRIKE_LEVELS_TUNABLES: tuple[Tunable, ...] = (
+    Tunable(
+        key="strike_levels.enabled",
+        group=Group.ROUTINES,
+        type=ValueType.CHOICE,
+        description="E23.3: say on each Quant menu item and trade card whether the short "
+        "strike / breakeven sits before, at or beyond the first volume-profile / OI-wall "
+        "level toward it. Context only. off = rollback (menu and card as before).",
+        target=Target.STRATEGY,
+        risk=Risk.NONE,
+        path=("strike_levels", "enabled"),
+        choices=("on", "off"),
+        aliases=("strike_levels",),
+    ),
+)
+
+# E5.16 (D116): the stale-pick cooldown (strategy.yaml `research.stale_pick:`). It only
+# narrows the idea pool Research sees (never a gate input): no risk direction.
+_STALE_PICK_TUNABLES: tuple[Tunable, ...] = (
+    Tunable(
+        key="stale_pick_after_loops",
+        group=Group.ENTRIES,
+        type=_I,
+        description="E5.16: a ticker|stance Research ranked in this many consecutive full "
+        "loops without a tradeable structure (sized >= 1 and gate pass) is suppressed "
+        "(0 = off, prompt as before E5.16).",
+        target=Target.STRATEGY,
+        risk=Risk.NONE,
+        path=("research", "stale_pick", "after_loops"),
+        unit="loops",
+        min=0,
+        max=20,
+        hard_ceiling=20,
+        aliases=("research.stale_pick.after_loops",),
+    ),
+    Tunable(
+        key="stale_pick_suppress_loops",
+        group=Group.ENTRIES,
+        type=_I,
+        description="E5.16: research runs a stale pick stays out of the idea pool before it "
+        "is eligible again (streak reset).",
+        target=Target.STRATEGY,
+        risk=Risk.NONE,
+        path=("research", "stale_pick", "suppress_loops"),
+        unit="loops",
+        min=1,
+        max=40,
+        hard_ceiling=40,
+        aliases=("research.stale_pick.suppress_loops",),
+    ),
+)
+
 REGISTRY: dict[str, Tunable] = {
     t.key: t
     for t in (
@@ -2749,6 +3225,11 @@ REGISTRY: dict[str, Tunable] = {
         *_OPTIONS_SLOW_TUNABLES,
         *_IV_BACKFILL_TUNABLES,
         *_ANTI_CHASE_TUNABLES,
+        *_LEVELS_TUNABLES,
+        *_RANGE_EDGES_TUNABLES,
+        *_PULLBACK_TUNABLES,
+        *_STRIKE_LEVELS_TUNABLES,
+        *_STALE_PICK_TUNABLES,
         *_MARKET_HEALTH_TUNABLES,
         *_OPTIONS_FAST_TUNABLES,
         *_CARRYOVER_TUNABLES,
@@ -2793,6 +3274,37 @@ def _pattern_tunable(key: str) -> Tunable | None:
             target=Target.PROFILES,
             risk=Risk.DOWN if attr == "dte_min" else Risk.NONE,
             path=("profiles", name, attr),
+            min=7,
+            max=120,
+            hard_ceiling=7 if attr == "dte_min" else None,
+        )
+    m = _SLEEVE_KEY_RE.match(key)
+    if m:
+        name, sleeve, attr = m.group("name"), m.group("sleeve"), m.group("attr")
+        path = ("profiles", name, "sleeves", sleeve, attr)
+        if attr == "max_positions":
+            return Tunable(
+                key=key,
+                group=Group.ENTRIES,
+                type=_I,
+                description=(
+                    f"Account profile {name}, DTE sleeve {sleeve}: max open positions "
+                    "(by entry DTE; gate rule sleeve_max_positions; 0 closes the sleeve)."
+                ),
+                target=Target.PROFILES,
+                risk=Risk.UP,
+                path=path,
+                min=0,
+                max=20,
+            )
+        return Tunable(
+            key=key,
+            group=Group.ENTRIES,
+            type=_I,
+            description=f"Account profile {name}, DTE sleeve {sleeve}: entry DTE {attr[4:]} bound.",
+            target=Target.PROFILES,
+            risk=Risk.DOWN if attr == "dte_min" else Risk.NONE,
+            path=path,
             min=7,
             max=120,
             hard_ceiling=7 if attr == "dte_min" else None,
@@ -3159,6 +3671,11 @@ _STRATEGY_SWITCHES = frozenset(
         ("research_technicals", "enabled"),  # E16.2
         ("anti_chase", "enabled"),  # E16.3
         ("market_health_context", "enabled"),  # E16.4
+        ("volume_profile", "enabled"),  # E23.0 (D98)
+        ("oi_walls", "enabled"),  # E23.0 (D98)
+        ("range_edges", "enabled"),  # E23.1 (D98)
+        ("pullback_watch", "enabled"),  # E23.2 (D98)
+        ("strike_levels", "enabled"),  # E23.3 (D98)
     }
 )
 # E20.3: choice switches in strategy.yaml (E12.5) -> the control value when absent.

@@ -161,7 +161,7 @@ def test_enumerates_every_violation_without_short_circuit() -> None:
     p = make_proposal(expires_at=NOW - dt.timedelta(seconds=1))
     a = acct(halted=True, equity=D("96000"), as_of=NOW - dt.timedelta(hours=1))
     pf = Portfolio(
-        positions=[Position(underlying="SPY", max_loss=D("4500"))] * 8,
+        positions=[Position(underlying="SPY", max_loss=D("4500"))] * 10,
         closed_lots=[
             ClosedLot(underlying="SPY", closed_at=NOW - dt.timedelta(days=3), realized_pnl=D("-1"))
         ],
@@ -425,6 +425,15 @@ def test_closed_lot_from_store_row() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _spot_unit(root: str) -> Structure:
+    """A credit vertical on *root*: D116 (E3.8) leaves its delta-cap unit at Δ × spot, so
+    the D57/D62 Δ × spot tests below use it (Greeks are overridden by each test)."""
+    return credit_vertical(
+        "put", root, EXP, short_strike=100, short_premium="2.00", long_strike=95,
+        long_premium="1.00", as_of=AS_OF,
+    )  # fmt: skip
+
+
 def test_greek_caps() -> None:
     # D62: $Δ cap 1.00 x $100,000 = $100,000; vega cap 1.0% = $1,000/vol-pt.
     c, a, m = cfg(), acct(), mkt()
@@ -450,7 +459,7 @@ def test_dollar_delta_worked_example() -> None:
     c = cfg(portfolio_dollar_delta_cap_pct=0.50)
     nvda = Portfolio(dollar_delta=D(100) * D(180))
     for root, spot, fails in (("AVGO", "350", True), ("INTC", "25", False)):
-        lc = long_call(root, EXP, strike=100, premium="3", as_of=AS_OF)
+        lc = _spot_unit(root)
         p = make_proposal(
             lc.model_copy(update={"greeks": Greeks(delta=100.0, vega=10.0)}),
             sizing=Sizing(contracts=1, notional=D("300"), pct_equity=0.003),
@@ -464,7 +473,8 @@ def test_dollar_delta_worked_example() -> None:
 
 
 def _call(root: str, delta: float, n: int = 1) -> Proposal:
-    lc = long_call(root, EXP, strike=100, premium="3", as_of=AS_OF)
+    """A Δ × spot-unit proposal on *root* (credit vertical; see :func:`_spot_unit`)."""
+    lc = _spot_unit(root)
     return make_proposal(
         lc.model_copy(update={"greeks": Greeks(delta=delta, vega=1.0)}),
         sizing=Sizing(contracts=n, notional=D("300"), pct_equity=0.003),
@@ -574,7 +584,7 @@ def test_dollar_delta_additive_and_linear(legs: list[tuple[int, D, int]], k: int
     proposal of n contracts on a book equals the sum of the parts."""
     book = sum((D(dl) * n * sp for dl, sp, n in legs), start=D(0))
     dl, sp, _ = legs[0]
-    lc = long_call("SPY", EXP, strike=600, premium="3", as_of=AS_OF)
+    lc = _spot_unit("SPY")
     p = make_proposal(
         lc.model_copy(update={"greeks": Greeks(delta=float(dl))}),
         sizing=Sizing(contracts=k, notional=D("300"), pct_equity=0.003),
@@ -643,7 +653,7 @@ def test_beta_delta_post_trade_formula(delta: int, spot: D, beta: D, book: int) 
 )
 def test_dollar_check_equals_share_check_for_one_underlying(delta: int, spot: D, pct: D) -> None:
     """(c) One underlying at spot S: |Δ·S| ≤ pct·E  ⇔  |Δ| ≤ pct·E / S."""
-    lc = long_call("SPY", EXP, strike=600, premium="3", as_of=AS_OF)
+    lc = _spot_unit("SPY")
     p = make_proposal(
         lc.model_copy(update={"greeks": Greeks(delta=float(delta))}),
         sizing=Sizing(contracts=1, notional=D("300"), pct_equity=0.003),
@@ -799,7 +809,7 @@ def test_earnings_exemptions() -> None:
 def test_max_open_positions(n: int) -> None:
     pf = Portfolio(positions=[Position(underlying="QQQ", max_loss=D("1"))] * n)
     out = R.check_max_open_positions(pf, cfg())
-    assert (out == []) == (n + 1 <= 8)
+    assert (out == []) == (n + 1 <= 10)  # D97: max_open_positions 10 (was 8)
 
 
 # ---------------------------------------------------------------------------

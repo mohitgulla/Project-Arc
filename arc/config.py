@@ -22,10 +22,20 @@ from pydantic import (
 )
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-from arc.account_profiles import DEFAULT_ACCOUNT_PROFILE, AccountProfile, load_account_profiles
+from arc.account_profiles import (
+    DEFAULT_ACCOUNT_PROFILE,
+    AccountProfile,
+    DteSleeve,
+    load_account_profiles,
+    sleeve_for_dte,
+    sleeve_of,
+)
 
 if TYPE_CHECKING:
+    import datetime as dt
     from collections.abc import Mapping
+
+    from arc.models import Structure
 
 log = structlog.get_logger()
 
@@ -250,8 +260,26 @@ class ArcSettings(BaseSettings):
 
     # -- Risk limits (PLAN.md §5) -------------------------------------------
     max_alloc_pct: Annotated[float, Field(gt=0.0, le=1.0)] = Field(
+        default=0.15,
+        description=(
+            "Max loss per underlying as a fraction of equity, base (upper) tier: applies "
+            "while the book's deployed max loss is below alloc_tier_threshold_pct "
+            "(15%, D116; was a flat 10%, D85; 5% before)."
+        ),
+    )
+    max_alloc_pct_reduced: Annotated[float, Field(gt=0.0, le=1.0)] = Field(
         default=0.10,
-        description="Max allocation per underlying as fraction of equity (10%, D85; was 5%).",
+        description=(
+            "D116 reduced tier: the per-underlying cap once deployed max loss is at or "
+            "above alloc_tier_threshold_pct of equity (10%). Never above max_alloc_pct."
+        ),
+    )
+    alloc_tier_threshold_pct: Annotated[float, Field(gt=0.0, le=1.0)] = Field(
+        default=0.60,
+        description=(
+            "D116: deployed max loss (open + in-flight opens, pre-trade) as a share of "
+            "equity at which the per-underlying cap drops to max_alloc_pct_reduced (60%)."
+        ),
     )
     daily_loss_halt_pct: Annotated[float, Field(gt=0.0, le=1.0)] = Field(
         default=0.03,
@@ -273,7 +301,8 @@ class ArcSettings(BaseSettings):
         default=1.00,
         description=(
             "D57/D62: |net dollar delta| cap as a share of equity: post-trade "
-            "|Σ (net Δ share-eq × spot)| ≤ 1.00 × equity. Not beta-weighted."
+            "|Σ (net Δ share-eq × spot)| ≤ 1.00 × equity. Not beta-weighted. D116 (E3.8): "
+            "debit verticals and long options count sign(Δ) × max loss instead."
         ),
     )
     portfolio_beta_delta_cap_pct: Annotated[float, Field(ge=0.0, le=4.0)] = Field(
@@ -281,7 +310,8 @@ class ArcSettings(BaseSettings):
         description=(
             "D62: |beta-weighted net dollar delta| cap as a share of equity: post-trade "
             "|Σ (net Δ share-eq × spot × max(β, 1))| ≤ 2.00 × equity; β = 1y daily vs SPY "
-            "(betas routine), 1.0 when missing or stale."
+            "(betas routine), 1.0 when missing or stale. D116 (E3.8): debit verticals and "
+            "long options count sign(Δ) × max loss × max(β, 1) instead."
         ),
     )
     portfolio_vega_cap_pct: Annotated[float, Field(ge=0.0, le=1.0)] = Field(
@@ -321,7 +351,7 @@ class ArcSettings(BaseSettings):
         description="Block short premium through earnings unless overridden.",
     )
     max_open_positions: Annotated[int, Field(ge=1)] = Field(
-        default=8,
+        default=10,  # D97: was 8 (cash profiles: short 5 + swing 5 sleeve slots)
         description="Max simultaneous open positions.",
     )
     approval_ttl_seconds: Annotated[int, Field(ge=1)] = Field(
@@ -386,6 +416,23 @@ class ArcSettings(BaseSettings):
             "D34: if more than this passed between the proposal's pricing and the ladder's "
             "first attempt, the Broker re-prices at the current mid. A mid outside the "
             "gate-approved band is not sent (journal reason stale_band)."
+        ),
+    )
+    execution_regate_max: Annotated[int, Field(ge=0, le=3)] = Field(
+        default=1,
+        description=(
+            "D101: re-gates a ladder may make when the market moves past its band "
+            "(fresh mid above the band's worst price between steps). Each re-gate runs the "
+            "full gate on the same structure at the fresh mid and walks a new band under a "
+            "new token. 0 = today's behaviour (no between-step check; rollback)."
+        ),
+    )
+    execution_regate_max_move_pct: Annotated[float, Field(ge=0.0, le=0.20)] = Field(
+        default=0.05,
+        description=(
+            "D101 price-move ceiling: a re-gate is refused when the new band's worst price "
+            "exceeds the original worst price by more than this share of the original mid. "
+            "Closes inside the D73 expiry guard window are exempt."
         ),
     )
     # -- Unknown submit state (E11.1, D71) ---------------------------------------
@@ -498,6 +545,47 @@ class ArcSettings(BaseSettings):
             "use the rest up to daily_max."
         ),
     )
+    # -- D69 shared experiment account (E15.3; D108: no per-arm slice) -------------
+    order_budget_account_max: int | None = Field(
+        default=None,
+        ge=1,
+        le=3200,
+        description=(
+            "D69/D108 account guard (set only on a shared arm's effective settings, = "
+            "arms on the account x order_budget_daily_max, at most 16 x 200): every arm "
+            "on the account stops once the account's option orders reach this."
+        ),
+    )
+    alpaca_rate_per_min: Annotated[int, Field(ge=1, le=200)] = Field(
+        default=180,
+        description=(
+            "D69: requests/min per Alpaca account (file-lock token bucket shared by "
+            "every arm process; 10% under Alpaca's 200/min)."
+        ),
+    )
+    # -- Transient market-data read retry (XP-1 day 1 fix, D114) ----------------
+    alpaca_read_retries: Annotated[int, Field(ge=0, le=5)] = Field(
+        default=2,
+        description=(
+            "D114: retries of a market-data GET that failed transiently (HTTP 500/502/503, "
+            "DNS/connection reset/timeout). 0 = off. Never 4xx, never a non-GET (no submit)."
+        ),
+    )
+    alpaca_read_retry_base_s: Annotated[float, Field(ge=0.0, le=5.0)] = Field(
+        default=0.5,
+        description="D114: first retry backoff (s); each next one x3, jittered +/-25%.",
+    )
+    alpaca_read_retry_budget_s: Annotated[float, Field(ge=0.0, le=10.0)] = Field(
+        default=3.0,
+        description="D114: cap on the total retry sleep (s) of one market-data read.",
+    )
+    alpaca_rate_lock_dir: Path | None = Field(
+        default=None,
+        description=(
+            "D69: where the per-account bucket files live (alpaca-<last4>.bucket). "
+            "None = data/locks in the repo."
+        ),
+    )
     order_budget_restrictive_research_max_shortlist: Annotated[int, Field(ge=0, le=10)] = Field(
         default=1, description="Restrictive tier: Research shortlist cap."
     )
@@ -527,7 +615,7 @@ class ArcSettings(BaseSettings):
     ] = Field(default=2.0, description="Restrictive tier: E5.9 dedupe cooldown multiplier.")
     # -- Portfolio-aware Research, dedupe, no-trade guard (E5.9, D33) ----------
     dedupe_executed_cooldown_sessions: Annotated[int, Field(ge=0, le=60)] = Field(
-        default=5,
+        default=2,  # D97: was 5
         description=(
             "D33: an idea whose fingerprint was executed (open, or closed within this many "
             "trading sessions) is suppressed. Doubled in the restrictive order-budget tier."
@@ -552,6 +640,22 @@ class ArcSettings(BaseSettings):
         description=(
             "D33 material-change override: a suppressed idea is re-admitted when spot moved "
             "at least this fraction since the last one (or the regime changed)."
+        ),
+    )
+    dedupe_missed_retry_after_minutes: Annotated[int, Field(ge=5, le=240)] = Field(
+        default=30,
+        description=(
+            "E24.2 (D101): a missed open (approved, ladder cancelled with no fill) is held "
+            "this many minutes after its ladder finished, then re-admitted for a same-day "
+            "retry. Doubled in the restrictive tier."
+        ),
+    )
+    dedupe_missed_retry_max: Annotated[int, Field(ge=0, le=3)] = Field(
+        default=1,
+        description=(
+            "E24.2 (D101): same-session retries of a missed open (0 = a miss is held like "
+            "any proposed idea, the pre-E24.2 behaviour). Halved (floor) in the restrictive "
+            "tier."
         ),
     )
     portfolio_sector_max_pct: Annotated[float, Field(gt=0.0, le=1.0)] = Field(
@@ -789,6 +893,15 @@ class ArcSettings(BaseSettings):
     alpaca_options_feed: AlpacaOptionsFeed = Field(
         default=AlpacaOptionsFeed.INDICATIVE,
         description="Alpaca options data feed (ARC_ALPACA_OPTIONS_FEED). Free tier: indicative.",
+    )
+    alpaca_history_feed: Literal["sip", "iex"] = Field(
+        default="sip",
+        description=(
+            "E23.0a (D98): stock feed for volume-weighted history reads (regime technicals' "
+            "daily bars, the anti-chase session VWAP). sip = consolidated tape, free for "
+            "windows ending >= 15 min ago (the adapter clamps the request end); iex = one "
+            "exchange (~5% of volume), the rollback. Live quotes stay on alpaca_data_feed."
+        ),
     )
 
     # -- Chain scanner (E2.3) ------------------------------------------------
@@ -1142,6 +1255,15 @@ class ArcSettings(BaseSettings):
             "'Ranked, not structured'."
         ),
     )
+    research_min_ranked: Annotated[int, Field(ge=0, le=10)] = Field(
+        default=4,
+        description=(
+            "E22.3 (D97): Research is asked to rank at least min(this, free slots x 2, "
+            "pool size) names when free slots exist and the pool has names that pass its "
+            "bar; fewer is journaled research_under_ranked. Never forces a trade. "
+            "0 = the pre-E22.3 prompt, byte-identical (rollback)."
+        ),
+    )
     pipeline_max_context_notes: Annotated[int, Field(ge=0, le=100)] = Field(
         default=20,
         description="Max prior D27 notes (regime view/thesis/observation) shown to Research.",
@@ -1291,9 +1413,49 @@ class ArcSettings(BaseSettings):
         )
 
     @property
+    def entry_sleeves(self) -> list[DteSleeve]:
+        """E22.1 (D97): the entry-DTE sleeves of the active profile, ordered by window.
+
+        A profile with named ``sleeves`` returns them; a single-window profile (its
+        ``dte_min/dte_max``, else the global ``dte_min/dte_max``) is one implicit
+        ``default`` sleeve with no slot cap and the kind exit policy.
+        """
+        return self.profile.entry_sleeves((self.dte_min, self.dte_max))
+
+    def sleeve_for_dte(self, dte: int | None) -> DteSleeve | None:
+        """The active profile's sleeve containing entry DTE *dte*, else ``None``."""
+        return sleeve_for_dte(self.entry_sleeves, dte)
+
+    def exit_block_for_dte(self, dte: int | None) -> str | None:
+        """The ``config/exits.yaml`` ``sleeves:`` block for entry DTE *dte*, else ``None``.
+
+        ``None`` (no sleeve, or a sleeve without ``exit_policy``, e.g. every
+        single-window profile) means the kind policy: ``ExitConfig.policy_for(kind)``.
+        """
+        sleeve = self.sleeve_for_dte(dte)
+        return sleeve.exit_policy if sleeve is not None else None
+
+    def exit_block_of(
+        self, structure: Structure, opened_at: dt.date | dt.datetime | str | None = None
+    ) -> str | None:
+        """:meth:`exit_block_for_dte` of a structure's entry DTE (stored ``dte`` first)."""
+        sleeve = sleeve_of(self.entry_sleeves, structure, opened_at)
+        return sleeve.exit_policy if sleeve is not None else None
+
+    @property
     def entry_dte_window(self) -> tuple[int, int]:
-        """Entry DTE window: the profile's override when set, else ``dte_min/dte_max``."""
+        """Entry DTE window: the profile's override when set, else ``dte_min/dte_max``.
+
+        E22.1 (D97): for a profile with named sleeves this is the **union envelope**
+        ``(min of the sleeves' dte_min, max of their dte_max)``. Consumers that only
+        need "an expiry somewhere in range" read it unchanged (universe guard/screen,
+        cboe_fast snapshots, chain fetches). Per-sleeve consumers (the gate's
+        ``dte_window`` and ``sleeve_max_positions`` rules) read :attr:`entry_sleeves`.
+        A single-window profile's envelope is its window, so nothing changes there.
+        """
         p = self.profile
+        if p.sleeves:
+            return min(s.dte_min for s in p.sleeves), max(s.dte_max for s in p.sleeves)
         if p.dte_min is not None and p.dte_max is not None:
             return p.dte_min, p.dte_max
         return self.dte_min, self.dte_max

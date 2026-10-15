@@ -19,6 +19,7 @@ It never submits: the same ``client_order_id`` is never sent twice (D71).
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -29,9 +30,12 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 __all__ = [
+    "WASH_TRADE_CODE",
     "ResolvedSubmit",
+    "api_error_body",
     "api_status_code",
     "is_transport_error",
+    "is_wash_trade_rejection",
     "resolve_unknown_submit",
 ]
 
@@ -87,6 +91,42 @@ def api_status_code(exc: BaseException) -> int | None:
     except Exception:  # noqa: BLE001 - a broken property means "no status"
         return None
     return code if isinstance(code, int) else None
+
+
+#: D69 (E15.3): Alpaca's 403 code for an order opposite to a working order on the same
+#: contract ("potential wash trade detected", 2026-10-09 stress test).
+WASH_TRADE_CODE = 40310000
+
+
+def api_error_body(exc: BaseException) -> dict[str, Any] | None:
+    """The JSON body of an API error (alpaca-py ``APIError`` keeps the raw text), else None."""
+    raw: Any = getattr(exc, "_error", None)
+    for text in (raw, str(exc)):
+        if isinstance(text, bytes | str) and text:
+            try:
+                body = json.loads(text)
+            except (TypeError, ValueError):
+                continue
+            if isinstance(body, dict):
+                return body
+    return None
+
+
+def is_wash_trade_rejection(exc: BaseException) -> bool:
+    """Is *exc* Alpaca's 403 ``40310000`` "potential wash trade detected"?
+
+    Read from the body's ``code``; an error that carries an HTTP status must carry 403.
+    """
+    status = api_status_code(exc)
+    if status is not None and status != 403:
+        return False
+    body = api_error_body(exc)
+    if body is None:
+        return False
+    try:
+        return int(body.get("code", 0)) == WASH_TRADE_CODE
+    except (TypeError, ValueError):
+        return False
 
 
 def resolve_unknown_submit(

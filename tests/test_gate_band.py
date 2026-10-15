@@ -21,7 +21,7 @@ from arc.config import TickRules
 from arc.gate import Portfolio, RuleCode, derive, proposal_hash
 from arc.gate import rules as R
 from arc.gate import token as T
-from arc.gate.band import MAX_BAND_STEPS, PriceBand, band_from_nbbo
+from arc.gate.band import MAX_BAND_STEPS, PriceBand, band_from_nbbo, regate_move_ok
 from arc.gate.hook_policy import check_tool_call
 from arc.gate.token import (
     BandToken,
@@ -694,3 +694,80 @@ class TestHookArc2:
     def test_arc_execute_accepts_arc2(self) -> None:
         cmd = f"arc execute --proposal abc --token {band_token()}"
         assert check_tool_call("terminal", {"command": cmd}, secret=SECRET, now=NOW).allow
+
+
+# ---------------------------------------------------------------------------
+# D101 (E24.1): band moved past + re-gate price-move ceiling
+# ---------------------------------------------------------------------------
+
+LBAND = PriceBand(lo=D("-0.85"), hi=D("-0.76"), max_steps=3)  # the ladder suite's band
+NEW_BAND = PriceBand(lo=D("-0.80"), hi=D("-0.72"), max_steps=2)
+
+
+class TestMovedPast:
+    def test_inside_band_is_not_moved(self) -> None:
+        assert not LBAND.moved_past(D("-0.80"), TICK)
+        assert not LBAND.moved_past(D("-0.76"), TICK)  # at the worst price: still reachable
+        assert not LBAND.moved_past(D("-0.99"), TICK)  # better than the start: never "moved"
+
+    def test_past_worst_price_is_moved(self) -> None:
+        assert LBAND.moved_past(D("-0.75"), TICK)
+        assert LBAND.moved_past(D("-0.70"), TICK)
+
+    def test_snaps_toward_marketable_side(self) -> None:
+        nickel = D("0.05")
+        band = PriceBand(lo=D("-0.85"), hi=D("-0.75"), max_steps=2)
+        assert not band.moved_past(D("-0.76"), nickel)  # snaps up to -0.75: in band
+        assert band.moved_past(D("-0.74"), nickel)  # snaps up to -0.70: past it
+
+    def test_debit_band(self) -> None:
+        band = PriceBand(lo=D("4.65"), hi=D("4.75"), max_steps=2)
+        assert not band.moved_past(D("4.70"), TICK)
+        assert band.moved_past(D("4.82"), TICK)
+
+    @given(mid=st.decimals(min_value=D("-5"), max_value=D("5"), places=2))
+    def test_matches_reanchor(self, mid: D) -> None:
+        assert LBAND.moved_past(mid, TICK) == (LBAND.reanchor(mid, TICK) is None)
+
+
+class TestRegateMoveOk:
+    BASE = PriceBand(lo=D("4.65"), hi=D("4.75"), max_steps=2)
+
+    def test_within_ceiling(self) -> None:
+        # 5% of 4.65 = 0.2325: a worst price up to 4.9825 passes
+        assert regate_move_ok(
+            self.BASE, PriceBand(lo=D("4.82"), hi=D("4.95"), max_steps=2), D("0.05")
+        )
+
+    def test_past_ceiling_refused(self) -> None:
+        new = PriceBand(lo=D("4.95"), hi=D("5.05"), max_steps=2)
+        assert not regate_move_ok(self.BASE, new, D("0.05"))
+
+    def test_zero_ceiling_allows_no_worse_price(self) -> None:
+        assert regate_move_ok(self.BASE, self.BASE, D(0))
+        assert not regate_move_ok(
+            self.BASE, PriceBand(lo=D("4.70"), hi=D("4.76"), max_steps=1), D(0)
+        )
+
+    def test_credit_uses_absolute_mid(self) -> None:
+        # credit -0.85 .. -0.76; 5% of 0.85 = 0.0425 -> new hi up to -0.7175
+        assert regate_move_ok(LBAND, NEW_BAND, D("0.05"))
+        assert not regate_move_ok(
+            LBAND, PriceBand(lo=D("-0.75"), hi=D("-0.70"), max_steps=1), D("0.05")
+        )
+
+    def test_negative_ceiling_rejected(self) -> None:
+        with pytest.raises(ValueError, match="max_move_pct"):
+            regate_move_ok(self.BASE, self.BASE, D("-0.01"))
+
+    @given(
+        lo=st.decimals(min_value=D("0.10"), max_value=D("20"), places=2),
+        width=st.decimals(min_value=D(0), max_value=D("2"), places=2),
+        move=st.decimals(min_value=D("-1"), max_value=D("3"), places=2),
+        pct=st.decimals(min_value=D(0), max_value=D("0.20"), places=2),
+    )
+    def test_property(self, lo: D, width: D, move: D, pct: D) -> None:
+        orig = PriceBand(lo=lo, hi=lo + width, max_steps=1 if width else 0)
+        new_hi = orig.hi + move
+        new = PriceBand(lo=min(new_hi, orig.lo + move), hi=new_hi, max_steps=0)
+        assert regate_move_ok(orig, new, pct) == (move <= pct * lo)

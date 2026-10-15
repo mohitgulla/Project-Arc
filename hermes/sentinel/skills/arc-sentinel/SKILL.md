@@ -174,6 +174,14 @@ trigger actions. Resolve an S-id's full finding from the newest `~/.hermes/profi
      rule).
    - **A/A before A/B**: an ab experiment that started with no stopped A/A (with sigma) before
      it and no owner `aa_override` is `workflow`, `medium`.
+   - **P − C residual (D108, E25.4)**: section 5 of `experiments.md`. From spec v3, control
+     is its own flat-start arm on the experiment account, and the report's production panel
+     splits P − C into start-book P&L + residual. Once production's start book has fully
+     closed **and** control has ramped, the residual should converge to 0. A `WARN` line
+     (running-mean CI excludes 0 for ≥ 10 converged sessions) is `workflow`, severity `warn`
+     (report it as `medium`), worded as a harness/account gap between the production account
+     and the control arm (capital, fills, order budget, pairing lag), never as a strategy
+     finding or a verdict. "start book still open" / "not ramped yet" lines are not findings.
    - Never run `arc experiment` write verbs (`create`, `register`, `start`, `stop`, `evaluate`
      without `--stored`) and never touch the experiment paper account. Read-only verbs against
      `RUN_DIR/arc-copy.db` are fine (`arc experiment list|report <id> --stored|verify <id>
@@ -211,7 +219,7 @@ trigger actions. Resolve an S-id's full finding from the newest `~/.hermes/profi
 
 *Checks:* <PASS/FAIL one-liners, only FAILs expanded> · tests <n> (<Δ>) · coverage <x>% (<Δ>)
 *Regressions:* <metric flags or "none">
-*Experiments:* <n registered (running ids) · prereg OK/MISMATCH · mid-run control commits n · XP-advisory n/n · A/A before A/B OK, or "pre-E10 store">
+*Experiments:* <n registered (running ids) · prereg OK/MISMATCH · mid-run control commits n · XP-advisory n/n · A/A before A/B OK · P − C residual converging/WARN, or "pre-E10 store">
 
 *New*
 • *S-<n>* [<severity>/<category>] <title> — <evidence in one line> → <recommendation> · <action + related cards>

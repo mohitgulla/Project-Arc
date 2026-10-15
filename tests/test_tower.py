@@ -166,6 +166,34 @@ def test_greeks_pre_d57_heartbeat_has_no_dollar_delta(tmp_path: Path) -> None:
     assert g.delta == 25.0 and g.dollar_delta is None
     assert g.dollar_delta_cap == pytest.approx(500.0) and g.vega_cap_usd == pytest.approx(10.0)
     assert g.beta_dollar_delta is None and g.delta_by_underlying == {}  # pre-D62: —
+    assert g.dollar_delta_raw is None and g.beta_dollar_delta_raw is None  # pre-E3.8: —
+
+
+def test_greeks_raw_delta_from_heartbeat(tmp_path: Path) -> None:
+    """D116 (E3.8): the cap measure and the raw Σ Δ × spot both come off the heartbeat."""
+    from arc.tower.data import _greeks
+
+    conn = connect(tmp_path / "raw.db")
+    migrate(conn)
+    HeartbeatRepo(conn).record(
+        "monitor", "ok", at=NOW,
+        detail={
+            "valued": True, "equity": 24_600.0, "dollar_delta": -883.6,
+            "dollar_delta_raw": -12_500.0, "beta_dollar_delta": -1_200.0,
+            "beta_dollar_delta_raw": -20_000.0,
+            "delta_by_underlying": {
+                "UNH": {"dollar_delta": -1357.5, "beta": 1.0, "beta_dollar_delta": -1357.5,
+                        "beta_source": "stored", "dollar_delta_raw": -12_323.8,
+                        "beta_dollar_delta_raw": -12_323.8},
+            },
+        },
+    )  # fmt: skip
+    row = conn.execute("SELECT * FROM heartbeats ORDER BY rowid DESC LIMIT 1").fetchone()
+    g = _greeks(row, 2.00, 0.010, dt.timedelta(minutes=15), beta_delta_cap_pct=4.00)
+    conn.close()
+    assert g.dollar_delta == -883.6 and g.dollar_delta_raw == -12_500.0
+    assert g.beta_dollar_delta == -1_200.0 and g.beta_dollar_delta_raw == -20_000.0
+    assert g.delta_by_underlying["UNH"].dollar_delta_raw == -12_323.8
 
 
 def test_greeks_beta_weighted_delta_from_heartbeat(tmp_path: Path) -> None:
@@ -492,6 +520,9 @@ def test_cli_snapshot_matches_api_snapshot(db: Path, capsys: pytest.CaptureFixtu
         api_payload = c.get("/api/snapshot").json()
     for k in ("as_of", "ops"):  # wall-clock read time / age fields
         cli_payload.pop(k), api_payload.pop(k)
+    # E15.6: the route adds its read scope (control here); the CLI has no ?arm=
+    assert api_payload.pop("scope") == {"arm_id": None}
+    assert api_payload.pop("shared_from_control") is False
     assert cli_payload == api_payload
 
 

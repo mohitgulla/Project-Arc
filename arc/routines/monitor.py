@@ -70,15 +70,23 @@ def broker_requests(roots: int, benchmarks: int = 0) -> int:
     return _BASE_REQUESTS + _REQUESTS_PER_ROOT * roots + _REQUESTS_PER_BENCHMARK * benchmarks
 
 
+#: D102: the benchmarks are index ETFs whose real spread is a cent or two, so a quote wider
+#: than this falls back to today's daily bar (its close is the last trade) instead of a mid.
+BENCHMARK_MAX_SPREAD_PCT = 0.005
+
+
 def _benchmarks(
     market: Any, symbols: list[str], now: _dt.datetime, max_spread_pct: float
 ) -> dict[str, dict[str, float | str | None]]:
     """D87: each benchmark's spot and prior-session close, for the Tower's equity chart.
 
-    Spot is :func:`arc.data.base.market_spot` (never a one-sided half price); the prior
-    close is the last daily bar before today (ET). A symbol that fails is left out (the
-    Tower then draws no line for it), never a monitor failure.
+    Spot is :func:`arc.data.base.market_spot` (never a one-sided half price, and the
+    day's close once the session has closed), with the spread cap tightened to
+    :data:`BENCHMARK_MAX_SPREAD_PCT` (D102); the prior close is the last daily bar before
+    today (ET). A symbol that fails is left out (the Tower then draws no line for it),
+    never a monitor failure.
     """
+    max_spread_pct = min(max_spread_pct, BENCHMARK_MAX_SPREAD_PCT)
     from arc.data.base import market_spot
 
     today = now.astimezone(ET).date()
@@ -280,9 +288,14 @@ def monitor(ctx: JobContext, env: PipelineEnv) -> JobResult:
                 "valued": True,
                 "max_loss": float(max_loss),
                 "delta": g.delta,
-                "dollar_delta": float(portfolio.dollar_delta),  # D57: Σ Δ × spot, $
-                # D62: Σ Δ × spot × max(β, 1), $; its cap; per-underlying breakdown
+                # D57/D116: the gate's measure: Σ Δ × spot, except debit verticals /
+                # long options at sign(Δ) × max loss (E3.8); $
+                "dollar_delta": float(portfolio.dollar_delta),
+                # D62: the same terms × max(β, 1), $; its cap; per-underlying breakdown
                 "beta_dollar_delta": float(portfolio.beta_dollar_delta),
+                # D116: the plain Σ Δ × spot (× β) for display; the gate never reads it
+                "dollar_delta_raw": float(portfolio.dollar_delta_raw),
+                "beta_dollar_delta_raw": float(portfolio.beta_dollar_delta_raw),
                 "beta_delta_cap": settings.portfolio_beta_delta_cap_pct * float(info.equity),
                 "dollar_delta_cap": settings.portfolio_dollar_delta_cap_pct * float(info.equity),
                 "delta_by_underlying": dict(sorted(breakdown.items())),

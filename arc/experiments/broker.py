@@ -95,7 +95,29 @@ def trading_broker(
         inner = factory(key, secret)
     _guard_account(ident, inner)
     vb = virtual_broker(conn, ident, inner, settings=settings, now=now)
+    if vb.shared:
+        _attach_rate_bucket(inner, settings, conn)
     return cast("BrokerAdapter", vb)  # the real broker's methods via __getattr__
+
+
+def _attach_rate_bucket(
+    inner: BrokerAdapter, settings: ArcSettings | None, conn: sqlite3.Connection
+) -> None:
+    """D69 (E15.3): a shared-account arm's REST calls draw from the account's bucket.
+
+    One file per account key (``alpaca-<last4>.bucket``) under ``alpaca_rate_lock_dir``,
+    at ``alpaca_rate_per_min``; every arm process on the account shares it. A broker
+    that cannot take one (a test fake) is left as it is.
+    """
+    use = getattr(inner, "use_rate_bucket", None)
+    key = getattr(inner, "key_id", None)
+    if not callable(use) or not isinstance(key, str) or not key:
+        return
+    from arc.control.effective import effective_settings
+    from arc.utils.ratelimit import AccountRateBucket, bucket_path
+
+    s = settings if settings is not None else effective_settings(conn)
+    use(AccountRateBucket(bucket_path(key, s.alpaca_rate_lock_dir), s.alpaca_rate_per_min))
 
 
 def _guard_account(ident: ArmIdentity, inner: BrokerAdapter) -> None:
@@ -139,4 +161,8 @@ def virtual_broker(
         cash_settlement=s.profile.buying_power is BuyingPower.CASH_SETTLED,
         now=now or now_et,
         control=_control_opener(ident),
+        account_mode=ident.account_mode,
+        arm_code=ident.arm_code,
+        account_sha256=ident.account_sha256,
+        keys_env=ident.keys_env,
     )

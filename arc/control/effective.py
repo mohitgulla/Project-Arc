@@ -260,10 +260,41 @@ def effective_settings(
     c = conn if conn is not None else open_store(db_path or base.db_path, settings=base)
     try:
         changes, version, overlay = _arm_source(c)
+        arms = _shared_arms(c)
     finally:
         if own:
             c.close()
-    return apply_changes(base, changes, version=version, overlay=overlay)
+    settings = apply_changes(base, changes, version=version, overlay=overlay)
+    return shared_arm_settings(settings, arms=arms) if arms else settings
+
+
+def _shared_arms(c: sqlite3.Connection) -> int:
+    """D69/D108: arms on the account when *c* is a shared-account arm store with an arm
+    code (E15.2), else 0 (control, production or a dedicated arm)."""
+    from arc.budget.orders import MAX_SHARED_ARMS
+    from arc.experiments.arms import read_identity, shared_arms_on_account
+
+    ident = read_identity(c)
+    if ident is None or ident.account_mode != "shared" or ident.arm_code is None:
+        return 0
+    # start refuses more than max_parallel_arms (<= 16); clamping only lowers the guard
+    return min(shared_arms_on_account(ident), MAX_SHARED_ARMS)
+
+
+def shared_arm_settings(settings: ArcSettings, *, arms: int) -> ArcSettings:
+    """D108: *settings* of one shared-account arm, *arms* arms on the account.
+
+    The arm keeps production's full D32 budget (``order_budget_daily_max`` /
+    ``restrict_at`` / ``close_reserve`` untouched; the D69 per-arm slice is gone) and
+    gets ``order_budget_account_max = arms x daily_max``
+    (:meth:`arc.budget.orders.OrderBudgetConfig.shared_account`), so the gate rule, the
+    ladder's guard and the pipeline tier all read the arm's numbers with no arm logic
+    of their own.
+    """
+    from arc.budget.orders import OrderBudgetConfig
+
+    cfg = OrderBudgetConfig.from_settings(settings).shared_account(arms=arms)
+    return settings.model_copy(update={"order_budget_account_max": cfg.account_max})
 
 
 def apply_changes(

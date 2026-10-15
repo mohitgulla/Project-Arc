@@ -117,6 +117,8 @@ class MismatchKind(StrEnum):
     # E6.2c: an unrecorded broker fill whose client_order_id is ``test.``-prefixed
     # (an integration-test order). Reported as a notice, not a mismatch: no halt.
     FILL_TEST = "fill_test"
+    # E15.2 (D69): the shared experiment account's book invariant failed for this arm
+    BOOK_INVARIANT = "book_invariant"
 
 
 # Reconcile anomaly categories (AnomalyReport.category)
@@ -130,6 +132,7 @@ CATEGORY: dict[MismatchKind, str] = {
     MismatchKind.FILL_QTY: "fill_discrepancy",
     MismatchKind.BROKER_ERROR: "other",
     MismatchKind.FILL_TEST: "fill_discrepancy",
+    MismatchKind.BOOK_INVARIANT: "position_mismatch",
 }
 
 
@@ -1166,6 +1169,7 @@ def reconcile(
             start=Decimal(0),
         )
     _check_orders(conn, broker, report, journal, now, run_id)
+    _check_book(broker, report, now)
     local = _local_fills(conn, day)
     if fills_ok:
         _check_fills(local, broker_fills, report, unwinds)
@@ -1228,6 +1232,33 @@ def reconcile(
         halt_on_mismatch(conn, report, now=now, run_id=run_id)
     log.info("reconcile.done", day=day.isoformat(), summary=report.summary())
     return report
+
+
+def _check_book(broker: BrokerAdapter, report: ReconcileReport, now: _dt.datetime) -> None:
+    """E15.2 (D69): a shared-mode arm broker's book invariant over the whole account.
+
+    Only a virtual broker in shared mode has one (``book_check``); it halts every arm
+    the violations reach (account scope: all arms on the account) and returns the ones
+    reaching this arm, which become ``book_invariant`` mismatches here.
+    """
+    if getattr(broker, "is_virtual", False) is not True:
+        return
+    if getattr(broker, "shared", False) is not True:
+        return
+    try:
+        found = broker.book_check(now=now)  # type: ignore[attr-defined]
+    except Exception as exc:  # noqa: BLE001 - books unproven: fail closed
+        report.mismatches.append(Mismatch(kind=MismatchKind.BROKER_ERROR, subject="book",
+                                          detail=f"{type(exc).__name__}: {exc}"))  # fmt: skip
+        return
+    for v in found:
+        report.mismatches.append(
+            Mismatch(
+                kind=MismatchKind.BOOK_INVARIANT,
+                subject=v.subject,
+                detail=f"{v.scope}:{v.kind} {v.detail}",
+            )  # fmt: skip
+        )
 
 
 def _halt_opens_on_expiry(

@@ -13,6 +13,9 @@ Rules (a contract must pass all of them):
   i.e. PLAN §5 "spread ≤ 10% of mid **or** ≤ $0.10".
 - ``low_open_interest`` / ``low_volume``: at or above the configured minimums.
   Unknown (``None``) open interest or volume fails: missing data is not liquidity.
+  E2.5 (D116): a contract whose volume is today's (``volume_source == "today"``)
+  faces ``ceil(min_volume x volume_fraction)``, floor 1 (:mod:`arc.data.volume`),
+  so the full minimum applies from midday on; any other volume faces the full one.
 """
 
 from __future__ import annotations
@@ -58,6 +61,16 @@ class LiquidityRules(BaseModel):
     spread_max_abs: float = Field(0.10, ge=0.0)
     min_open_interest: int = Field(100, ge=0)
     min_volume: int = Field(10, ge=0)
+    #: E2.5: elapsed part of the session's ramp to midday (arc.data.volume); 1.0 = full
+    volume_fraction: float = Field(1.0, ge=0.0, le=1.0)
+
+    def min_volume_for(self, c: OptionContract) -> int:
+        """The volume minimum *c* faces (pro-rated for today's volume, E2.5)."""
+        if c.volume_source == "today":
+            from arc.data.volume import today_min_volume
+
+            return today_min_volume(self.min_volume, self.volume_fraction)
+        return self.min_volume
 
     @classmethod
     def from_settings(cls, settings: ArcSettings) -> LiquidityRules:
@@ -101,7 +114,7 @@ def check_contract(c: OptionContract, rules: LiquidityRules) -> Reject | None:
         return Reject.WIDE_SPREAD
     if c.open_interest is None or c.open_interest < rules.min_open_interest:
         return Reject.LOW_OPEN_INTEREST
-    if c.volume is None or c.volume < rules.min_volume:
+    if c.volume is None or c.volume < rules.min_volume_for(c):
         return Reject.LOW_VOLUME
     return None
 

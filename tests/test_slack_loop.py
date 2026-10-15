@@ -6,7 +6,16 @@ import datetime as dt
 
 import pytest
 
-from arc.slack.loop import HEADLINE_MAX, LoopOutcome, LoopRoot, loop_status_line, slot_stamp
+from arc.slack.loop import (
+    HEADLINE_MAX,
+    RECAP_MAX,
+    LoopOutcome,
+    LoopRoot,
+    SleeveAllocation,
+    bold_italic,
+    loop_status_line,
+    slot_stamp,
+)
 from arc.utils.calendar import ET
 
 SLOT = dt.datetime(2026, 9, 28, 9, 40, tzinfo=ET)
@@ -75,6 +84,16 @@ class TestRootLine:
         assert slot_stamp(dt.datetime(2026, 9, 28, 13, 40, tzinfo=dt.UTC)) == "2026-09-28 09:40ET"
         assert slot_stamp(dt.datetime(2026, 12, 1, 14, 40, tzinfo=dt.UTC)) == "2026-12-01 09:40ET"
 
+    def test_no_sleeves_fact(self) -> None:
+        # D109: the D100 ``Sleeves:`` fact is no longer rendered (fields still load)
+        alloc = [
+            SleeveAllocation(name="short", held=3, cap=5),
+            SleeveAllocation(name="swing", held=0, cap=5),
+        ]
+        r = _root(buys=["SPY"], pending=["NVDA"], sleeves={"short": 1, "swing": 1}, allocated=alloc)
+        assert r.text() == f":white_check_mark: {FACTS} • BUY: SPY"
+        assert "Sleeves" not in r.text() and "Short" not in r.text()
+
     def test_round_trip_through_json(self) -> None:
         r = _root(buys=["SPY"])
         again = LoopRoot.model_validate(r.model_dump(mode="json"))
@@ -90,6 +109,14 @@ class TestHeadline:
             f":white_check_mark: {FACTS} • BUY: SPY\n"
             "_*SPY iron condor x1 filled; FOMC hold is priced.*_"
         )
+
+    def test_recap_limit_is_twice_the_headline(self) -> None:
+        # D109: the Day Recap / experiment readout headline gets 2x the room
+        assert RECAP_MAX == 2 * HEADLINE_MAX
+        long = "a" * (HEADLINE_MAX + 50)
+        assert bold_italic(long, RECAP_MAX) == f"_*{long}*_"
+        clipped = bold_italic("a" * 400, RECAP_MAX)
+        assert len(clipped) == RECAP_MAX + 4 and clipped.endswith("…*_")
 
     def test_one_sentence_clipped_to_two_lines(self) -> None:
         r = _root(headline=["a" * 400, "b"])

@@ -704,6 +704,7 @@ class TestAlpacaEnrichment:
     @patch("arc.data.alpaca.now_et", lambda: FROZEN_NOW)
     def test_open_interest_and_volume_filled(self) -> None:
         from arc.data.alpaca import AlpacaMarketData
+        from arc.data.volume import volume_basis
 
         sym = "SPY261030P00745000"
         snap = MagicMock()
@@ -726,8 +727,12 @@ class TestAlpacaEnrichment:
         contracts.get_option_contracts.side_effect = [page1, page2]
         raw = MagicMock()
         raw.get_option_chain.return_value = {
-            sym: {"dailyBar": {"v": 562}},
-            "SPY261030P00740000": {"prevDailyBar": {"v": 7}},
+            # E2.5 (D116): today's bar only (FROZEN_NOW is 12:00 ET on 2026-10-01)
+            sym: {
+                "dailyBar": {"v": 562, "t": "2026-10-01T04:00:00Z"},
+                "prevDailyBar": {"v": 9, "t": "2026-09-30T04:00:00Z"},
+            },
+            "SPY261030P00740000": {"prevDailyBar": {"v": 7, "t": "2026-09-30T04:00:00Z"}},
             "SPY261030P00735000": {},
         }
 
@@ -740,6 +745,10 @@ class TestAlpacaEnrichment:
         (c,) = md.option_chain("SPY", dt.date(2026, 10, 27), dt.date(2026, 11, 11))
         assert c.open_interest == 21384
         assert c.volume == 562
+        assert c.volume_source == "today"
+        assert md._daily_volume(  # noqa: SLF001 - yesterday's bar never stands in
+            MagicMock(), volume_basis(FROZEN_NOW)
+        ) == {sym: 562, "SPY261030P00740000": 0, "SPY261030P00735000": 0}
         assert contracts.get_option_contracts.call_count == 2
         second = contracts.get_option_contracts.call_args_list[1].args[0]
         assert second.page_token == "p2"
@@ -925,7 +934,9 @@ class TestDebitStrategies:
             ScanStrategy.BEAR_PUT_DEBIT,
             ScanStrategy.LONG_PUT,
         ]
-        assert (p.dte_min, p.dte_max) == (30, 60)
+        # E22.4 (D97): envelope of the short 10-29 + swing 30-60 sleeves
+        assert (p.dte_min, p.dte_max) == (10, 60)
+        assert p.dte_windows == [(10, 29), (30, 60)]
 
     def test_cli_debit_table(self, capsys, tmp_path) -> None:  # noqa: ANN001
         from arc.cli import main

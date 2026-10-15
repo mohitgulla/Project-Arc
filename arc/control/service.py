@@ -290,6 +290,8 @@ class ControlService:
         These are the entry DTE window the scanner and gate actually use under
         that profile (the global ``dte_min``/``dte_max`` only apply to a profile
         without a window, i.e. ``margin``), so the summary must show them.
+        E22.1 (D97): a profile with named sleeves lists
+        ``profiles.<name>.sleeves.<sleeve>.dte_min|dte_max|max_positions`` instead.
         """
         raw = self._raw(Target.PROFILES)
         out: list[str] = []
@@ -299,7 +301,29 @@ class ControlService:
             for attr in ("dte_min", "dte_max"):
                 if spec.get(attr) is not None:
                     out.append(f"profiles.{name}.{attr}")
+            sleeves = spec.get("sleeves")
+            if isinstance(sleeves, dict):
+                for sleeve in sleeves:
+                    out += [
+                        f"profiles.{name}.sleeves.{sleeve}.{attr}"
+                        for attr in ("dte_min", "dte_max", "max_positions")
+                    ]
         return out
+
+    def _check_profile_window_key(self, t: Tunable) -> None:
+        """E22.1: a profile's single-window key is refused on a profile with sleeves."""
+        if t.target is not Target.PROFILES or len(t.path) != 3:  # noqa: PLR2004
+            return
+        _, name, attr = t.path
+        spec = (self._raw(Target.PROFILES).get("profiles") or {}).get(name)
+        if isinstance(spec, dict) and spec.get("sleeves"):
+            keys = ", ".join(
+                f"profiles.{name}.sleeves.{s}.{attr}" for s in (spec.get("sleeves") or {})
+            )
+            msg = (
+                f"{t.key}: profile {name} has DTE sleeves, so it has no single window; tune {keys}"
+            )
+            raise TunableError(msg)
 
     def show(self, what: str | None = None) -> list[KeyView]:
         """Every key, one group, or one key."""
@@ -342,6 +366,8 @@ class ControlService:
 
     def _validate_effective(self, t: Tunable, new: Any, *, is_default: bool = False) -> None:
         """Would the effective config still load with this value? Raises TunableError."""
+        if not is_default:
+            self._check_profile_window_key(t)
         active = dict(self.changes.active())
         if is_default:
             active.pop(t.key, None)

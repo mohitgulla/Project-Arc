@@ -68,16 +68,35 @@ class EntryTerms(BaseModel):
     dte_min: int = Field(..., ge=0)
     dte_max: int = Field(..., ge=0)
     bands: list[DeltaBand] = Field(default_factory=list)
+    sleeves: list[tuple[str, int, int]] | None = Field(
+        None, description="E22.1 (D97): (name, dte_min, dte_max) per sleeve; None = one window"
+    )
 
     @property
     def window(self) -> str:
+        if self.sleeves:
+            return " / ".join(f"{lo}-{hi} DTE ({name})" for name, lo, hi in self.sleeves)
         return f"{self.dte_min}-{self.dte_max} DTE"
 
     def bands_text(self) -> str:
         return "; ".join(b.render() for b in self.bands) or "no strike band (no strategy)"
 
+    @property
+    def sleeve_windows(self) -> str:
+        """E22.2 (D97): ``<name> <lo>-<hi> DTE`` per sleeve, comma-joined (sleeved only)."""
+        return ", ".join(f"{name} {lo}-{hi} DTE" for name, lo, hi in self.sleeves or [])
+
     def quant_lines(self) -> str:
         """The Quant's structure terms (replaces the old hard-coded D4 line)."""
+        if self.sleeves:  # E22.2 (D97): one menu per open sleeve
+            return (
+                f"- Entry windows: {self.sleeve_windows} (DTE sleeves of the account profile "
+                f"`{self.account_profile}`). Every menu structure is inside one of them and "
+                "carries its `sleeve`; do not reject or skip a menu item on DTE alone.\n"
+                "- At most one structure per ticker across sleeves: pick the sleeve whose "
+                "horizon fits the thesis (catalyst date, momentum vs a slower trend).\n"
+                f"- Strike bands the scanner applied: {self.bands_text()}."
+            )
         return (
             f"- Every menu structure is inside the {self.window} entry window set by the "
             f"account profile `{self.account_profile}`; do not reject or skip a menu item "
@@ -95,6 +114,13 @@ class EntryTerms(BaseModel):
         )
 
     def risk_line(self) -> str:
+        if self.sleeves:  # E22.2 (D97)
+            return (
+                f"Entry windows: {self.sleeve_windows}, fixed by config (account profile "
+                f"`{self.account_profile}`; {self.bands_text()}); every proposed structure "
+                "is inside one sleeve, at most one per ticker. Do not decline or downsize a "
+                "structure for its DTE alone."
+            )
         return (
             f"Entry window: every proposed structure is inside the {self.window} window "
             f"fixed by config (account profile `{self.account_profile}`; "
@@ -130,7 +156,18 @@ def entry_terms(settings: ArcSettings) -> EntryTerms:
                 kind="long", lo=settings.scanner_long_delta_min, hi=settings.scanner_long_delta_max
             )
         )
-    return EntryTerms(account_profile=settings.account_profile, dte_min=lo, dte_max=hi, bands=bands)
+    sleeves = (
+        [(s.name, s.dte_min, s.dte_max) for s in settings.entry_sleeves]
+        if settings.profile.has_sleeves
+        else None
+    )
+    return EntryTerms(
+        account_profile=settings.account_profile,
+        dte_min=lo,
+        dte_max=hi,
+        bands=bands,
+        sleeves=sleeves,
+    )
 
 
 _DTE_TEXT = re.compile(r"\bDTE\b|days?[ -]to[ -]expir", re.IGNORECASE)

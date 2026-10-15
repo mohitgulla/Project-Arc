@@ -152,6 +152,7 @@ def review_position(
     entry_managed_net_ev: float | None = None,
     minutes_since_fill: float | None = None,
     peak_pnl: float | None = None,
+    exit_block: str | None = None,
 ) -> PositionReview:
     """Review one open position (see module doc). Raises ``LookupError`` on a missing mark.
 
@@ -161,9 +162,11 @@ def review_position(
     *minutes_since_fill* are recorded for the audit only; they never change a signal.
     *peak_pnl* (E18.1) is the peak per-share P&L of the position's stored marks
     (:func:`arc.positions.marks.stored_peak_pnl`); ``None`` leaves the lock unarmed.
+    *exit_block* (E22.1) is the position's sleeve exit block
+    (``ArcSettings.exit_block_of``); ``None`` = the kind policy.
     """
     st = position.structure
-    policy = exits.policy_for(st.kind)
+    policy = exits.policy_for(st.kind, exit_block)
     state = evaluate_position(
         position, marks, policy, cost=cost, cfg=exits.model, peak_pnl=peak_pnl
     )

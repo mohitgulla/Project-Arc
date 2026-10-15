@@ -7,8 +7,10 @@
 * ``pair <chain>``: run each arm's copy of one control loop chain now. ``--fixtures``
   uses the canned personas and the recorded market, like ``arc propose --fixtures``.
 * ``arms-tick``: what the routines tick spawns (detached) after control's tick:
-  pair recent control chains, then each arm's own jobs. Holds its own lock, so two
-  overlapping ticks never run the arms twice.
+  plans the arms (tape prune, book + account checks) under its own lock, then runs
+  each arm as an ``arm-tick`` child, ``max_parallel_arms`` at once (E15.4, D69).
+* ``arm-tick <XP-n>:<arm>``: one arm's tick (pair recent control chains, then the
+  arm's own jobs) under its own lock ``experiment-arms:<arm>``; control read ``mode=ro``.
 """
 
 from __future__ import annotations
@@ -96,6 +98,22 @@ def add_arm_parsers(esub: Any, common: Any, local_actor: str) -> None:
         help="With --dry-run: preview this (draft/registered) experiment's arms instead",
     )
     at.add_argument("--since", default=None, help="With --dry-run: tick window start (ISO)")
+    at.add_argument(
+        "--in-process",
+        action="store_true",
+        help="E15.4: run the arms as threads in this process, not one arm-tick child each",
+    )
+    one = common(
+        esub.add_parser(
+            "arm-tick",
+            help="E15.4: one arm's tick under its own lock (what arms-tick spawns per arm)",
+        )
+    )
+    one.add_argument("arm_id", help="XP-<n>:<arm>")
+    one.add_argument("--config", default=None, help="routines.yaml (default: config/routines.yaml)")
+    one.add_argument("--lock-dir", default="data/locks")
+    one.add_argument("--now", default=None)
+    one.add_argument("--no-slack", action="store_true", help="No [Ops] notice (D69 account guard)")
     rl = common(
         esub.add_parser(
             "repair-ledger",
@@ -198,7 +216,7 @@ def _start(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
         "status": st.status.value,
         "t0": None if st.running is None else st.running.t0.isoformat(),
         "t0_equity": str(t0_equity),
-        "legacy_book": [] if st.running is None else st.running.legacy_book,
+        "production_book": [] if st.running is None else st.running.production_book,
         "arms": {n: str(p) for n, p in arm_stores(conn, st.experiment_id).items()},
         "plans": {}
         if st.running is None
@@ -209,7 +227,7 @@ def _start(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
     else:
         _out(
             f"{st.experiment_id} running from {payload['t0']} at t0 equity ${t0_equity} "
-            f"({len(payload['legacy_book'])} legacy structure(s))"
+            f"(production book: {len(payload['production_book'])} structure(s))"
         )
         for n, p in payload["arms"].items():
             plan = payload["plans"].get(n) or {}
@@ -324,6 +342,15 @@ class _FixtureBroker:
         _ = since
         return []
 
+    def raw_activities(self, since: _dt.date, **_: Any) -> list[dict[str, Any]]:
+        """D69 shared-account attribution reads (the fixture account never trades)."""
+        _ = since
+        return []
+
+    def raw_orders(self, since: _dt.datetime) -> list[dict[str, Any]]:
+        _ = since
+        return []
+
 
 def _arms_tick(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
     from arc.experiments.runner import arms_tick
@@ -339,7 +366,7 @@ def _arms_tick(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
     now = _parse_now(args.now)
     lock_dir = Path(args.lock_dir)
     report: dict[str, Any]
-    from arc.experiments.runner import live_account_number
+    from arc.experiments.runner import live_account_number, live_book_reader
     from arc.monitoring.alerts import LogOpsNotifier, OpsNotifier, SlackOpsNotifier
     from arc.routines.config import load_routines
 
@@ -349,26 +376,138 @@ def _arms_tick(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
         if args.no_slack
         else SlackOpsNotifier(load_routines(args.config).monitoring.alert_channel)
     )
+    # E15.4: the ``experiment-arms`` lock covers the planning only; each arm runs as its
+    # own ``arc experiment arm-tick`` child under its own lock, max_parallel_arms at once
     try:
-        with LockManager(lock_dir).hold(ARMS_TICK_LOCK):
-            report = arms_tick(
-                conn,
-                routines_path=args.config,
-                now=now,
-                lock_dir=lock_dir,
-                clock=None if args.now else now_et,
-                spawner=spawn_detached,
-                account_number=live_account_number(),
-                notifier=notifier,
-            )
+        report = arms_tick(
+            conn,
+            routines_path=args.config,
+            now=now,
+            lock_dir=lock_dir,
+            clock=None if args.now else now_et,
+            spawner=spawn_detached,
+            account_number=live_account_number(),
+            notifier=notifier,
+            book_reader=live_book_reader(conn),
+            launcher=None if args.in_process else _process_launcher(args, conn),
+            plan_lock=lambda: LockManager(lock_dir).hold(ARMS_TICK_LOCK),
+        )
     except LockBusyError as exc:
-        report = {"skipped": f"another arms-tick is running ({exc})"}
+        report = {"skipped": f"another arms-tick is planning ({exc})"}
     _out(
         json.dumps(report, indent=2, default=str) if args.json else json.dumps(report, default=str)
     )
     arms = report.get("arms") or {}
     failed = any("error" in a for a in arms.values())
     return 1 if failed else 0
+
+
+#: E15.4: how long ``arms-tick`` waits for one arm child beyond its loop deadline
+#: (``loop.max_runtime``); a child still running after that is reported, never killed.
+_ARM_CHILD_GRACE_S = 300
+
+
+def _child_timeout(conn: sqlite3.Connection, config: str | None) -> float:
+    """E15.4: the wait for one arm child: twice ``loop.max_runtime`` plus a grace."""
+    from arc.control.effective import effective_routines
+
+    limit = 2 * effective_routines(conn, config).loop.max_runtime.total_seconds()
+    return limit + _ARM_CHILD_GRACE_S
+
+
+def _process_launcher(
+    args: argparse.Namespace, conn: sqlite3.Connection
+) -> Callable[[Any], dict[str, Any]]:
+    """E15.4: run each arm as ``arc experiment arm-tick <arm>`` (one process per arm).
+
+    The child's JSON report (stdout, via an anonymous temp file so a large report never
+    blocks on a pipe) is the arm's entry. The wait is bounded (:func:`_child_timeout`);
+    a child past it keeps running (it holds its own lock, so the next slot skips it)
+    and the arm is reported ``failed`` with the reason.
+    """
+    import subprocess
+    import tempfile
+
+    from arc.routines.handlers import RunEnv
+    from arc.routines.spawn import arc_command
+
+    timeout = _child_timeout(conn, args.config)
+    env = RunEnv(
+        db_path=args.db,
+        config_path=args.config,
+        lock_dir=args.lock_dir,
+        slack=not args.no_slack,
+    )
+
+    def launch(task: Any) -> dict[str, Any]:
+        extra = ["--now", args.now] if args.now else []
+        argv = arc_command(env, ["experiment", "arm-tick", task.key, "--json", *extra])
+        with tempfile.TemporaryFile() as out:
+            proc = subprocess.Popen(  # noqa: S603 - argv is built from our own constants
+                argv, stdin=subprocess.DEVNULL, stdout=out, start_new_session=True
+            )
+            try:
+                code = proc.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                return {"error": f"arm-tick pid {proc.pid} still running after {timeout:.0f}s"}
+            out.seek(0)
+            text = out.read().decode(errors="replace")
+        try:
+            res = json.loads(text[text.index("{") :]) if "{" in text else {}
+        except ValueError:
+            res = {}
+        if not isinstance(res, dict) or not res:
+            return {"error": f"arm-tick exited {code} with no report"}
+        res["pid"] = proc.pid
+        return res
+
+    return launch
+
+
+def run_arm_tick(args: argparse.Namespace) -> int:
+    """``arc experiment arm-tick <XP-n>:<arm>``: one arm's tick (E15.4, D69).
+
+    Reads control's store ``mode=ro`` (never migrates or writes it); the arm's own store
+    is the only one written. Holds ``experiment-arms:<arm>``; a held lock prints
+    ``skipped: previous arm tick running``. Exit 1 when the arm failed.
+    """
+    from arc.experiments.runner import ArmTask, arm_stores, runner_config, tick_arm
+    from arc.experiments.tape import running_experiments
+    from arc.routines.spawn import spawn_detached
+    from arc.store.db import connect_ro
+    from arc.utils.calendar import now_et
+
+    experiment_id, sep, arm = str(args.arm_id).rpartition(":")
+    if not sep or not experiment_id or not arm:
+        _err(f"arc experiment arm-tick: {args.arm_id!r} is not an arm id (XP-<n>:<arm>)")
+        return 2
+    control = connect_ro(args.db)
+    try:
+        running = {s.experiment_id: s for s in running_experiments(control)}
+        st = running.get(experiment_id)
+        if st is None:
+            _err(f"arc experiment arm-tick: {experiment_id} is not running")
+            return 2
+        path = arm_stores(control, experiment_id).get(arm)
+        if path is None:
+            _err(f"arc experiment arm-tick: {experiment_id} has no arm {arm!r}")
+            return 2
+        now = _parse_now(args.now)
+        report = tick_arm(
+            control,
+            st,
+            ArmTask(experiment_id, arm, path),
+            runner=runner_config(control),
+            routines_path=args.config,
+            now=now,
+            lock_dir=Path(args.lock_dir),
+            clock=None if args.now else now_et,
+            spawner=spawn_detached,
+        )
+    finally:
+        control.close()
+    _out(json.dumps(report, indent=2 if args.json else None, default=str))
+    return 1 if "error" in report else 0
 
 
 def _repair_ledger(args: argparse.Namespace, conn: sqlite3.Connection) -> int:

@@ -16,9 +16,9 @@ const VIEWPORTS = [
 ] as const;
 const THEMES = ["dark", "light"] as const;
 // E8.8d: the owner's widget order (Alerts / Halts / Runs are collapsible sections).
-const CARDS = ["Session Timeline", "Sources", "Health", "LLM Usage", "Context Store", "Auto-Approve", "Config"];
+const CARDS = ["Session Timeline", "Sources", "LLM Usage", "Context Store", "Auto-Approve", "Config", "Health"];
 // E8.8e: Config sits right below Auto-Approve.
-const ORDER = ["Session Timeline", "Sources", "Health", "LLM Usage", "Context Store", "Auto-Approve", "Config", "Alerts", "Halts", "Runs"];
+const ORDER = ["Session Timeline", "Sources", "LLM Usage", "Context Store", "Auto-Approve", "Config", "Health", "Alerts", "Halts", "Runs"];
 
 test.use({ baseURL: OPS_URL });
 
@@ -52,15 +52,22 @@ for (const vp of VIEWPORTS) {
           await expect(page.getByRole("heading", { level: 2, name: title, exact: true })).toBeVisible();
         await expect(page.getByRole("heading", { level: 2, name: "Order Budget" })).toHaveCount(0);
         await expect(page.getByTestId("order-budget")).toHaveCount(0);
-        const phone = vp.width <= 768;
+        // D93: one fixed-scale timeline at every width (no Gantt / section-list split)
         const tl = page.getByTestId("session-timeline");
-        await expect(tl).toHaveAttribute("data-layout", phone ? "list" : "gantt");
-        await expect(tl.getByTestId("band").first()).toBeVisible();
+        await expect(tl).toHaveAttribute("data-layout", "timeline");
+        await expect(tl).toHaveAttribute("data-window", "rolling");
+        await expect(tl.getByTestId("tl-group").first()).toBeVisible();
+        await expect(tl.getByTestId("now-line")).toBeAttached();
         await expect(page.getByTestId("loop-row")).toBeAttached();
-        await expect(page.getByTestId("loop-row").locator('[data-status="no_change"]').first()).toBeAttached();
+        const loopJob = await page.getByTestId("loop-row").getAttribute("data-job");
+        await expect(tl.locator(`[data-testid=track-row][data-job="${loopJob}"] [data-status="no_change"]`).first()).toBeAttached();
         await expect(tl.locator('[data-status="failed"]').first()).toBeAttached();
         await expect(page.getByTestId("health-strip").getByTestId("health-chip")).toHaveCount(5);
-        await expect(page.getByTestId("health-strip")).toContainText("Tick ok");
+        await expect(page.getByTestId("health-strip").getByTestId("health-name").first()).toHaveText("Tick");
+        // D89: equal-size tiles (one width and one height for every check)
+        const boxes = await page.getByTestId("health-chip").evaluateAll((els) => els.map((el) => [el.getBoundingClientRect().width, el.getBoundingClientRect().height]));
+        expect(new Set(boxes.map((b) => Math.round(b[0]))).size).toBe(1);
+        expect(new Set(boxes.map((b) => Math.round(b[1]))).size).toBe(1);
         // Alerts, Halts, Runs: closed on a first visit; the header pills still signal trouble
         for (const name of ["Alerts", "Halts", "Runs"])
           await expect(page.getByRole("button", { name: new RegExp(`^${name}`) })).toHaveAttribute("aria-expanded", "false");
@@ -173,8 +180,10 @@ test.describe("ops behaviour", () => {
 
   test("day control and run filters are URL-synced; a run row opens its detail", async ({ page }) => {
     await open(page, "/ops");
+    await page.getByTestId("timeline-window").getByRole("tab", { name: "Day" }).click();
     await page.getByRole("button", { name: "Yesterday", exact: true }).click();
     await expect(page).toHaveURL(/day=yesterday/);
+    await expect(page).toHaveURL(/tl=day/);
     await expect(page.getByTestId("session-timeline").locator('[data-status="future"]')).toHaveCount(0);
     await page.getByRole("button", { name: /^Runs/ }).click();
     await page.getByLabel("Status").selectOption("failed");
@@ -187,7 +196,7 @@ test.describe("ops behaviour", () => {
 
   test("a timeline slot opens its run; context links open the entry", async ({ page }) => {
     await open(page, "/ops");
-    await page.getByTestId("loop-row").locator('[data-status="done"]').first().click();
+    await page.locator('[data-testid=track-row][data-job="research"] [data-status="done"]').first().click();
     await expect(page).toHaveURL(/\/ops\/runs\/run-ops-research-/);
     await page.locator('[data-testid=kind-count][data-kind="candidate"]').first().click();
     await page.getByRole("link", { name: /^candidate:/ }).first().click();
@@ -198,29 +207,92 @@ test.describe("ops behaviour", () => {
   test("timeline bands, persona chips and the ⓘ about line come from routines.yaml", async ({ page }) => {
     await open(page, "/ops");
     const tl = page.getByTestId("session-timeline");
-    await expect(tl.getByTestId("band").first()).toBeVisible();
+    await expect(tl.getByTestId("tl-group").first()).toBeVisible();
+    // D93: TIMELINE_GROUPS are label rows on the timeline; Sources keeps its category sub-labels
+    const groups = await tl.getByTestId("tl-group").evaluateAll((els) => els.map((e) => e.getAttribute("data-group")));
+    expect(groups[0]).toBe("sources");
+    expect(groups.indexOf("scalp")).toBeLessThan(groups.indexOf("trading_loop"));
+    expect(groups.indexOf("trading_loop")).toBeLessThan(groups.indexOf("position_management"));
     const bands = await tl.getByTestId("band").evaluateAll((els) => els.map((e) => e.getAttribute("data-band")));
     expect(bands[0]).toMatch(/^sources\./);
-    expect(bands.indexOf("scalp")).toBeLessThan(bands.indexOf("trading_loop"));
-    expect(bands.indexOf("trading_loop")).toBeLessThan(bands.indexOf("position_management"));
     const loop = page.getByTestId("loop-row");
-    await expect(loop).toContainText("Research → Quant → Risk → Propose → Execute");
+    await expect(loop).toContainText("Trade Loop");
     // D59: the loop label is the same size as every other job label (bold only), and
     // band / job labels are Title Case.
     const fs = async (l: import("@playwright/test").Locator) => l.evaluate((el) => getComputedStyle(el).fontSize);
     expect(await fs(loop.getByTestId("job-label"))).toBe(await fs(tl.getByTestId("timeline-row").first().getByTestId("job-label")));
-    await expect(tl.locator("[data-band=trading_loop] [data-testid=band-header]")).toContainText("Trading Loop");
+    await expect(tl.locator("[data-testid=tl-group][data-group=trading_loop]")).toContainText("Trading Loop");
     await expect(loop.getByTestId("persona-chip")).toHaveText("🧠 Research");
     await expect(tl.locator('[data-job="positions.evaluate"]')).toContainText("Position Marks");
     await loop.getByTestId("job-info").click();
     await expect(page.getByRole("dialog").or(page.locator("[role=tooltip]")).first()).toContainText("LLM yes");
   });
 
+  test("D93 timeline: Rolling by default with a now-line, Day covers 00:00-24:00, groups collapse", async ({ page }) => {
+    await open(page, "/ops");
+    const tl = page.getByTestId("session-timeline");
+    const tabs = page.getByTestId("timeline-window");
+    await expect(tabs.getByRole("tab", { name: "Rolling" })).toHaveAttribute("aria-selected", "true");
+    await expect(tl).toHaveAttribute("data-window", "rolling");
+    const now = tl.getByTestId("now-line");
+    await expect(now).toBeAttached();
+    await expect(now).toHaveAttribute("aria-label", /^Now \d{2}:\d{2} ET$/);
+    // opens scrolled to now: the now-line sits inside the visible track
+    const [track, line] = await Promise.all([tl.getByTestId("timeline-track").boundingBox(), now.boundingBox()]);
+    expect(line!.x).toBeGreaterThanOrEqual(track!.x);
+    expect(line!.x).toBeLessThanOrEqual(track!.x + track!.width);
+    // faint 10-minute routines ticks: 13 h rolling = 79 ticks, 14 of them hour lines
+    await expect(tl.getByTestId("hour-tick")).toHaveCount(14);
+    await expect(tl.getByTestId("minute-tick")).toHaveCount(65);
+    // Day: the full ET day, so the 23:00 jobs are on the scale (a fixed trading day, so the
+    // check does not depend on what weekday the fixture was built on)
+    await tabs.getByRole("tab", { name: "Day" }).click();
+    await expect(page).toHaveURL(/tl=day/);
+    await expect(tl).toHaveAttribute("data-window", "day");
+    await page.getByLabel("Pick a day").fill("2026-10-09");
+    await expect(page).toHaveURL(/day=2026-10-09/);
+    await expect(page.getByTestId("window-caption")).toHaveText("2026-10-09 · 00:00–24:00 ET");
+    await expect(tl.getByTestId("hour-tick")).toHaveCount(25);
+    await expect(tl.getByTestId("now-line")).toHaveCount(0); // a past day has no now-line
+    const late = await tl.locator("[data-testid=slot]").evaluateAll((els) => els.filter((e) => / 23:00 ET/.test(e.getAttribute("aria-label") ?? "")).length);
+    expect(late).toBeGreaterThan(0);
+    // names stay pinned while the track scrolls sideways
+    const name = tl.getByTestId("timeline-row").first();
+    const x0 = (await name.boundingBox())!.x;
+    await tl.getByTestId("timeline-track").evaluate((el) => (el.scrollLeft = el.scrollWidth));
+    expect((await name.boundingBox())!.x).toBe(x0);
+    // groups collapse to their label row
+    const sources = tl.locator("[data-testid=tl-group][data-group=sources]");
+    const rowsBefore = await tl.getByTestId("timeline-row").count();
+    await sources.click();
+    await expect(sources).toHaveAttribute("data-open", "false");
+    expect(await tl.getByTestId("timeline-row").count()).toBeLessThan(rowsBefore);
+    await sources.click();
+    await expect(sources).toHaveAttribute("data-open", "true");
+    // back to Rolling
+    await tabs.getByRole("tab", { name: "Rolling" }).click();
+    await expect(tl).toHaveAttribute("data-window", "rolling");
+    await expect(page).not.toHaveURL(/tl=day/);
+  });
+
+  test("context store groups kinds by Timeline band with writers and readers (D89)", async ({ page }) => {
+    await open(page, "/ops");
+    const groups = page.getByTestId("context-group");
+    await expect(groups.first()).toHaveAttribute("data-group", "sources");
+    await page.locator('[data-testid=context-group][data-group="scalp"] > button').click();
+    const cand = page.locator('[data-testid=context-kind][data-kind="candidate"]');
+    await expect(cand).toContainText("Candidate");
+    await expect(cand.getByTestId("context-writers")).toContainText("Scalp");
+    await expect(cand.getByTestId("context-readers")).toContainText("Trade Loop");
+  });
+
   test("health chips, auto-approve key/values and grouped alerts", async ({ page }) => {
     await open(page, "/ops");
     const failed = page.locator('[data-testid=health-chip][data-status="failed"]');
     await expect(failed).toHaveCount(1);
-    await expect(failed.getByTestId("health-message")).toBeVisible(); // non-ok chips expand inline
+    // D89: a non-ok check's message sits under the tile grid
+    const key = await failed.getAttribute("data-key");
+    await expect(page.locator(`[data-testid=health-message][data-key="${key}"]`)).toBeVisible();
     await expect(page.getByTestId("auto-approve")).toContainText("Paper");
     await expect(page.getByTestId("auto-approve")).toContainText("Last flip");
     await page.getByRole("button", { name: /^Alerts/ }).click();
@@ -280,7 +352,7 @@ test.describe("ops behaviour", () => {
 
   test("run detail is concise: ids hidden until Show ids, manifest collapsed", async ({ page }) => {
     await open(page, "/ops");
-    await page.getByTestId("loop-row").locator('[data-status="done"]').first().click();
+    await page.locator('[data-testid=track-row][data-job="research"] [data-status="done"]').first().click();
     await expect(page).toHaveURL(/\/ops\/runs\/run-ops-research-/);
     await expect(page.getByTestId("context-id")).toHaveCount(0);
     await expect(page.getByTestId("manifest-group")).toHaveCount(0);
@@ -296,29 +368,28 @@ test.describe("ops behaviour", () => {
 });
 
 test.describe("ops phone-75", { tag: PHONE_75_TAG }, () => {
-  test("timeline is a grouped list; bands and categories collapse; sections start closed", async ({ page }) => {
+  test("timeline is the same scrolling timeline on a phone; groups and categories collapse; sections start closed", async ({ page }) => {
     await open(page, "/ops");
     const tl = page.getByTestId("session-timeline");
-    await expect(tl).toHaveAttribute("data-layout", "list");
-    await expect(page.locator(".min-w-\\[720px\\]")).toHaveCount(0); // no min-width Gantt
-    // a band with a failed / missed slot starts open; a clean one starts closed
-    const bands = tl.getByTestId("band");
-    await expect(bands.first()).toBeVisible();
-    const states = await bands.evaluateAll((els) => els.map((e) => e.getAttribute("data-open")));
-    expect(states).toContain("true");
-    // expand a closed band, then tap a job row for its slot details
-    const [closedKey] = await tl.locator('[data-testid=band][data-open="false"]').evaluateAll((els) => els.map((e) => e.getAttribute("data-band")));
-    if (closedKey) {
-      const closed = tl.locator(`[data-testid=band][data-band="${closedKey}"]`);
-      await closed.getByTestId("band-header").click();
-      await expect(closed).toHaveAttribute("data-open", "true");
-    }
-    const row = tl.getByTestId("loop-row");
-    const loopBand = tl.locator("[data-testid=band][data-band=trading_loop]");
-    if ((await loopBand.getAttribute("data-open")) === "false") await loopBand.getByTestId("band-header").click();
-    await expect(row.getByTestId("row-summary")).toContainText(/\d+\/\d+ done/);
-    await row.locator("button[aria-controls]").first().click();
-    await expect(row.getByTestId("slot-details")).toBeVisible();
+    // D93: no section list on phones either; one timeline with a now-line in Rolling
+    await expect(tl).toHaveAttribute("data-layout", "timeline");
+    await expect(tl).toHaveAttribute("data-window", "rolling");
+    await expect(tl.getByTestId("now-line")).toBeAttached();
+    const track = tl.getByTestId("timeline-track");
+    const [sw, cw] = await track.evaluate((el) => [el.scrollWidth, el.clientWidth]);
+    expect(sw).toBeGreaterThan(cw!);
+    // the Day view of a trading day: names pinned, groups collapse, marks are tappable
+    await page.getByTestId("timeline-window").getByRole("tab", { name: "Day" }).click();
+    await page.getByLabel("Pick a day").fill("2026-10-09");
+    await expect(tl).toHaveAttribute("data-window", "day");
+    const loopBand = tl.locator("[data-testid=tl-group][data-group=trading_loop]");
+    await expect(tl.getByTestId("loop-row")).toBeVisible();
+    await loopBand.click();
+    await expect(loopBand).toHaveAttribute("data-open", "false");
+    await expect(tl.getByTestId("loop-row")).toHaveCount(0);
+    await loopBand.click();
+    await expect(tl.getByTestId("loop-row")).toBeVisible();
+    await expectTouchTargets(page, "[data-testid=ops] [data-testid=timeline-names]");
     // Sources: categories show the header only, unless they have a problem
     const cats = page.getByTestId("source-category");
     await expect(cats.first()).toBeVisible();

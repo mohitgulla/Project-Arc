@@ -47,7 +47,7 @@ from __future__ import annotations
 
 import datetime as dt
 import math
-from collections import defaultdict
+from collections import Counter, defaultdict
 from decimal import Decimal
 from enum import StrEnum
 from typing import TYPE_CHECKING
@@ -57,6 +57,7 @@ from pydantic import BaseModel, Field, model_validator
 from scipy.stats import norm
 
 from arc.backtest.costs import CostModel, load_cost_model
+from arc.data.volume import today_min_volume, volume_basis
 from arc.models import Liquidity, Structure
 from arc.pricing.bs import BSMInputs, price
 from arc.scanner.filters import FilterReport, LiquidityRules, apply_filters
@@ -77,6 +78,7 @@ from arc.utils.calendar import dte_calendar
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
+    from arc.account_profiles import DteSleeve
     from arc.config import ArcSettings
     from arc.data.base import MarketDataProvider, OptionContract
 
@@ -85,6 +87,7 @@ __all__ = [
     "DEBIT_STRATEGIES",
     "RankBy",
     "ScanCandidate",
+    "ScanInputs",
     "ScanParams",
     "ScanResult",
     "ScanStrategy",
@@ -137,6 +140,11 @@ class ScanParams(BaseModel):
 
     dte_min: int = Field(30, ge=1)
     dte_max: int = Field(45, ge=1)
+    dte_windows: list[tuple[int, int]] | None = Field(
+        None,
+        description="E22.1 (D97): the profile's sleeve windows; an expiry must fall inside "
+        "one (None = every expiry in [dte_min, dte_max], the single-window case)",
+    )
     target_delta: float = Field(0.20, gt=0.0, lt=1.0)
     delta_min: float = Field(0.16, gt=0.0, lt=1.0)
     delta_max: float = Field(0.30, gt=0.0, lt=1.0)
@@ -203,13 +211,19 @@ class ScanParams(BaseModel):
         return self
 
     @classmethod
-    def from_settings(cls, settings: ArcSettings, **overrides: object) -> ScanParams:
+    def from_settings(
+        cls, settings: ArcSettings, *, sleeve: DteSleeve | None = None, **overrides: object
+    ) -> ScanParams:
         """Defaults from :class:`arc.config.ArcSettings`, then *overrides*.
 
         The DTE window is the account profile's entry window (D25) and the default
-        strategies are every strategy the profile maps a stance to.
+        strategies are every strategy the profile maps a stance to. E22.1: a profile
+        with sleeves scans the envelope and keeps expiries inside some sleeve.
+        E22.2: with *sleeve* the window is that sleeve's alone (one menu per sleeve).
         """
         dte_min, dte_max = settings.entry_dte_window
+        if sleeve is not None:
+            dte_min, dte_max = sleeve.dte_min, sleeve.dte_max
         profile_strategies = profile_strategy_set(settings)
         base: dict[str, object] = {
             "dte_min": dte_min,
@@ -233,6 +247,8 @@ class ScanParams(BaseModel):
         }
         if profile_strategies:
             base["strategies"] = profile_strategies
+        if settings.profile.has_sleeves and sleeve is None:
+            base["dte_windows"] = [(w.dte_min, w.dte_max) for w in settings.entry_sleeves]
         base.update({k: v for k, v in overrides.items() if v is not None})
         return cls.model_validate(base)
 
@@ -278,6 +294,18 @@ class NoSpotError(LookupError):
     """E4.12: the underlying has no usable spot (fail the ticker closed)."""
 
 
+class ScanInputs(BaseModel):
+    """E2.5 (D116): where the chain's liquidity inputs came from (counts per source)."""
+
+    oi_cboe: int = 0
+    oi_alpaca: int = 0
+    oi_unknown: int = 0
+    volume_source: dict[str, int] = Field(default_factory=dict)
+    min_volume_today: int | None = Field(
+        None, description="Pro-rated minimum for today's volume (None: no `now` given)"
+    )
+
+
 class ScanResult(BaseModel):
     """Everything :func:`scan` found for one underlying."""
 
@@ -290,6 +318,20 @@ class ScanResult(BaseModel):
     iv: IvStats
     filter_report: FilterReport
     candidates: list[ScanCandidate]
+    inputs: ScanInputs = Field(default_factory=ScanInputs)
+
+
+def _scan_inputs(chain: Sequence[OptionContract], min_today: int | None) -> ScanInputs:
+    """E2.5 counts of the chain's OI and volume sources."""
+    oi = Counter(c.oi_source for c in chain)
+    vol = Counter(c.volume_source or "unknown" for c in chain)
+    return ScanInputs(
+        oi_cboe=oi["cboe"],
+        oi_alpaca=oi["alpaca"],
+        oi_unknown=oi[None],
+        volume_source=dict(sorted(vol.items())),
+        min_volume_today=min_today,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -638,8 +680,13 @@ def scan(
     *,
     as_of: dt.date,
     iv_history: Mapping[dt.date, float] | None = None,
+    now: dt.datetime | None = None,
 ) -> ScanResult:
-    """Scan *ticker*'s chain and return ranked candidates for ``params.strategies``."""
+    """Scan *ticker*'s chain and return ranked candidates for ``params.strategies``.
+
+    E2.5 (D116): *now* pro-rates the volume minimum for contracts carrying today's
+    volume (:func:`arc.data.volume.volume_basis`); ``None`` keeps the full minimum.
+    """
     from arc.data.base import market_spot
 
     ticker = ticker.upper()
@@ -656,6 +703,12 @@ def scan(
         if exp_start <= c.expiration <= exp_end
     ]
     expirations = sorted({c.expiration for c in chain})
+    if params.dte_windows is not None:  # E22.1: the gap between two sleeves is out
+        expirations = [
+            e
+            for e in expirations
+            if any(lo <= dte_calendar(as_of, e) <= hi for lo, hi in params.dte_windows)
+        ]
 
     # IV context from the full (unfiltered) chain of the expiry nearest 30 DTE.
     iv_exp = min(
@@ -671,7 +724,13 @@ def scan(
         min_obs=params.iv_min_obs,
     )
 
-    liquid, report = apply_filters(chain, params.rules)
+    rules = params.rules
+    min_today = None
+    if now is not None:
+        rules = rules.model_copy(update={"volume_fraction": volume_basis(now).fraction})
+        min_today = today_min_volume(rules.min_volume, rules.volume_fraction)
+    liquid, report = apply_filters(chain, rules)
+    inputs = _scan_inputs(chain, min_today)
     # Builders emit compact OCC symbols; normalise chain symbols (padded or compact) to match.
     quotes = {parse_occ(c.symbol).format(): c for c in liquid}
     by_exp: dict[tuple[dt.date, str], list[OptionContract]] = defaultdict(list)
@@ -771,6 +830,8 @@ def scan(
         candidates=len(cands),
         atm_iv=iv.atm_iv,
         iv_rank=iv.iv_rank,
+        **inputs.model_dump(),
+        rejected=report.rejected,
     )
     return ScanResult(
         ticker=ticker,
@@ -782,4 +843,5 @@ def scan(
         iv=iv,
         filter_report=report,
         candidates=ranked,
+        inputs=inputs,
     )

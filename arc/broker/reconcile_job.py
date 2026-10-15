@@ -235,7 +235,7 @@ def _day_recap(ctx: JobContext, report: ReconcileReport) -> CardView | None:
 
     from arc.routines.headline import day_recap
     from arc.slack.blocks import CardView
-    from arc.slack.loop import bold_italic
+    from arc.slack.loop import RECAP_MAX, bold_italic
 
     try:
         try:
@@ -256,7 +256,9 @@ def _day_recap(ctx: JobContext, report: ReconcileReport) -> CardView | None:
     if not lines:
         return None
     title = f":rolled_up_newspaper: *{report.day:%a %b} {report.day.day} · Day Recap*"
-    text = title + "\n\n" + "\n".join(bold_italic(line) for line in lines[:1])
+    # D109: headline up to RECAP_MAX (2x a loop headline); no per-sleeve lines (E22.5's
+    # ``Short 10–29: …`` lines dropped; the split stays in the Tower and the Analyst)
+    text = title + "\n\n" + "\n".join(bold_italic(line, RECAP_MAX) for line in lines[:1])
     return CardView(text=text, blocks=[], broadcast=True)
 
 

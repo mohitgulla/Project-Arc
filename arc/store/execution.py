@@ -10,15 +10,19 @@ from __future__ import annotations
 
 import sqlite3
 import uuid
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any
+
+import structlog
 
 from arc.context.ttl import to_db
 
 if TYPE_CHECKING:
     import datetime as dt
-    from decimal import Decimal
 
-__all__ = ["ExecutionRepo", "OpenStructureRepo"]
+__all__ = ["ExecutionRepo", "OpenStructureRepo", "reserved_open_max_loss"]
+
+log = structlog.get_logger(__name__)
 
 
 def _dec(x: Decimal | None) -> str | None:
@@ -73,6 +77,20 @@ class ExecutionRepo:
             self.conn.execute(
                 "UPDATE executions SET attempts = attempts + 1 WHERE proposal_hash = ?",
                 (proposal_hash,),
+            )
+
+    def regate(self, proposal_hash: str, *, max_steps: int) -> None:
+        """D101: a re-gated band of *max_steps* steps follows the attempts already made.
+
+        ``max_steps`` becomes ``attempts + max_steps`` so the D32 reservation
+        (``max_steps + 1 - attempts``) covers exactly the new band's attempts.
+        The row's ``band_lo`` / ``band_hi`` keep the original (approved) band;
+        each re-gated band is journalled (``order:band_moved``).
+        """
+        with self.conn:
+            self.conn.execute(
+                "UPDATE executions SET max_steps = attempts + ? WHERE proposal_hash = ?",
+                (max_steps, proposal_hash),
             )
 
     def finish(
@@ -220,3 +238,74 @@ class OpenStructureRepo:
         if commit:
             self.conn.commit()
         return left <= 0
+
+
+def _expired(expires_at: str | None, now: dt.datetime) -> bool:
+    """``expires_at`` (ISO / to_db text) is at or before *now*; unreadable = expired."""
+    import datetime as _dt
+
+    if not expires_at:
+        return True
+    try:
+        at = _dt.datetime.fromisoformat(str(expires_at).replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    at = at if at.tzinfo is not None else at.replace(tzinfo=_dt.UTC)
+    return at <= now
+
+
+def reserved_open_max_loss(
+    conn: sqlite3.Connection | None,
+    *,
+    now: dt.datetime | None = None,
+    exclude: str | None = None,
+) -> Decimal:
+    """D116 (E3.7): max loss reserved by in-flight opens, dollars (read-only).
+
+    An open is in flight from its approval request until its execution resolves:
+    an open proposal whose ``approval_requests`` row is still ``pending`` or
+    ``approved`` with no execution
+    yet and whose proposal has not expired at *now* (an approval that lapsed without
+    a Broker run stays ``approved``; without *now* none of these count), or an
+    ``executions`` row still ``working`` / ``unconfirmed``. Each counts its
+    unfilled contracts at the structure's max loss per unit; an execution counts it at
+    its band's worst price (``band_hi``), as the gate checked it. *exclude* drops one
+    proposal hash: the trade being (re-)gated is never part of its own pre-trade test.
+    Unreadable rows are skipped (logged); the broker positions still count once filled.
+    """
+    if conn is None:
+        return Decimal(0)
+    rows = conn.execute(
+        """SELECT p.proposal_hash, p.structure_json, p.sizing_json, p.expires_at,
+                  e.status, e.band_hi, e.contracts, e.filled_qty
+           FROM proposals p
+           LEFT JOIN approval_requests r ON r.proposal_hash = p.proposal_hash
+           LEFT JOIN executions e ON e.proposal_hash = p.proposal_hash
+           WHERE p.kind = 'open'
+             AND (e.status IN ('working', 'unconfirmed')
+                  OR (e.proposal_hash IS NULL AND r.status IN ('pending', 'approved')))"""
+    ).fetchall()
+    from arc.models import Sizing, Structure
+
+    total = Decimal(0)
+    for phash, st_json, sz_json, expires_at, exec_status, band_hi, exec_contracts, filled in rows:
+        if exclude is not None and phash == exclude:
+            continue
+        try:
+            if exec_status is None and (now is None or _expired(expires_at, now)):
+                continue
+            st = Structure.model_validate_json(st_json)
+            if st.max_loss is None:
+                continue
+            per = Decimal(st.max_loss)
+            n = Sizing.model_validate_json(sz_json).contracts
+            if exec_status is not None:
+                n = max(int(exec_contracts) - int(filled or 0), 0)
+                # worst fill inside the band the gate checked (band_hi = most debit)
+                worst = Decimal(str(band_hi))
+                per = max(per + (worst - Decimal(st.net_debit_credit)) * 100, Decimal(0))
+        except (ValueError, ArithmeticError, TypeError) as exc:
+            log.warning("store.reserved_unreadable", proposal_hash=phash, error=str(exc))
+            continue
+        total += per * n
+    return total

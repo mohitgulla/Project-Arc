@@ -446,6 +446,8 @@ class Dispatcher:
             for d in plan:
                 reason = self._reason(d)
                 status = "planned" if d.action == "run" else "skipped"
+                if d.action == "run":
+                    reason += self._dry_preview(d.job, now)
                 report.outcomes.append(Outcome(d.job, d.slot, status, reason))
                 if d.action == "run":
                     for i, step in enumerate(d.chain, 1):
@@ -495,6 +497,22 @@ class Dispatcher:
         report.outcomes.extend(self._drain_events(now, reclaimed=reclaimed))
         self.state.set_time(_LAST_TICK, now)
         return report
+
+    def _dry_preview(self, job: str, now: _dt.datetime) -> str:
+        """E21.4: `` · <preview>`` for a job with a read-only dry-run preview, else ""."""
+        import importlib
+
+        from arc.routines.handlers import DRY_RUN_PREVIEWS
+
+        path = DRY_RUN_PREVIEWS.get(job)
+        if path is None:
+            return ""
+        try:
+            module, _, attr = path.partition(":")
+            preview = getattr(importlib.import_module(module), attr)
+            return " · " + str(preview(self.conn, now))
+        except Exception as exc:  # noqa: BLE001 - a preview never fails the dry run
+            return f" · preview failed: {exc}"
 
     @staticmethod
     def _reason(d: DueJob) -> str:

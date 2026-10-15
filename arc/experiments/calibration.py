@@ -27,23 +27,26 @@ if TYPE_CHECKING:
 __all__ = ["aa_document", "calibration_markdown"]
 
 DOC_PATH = "docs/RESEARCH/experiments/XP-1-aa.md"
-PENDING_HEADER = "Status: **pending live run (E10.8)**."
+PENDING_HEADER = "Status: **pending live run (E15.9)**."
 
 
 def aa_document(r: ExperimentReport, *, example: bool = False) -> str:
     """The whole ``XP-<n>-aa.md`` document for *r*.
 
     ``example=True`` (the committed template, E10.4): the status header says the
-    live run is pending and the body is labelled as a fixture dry run. E10.8 writes
-    the live report with ``arc experiment report XP-1 --stored --format md --out``.
+    live run is pending and the body is labelled as a fixture dry run. E15.9 writes
+    the live report of XP-1 (the K=3 A/A, PLAN D111) with ``arc experiment report XP-1
+    --stored --format md --out``.
     """
     head = [f"# {r.experiment_id} A/A calibration", ""]
     if example:
         head += [
-            PENDING_HEADER + " The live A/A (about 10 sessions on the production and "
-            "experiment paper accounts) has not run yet. The section below is the "
-            "**fixture dry run** (synthetic sessions on scratch stores, no orders) that "
-            "shows the layout; E10.8 replaces this file with the live report:",
+            PENDING_HEADER + " XP-1 is the K=3 calibration A/A (control arm plus "
+            "t1–t3, every arm flat on the shared experiment account; "
+            "`config/experiments/live/xp1_aa_k3.yaml`, PLAN D108/D111) and has not run "
+            "yet. The section below is the **fixture dry run** of the v1 two-account "
+            "layout (synthetic sessions on scratch stores, no orders); E15.9 replaces "
+            "this file with the live report:",
             "",
             f"    arc experiment report {r.experiment_id} --db data/arc.db --stored "
             f"--format md --out {DOC_PATH}",
@@ -83,6 +86,33 @@ def _arm_row(a: ArmSummary) -> str:
     )
 
 
+def _production_md(r: ExperimentReport, h: str) -> list[str]:
+    """D108: the descriptive production panel (v3 reports only; nothing for v1/v2)."""
+    pp = r.production
+    if pp is None:
+        return []
+    out = [
+        f"{h}# Production (descriptive; never a verdict, stop or promotion input)",
+        "",
+        f"- P − C = {view.pct(pp.cum_d_p_c, 3)} of t0 equity = start book "
+        f"{view.pct(pp.cum_start_book, 3)} + residual {view.pct(pp.cum_residual, 3)}",
+        f"- Start book: {len(pp.start_book.ids)} structure(s), cumulative P&L "
+        f"{_usd(pp.start_book.cum_pnl)}",
+        f"- Ramped (control's open structures ≥ production's, median of {pp.ramp_window} "
+        f"sessions) from: {pp.ramped_from or 'not yet'}",
+        "",
+        "| Arm − production | Basis | n | Mean/day | Always-valid CI | p |",
+        "|---|---|---:|---:|---:|---:|",
+    ]
+    for c in pp.compare:
+        ci = "n/a" if c.ci is None else f"[{view.pct(c.ci.lo, 3)}, {view.pct(c.ci.hi, 3)}]"
+        out.append(
+            f"| {c.arm} | {c.basis} | {c.n} | {view.pct(c.mean, 3)} | {ci} | "
+            f"{view.p_text(c.p_value)} |"
+        )
+    return [*out, ""]
+
+
 def calibration_markdown(r: ExperimentReport, *, level: int = 1) -> list[str]:
     """The calibration report of *r* as Markdown lines; ``level`` = top heading depth."""
     h = "#" * level
@@ -98,8 +128,14 @@ def calibration_markdown(r: ExperimentReport, *, level: int = 1) -> list[str]:
         "calibration report",
         "",
         f"- Evaluated: {r.evaluated_at:%Y-%m-%d %H:%M %Z}; "
-        f"t0 {r.t0:%Y-%m-%d %H:%M %Z} at {_usd(r.t0_equity)} (both arms); "
-        f"legacy book {len(r.legacy_book)} structure(s), excluded",
+        f"t0 {r.t0:%Y-%m-%d %H:%M %Z} at {_usd(r.t0_equity)} "
+        + (
+            f"(every arm, flat); reference: the control arm (D108); production start book "
+            f"{len(r.production.start_book.ids) if r.production else 0} structure(s), "
+            "in the production panel only"
+            if r.reference == "control"
+            else f"(both arms); legacy book {len(r.legacy_book)} structure(s), excluded"
+        ),
         f"- Sessions: {r.sessions} paired (window {r.min_sessions}–{r.max_sessions}); "
         f"as of {r.as_of_day or 'n/a'}"
         + (
@@ -148,6 +184,7 @@ def calibration_markdown(r: ExperimentReport, *, level: int = 1) -> list[str]:
         "|---|---:|---:|---:|---:|---:|---:|---:|",
         *(_arm_row(a) for a in r.arms),
         "",
+        *_production_md(r, h),
         f"{h}# Policy (fixed, not set from this A/A)",
         "",
         f"- alpha {r.config['defaults']['alpha']}, power {r.config['defaults']['power']}, "

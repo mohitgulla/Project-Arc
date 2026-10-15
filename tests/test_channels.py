@@ -25,6 +25,7 @@ from arc.ingest.channels.base import (
     ChannelProfile,
     VideoDoc,
     applies_to_session,
+    extract_json_object,
     is_grounded,
     normalize_text,
     normalize_ticker,
@@ -840,6 +841,36 @@ class TestProcessor:
             stockedup.process(_video(), FixtureScalpLLM(["no json here"]), universe=[])
         with pytest.raises(BriefParseError):
             stockedup.process(_video(), FixtureScalpLLM(["{bad json}"]), universe=[])
+        with pytest.raises(BriefParseError):
+            stockedup.process(_video(), FixtureScalpLLM(["[1, 2] then {"]), universe=[])
+
+    def test_extract_json_object_ignores_trailing_text(self) -> None:
+        # Warrior Trading 2026-10-12: a second object / note after the brief raised
+        # "Extra data" and the channel's brief was lost for the day.
+        assert extract_json_object('{"a": 1}\n\n{"b": 2}') == {"a": 1}
+        assert extract_json_object('Here:\n{"a": {"c": 1}}\nThanks}') == {"a": {"c": 1}}
+
+    def test_extract_json_object_tolerates_trailing_commas(self) -> None:
+        # StockedUp 2026-10-15: `"quote": "...",\n  },` raised "Expecting property
+        # name enclosed in double quotes" and the channel's brief was lost for the day.
+        reply = (
+            '{\n  "market_bias": {\n    "stance": "bearish",\n'
+            '    "quote": "good downside momentum, right now.",\n  },\n'
+            '  "levels": [1, 2,],\n}\nnote'
+        )
+        assert extract_json_object(reply) == {
+            "market_bias": {"stance": "bearish", "quote": "good downside momentum, right now."},
+            "levels": [1, 2],
+        }
+        # Commas inside strings are never touched, even when followed by "}" / "]".
+        assert extract_json_object('{"q": "a ,} b ,]", "e": "\\",}",}') == {
+            "q": "a ,} b ,]",
+            "e": '",}',
+        }
+
+    def test_extract_json_object_still_rejects_other_malformed_json(self) -> None:
+        with pytest.raises(BriefParseError, match="Expecting property name"):
+            extract_json_object("{'a': 1}")
 
     def test_llm_error_propagates(self, stockedup: ChannelProcessor) -> None:
         with pytest.raises(ScalpLLMError):
@@ -1011,6 +1042,10 @@ class TestFixtureDryRun:
         )
         ChannelBriefRepo(conn).store(res, proc, now=now)
         conn.close()
+        # The setup above logs `db.connected` through structlog's default (stdout) config
+        # when no earlier test on this worker routed logs to stderr; drop it so only the
+        # CLI's own stdout is parsed (order-dependent under xdist otherwise).
+        capsys.readouterr()
 
         assert main(["brief", "show", "--channel", "stockedup", "--db", str(path)]) == 0
         shown = json.loads(capsys.readouterr().out)

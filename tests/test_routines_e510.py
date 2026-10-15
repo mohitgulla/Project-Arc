@@ -193,11 +193,11 @@ class TestConfig:
             "finnhub.recs",
             "iv.backfill",  # E16.1: nightly IV top-up, up to 15 min on the Alpaca budget
             "iv.record",
+            "levels",  # E23.0: one bars + one chain request per ticker, pre-market
             "market_movers",  # E14.3: two screener calls + one snapshot call
             "options_fast",  # E13.6: ~50 chain requests, ~45 s
             "retail_sentiment",  # E14.6: ~55 paced Stocktwits requests, ~90 s
             "scalp",
-            "scalp.overnight",
             "scout",  # E13.7: one daily cheap LLM call
             "ticker_news",  # E14.1: up to 20 pages per symbol chunk + Finnhub fallback
             "youtube.briefs",

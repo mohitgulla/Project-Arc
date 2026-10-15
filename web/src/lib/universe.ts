@@ -145,11 +145,20 @@ export function rowDetail(m: UniverseActive): string[] {
   return out;
 }
 
-/** Freshness state of the stored resolve. */
+/** Freshness state of the stored resolve. E14.11 (D110): `pending` = overnight / weekend, not a fault. */
 export function resolveLabel(u: Pick<Universe, "state" | "resolved_for">): string {
+  const last = u.resolved_for ? ` · last ${u.resolved_for}` : "";
   if (u.state === "today") return "Resolved Today";
-  if (u.state === "stale") return `Not Resolved Today${u.resolved_for ? ` · last ${u.resolved_for}` : ""}`;
+  if (u.state === "pending") return `Awaiting Today's Resolve${last}`;
+  if (u.state === "stale") return `Not Resolved Today${last}`;
   return "Never Resolved";
+}
+
+/** E14.11: pill + note tone. Only a missed resolve (or none at all) warns; `pending` stays neutral. */
+export function resolveTone(state: Universe["state"]): { pill: "pos" | "neutral" | "warn"; note: string } {
+  if (state === "today") return { pill: "pos", note: "text-secondary" };
+  if (state === "pending") return { pill: "neutral", note: "text-secondary" };
+  return { pill: "warn", note: "text-warn" };
 }
 
 /** `SPY QQQ (regime only, not traded)`. */

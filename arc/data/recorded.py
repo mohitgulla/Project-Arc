@@ -113,6 +113,8 @@ class RecordedMarketData:
         start: dt.date,
         end: dt.date,
         timeframe: str = "1Day",
+        *,
+        feed: str | None = None,  # noqa: ARG002 - one recorded feed (E23.0a protocol)
     ) -> list[HistoryBar]:
         if timeframe.lower().replace(" ", "") != "1day":
             msg = f"recordings only hold daily closes, not {timeframe!r}"

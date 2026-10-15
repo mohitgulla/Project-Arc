@@ -412,7 +412,7 @@ def test_shipped_source_config() -> None:
     )
     # the Scalp jobs may read it; no Scout / Research / trending job does (D56)
     readers = {n for n, (_, s) in routines.jobs().items() if "market_movers" in (s.reads or [])}
-    assert readers == {"scalp", "scalp.overnight"}
+    assert readers == {"scalp"}  # D91: scalp.overnight dropped
 
 
 # ---------------------------------------------------------------------------

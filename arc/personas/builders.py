@@ -19,7 +19,7 @@ from arc.positions.portfolio import relabel_buckets
 from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Callable, Mapping, Sequence
 
     from arc.context.store import ContextSnapshot
 
@@ -112,6 +112,22 @@ class ResearchInput:
     # E16.2 (D76/D78): True = each regime line ends with the code-rendered ``tech …``
     # segment (personas.research_technicals on); False keeps the prompt byte-identical.
     technicals: bool = False
+    # E23.0 (D98): True = the ``tech`` legend also names the level parts (volume profile /
+    # OI walls on); False keeps the prompt byte-identical.
+    levels: bool = False
+    # E23.1 (D98): True = the ``tech`` segment also shows ``rng`` (the 20-day range
+    # position) and the legend names it (range_edges on); False keeps it byte-identical.
+    range_edges: bool = False
+    # E22.3 (D97): the code-built ``Free slots: …`` line and the number of names
+    # Research is asked to rank (research.min_ranked > 0). "" / 0 = the prompt as before.
+    free_slots: str = ""
+    min_ranked: int = 0
+    # E23.2 (D98): the code-built pullback-watch lines (ready names + a waiting count);
+    # "" = not recorded (flag off / nothing on watch): the prompt is byte-identical.
+    pullback_watch: str = ""
+    # E24.2 (D101): the code-built ``Retry: …`` lines for missed opens due a retry;
+    # "" = not recorded (none due): the prompt is byte-identical.
+    missed_retry: str = ""
 
 
 @dataclass(frozen=True)
@@ -196,6 +212,12 @@ def research_input_from_context(
     retail_sentiment: Mapping[str, str] | None = None,
     technicals: bool = False,
     market_health: bool = False,
+    levels: bool = False,
+    range_edges: bool = False,
+    free_slots: str = "",
+    min_ranked: int = 0,
+    pullback_watch: str = "",
+    missed_retry: str = "",
 ) -> ResearchInput:
     """Research reads every active ``candidate`` and ``regime`` entry, plus up to
     *max_notes* prior ``note`` entries (regime view / thesis / observation), newest first.
@@ -240,8 +262,24 @@ def research_input_from_context(
     E16.2 (D76/D78): *technicals* (recorded only with ``personas.research_technicals``
     on) appends :func:`tech_segment` to each regime line.
 
+    E23.0 (D98): *levels* (recorded only with ``volume_profile`` or ``oi_walls`` on)
+    extends the ``tech`` legend with the level parts (the parts themselves render from
+    the merged ``technicals`` fields).
+
+    E23.1 (D98): *range_edges* (recorded only with ``personas.range_edges`` on) adds
+    ``rng`` (the 20-day range position) to each ``tech`` segment and its legend.
+
     E16.4 (D76): *market_health* (recorded only with ``personas.market_health_context``
     on) adds the code-rendered ``Market health (…)`` line to the market lines.
+
+    E22.3 (D97): *free_slots* / *min_ranked* (recorded only with
+    ``research_min_ranked`` > 0) add the free-slots section after the entry window.
+
+    E23.2 (D98): *pullback_watch* (recorded only with ``personas.pullback_watch`` on and
+    something on watch) adds the code-built pullback-watch section after the pool.
+
+    E24.2 (D101): *missed_retry* (recorded only when a missed open is due its retry)
+    adds the ``Retry: …`` lines after the recently-suggested ideas.
     """
     entries = snapshot.of_kind("candidate")
     if candidate_tickers is not None:
@@ -287,7 +325,8 @@ def research_input_from_context(
             compact=True,
             scout_read=scout_read_block(snapshot),
             regime_lines="\n".join(
-                regime_line(t, regime[t], technicals=technicals) for t in sorted(regime)
+                regime_line(t, regime[t], technicals=technicals, rng=range_edges)
+                for t in sorted(regime)
             ),
             market_lines=market_lines(
                 market_data_from_context(snapshot, market_health=market_health)
@@ -297,6 +336,12 @@ def research_input_from_context(
             exit_rules=tuple(exit_rules),
             retail_sentiment=retail_sentiment is not None,
             technicals=technicals,
+            levels=levels,
+            range_edges=range_edges,
+            free_slots=free_slots,
+            min_ranked=min_ranked,
+            pullback_watch=pullback_watch,
+            missed_retry=missed_retry,
         )
     return ResearchInput(
         candidates_json=_dump({"candidates": candidates}),
@@ -336,6 +381,10 @@ def research_input_from_context(
         exit_block=exit_block,
         exit_rules=tuple(exit_rules),
         retail_sentiment=retail_sentiment is not None,
+        free_slots=free_slots,
+        min_ranked=min_ranked,
+        pullback_watch=pullback_watch,
+        missed_retry=missed_retry,
     )
 
 
@@ -432,13 +481,16 @@ def _regime_head(reg: Mapping[str, Any]) -> list[str]:
 _RANGE_LABEL = {"above": "> y-hi", "below": "< y-lo", "inside": "in y-range"}
 
 
-def tech_segment(tech: Mapping[str, Any] | None) -> str:
+def tech_segment(tech: Mapping[str, Any] | None, *, rng: bool = False) -> str:
     """``tech rsi 71 · +2.3 ATR vs 20d · 50>200 · 1.1% off 20d hi · RS20 +4.1% vs SPY ·
     squeeze 6d · > y-hi · impl/ATR 1.3`` from a stored ``TechnicalFeatures`` dump.
 
     E16.2 (D76): code-rendered, so Research never computes any of it. A part whose
     field is ``None`` is dropped; ``""`` when nothing is available (no entry, or a
     pre-E16.2 one). The squeeze part shows only while it is on.
+
+    E23.1 (D98): *rng* (``personas.range_edges`` on) adds ``rng 0.42``, the close's
+    position in the 20-session low..high range, after the 20-day-high part.
     """
     if not tech:
         return ""
@@ -458,6 +510,8 @@ def tech_segment(tech: Mapping[str, Any] | None) -> str:
     if close is not None and high20 is not None and high20 > 0:
         off = 1.0 - close / high20
         parts.append("at 20d hi" if off <= 0 else f"{off:.1%} off 20d hi")
+    if rng and (rp := num("range_pos_20d")) is not None:
+        parts.append(f"rng {rp:.2f}")
     if (rs := num("rs_spy_20d")) is not None:
         parts.append(f"RS20 {round(rs, 3) + 0.0:+.1%} vs SPY")
     days = tech.get("squeeze_days")
@@ -467,10 +521,46 @@ def tech_segment(tech: Mapping[str, Any] | None) -> str:
         parts.append(pos)
     if (ratio := num("implied_vs_atr")) is not None:
         parts.append(f"impl/ATR {ratio:.1f}")
+    if parts and (lv := _levels_segment(tech, num)):
+        parts.append(lv)
     return "tech " + " · ".join(parts) if parts else ""
 
 
-def regime_line(ticker: str, payload: Mapping[str, Any], *, technicals: bool = False) -> str:
+def _px(v: float) -> str:
+    """A level price: 1 decimal from $100 up, else 2 (``182.4`` / ``24.37``)."""
+    return f"{v:.1f}" if abs(v) >= 100 else f"{v:.2f}"  # noqa: PLR2004
+
+
+def _strike(v: float) -> str:
+    """A strike without trailing zeros (``190`` / ``182.5``)."""
+    return f"{v:g}"
+
+
+def _levels_segment(tech: Mapping[str, Any], num: Callable[[str], float | None]) -> str:
+    """E23.0 (D98): ``vp POC 182.4 (−0.6 ATR) VA 178.9–186.1 pos 0.31 · OI walls C190 /
+    P175`` from the merged volume-profile / OI-wall fields; ``""`` when none is set (a
+    pre-E23.0 entry or both features off: the segment is byte-identical)."""
+    out: list[str] = []
+    poc, vah, val = num("vp_poc"), num("vp_vah"), num("vp_val")
+    if poc is not None and vah is not None and val is not None:
+        s = f"vp POC {_px(poc)}"
+        if (d := num("dist_poc_atr")) is not None:
+            s += f" ({round(d, 1) + 0.0:+.1f} ATR)"
+        s += f" VA {_px(val)}–{_px(vah)}"
+        if (pos := num("vp_pos")) is not None:
+            s += f" pos {pos:.2f}"
+        out.append(s)
+    call, put = num("oi_call_wall"), num("oi_put_wall")
+    if call is not None or put is not None:
+        sides = [f"C{_strike(call)}" if call is not None else "",
+                 f"P{_strike(put)}" if put is not None else ""]  # fmt: skip
+        out.append("OI walls " + " / ".join(w for w in sides if w))
+    return " · ".join(out)
+
+
+def regime_line(
+    ticker: str, payload: Mapping[str, Any], *, technicals: bool = False, rng: bool = False
+) -> str:
     """``AVGO · sideways (stick 0.70) · 5d bull 0.23/side 0.47/bear 0.29 · ret20 +2.7% ·
     iv 0.37 hv20 0.36 iv/hv20 1.04 · ivr n/a · close 378.68`` (one regime entry).
 
@@ -501,7 +591,7 @@ def regime_line(ticker: str, payload: Mapping[str, Any], *, technicals: bool = F
     parts.append(f"ivr {_num(ivr * 100 if isinstance(ivr, int | float) else None, '.0f')}")
     if payload.get("last_close") is not None:
         parts.append(f"close {_num(payload.get('last_close'))}")
-    if technicals and (seg := tech_segment(payload.get("technicals"))):
+    if technicals and (seg := tech_segment(payload.get("technicals"), rng=rng)):
         parts.append(seg)
     return " · ".join(parts)
 
@@ -1452,6 +1542,19 @@ def _recent_ideas_section(inp: ResearchInput) -> str:
     )
 
 
+def _missed_retry_section(inp: ResearchInput) -> str:
+    """E24.2 (D101): missed opens due their same-day retry ("" when none is due)."""
+    if not inp.missed_retry.strip():
+        return ""
+    return (
+        "\n### Missed opens due a retry (code-checked, E24.2)\n"
+        f"{scrub_carried_text(inp.missed_retry)}\n"
+        "Each was approved earlier today but never filled (the price ran away from the "
+        "order). Rank one again only if its thesis still holds; Quant re-prices it from "
+        "fresh quotes and the gate checks it again.\n"
+    )
+
+
 def _market_data_section(inp: ResearchInput) -> str:
     return _market_data_block(inp.market_data_json, legacy=inp.d47_replay or inp.d49_replay)
 
@@ -1844,6 +1947,46 @@ def _research_window(terms: EntryTerms | None) -> str:
     return f"\n### Entry window (config, not a per-call choice)\n{terms.research_line()}\n"
 
 
+def _free_slots_section(inp: ResearchInput) -> str:
+    """E22.3 (D97): free position slots per sleeve and the rank ask ("" = not recorded)."""
+    if not inp.free_slots:
+        return ""
+    # The line is code-built (arc.pipeline.free_slots): ``Free slots: short 3/5, …``
+    # names sleeves; ``Free slots: 3/8`` is a single window.
+    sleeved = inp.free_slots.removeprefix("Free slots: ")[:1].isalpha()
+    ask = (
+        f"Rank at least {inp.min_ranked} names when the pool has that many that pass your "
+        "own bar"
+        + (", spread across the sleeves with free slots" if sleeved else "")
+        + (
+            "; settled cash is first come within a loop, in your rank order"
+            if "settled cash" in inp.free_slots
+            else ""
+        )
+        + ". If you rank fewer, say why in one line in `session_notes`. This never forces "
+        "a trade: an idea that fails your bar stays out.\n"
+        if inp.min_ranked > 0
+        else ""
+    )
+    return (
+        "\n### Free slots (code-counted; open positions by entry-DTE sleeve, E22.3)\n"
+        f"{inp.free_slots}\n{ask}"
+    )
+
+
+def _pullback_section(inp: ResearchInput) -> str:
+    """E23.2 (D98): anti-chase drops whose stretch reset ("" when not recorded)."""
+    if not inp.pullback_watch.strip():
+        return ""
+    return (
+        "\n### Pullback watch (code-checked; ideas dropped as stretched, E23.2)\n"
+        "A ready name was dropped earlier as a chase and has pulled back to its level "
+        "(numbers by code). Rank it only if the thesis still holds; it is filtered like "
+        "any other idea.\n"
+        f"{scrub_carried_text(inp.pullback_watch)}\n"
+    )
+
+
 def _pool_section(inp: ResearchInput) -> str:
     """E13.8: the code-built idea pool header + lines ("" when not recorded)."""
     if not inp.pool_block.strip():
@@ -1871,6 +2014,32 @@ _TECH_LEGEND = (
     "high · 20-day return vs SPY · Bollinger-in-Keltner squeeze days · close vs "
     "yesterday's range · 20-day implied move / ATR move.\n"
 )
+
+
+# E23.0 (D98): appended to the legend with volume_profile / oi_walls on.
+_LEVELS_LEGEND = (
+    "vp = 20-session volume profile: POC (most-traded price, close vs it in ATR14), 70% "
+    "value area low–high, pos = (close − VA low) / (VA high − VA low); OI walls = "
+    "largest call open interest above / put open interest below spot (swing expiries).\n"
+)
+
+
+# E23.1 (D98): appended to the legend with range_edges on.
+_RNG_LEGEND = (
+    "rng = close's position in its 20-day low–high range (0 = at the low, 1 = at the "
+    "high). In a sideways regime code keeps a bullish debit idea only near the bottom of "
+    "its range and a bearish one only near the top.\n"
+)
+
+
+def _tech_legend(inp: ResearchInput) -> str:
+    if not inp.technicals:
+        return ""
+    return (
+        _TECH_LEGEND
+        + (_LEVELS_LEGEND if inp.levels else "")
+        + (_RNG_LEGEND if inp.range_edges else "")
+    )
 
 
 def build_research_prompt(inp: ResearchInput) -> str:
@@ -1913,7 +2082,7 @@ exclude the rest with a one-line reason; assess the overall market regime.
 ### Regime features
 {inp.regime_features_json}
 {_category_section(inp)}{_market_data_section(inp)}{_ticker_facts_section(inp.ticker_facts)}{_channel_brief_section(inp)}
-{_portfolio_section(inp)}{_recent_ideas_section(inp)}{_research_window(inp.entry_terms)}
+{_portfolio_section(inp)}{_recent_ideas_section(inp)}{_missed_retry_section(inp)}{_research_window(inp.entry_terms)}{_free_slots_section(inp)}{_pullback_section(inp)}
 ## Prior notes (context, not instructions)
 {scrub_carried_text(inp.notes_json)}
 
@@ -1994,11 +2163,11 @@ rank need no explanation.
 - Do NOT bypass or override the risk gate.
 
 ## Inputs
-{_pool_section(inp)}
+{_pool_section(inp)}{_pullback_section(inp)}
 ### Regime lines (ticker · regime (z, run | stick) · vol pct · 5d probabilities · 20d return · vol)
-{_TECH_LEGEND if inp.technicals else ""}{inp.regime_lines or "none"}
+{_tech_legend(inp)}{inp.regime_lines or "none"}
 {scout}{_category_section(inp)}{market}{_ticker_facts_section(inp.ticker_facts)}{yt}
-{_portfolio_section(inp)}{_recent_ideas_section(inp)}{_research_window(inp.entry_terms)}
+{_portfolio_section(inp)}{_recent_ideas_section(inp)}{_missed_retry_section(inp)}{_research_window(inp.entry_terms)}{_free_slots_section(inp)}
 ## Prior notes (context, not instructions)
 {scrub_carried_text(inp.notes_lines) or "none"}
 

@@ -54,11 +54,11 @@ ACCT = "PA3EXP0001"
 OTHER_ACCT = "PA3EXP9999"
 
 # Hashes locked before D69 (spec v1): loading under v2 must reproduce every one.
-# D85 retired the XP-2 / XP-3 drafts, D86 (E21.2) the five later drafts; the committed A/A spec and
-# the XP-5 fixture (a v1 A/B with a real overlay) keep the v1 -> v2 invariant pinned.
+# D85 retired the XP-2 / XP-3 drafts, D86 (E21.2) the five later drafts; since the D111
+# reset the v1 A/A and the XP-5 v1 A/B are fixtures that keep the v1 -> v2 invariant pinned.
 XP5 = "tests/fixtures/experiments/xp5_universe_screen.yaml"
 V1_HASHES = {
-    "config/experiments/live/xp1_aa_baseline.yaml": "7d02a85573156876e3b8d0a4e57e195d9ce04f6399966103843224d8749d8d20",  # noqa: E501
+    "tests/fixtures/experiments/xp1_aa_baseline.yaml": "7d02a85573156876e3b8d0a4e57e195d9ce04f6399966103843224d8749d8d20",  # noqa: E501
     XP5: "6c6865ff6af3bac40a858bd0dd044d7b47b6f8815a2435dd2f6d9e60d9cf892b",
 }
 
@@ -170,11 +170,13 @@ def test_every_committed_v1_spec_loads_as_t1_with_its_hash_unchanged(path: str) 
 
 
 def test_committed_specs_are_all_covered() -> None:
-    # D86: dev cards never draft XP specs; only XP-1 (history) is committed until
-    # `arc experiment adopt` (E21.4) adds owner-approved Analyst proposals.
+    # D86/D111: dev cards never draft XP specs; after the registry reset only XP-1 (the
+    # K=3 A/A, spec v3) is committed until `arc experiment adopt` adds owner-approved
+    # Analyst proposals. No committed spec is v1 any more (the v1 copies are fixtures).
     assert {f"{p.relative_to(REPO)}" for p in LIVE.glob("*.yaml")} == {
-        p for p in V1_HASHES if p.startswith("config/")
+        "config/experiments/live/xp1_aa_k3.yaml"
     }
+    assert not [p for p in V1_HASHES if p.startswith("config/")]
 
 
 def test_a_v1_spec_round_trips_through_its_stored_json() -> None:
@@ -297,13 +299,35 @@ def test_template_expands_one_arm_per_treatment() -> None:
         ).arms_for(_spec("XP-20", k=3))
 
 
-def test_shipped_experiments_yaml_is_dedicated_with_new_defaults() -> None:
+def test_shipped_experiments_yaml_is_shared_with_new_defaults() -> None:
     from arc.experiments.config import load_experiments_config
 
     r = load_experiments_config().runner
-    assert r.account_mode == "dedicated"
+    assert r.account_mode == "shared"  # D108 (E25.1)
     assert r.max_parallel_arms == 10 and r.shared_capacity_frac == 0.9
-    assert r.enabled is True and list(r.arms) == ["treatment"]
+    assert r.enabled is True and list(r.arms) == ["t", "control"]
+    t = r.arms["t"]
+    assert t.is_template and t.keys_env == "ALPACA_EXP"
+    assert t.db == "data/arc-exp-{experiment_id}-{arm}.db"
+    # a v2 K=4 spec expands to t1..t4 (its control is production: no control arm)
+    arms = r.arms_for(_spec("XP-20", k=4))
+    assert list(arms) == ["t1", "t2", "t3", "t4"]
+    assert [a.db_path("XP-20") for a in arms.values()] == [
+        f"data/arc-exp-XP-20-t{i}.db" for i in range(1, 5)
+    ]
+    assert {a.keys_env for a in arms.values()} == {"ALPACA_EXP"}
+
+
+def test_shipped_template_still_runs_a_v1_one_treatment_spec() -> None:
+    from arc.experiments.config import load_experiments_config
+    from arc.experiments.overlay import load_spec
+
+    spec = load_spec(REPO / "tests/fixtures/experiments/xp1_aa_baseline.yaml")
+    assert spec.spec_version == 1 and spec.arms.names == ["t1"]
+    arms = load_experiments_config().runner.arms_for(spec)
+    assert list(arms) == ["t1"]
+    assert arms["t1"].spec_arm == "t1"
+    assert arms["t1"].db_path("XP-1") == "data/arc-exp-XP-1-t1.db"
 
 
 def test_new_runner_knobs_are_registered_with_ceilings() -> None:

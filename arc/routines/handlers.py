@@ -1076,6 +1076,63 @@ def betas_source(
     )
 
 
+def levels_source(
+    ctx: JobContext,
+    market: MarketDataProvider | None = None,
+    take: Callable[[], object] | None = None,
+    clock: Callable[[], float] | None = None,
+) -> JobResult:
+    """E23.0 (D98): pre-market volume profile + options OI walls -> ``levels`` entries.
+
+    Covers the active list + open underlyings (+ today's candidates) and SPY/QQQ/IWM.
+    One ``levels`` entry per ticker (subject = ticker); the regime step merges today's
+    entry into the technicals. Both ``volume_profile`` and ``oi_walls`` off = a skip
+    (no request). Context only, never a gate input.
+    """
+    import time as _time
+
+    from arc.levels.refresh import refresh_levels
+
+    r = ctx.routines
+    if not (r.volume_profile.enabled or r.oi_walls.enabled):
+        msg = "volume_profile and oi_walls are off (strategy.yaml)"
+        raise JobSkippedError(msg)
+    if market is None:  # pragma: no cover - live Alpaca (integration)
+        from arc.data.alpaca import AlpacaMarketData
+
+        market = AlpacaMarketData()
+    if take is None:  # pragma: no cover - live shared Alpaca data budget
+        from arc.ingest.finnhub import DbRateLimiter
+        from arc.iv.alpaca_history import RATE_STATE_KEY
+
+        take = DbRateLimiter(
+            ctx.conn,
+            calls_per_minute=ctx.settings.alpaca_data_calls_per_minute,
+            key=RATE_STATE_KEY,
+        ).acquire
+    day = ctx.now.astimezone(ET).date()
+    res = refresh_levels(
+        market,
+        _data_tickers(ctx),
+        day,
+        vp_cfg=r.volume_profile,
+        oi_cfg=r.oi_walls,
+        sleeves=ctx.settings.entry_sleeves,
+        feed=ctx.settings.alpaca_history_feed,
+        take=take,
+        max_runtime_s=float(ctx.options.get("max_runtime_s", 900)),
+        clock=clock or _time.monotonic,
+    )
+    _data_result(ctx, "levels", "alpaca", res.metrics(), len(res.payloads))
+    if not res.payloads and res.errors:
+        first = next(iter(res.errors.items()))
+        msg = f"no levels computed ({len(res.errors)} errors, e.g. {first})"
+        raise RuntimeError(msg)
+    for payload in res.payloads:
+        ctx.write("levels", payload.ticker, payload)
+    return JobResult(summary=res.summary(), metrics=res.metrics())
+
+
 def ex_dividend_source(ctx: JobContext) -> JobResult:
     """E4.5: next cash-dividend ex-date per ticker (Alpaca corporate actions)."""
     from arc.ingest.options_data import fetch_ex_dividends
@@ -2892,6 +2949,7 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "iv.record": "arc.routines.handlers:iv_record_source",  # E4.12 (D55) daily 30-DTE IV
     "iv.backfill": "arc.routines.handlers:iv_backfill_source",  # E16.1 (D76) / D81 pre-market
     "betas": "arc.routines.handlers:betas_source",  # E3.6 (D62) daily 1y beta vs SPY
+    "levels": "arc.routines.handlers:levels_source",  # E23.0 (D98) volume profile + OI walls
     # E4.8 (D46): Finnhub per-ticker context (typed kinds, shared 55/min budget)
     "finnhub.insider": "arc.routines.handlers:finnhub_insider_source",
     "finnhub.recs": "arc.routines.handlers:finnhub_recs_source",
@@ -2933,6 +2991,10 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     # E10.3 (D44): daily experiment evaluation after the EOD reconcile
     "experiments.evaluate": "arc.routines.experiments:experiments_evaluate_step",
 }
+
+#: E21.4: ``tick --dry-run`` previews (read-only) of what a planned job would decide,
+#: appended to its ``planned`` reason. ``(conn, now) -> str``.
+DRY_RUN_PREVIEWS: dict[str, str] = {}
 
 
 def import_handler(path: str) -> Handler:

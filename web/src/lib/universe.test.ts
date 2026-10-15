@@ -36,6 +36,7 @@ import {
   membersOf,
   refreshLine,
   resolveLabel,
+  resolveTone,
   sortTiers,
   summaryLine,
   tierActiveLine,
@@ -110,7 +111,16 @@ describe("universe page helpers", () => {
   it("labels the resolve state", () => {
     expect(resolveLabel({ state: "today", resolved_for: "2026-10-05" })).toBe("Resolved Today");
     expect(resolveLabel({ state: "stale", resolved_for: "2026-10-04" })).toBe("Not Resolved Today · last 2026-10-04");
+    expect(resolveLabel({ state: "pending", resolved_for: "2026-10-13" })).toBe("Awaiting Today's Resolve · last 2026-10-13");
+    expect(resolveLabel({ state: "pending", resolved_for: null })).toBe("Awaiting Today's Resolve");
     expect(resolveLabel({ state: "none", resolved_for: null })).toBe("Never Resolved");
+  });
+
+  it("warns only on a missed resolve (E14.11)", () => {
+    expect(resolveTone("today")).toEqual({ pill: "pos", note: "text-secondary" });
+    expect(resolveTone("pending")).toEqual({ pill: "neutral", note: "text-secondary" });
+    expect(resolveTone("stale")).toEqual({ pill: "warn", note: "text-warn" });
+    expect(resolveTone("none")).toEqual({ pill: "warn", note: "text-warn" });
   });
 
   it("warns only when the core override has more than 30 names", () => {

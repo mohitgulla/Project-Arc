@@ -5,6 +5,9 @@ import { CAT } from "./personas.fixture";
 import {
   OPS_CLOSED_BY_DEFAULT,
   OPS_WIDGETS,
+  contextGroups,
+  kindLabel,
+  shortList,
   bandHasProblem,
   bandRollup,
   bandRows,
@@ -15,7 +18,16 @@ import {
   filterLog,
   formatDuration,
   groupRepeats,
-  hourTicks,
+  axisTicks,
+  etHM,
+  initialScroll,
+  pxPerHour,
+  sessionQuery,
+  timelineItems,
+  timelineX,
+  trackWidth,
+  windowCaption,
+  windowParam,
   llmBars,
   loopSplit,
   manifestGroups,
@@ -84,16 +96,89 @@ describe("timeline geometry", () => {
     expect(timelinePct("nope", START, END)).toBe(0);
   });
 
-  it("labels an hour tick every two hours", () => {
-    const t = hourTicks(START, END);
-    expect(t.map((x) => x.label)).toEqual(["06:00", "08:00", "10:00", "12:00", "14:00", "16:00", "18:00", "20:00", "22:00"]);
-    expect(t[4]?.pct).toBe(50);
+});
+
+describe("D93 interactive timeline: window maths and the now-line", () => {
+  // Rolling at 13:42 ET: 05:00 -> 18:00 (8 h back from the 13:00 hour, 4 h past its end).
+  const RS = "2026-09-30T05:00:00-04:00";
+  const RE = "2026-09-30T18:00:00-04:00";
+  // Day: the full ET day, 00:00 -> 24:00.
+  const DS = "2026-10-09T00:00:00-04:00";
+  const DE = "2026-10-10T00:00:00-04:00";
+
+  it("picks the window from the URL: Rolling by default, Day for a picked day", () => {
+    expect(windowParam(null, null)).toBe("rolling");
+    expect(windowParam(null, "today")).toBe("rolling");
+    expect(windowParam(null, "2026-10-09")).toBe("day");
+    expect(windowParam(null, "yesterday")).toBe("day");
+    expect(windowParam("day", null)).toBe("day");
+    expect(windowParam("rolling", "2026-10-09")).toBe("rolling");
+    expect(windowParam("week", null)).toBe("rolling");
+    expect(sessionQuery("rolling", "2026-10-09")).toEqual({ window: "rolling" });
+    expect(sessionQuery("day", "2026-10-09")).toEqual({ window: "day", day: "2026-10-09" });
+  });
+
+  it("uses one fixed scale: px per hour times the window length", () => {
+    expect(pxPerHour("desktop")).toBe(96);
+    expect(pxPerHour("mobile")).toBe(120);
+    expect(trackWidth(RS, RE, 96)).toBe(13 * 96);
+    expect(trackWidth(DS, DE, 96)).toBe(24 * 96); // the Day view covers all 24 h (23:00 jobs)
+    expect(trackWidth(RE, RS, 96)).toBe(0);
+  });
+
+  it("places the now-line by time, and only inside the window", () => {
+    const now = Date.parse("2026-09-30T13:42:00-04:00");
+    expect(timelineX(now, RS, RE, 96)).toBeCloseTo(8.7 * 96);
+    expect(timelineX(RS, RS, RE, 96)).toBe(0);
+    expect(timelineX(RE, RS, RE, 96)).toBe(13 * 96);
+    expect(timelineX("2026-09-30T04:59:00-04:00", RS, RE, 96)).toBeNull();
+    expect(timelineX("2026-09-30T18:01:00-04:00", RS, RE, 96)).toBeNull();
+    expect(timelineX("nope", RS, RE, 96)).toBeNull();
+    // a minute later the line moves 1/60 of an hour (the 60 s re-render)
+    expect(timelineX(now + 60_000, RS, RE, 120)! - timelineX(now, RS, RE, 120)!).toBeCloseTo(2);
+    expect(etHM(now)).toBe("13:42");
+  });
+
+  it("puts a 23:00 slot on the Day scale", () => {
+    expect(timelineX("2026-10-09T23:00:00-04:00", DS, DE, 96)).toBe(23 * 96);
+  });
+
+  it("draws a faint tick every 10 minutes and labels the hours (ET)", () => {
+    const t = axisTicks(RS, RE, 96);
+    expect(t).toHaveLength(13 * 6 + 1);
+    expect(t.filter((x) => x.hour).map((x) => x.label)).toEqual(
+      ["05:00", "06:00", "07:00", "08:00", "09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00"],
+    );
+    expect(t[1]).toEqual({ x: 16, hour: false });
+    const d = axisTicks(DS, DE, 96).filter((x) => x.hour);
+    expect(d[0]?.label).toBe("00:00");
+    expect(d.at(-1)?.label).toBe("00:00"); // midnight closes the Day scale
+    expect(d).toHaveLength(25);
+  });
+
+  it("rolls over midnight with the right ET labels", () => {
+    const t = axisTicks("2026-10-09T19:00:00-04:00", "2026-10-10T08:00:00-04:00", 96).filter((x) => x.hour);
+    expect(t.map((x) => x.label).slice(4, 7)).toEqual(["23:00", "00:00", "01:00"]);
+  });
+
+  it("opens scrolled to now (two thirds across), else to the first run", () => {
+    expect(initialScroll(835, null, 600, 1248)).toBe(435);
+    expect(initialScroll(100, null, 600, 1248)).toBe(0);
+    expect(initialScroll(1240, null, 600, 1248)).toBe(648);
+    expect(initialScroll(null, 300, 600, 2304)).toBe(276);
+    expect(initialScroll(null, null, 600, 2304)).toBe(0);
+    expect(initialScroll(500, null, 1400, 1248)).toBe(0); // the whole track fits
+  });
+
+  it("captions the window", () => {
+    expect(windowCaption({ window: "rolling", day: "2026-09-30", start: RS, end: RE })).toBe("05:00 → 18:00 ET");
+    expect(windowCaption({ window: "day", day: "2026-10-09", start: DS, end: DE })).toBe("2026-10-09 · 00:00–24:00 ET");
   });
 });
 
 describe("slots", () => {
   it("hover text carries job, time, status, duration and outcome", () => {
-    expect(slotTitle(slot("future"))).toBe("research 10:00 ET · Scheduled");
+    expect(slotTitle(slot("future"))).toBe("research 10:00 ET · Upcoming");
     const s = { ...slot("done", undefined, {}), chain_steps: 4 };
     expect(slotTitle(s)).toBe("research 10:00 ET · Done · 1 min 35 s · 4 chain steps — shortlist 1");
     expect(slotTitle(slot("failed", undefined, { status: "failed", error: "HTTPError: 503" }))).toContain("— HTTPError: 503");
@@ -269,11 +354,11 @@ describe("E8.8d widget order", () => {
       [
         "Session Timeline",
         "Sources",
-        "Health",
         "LLM Usage",
         "Context Store",
         "Auto-Approve",
         "Config",
+        "Health",
         "Alerts",
         "Halts",
         "Runs",
@@ -284,16 +369,59 @@ describe("E8.8d widget order", () => {
   });
 });
 
+describe("D89 context store groups", () => {
+  const kind = (k: string, group: string, active: number, latest: string | null) => ({
+    kind: k,
+    active,
+    ttl: null,
+    next_expiry: null,
+    remaining_fraction: null,
+    latest_id: latest ? `ctx-${k}` : null,
+    latest_subject: latest ? "s" : null,
+    latest_at: latest,
+    latest_by: null,
+    expired_24h: 0,
+    group,
+    writers: [],
+    readers: [],
+  });
+  it("joins kinds to the API's group order, active kinds first, unknown groups under Other", () => {
+    const g = contextGroups({
+      groups: [
+        { key: "sources", label: "Sources", active: 3, kinds: 2 },
+        { key: "universe", label: "Universe", active: 1, kinds: 1 },
+      ],
+      kinds: [
+        kind("vol_term", "sources", 0, "2026-10-09T08:20:00Z"),
+        kind("raw_doc_ref", "sources", 3, "2026-10-09T20:00:00Z"),
+        kind("universe_tier", "universe", 1, "2026-10-09T10:00:00Z"),
+        kind("mystery", "nowhere", 2, null),
+      ],
+    });
+    expect(g.map((x) => [x.key, x.active, x.kinds.map((k) => k.kind)])).toEqual([
+      ["sources", 3, ["raw_doc_ref", "vol_term"]],
+      ["universe", 1, ["universe_tier"]],
+      ["other", 2, ["mystery"]],
+    ]);
+    expect(g[0]?.latestAt).toBe("2026-10-09T20:00:00Z");
+  });
+  it("labels kinds and shortens long writer lists", () => {
+    expect(kindLabel("raw_doc_ref")).toBe("Raw doc ref");
+    expect(shortList(["RSS news", "EDGAR", "Ticker news", "Earnings"], 2)).toBe("RSS news, EDGAR +2");
+    expect(shortList([], 2)).toBe("—");
+  });
+});
+
 describe("E8.8d timeline bands", () => {
   // The API assigns bands from routines.yaml (category for sources, group: for the rest,
   // fallback other); the UI joins rows to bands in the API's order.
   const session = {
-    loop: eRow("research", "trading_loop", { persona: "research", label: "Research → Quant → Risk → Propose → Execute" }),
+    loop: eRow("research", "trading_loop", { persona: "research", label: "Trade Loop" }),
     rows: [
       eRow("rss", "sources.market_news", { kind: "source", categories: ["market_news", "company_data"] }),
       eRow("edgar", "sources.company_data", { kind: "source" }),
       eRow("scalp", "scalp", { persona: "scalp" }),
-      eRow("positions.evaluate", "position_management", { persona: "quant", label: "Position marks" }),
+      eRow("positions.evaluate", "position_management", { label: "Position marks" }),
       eRow("mystery", "other"),
       eRow("orphan", "nowhere"), // no band from the API: falls under Other
     ],
@@ -340,6 +468,37 @@ describe("E8.8d timeline bands", () => {
     expect(v).toHaveLength(1);
     expect(v[0]!.band.label).toBe("Other");
     expect(v[0]!.rows).toHaveLength(7);
+  });
+
+  it("D93: flattens groups into collapsible label rows over the job rows", () => {
+    const v = bandRows(session);
+    const items = timelineItems(v, "research", new Set());
+    expect(items.map((i) => `${i.kind}:${i.key}`)).toEqual([
+      "group:sources",
+      "band:sources.market_news",
+      "job:sources.market_news:rss",
+      "band:sources.company_data",
+      "job:sources.company_data:edgar",
+      "group:scalp",
+      "job:scalp:scalp",
+      "group:trading_loop",
+      "job:trading_loop:research",
+      "group:position_management",
+      "job:position_management:positions.evaluate",
+      "group:other",
+      "job:other:mystery",
+      "job:other:orphan",
+    ]);
+    expect(items.find((i) => i.kind === "job" && i.row.job === "research")).toMatchObject({ loop: true });
+    const shut = timelineItems(v, "research", new Set(["sources", "other"]));
+    expect(shut.filter((i) => i.kind === "group").map((i) => [i.key, i.kind === "group" && i.open])).toEqual([
+      ["sources", false],
+      ["scalp", true],
+      ["trading_loop", true],
+      ["position_management", true],
+      ["other", false],
+    ]);
+    expect(shut.some((i) => i.kind === "job" && i.row.job === "rss")).toBe(false);
   });
 
   it("rolls a band up over settled slots and opens it on a problem", () => {

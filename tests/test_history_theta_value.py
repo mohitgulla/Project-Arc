@@ -191,6 +191,22 @@ class TestParseAndJoin:
         assert r.created == dt.datetime(2020, 1, 2, 17, 15, tzinfo=ET)
         assert r.open_interest is None
 
+    def test_negative_count_and_sizes_become_none(self) -> None:
+        # Theta sometimes reports count=-1/-3; that used to fail the whole request.
+        d = dt.date(2020, 1, 2)
+        line = eod_line(d).replace(",10,3,5,1,1.05,0,6,1,1.15,0", ",10,-1,-5,1,1.05,0,6,1,-0.01,0")
+        good = eod_line(d, 101)
+        rows = parse_eod_csv(EOD_HEADER + line + good, "SPY")
+        assert len(rows) == 2
+        r = rows[0]
+        assert r.trade_count is None
+        assert r.bid_size is None
+        assert r.ask is None
+        assert r.volume == 10
+        assert r.bid == 1.05
+        assert r.ask_size == 6
+        assert rows[1].trade_count == 3
+
     def test_blank_last_trade(self) -> None:
         text = EOD_HEADER + eod_line(dt.date(2020, 1, 2)).replace("T15:59:30.000", "", 1)
         text = text.replace(",2020-01-02,1,", ",,1,")

@@ -20,7 +20,7 @@ const P = (s: string) => perfQuery(new URLSearchParams(s));
 describe("perfQuery", () => {
   it("defaults to 3M (the 90d preset), ticker tab, no shadow", () => {
     expect(DEFAULT_RANGE).toBe("3M");
-    expect(P("")).toEqual({ range: "3M", by: "ticker", shadow: false });
+    expect(P("")).toEqual({ range: "3M", by: "ticker", shadow: false, sleeve: null });
     expect(apiQuery(P(""))).toEqual({ preset: "90d" });
   });
 
@@ -32,12 +32,12 @@ describe("perfQuery", () => {
 
   it("reads the breakdown tab and shadow from the URL; ignores the removed params", () => {
     const q = P("range=YTD&by=regime&shadow=true&include_tests=true&preset=week");
-    expect(q).toEqual({ range: "YTD", by: "regime", shadow: true });
+    expect(q).toEqual({ range: "YTD", by: "regime", shadow: true, sleeve: null });
     expect(apiQuery(q)).toEqual({ preset: "ytd" });
   });
 
   it("falls back on junk", () => {
-    expect(P("range=2Y&by=y")).toEqual({ range: "3M", by: "ticker", shadow: false });
+    expect(P("range=2Y&by=y")).toEqual({ range: "3M", by: "ticker", shadow: false, sleeve: null });
   });
 });
 

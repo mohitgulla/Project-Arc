@@ -128,6 +128,7 @@ REFERENCE_KINDS: frozenset[str] = frozenset(
         "index_history",
         "pc_history",
         "market_health",
+        "levels",  # E23.0 (D98): pre-market volume profile + OI walls (derived)
     }
 )
 

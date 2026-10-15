@@ -3,9 +3,12 @@ import type { ComponentType, ReactNode, SVGProps } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import { apiGet, num } from "../lib/api";
+import { useArm } from "../lib/armContext";
+import { withArm } from "../lib/arm";
 import { useLayout } from "../lib/layout";
 import { REFRESH_CHOICES, useSettings } from "../lib/settings";
 import { useMeta, useSearch, useSnapshot } from "../lib/useApi";
+import { ArmBanner } from "./ArmSwitcher";
 import { AsOfBadge } from "./AsOfBadge";
 import {
   IconClose,
@@ -80,6 +83,7 @@ export function SearchInput({ autoFocus = false, onDone }: { autoFocus?: boolean
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
+  const arm = useArm();
   const res = useSearch(q);
   // Debounce: query 200 ms after the last keystroke.
   useEffect(() => {
@@ -114,7 +118,7 @@ export function SearchInput({ autoFocus = false, onDone }: { autoFocus?: boolean
             const hit =
               res.data?.q === term
                 ? res.data.matches[0]
-                : (await apiGet("/api/search", { query: { q: term } }).catch(() => null))?.matches[0];
+                : (await apiGet("/api/search", { query: withArm({ q: term }, arm) }).catch(() => null))?.matches[0];
             if (hit) go(hit.route);
           }}
           placeholder="Search ticker, hash, run id"
@@ -410,7 +414,7 @@ export function Shell({ children }: { children?: ReactNode }) {
       <div className={offset}>
         <header className="sticky top-0 z-10 flex h-header-h items-center gap-3 border-b border-line bg-header px-4 tablet:px-6">
           <h1 className="min-w-0 truncate text-title font-semibold text-title">{title}</h1>
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex min-w-0 items-center gap-2">
             {layout !== "mobile" && (
               <div className="w-[260px]">
                 <SearchInput />
@@ -440,6 +444,7 @@ export function Shell({ children }: { children?: ReactNode }) {
             <ThemeToggle />
           </div>
         </header>
+        <ArmBanner />
         {layout === "mobile" && search && (
           <div className="border-b border-line bg-header px-4 py-2">
             <SearchInput autoFocus onDone={() => setSearch(false)} />

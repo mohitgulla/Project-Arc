@@ -13,6 +13,7 @@ import json
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from arc.account_profiles import DteSleeve
 from arc.pipeline.runner import open_db
 from arc.routines.headline import (
     HEADLINE_CHARS,
@@ -102,9 +103,12 @@ def _proposal(
     qty: int = 1,
     price: str = "0",
     approval: str = "approved",
+    sleeve: str | None = None,
 ) -> str:
     phash = uuid.uuid4().hex
-    structure = {"kind": struct, "legs": [{"occ_symbol": occ}]}
+    structure: dict[str, object] = {"kind": struct, "legs": [{"occ_symbol": occ}]}
+    if sleeve is not None:
+        structure["sleeve"] = sleeve
     conn.execute(
         """INSERT INTO proposals (candidate_id, proposal_hash, structure_json, thesis, quant_json,
                sizing_json, expires_at, created_at, run_id, ticker, kind)
@@ -175,6 +179,67 @@ HOOD_THESIS = (
 def _close_review(conn: sqlite3.Connection, sid: str, code: str, reason: str) -> None:
     verdict = {"verdict": "close", "reason_code": code, "reason": reason}
     _dec(conn, "risk", "exit", sid, "noted", "exit:research_review", {"verdict": verdict})
+
+
+SLEEVES = [
+    DteSleeve(name="short", dte_min=10, dte_max=29, max_positions=5),
+    DteSleeve(name="swing", dte_min=30, dte_max=60, max_positions=5),
+]
+
+
+def _held(conn: sqlite3.Connection, ticker: str, *, dte: int, status: str = "open") -> None:
+    structure = {"kind": "vertical_debit", "dte": dte, "legs": [], "net_debit_credit": "1.00"}
+    conn.execute(
+        """INSERT INTO open_structures (id, ticker, open_proposal_hash, candidate_id,
+               structure_json, contracts, entry_net, opened_at, status)
+           VALUES (?, ?, ?, 'c', ?, 1, '1.00', ?, ?)""",
+        (uuid.uuid4().hex, ticker, uuid.uuid4().hex, json.dumps(structure), STAMP, status),
+    )
+
+
+class TestLoopSleeves:
+    """E22.2 (D97): the loop root counts the opens it shows, per DTE sleeve."""
+
+    def test_counts_shown_opens_per_sleeve(self) -> None:
+        conn = _conn()
+        runs = _full_chain(conn)
+        qp = runs["quant.propose"]
+        kw = {"struct": "vertical_debit", "occ": "HOOD261120P00110000"}
+        _proposal(conn, qp, "HOOD", "open", execution="filled", sleeve="short", **kw)  # type: ignore[arg-type]
+        _proposal(conn, qp, "XOM", "open", execution=None, approval="pending", sleeve="swing", **kw)  # type: ignore[arg-type]
+        _proposal(conn, qp, "NVDA", "open", execution="filled", sleeve="swing", **kw)  # type: ignore[arg-type]
+        _proposal(
+            conn, qp, "PLTR", "open", execution=None, approval="rejected", sleeve="short", **kw
+        )  # type: ignore[arg-type]
+        _proposal(conn, qp, "AAPL", "close", execution="filled", sleeve="short", **kw)  # type: ignore[arg-type]
+        # D100: totals over every open position, not this loop's opens
+        _held(conn, "HOOD", dte=11)
+        _held(conn, "NVDA", dte=25)
+        _held(conn, "IREN", dte=18)
+        _held(conn, "XOM", dte=45, status="closed")
+        root = loop_root_from_db(conn, CHAIN, SLOT, sleeves=SLEEVES)
+        assert root.sleeves == {"short": 1, "swing": 2}
+        line = root.text().split("\n")[0]
+        assert "Sleeves" not in line  # D109: counted on the model, not rendered
+
+    def test_single_window_profile_shows_no_allocation(self) -> None:
+        conn = _conn()
+        runs = _full_chain(conn)
+        kw = {"struct": "vertical_debit", "occ": "HOOD261120P00110000"}
+        qp = runs["quant.propose"]
+        _proposal(conn, qp, "HOOD", "open", execution="filled", sleeve="short", **kw)  # type: ignore[arg-type]
+        _held(conn, "HOOD", dte=11)
+        single = [DteSleeve(name="default", dte_min=30, dte_max=45)]
+        root = loop_root_from_db(conn, CHAIN, SLOT, sleeves=single)
+        assert root.allocated == [] and "Sleeves" not in root.text()
+
+    def test_no_sleeve_no_counts(self) -> None:
+        conn = _conn()
+        runs = _full_chain(conn)
+        kw = {"struct": "vertical_debit", "occ": "HOOD261120P00110000"}
+        _proposal(conn, runs["quant.propose"], "HOOD", "open", execution="filled", **kw)  # type: ignore[arg-type]
+        root = loop_root_from_db(conn, CHAIN, SLOT)
+        assert root.sleeves == {} and "Sleeves" not in root.text()
 
 
 class TestLoopHeadline:
@@ -417,8 +482,10 @@ class TestDayRecap:
     def test_result_then_main_blocker(self) -> None:
         conn = _conn()
         self._day(conn)
+        # D109: 2x room, so the opposite extreme and the main blocker fit too
         assert day_recap(conn, SLOT.date(), day_pnl=-1945.57, equity_start=99604.46) == [
-            "Red day: -$1,946 (-2.0%) on 1 open and 2 closes; biggest hit META -$8,765."
+            "Red day: -$1,946 (-2.0%) on 1 open and 2 closes; biggest hit META -$8,765; "
+            "best win VST +$160; Net EV floor blocked 2 of 2 picks."
         ]
 
     def test_blocker_when_nothing_closed(self) -> None:
@@ -438,6 +505,16 @@ class TestDayRecap:
             "Green day: +$500 (+0.5%) on 1 open and 2 closes"
         )
         assert day_recap(conn, SLOT.date())[0].startswith("Day done on 1 open and 2 closes")
+
+    def test_recap_keeps_every_point_that_fits(self) -> None:
+        # D109: the recap headline may run to RECAP_CHARS (2x) and keeps each point that fits
+        from arc.routines.headline import HEADLINE_CHARS, RECAP_CHARS, headline_points
+
+        assert RECAP_CHARS == 2 * HEADLINE_CHARS
+        out = headline_points("Main point", "Second one", "", "Third one", limit=RECAP_CHARS)
+        assert out == "Main point; second one; third one."
+        assert headline_points("M", "x" * 300, "short", limit=RECAP_CHARS) == "M; short."
+        assert len(headline_points("a" * 400, limit=RECAP_CHARS)) == RECAP_CHARS
 
     def test_quiet_day(self) -> None:
         assert day_recap(_conn(), SLOT.date(), day_pnl=0.0) == ["Flat day: +$0, no trades."]
@@ -519,7 +596,8 @@ class TestRecapBroadcast:
         assert view.text.split("\n") == [
             ":rolled_up_newspaper: *Thu Oct 8 · Day Recap*",
             "",
-            "_*Red day: -$1,946 (-2.0%) on 1 open and 2 closes; biggest hit META -$8,765.*_",
+            "_*Red day: -$1,946 (-2.0%) on 1 open and 2 closes; biggest hit META -$8,765; "
+            "best win VST +$160; Net EV floor blocked 2 of 2 picks.*_",
         ]
 
     def test_recap_failure_never_blocks_the_reconcile(self) -> None:

@@ -26,7 +26,9 @@ class TestDefaults:
     def test_default_limits(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("ARC_MAX_ALLOC_PCT")  # the suite pins the pre-D85 5%
         s = get_settings()
-        assert s.max_alloc_pct == 0.10  # D85 (was 0.05)
+        assert s.max_alloc_pct == 0.15  # D116 base tier (was 0.10, D85; 0.05 before)
+        assert s.max_alloc_pct_reduced == 0.10  # D116 reduced tier
+        assert s.alloc_tier_threshold_pct == 0.60  # D116
         assert s.daily_loss_halt_pct == 0.03
         assert s.spread_max_pct == 0.10
         assert s.spread_max_abs == 0.10
@@ -38,7 +40,7 @@ class TestDefaults:
         assert s.dte_min == 30
         assert s.dte_max == 45
         assert s.earnings_blackout is True
-        assert s.max_open_positions == 8
+        assert s.max_open_positions == 10  # D97 (was 8)
         assert s.approval_ttl_seconds == 1200
         assert s.auto_approve is False
 

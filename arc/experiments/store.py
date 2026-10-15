@@ -64,6 +64,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "OWNER_APPROVAL_RE",
+    "PROPOSAL_REF_RE",
     "AaRequiredError",
     "ExperimentError",
     "ExperimentStore",
@@ -72,6 +73,7 @@ __all__ = [
     "TransitionError",
     "Verification",
     "check_owner_approval",
+    "proposal_ref_of",
 ]
 
 log = structlog.get_logger(__name__)
@@ -115,6 +117,30 @@ def check_owner_approval(ref: str | None) -> str:
         msg = f"{what}: {ADOPT_HINT}"
         raise OwnerApprovalError(msg)
     return ref
+
+
+PROPOSAL_REF_RE = re.compile(r"^P-[1-9]\d*$")
+
+
+def _proposal_ref(ref: str | None) -> dict[str, str]:
+    """``{"proposal_ref": "P-<n>"}`` for the event detail (E21.4), ``{}`` for None."""
+    if ref is None:
+        return {}
+    if not PROPOSAL_REF_RE.match(ref):
+        msg = f"proposal_ref {ref!r} must look like P-<n> (an Analyst proposal)"
+        raise OwnerApprovalError(msg)
+    return {"proposal_ref": ref}
+
+
+def proposal_ref_of(st: ExperimentState) -> str | None:
+    """The ``P-<n>`` an experiment adopts: its ``proposal_ref`` (E21.4) or a ``P-<n>``
+    ``owner_approval`` (D86), from its earliest event naming one."""
+    for e in st.events:
+        for key in ("proposal_ref", "owner_approval"):
+            ref = str(e.detail.get(key) or "")
+            if PROPOSAL_REF_RE.match(ref):
+                return ref
+    return None
 
 
 class Verification(dict[str, Any]):
@@ -179,13 +205,14 @@ class ExperimentStore:
         now: Callable[[], _dt.datetime] | None = None,
     ) -> ExperimentStore:
         """A store capped by ``runner.max_parallel_arms``, counting each experiment's
-        runner arms (:meth:`RunnerConfig.arms_for`; its treatments when that refuses)."""
+        runner arms (:meth:`RunnerConfig.arms_for`; its treatments, plus a v3 control,
+        when that refuses)."""
 
         def count(spec: ExperimentSpec) -> int:
             try:
                 return len(runner.arms_for(spec))
-            except ValueError:
-                return len(spec.arms.treatments)
+            except ValueError:  # D108: a v3 spec's control is an arm too
+                return len(spec.arms.treatments) + int(spec.control_runs)
 
         return cls(conn, now=now, max_parallel_arms=runner.max_parallel_arms, arms_of=count)
 
@@ -375,13 +402,22 @@ class ExperimentStore:
             msg = f"{st.experiment_id}: cannot go from {st.status.value} to {to.value}"
             raise TransitionError(msg)
 
-    def create(self, spec: ExperimentSpec, *, actor: str, owner_approval: str) -> ExperimentState:
+    def create(
+        self,
+        spec: ExperimentSpec,
+        *,
+        actor: str,
+        owner_approval: str,
+        proposal_ref: str | None = None,
+    ) -> ExperimentState:
         """Store *spec* as a draft (a new revision when the id is still a draft).
 
         Refused once the experiment left draft: the spec is hash-locked. Refused
         without an *owner_approval* reference (D86, :func:`check_owner_approval`).
+        *proposal_ref* (E21.4, ``P-<n>``) names the Analyst proposal it adopts.
         """
         approval = check_owner_approval(owner_approval)
+        ref = _proposal_ref(proposal_ref)
         current = self.get(spec.id)
         if current is not None and current.status is not ExperimentStatus.DRAFT:
             msg = (
@@ -419,16 +455,24 @@ class ExperimentStore:
                 ExperimentStatus.DRAFT,
                 hash_=h,
                 actor=actor,
-                detail={"revision": revision, "owner_approval": approval},
+                detail={"revision": revision, "owner_approval": approval, **ref},
                 text=f"{spec.title} (revision {revision})",
             )
         return self.require(spec.id)
 
-    def register(self, experiment_id: str, *, actor: str, owner_approval: str) -> ExperimentState:
+    def register(
+        self,
+        experiment_id: str,
+        *,
+        actor: str,
+        owner_approval: str,
+        proposal_ref: str | None = None,
+    ) -> ExperimentState:
         """Lock the spec (sha256) and register it, or queue it when its area is busy
         (A/B only, D69) or its arms would exceed ``max_parallel_arms``. Refused without
         an *owner_approval* reference (D86)."""
         approval = check_owner_approval(owner_approval)
+        ref = _proposal_ref(proposal_ref)
         st = self.require(experiment_id)
         if st.status is not ExperimentStatus.DRAFT:
             msg = f"{experiment_id} is {st.status.value}, not draft: already registered"
@@ -457,7 +501,7 @@ class ExperimentStore:
             )
         if cap:
             text += f"; {cap}"
-        detail: dict[str, Any] = {"owner_approval": approval}
+        detail: dict[str, Any] = {"owner_approval": approval, **ref}
         if busy:
             detail["queued_behind"] = [b.experiment_id for b in busy]
         if cap:
@@ -520,7 +564,7 @@ class ExperimentStore:
                 hash_=st.spec_hash,
                 actor=actor,
                 detail=d.model_dump(mode="json"),
-                text=f"t0 equity {d.t0_equity:,.2f}; legacy book {len(d.legacy_book)}",
+                text=f"t0 equity {d.t0_equity:,.2f}; production book {len(d.production_book)}",
             )
         return self.require(experiment_id)
 

@@ -33,11 +33,17 @@ from arc.routines.config import (
     FinnhubContextSettings,
     FunnelConfig,
     MarketHealthContextSettings,
+    OiWallsSettings,
+    PullbackWatchSettings,
+    RangeEdgesSettings,
     ResearchDiversificationSettings,
+    ResearchStrategySettings,
     ResearchTechnicalsSettings,
     RetailSentimentContextSettings,
     ScalpMoversContextSettings,
     ScoutBuzzVelocitySettings,
+    StrikeLevelsSettings,
+    VolumeProfileSettings,
 )
 
 if TYPE_CHECKING:
@@ -81,6 +87,11 @@ MOVED_BLOCKS: tuple[str, ...] = (
     "market_health",
     "technicals",
     "funnel",
+    "volume_profile",  # E23.0 (D98): born in strategy.yaml; refused in routines.yaml
+    "oi_walls",  # E23.0 (D98)
+    "range_edges",  # E23.1 (D98)
+    "pullback_watch",  # E23.2 (D98)
+    "strike_levels",  # E23.3 (D98)
 )
 
 
@@ -116,6 +127,18 @@ class StrategyConfig(BaseModel):
         default_factory=ResearchDiversificationSettings
     )
     funnel: FunnelConfig = Field(default_factory=FunnelConfig)
+    # E23.0 (D98): levels on regime technicals (the pre-market `levels` job)
+    volume_profile: VolumeProfileSettings = Field(default_factory=VolumeProfileSettings)
+    oi_walls: OiWallsSettings = Field(default_factory=OiWallsSettings)
+    # E23.1 (D98): the range-edge entry filter
+    range_edges: RangeEdgesSettings = Field(default_factory=RangeEdgesSettings)
+    # E23.2 (D98): the pullback watch for anti-chase drops
+    pullback_watch: PullbackWatchSettings = Field(default_factory=PullbackWatchSettings)
+    # E23.3 (D98): strike vs level context on the Quant menu and trade card
+    strike_levels: StrikeLevelsSettings = Field(default_factory=StrikeLevelsSettings)
+    # E5.16 (D116): Research knobs (the stale-pick cooldown). Born here; not in
+    # MOVED_BLOCKS, because routines paths starting `research` are the job's own keys.
+    research: ResearchStrategySettings = Field(default_factory=ResearchStrategySettings)
 
     def routines_fields(self) -> dict[str, Any]:
         """The :class:`~arc.routines.config.RoutinesConfig` fields this file sets."""
@@ -131,6 +154,12 @@ class StrategyConfig(BaseModel):
             "market_health": mh.thresholds,
             "director_diversification": self.director_diversification,
             "funnel": self.funnel,
+            "volume_profile": self.volume_profile,
+            "oi_walls": self.oi_walls,
+            "range_edges": self.range_edges,
+            "pullback_watch": self.pullback_watch,
+            "strike_levels": self.strike_levels,
+            "research": self.research,
         }
 
 

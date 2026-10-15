@@ -32,7 +32,6 @@ import {
 } from "../lib/format";
 import {
   OVERVIEW_RANGES,
-  equityDates,
   directionView,
   equityView,
   greekRiskLabel,
@@ -63,7 +62,11 @@ import {
   universeHref,
   type Universe,
 } from "../lib/universe";
-import { useMeta, useOps, useOverview } from "../lib/useApi";
+import { sleeveUsageLine } from "../lib/sleeves";
+import { useControlMeta, useMeta, useOps, useOverview } from "../lib/useApi";
+import { useArmState } from "../lib/armContext";
+import { switcherLabel } from "../lib/arm";
+import { ArmSwitcher, Chevron } from "../components/ArmSwitcher";
 import { PositionsTable } from "./PositionsTable";
 
 const PROPOSAL_STAGES = ["proposed", "gate", "approval", "execution", "filled"] as const;
@@ -107,33 +110,55 @@ function SlotCell({ slot }: { slot: StatusSlot }) {
   );
 }
 
-const CELL = "flex min-h-[44px] min-w-0 items-center gap-2 rounded-control px-2 text-caption tablet:min-h-[32px]";
+/** Phone cells are tight (px-1, gap-1.5) so `Orders 0/200` and `Paper Trade · Arc Investor` fit at 390–520 px (D99). */
+const CELL = "flex min-h-[44px] min-w-0 items-center gap-1.5 rounded-control px-1 text-caption tablet:min-h-[32px] tablet:gap-2 tablet:px-2";
+/** D92 groups: Account ‖ Trading ‖ Orders · Tick · Health · Alerts (a divider before each group on desktop). */
+const GROUP_START = "tablet:border-l tablet:border-line tablet:pl-4";
+/** Phone (≤ 768 px) grid: row 1 Account | Trading (2 + 2 cols), row 2 Orders | Tick | Health | Alerts
+ * (columns sized to their usual text so `Orders 0/200` and `Health Failed 30m` fit at 520 px, D99).
+ * Below 480 px: 2 columns (left one wider for the account name), rows Account | Trading,
+ * Orders | Tick, Health | Alerts. */
+const PHONE_SPAN: Partial<Record<StatusSlot["key"], string>> = { account: "min-[480px]:col-span-2", trading: "min-[480px]:col-span-2" };
 
 /**
- * Status row (D48, D50 order): fixed slots Trading · env · Health · Orders · Tick · Alerts, each
- * `label value` with a status dot; the env slot (`Paper Trade`) is plain text styled like
- * the others, with a neutral dot. A 3x2 grid of equal cells up to 768 px; one row above, same
- * order. A halt replaces slot 1 with HALTED + reason + age.
+ * Status row (D92; was D48/D50): fixed slots Account · Trading · Orders · Tick · Health · Alerts,
+ * each `label value` with a status dot. The account slot (`Paper Trade · Arc Investor`, the switcher) has a
+ * neutral dot; Trading carries the session count (`Enabled (7)`); Tick is `4m`. A 4-column
+ * grid up to 768 px (row 1 Account | Trading, row 2 the four checks); one row above, with a
+ * divider before Trading and before Orders. A halt replaces the Trading slot with HALTED +
+ * reason + age (full width on a phone).
  */
 function StatusStrip({ o, cad, now }: { o: Overview; cad: ReturnType<typeof useCadences>; now: number }) {
   const [open, setOpen] = useState(false);
   const s = o.status;
   const tone = stripTone(o);
   const alerts = s.alerts ?? [];
-  const slots = statusRow(o, { now, tickS: cad.tick, healthS: cad.health, env: cad.env, accountProfile: cad.accountProfile });
+  const { arm } = useArmState();
+  const armsMeta = useControlMeta().data?.arms;
+  const slots = statusRow(o, {
+    now,
+    tickS: cad.tick,
+    healthS: cad.health,
+    env: cad.env,
+    accountProfile: cad.accountProfile,
+    // the account slot is the switcher's trigger: "Arc Investor" for production (owner exception)
+    account: switcherLabel(arm, armsMeta),
+  });
   const border = tone === "neg" ? "border-neg" : tone === "warn" ? "border-warn" : "border-line";
+  const groupStart = (key: StatusSlot["key"]) => (key === "trading" || key === "orders" ? GROUP_START : "");
   return (
     <section
       data-testid="status-strip"
       data-tone={tone}
-      className={`arc-card flex flex-col gap-2 border ${border} !py-2`}
+      className={`arc-card flex flex-col gap-2 border ${border} !py-2 max-tablet:!px-3`}
       aria-label="Trading status"
     >
-      <ul className="grid grid-cols-3 gap-1 tablet:flex tablet:flex-wrap tablet:items-center tablet:gap-x-4" data-testid="status-slots">
+      <ul className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)] gap-x-0.5 gap-y-1 min-[480px]:grid-cols-[minmax(0,1.15fr)_minmax(0,0.8fr)_minmax(0,1.35fr)_minmax(0,0.9fr)] tablet:flex tablet:flex-wrap tablet:items-center tablet:gap-x-4" data-testid="status-slots">
         {slots.map((slot) => {
+          const span = PHONE_SPAN[slot.key] ?? "";
           if (slot.key === "trading" && slot.tone === "neg")
             return (
-              <li key={slot.key} className={`${CELL} col-span-3 flex-wrap py-1`} data-testid="halt-banner" title={slot.title}>
+              <li key={slot.key} className={`${CELL} col-span-2 flex-wrap py-1 min-[480px]:col-span-4 ${GROUP_START}`} data-testid="halt-banner" title={slot.title}>
                 <span className="rounded-pill bg-neg-bg px-2 py-0.5 font-bold text-neg-text">HALTED</span>
                 <span className="min-w-0 text-primary [overflow-wrap:anywhere]">{slot.detail}</span>
                 <span className="text-muted tabular-nums">
@@ -165,14 +190,19 @@ function StatusStrip({ o, cad, now }: { o: Overview; cad: ReturnType<typeof useC
                 </button>
               </li>
             );
-          if (slot.key === "env")
+          const testid = slot.key === "account" ? "account-slot" : slot.key === "orders" ? "order-budget" : `slot-${slot.key}`;
+          // E15.7 (D92, D103): the account slot is the Tower's one master account switcher.
+          if (slot.key === "account")
             return (
-              <li key={slot.key} className={CELL} data-testid="env-slot" title={slot.title}>
-                <SlotCell slot={slot} />
+              <li key={slot.key} className={`min-w-0 ${span}`} data-testid={testid}>
+                <ArmSwitcher className={CELL} title={slot.title}>
+                  <SlotCell slot={slot} />
+                  <Chevron />
+                </ArmSwitcher>
               </li>
             );
           return (
-            <li key={slot.key} className={CELL} title={slot.title} data-testid={slot.key === "orders" ? "order-budget" : `slot-${slot.key}`}>
+            <li key={slot.key} className={`${CELL} ${span} ${groupStart(slot.key)}`} title={slot.title} data-testid={testid}>
               <SlotCell slot={slot} />
             </li>
           );
@@ -199,7 +229,7 @@ function StatusStrip({ o, cad, now }: { o: Overview; cad: ReturnType<typeof useC
 // Equity + P&L
 // ---------------------------------------------------------------------------
 
-function EquityCard({ o, range, cad, now }: { o: Overview; range: OverviewRange; cad: ReturnType<typeof useCadences>; now: number }) {
+function EquityCard({ o, range, cad }: { o: Overview; range: OverviewRange; cad: ReturnType<typeof useCadences> }) {
   const e = o.equity;
   const v = equityView(e, range);
   const bench = withBenchmarks(e.range === range ? e : undefined, v.series, v.reference);
@@ -244,12 +274,9 @@ function EquityCard({ o, range, cad, now }: { o: Overview; range: OverviewRange;
         label: e.source === "intraday" ? "monitor mark" : "reconcile",
       }}
     >
-      {/* D50: the range selector sits below the hero, with its dates (Performance RangeBar layout). */}
+      {/* D50: the range selector sits below the hero; no date range beside it (D104). */}
       <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1" data-testid="equity-range">
         <RangeControl fallback="1D" ranges={OVERVIEW_RANGES} size="sm" />
-        <span className="text-caption text-muted tabular-nums" data-testid="equity-dates">
-          {equityDates(e.range === range ? e : undefined, now)}
-        </span>
       </div>
       {v.series.length > 1 ? (
         <TrendChart
@@ -491,10 +518,14 @@ function GreeksCard({ o, monitorS, caps }: { o: Overview; monitorS?: number; cap
   const cadence = monitorS ?? o.stale_after_s / STALE_FACTOR;
   const stale = o.marks_stale || isStale(g.at, cadence, now);
   // D57: the gate caps dollar delta (Σ Δ × spot); a pre-D57 heartbeat has none (—).
+  // D116 (E3.8): debit verticals / long options count at signed max loss in both caps;
+  // the plain Σ Δ × spot is shown in the tip (— on a heartbeat written before E3.8).
   const dollarDelta = g.dollar_delta ?? null;
+  const dollarDeltaRaw = g.dollar_delta_raw ?? null;
   const dollarCap = g.dollar_delta_cap ?? null;
   // D62: beta-weighted dollar delta (SPY-equivalent); a pre-D62 heartbeat has none (—).
   const betaDelta = g.beta_dollar_delta ?? null;
+  const betaDeltaRaw = g.beta_dollar_delta_raw ?? null;
   const betaCap = g.beta_delta_cap ?? null;
   const betaRows = Object.entries(g.delta_by_underlying ?? {}).sort(
     ([, a], [, b]) => Math.abs(b.beta_dollar_delta) - Math.abs(a.beta_dollar_delta),
@@ -517,7 +548,18 @@ function GreeksCard({ o, monitorS, caps }: { o: Overview; monitorS?: number; cap
               <InfoTip
                 label="About net dollar delta"
                 testid="greeks-info-dollar-delta"
-                formula={<>|Σ Δ × spot| ≤ {capText(caps?.portfolio_dollar_delta_cap_pct)} × equity</>}
+                formula={
+                  <>
+                    |Σ Δ × spot| ≤ {capText(caps?.portfolio_dollar_delta_cap_pct)} × equity
+                    <span className="mt-1 block" data-testid="greeks-debit-max-loss-note">
+                      Debit structures count at max loss: debit verticals and long calls/puts add sign(Δ) × max loss,
+                      not Δ × spot.
+                    </span>
+                    <span className="block" data-testid="greeks-dollar-delta-raw">
+                      Plain Σ Δ × spot: {dollarDeltaRaw === null ? "—" : formatMoney(dollarDeltaRaw, "allocation")}
+                    </span>
+                  </>
+                }
               >
                 How many dollars of stock the whole book behaves like (longs minus shorts).
               </InfoTip>
@@ -538,6 +580,10 @@ function GreeksCard({ o, monitorS, caps }: { o: Overview; monitorS?: number; cap
                 formula={
                   <>
                     |Σ Δ × spot × max(β,1)| ≤ {capText(caps?.portfolio_beta_delta_cap_pct)} × equity · β = 1y daily vs SPY
+                    <span className="mt-1 block">
+                      Debit structures count at max loss × max(β,1). Plain Σ Δ × spot × max(β,1):{" "}
+                      {betaDeltaRaw === null ? "—" : formatMoney(betaDeltaRaw, "allocation")}
+                    </span>
                     {betaRows.length > 0 && (
                       <span className="mt-1 block" data-testid="greeks-beta-breakdown">
                         {betaRows.map(([t, r]) => (
@@ -629,11 +675,26 @@ function GreeksCard({ o, monitorS, caps }: { o: Overview; monitorS?: number; cap
               <InfoTip
                 label="About max loss per underlying"
                 testid="greeks-info-max-loss"
-                formula={<>Σ max loss per ticker ≤ {formatPercent(o.greeks.max_alloc_pct)} × equity</>}
+                formula={
+                  <>
+                    Σ max loss per ticker ≤ {formatPercent(o.greeks.max_alloc_pct_base ?? o.greeks.max_alloc_pct)} ×
+                    equity while deployed &lt; {formatPercent(o.greeks.alloc_tier_threshold_pct ?? 1)}, else{" "}
+                    {formatPercent(o.greeks.max_alloc_pct_reduced ?? o.greeks.max_alloc_pct)}
+                  </>
+                }
               >
-                The most one ticker&apos;s open structures can lose together at their worst outcome.
+                The most one ticker&apos;s open structures can lose together at their worst outcome. The cap drops to the
+                reduced tier once the book&apos;s deployed max loss (open positions plus orders in flight) reaches the
+                threshold share of equity.
               </InfoTip>
             </p>
+            {o.greeks.deployed_pct != null && o.greeks.alloc_tier_threshold_pct != null && (
+              <p className="tabular-nums" data-testid="alloc-tier">
+                Deployed {formatPercent(o.greeks.deployed_pct)} of equity ·{" "}
+                {o.greeks.alloc_tier === "reduced" ? "Reduced Tier" : "Base Tier"} (drops at{" "}
+                {formatPercent(o.greeks.alloc_tier_threshold_pct)})
+              </p>
+            )}
             {byUnderlying.length === 0 ? (
               <p className="text-muted">No open structures.</p>
             ) : (
@@ -933,11 +994,12 @@ export function OverviewPage() {
       <div className="grid gap-6 desktop:grid-cols-2 desktop:gap-10" data-testid="overview-grid">
         <div className={col}>
           <div className="order-1 min-w-0 desktop:order-none">
-            <EquityCard o={o} range={range} cad={cad} now={now} />
+            <EquityCard o={o} range={range} cad={cad} />
           </div>
           <div className="order-4 min-w-0 desktop:order-none">
             <Card
               title="Positions"
+              subtitle={sleeveUsageLine(o.sleeves) ?? undefined}
               action={{ label: "VIEW ALL", to: "/positions" }}
               freshness={{ at: o.marks_at, cadenceS: cad.monitor, label: "monitor mark" }}
             >

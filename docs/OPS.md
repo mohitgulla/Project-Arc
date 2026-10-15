@@ -147,6 +147,21 @@ head migration); exit 1 when one fails. `--apply --actor <owner id>
 Any failure before the swap deletes `arc.db.new` and leaves the live store as it was.
 Trading stays halted afterwards: resume only after the cutover checks (E19.3).
 
+**D80 cutover log (E19.3).**
+- 2026-10-10 16:34 PT: the owner cleared the experiment registry (XP-10; XP-3 was cleared
+  2026-10-06) as a prep step for the D80 fresh start. This was not a defect (Sentinel S-36,
+  owner decision 2026-10-11). The rows were deleted in place with the append-only triggers
+  bypassed. Pre-deletion copies are in
+  `data/archive/20261011-1315-pre-d80/xp-registry-pre-clear-20261010/` (XP-10 plus its arm
+  store `arc-exp-XP-10.db`) and `.../xp-registry-pre-clear-20261006/` (XP-3). Their
+  `verdict: stopped` files and registered specs were removed from the repo by the D111
+  registry reset (2026-10-13); `git log -- config/experiments/live/` still has them.
+- 2026-10-11 13:15 ET: `arc store reset --apply` swapped in the fresh store. Production is
+  …63Y6 with $25,000 (`store:epoch`), the archive is `data/archive/20261011-1315-pre-d80/`,
+  carry-over was 0 overrides, and the Analyst state is archived under
+  `analyst/archive/pre-d80-20261011-1015/`. The pre-reset scorecards are in
+  `docs/RESEARCH/weekly/archive/pre-d80/`. History on the new store starts here.
+
 ### 3.3 Broker venues (E13.11, D56)
 
 Every trading entry point builds its broker through `arc/broker/registry.py`
@@ -361,6 +376,31 @@ categories, D58 `retail_buzz`, then Reference data). The SPA takes every persona
 OpenAPI browser. Every response carries `as_of` (ET); errors are `{error, detail, as_of}`
 (e.g. 503 `db_unavailable`, 503 `config_unavailable`).
 
+**Arm-scoped reads (E15.6, D69).** Every `/api/*` GET takes `?arm=<experiment id>:<arm>`
+(e.g. `?arm=XP-12:t1`; ids from `/api/meta` `arms`: `{id, experiment_id, arm, label
+"XP-12 · T1", status, store_age_s, viewable}`, running first). It reads that arm's store
+(`mode=ro`, the path control recorded at t0 in `routine_state experiment_arm:*`) with the
+same loaders. Equity, positions, trades, performance, halts, runs, budget and context are
+then the arm's own data: its virtual account and attributed fills (E15.2), never the
+shared broker account. Pages fed by control-only data serve control's response with
+`shared_from_control: true`: the session timeline, health strip, alerts, sources, LLM
+spend, config, the idea funnel and experiments, plus the universe unless the arm runs
+the Scout/Trending itself. Every response carries `scope: {arm_id}` (`null` means Arc
+Investor). No param, or `arm=control`, gives today's response. An unknown, stopped or
+store-less arm returns 404 `unknown_arm`, listing the valid arms.
+
+**Arm switcher (E15.7, D69/D92).** The Tower shows one account at a time. On Overview the
+status strip's account slot (`Paper Trade · Arc Investor`) is the switcher; every other page
+has an account pill in the header. The switcher, its production row and the Back button
+say "Arc Investor" (owner exception, E25.6); every other surface says "Production"
+(D108). The menu lists Arc Investor plus each running arm from
+`/api/meta` `arms` (`XP-12 · T1`, …). Choosing an arm puts `?arm=XP-12:t1` on the URL (copy
+it to share the view) and on every API call; in-app links keep it. While an arm is under view,
+a banner on every page reads
+`Viewing XP-12 · T1` with
+**Back to Arc Investor**. Nothing is remembered: any load without `?arm` is
+Production. A stopped or unknown arm in the URL shows a red banner with the same way back.
+
 **D56 views (E13.14).**
 - *Positions:* each open row shows the latest
   Research exit watch (`hold | review` + thesis status), Quant exit case (recommendation +
@@ -416,7 +456,7 @@ Outside the session the pages show the last in-session monitor run, marked stale
 |---|---|
 | Status strip | active `halts`, latest `tick`/`health` heartbeats, open `ops_alerts` |
 | P&L / equity | latest `monitor` heartbeat (intraday equity, day P&L); `pnl_snapshots` (reconciled realized/unrealized, Day/MTD/YTD via `arc.reconcile.performance`) |
-| Greeks | latest `monitor` heartbeat: net dollar delta (Σ Δ × spot, D57) against the gate's `portfolio_dollar_delta_cap_pct` × equity (1.00), beta-weighted net dollar delta (Σ Δ × spot × max(β, 1), D62) against `portfolio_beta_delta_cap_pct` × equity (2.00) with the per-underlying β in its ⓘ, ν against `portfolio_vega_cap_pct` × equity, plus Γ Θ and max loss; every row has an ⓘ |
+| Greeks | latest `monitor` heartbeat: net dollar delta (Σ Δ × spot, D57; debit verticals and long calls/puts count sign(Δ) × max loss, D116/E3.8, with the plain Σ Δ × spot in the ⓘ) against the gate's `portfolio_dollar_delta_cap_pct` × equity (1.00), beta-weighted net dollar delta (the same terms × max(β, 1), D62) against `portfolio_beta_delta_cap_pct` × equity (2.00) with the per-underlying β in its ⓘ, ν against `portfolio_vega_cap_pct` × equity, plus Γ Θ and max loss per underlying against the active D116 tier (`max_alloc_pct` 15% while deployed max loss — open + in-flight opens — is below `alloc_tier_threshold_pct` 60% of equity, else `max_alloc_pct_reduced` 10%), with a "Deployed N% of equity · Base/Reduced Tier" line; every row has an ⓘ |
 | Positions | `open_structures` + broker legs from the `monitor` heartbeat; "held at broker" from the last `positions_snapshots` |
 | Proposals / Trades | `proposals` + latest `gate_decisions` + `approval_requests` + `executions` |
 | Halts | `halts`, active first |
@@ -697,6 +737,47 @@ tower's ops strip and the monitor heartbeat carry the same numbers. Tunables:
 `order_budget.daily_max|restrict_at|close_reserve` plus the `order_budget.restrictive.*`
 knobs (see `!arc config execution`). Raising the cap is the riskier direction (confirm step).
 
+**Shared experiment account (D69, E15.3; D108).** Every arm on the shared `ALPACA_EXP_*`
+account (control `XP-<n>:control` and each treatment) gets production's **full** budget:
+the same `order_budget.daily_max` / `restrict_at` / `close_reserve` (200 / 100 / 25), so
+each arm turns restrictive at 100 of its own orders and stops opens at 175. There is no
+per-arm slice any more (D108 removed `order_budget.per_arm`). An arm counts only the
+account's option orders tagged with its arm code (`arc2.<code>.…`), read in the same broker
+call as the whole account's count. The **account guard** (`order_budget_account_max` =
+arms on the account × `daily_max`, derived, never set by hand; *arms* = shared-mode arms of
+running experiments on that account, e.g. 4 × 200 = 800 for a K = 3 XP) stops every arm on
+the account once the account reaches it that ET day, whatever each arm's own count says;
+the ladder journals `order:budget_exhausted` with "shared account order cap reached".
+Production and dedicated-mode arms are unchanged (200/day each, no guard). `arc budget
+status --arm <XP-n:arm | arm> [--db <control store>]` prints the arm line and the account
+line. The real throttle at that volume is the shared rate bucket below.
+
+**Alpaca rate bucket (D69).** Every REST call of a shared-mode arm draws from one
+file-locked token bucket per account key (`data/locks/alpaca-<last4>.bucket`), shared by all
+arm processes: `alpaca_rate_per_min` (default 180, Alpaca allows 200) with a burst of
+rate/10. Order submits (`POST /v2/orders`) take a token whenever one is left; reads leave a
+quarter of the burst for submits. A 429 empties the bucket (every arm backs off) and logs
+`alpaca.rate_limited` with the bucket state.
+
+**Market-data read retry (D114).** Every market-data GET (`AlpacaMarketData`: chains,
+snapshots, contracts list, quotes, bars), in production and in every arm, is sent again
+after a transient failure (HTTP 500/502/503, DNS `no such host`, connection reset, timeout):
+at most `alpaca_read_retries` (2) retries, ~0.5 s then ~1.5 s (±25% jitter), at most
+`alpaca_read_retry_budget_s` (3 s) of sleep in total. Each retry takes a read token from
+this bucket. 4xx (auth, 403 subscription), 429/504 (alpaca-py retries those) and every
+non-GET (order submits, cancels) are never retried. Grep `arc.jsonl` for
+`marketdata.retry` / `marketdata.retry_exhausted`; on exhaustion the job fails exactly as
+before. Off: `ARC_ALPACA_READ_RETRIES=0`.
+
+**Cross-arm conflicts (D69).** Before each submit a shared-mode arm checks the account:
+an order opposite to another arm's working order on the same contract (Alpaca rejects it
+as a wash trade, 403 `40310000`), or one that would cross another arm's position beyond
+this arm's own holding, is **refused** before the broker and journalled
+`order:cross_arm_conflict` (`source: pre_check`). No netting, no simulated fills; closing an
+arm's own position never conflicts. A wash-trade 403 that still comes back is journalled
+the same way (`source: broker_403`). If the account can't be read the order is refused
+(`cross_arm_unchecked`). The arm report counts both as `cross_arm_conflicts`.
+
 ### 5.10 Auto-approve and in-chain Execute (E6.6, D34)
 
 `auto_approve` is one switch per environment, both **off** by default. When it is on for the
@@ -715,6 +796,20 @@ Freshness (`max_quote_age`, default 60 s, ceiling 600): when the proposal is old
 that at the first attempt, the ladder re-prices at the current mid and re-anchors the band
 there (`PriceBand.reanchor`, pure gate code; the band is never widened). A mid outside the
 signed band sends nothing (journal `order:stale_band`); the next loop may propose afresh.
+
+Re-gate on band move (D101, E24.1; `execution.regate_max`, default 1, ceiling 3;
+`execution.regate_max_move_pct`, default 5%, ceiling 20%): before every attempt after the
+first, the Broker re-reads the legs' quotes. A mid still inside the band changes nothing.
+A mid past the band's worst price stops the walk (journal `order:band_moved` with the old
+band, the fresh mid, far touch and quote age). With a re-gate left and the approval TTL
+still open, the same structure is re-priced at the fresh mid and runs the **full** gate
+again (opens: the live Net EV floor too); a pass mints a new token and walks the new band
+under the same `executions` row, a fail stops (`gate:<rule>` / `net_ev_floor` row). A new
+worst price more than `regate_max_move_pct` of the approved mid past the approved one is
+refused (`regate: refused_move`), except for closes inside the D73 expiry guard window.
+The loop root and the broker card say `re-priced once: 4.65–4.75 → 4.82–4.95, filled
+4.88`; the Tower trade detail lists each re-gated band. Rollback:
+`!arc config set execution.regate_max 0` (no between-step check, as before D101).
 
 Runbook (paper): auto-approve and auto-exit are **on by default in paper** (D85, was off);
 live defaults stay off.
@@ -1112,7 +1207,7 @@ and `arc context show --kind unusual_options` still lists them until then.
 
   | Job | Source | Kind | Category | When (ET) |
   |---|---|---|---|---|
-  | `vol_term` | Cboe VIX9D/VIX/VIX3M/VVIX daily history | `vol_term` (contango/backwardation) | `options_slow` | 18:30 + 08:15 catch-up (E14.2, D60; was 09:00/16:45, both stored the previous close) |
+  | `vol_term` | Cboe VIX9D/VIX/VIX3M/VVIX daily history | `vol_term` (contango/backwardation) | `options_slow` | 18:30 + 08:00 catch-up (E14.2, D60; was 09:00/16:45, both stored the previous close; catch-up 08:15 → 08:00 per D96) |
   | `macro_calendar` | federalreserve.gov FOMC page + BLS release ICS + BEA release ICS | `macro_calendar` | reference | 05:45 |
   | `ex_dividend` | Alpaca corporate actions | `ex_dividend` per ticker | reference | 06:15 |
 
@@ -1269,6 +1364,18 @@ Before every entry chain the Director step runs three deterministic pieces
    on the live spot. Migration 016 replaces the one-open-per-ticker-per-day
    index with `(chain_run_id, ticker)`; manual `arc propose` runs use
    `manual-<day>-<run_id>`.
+   **Missed-open retry (D101, E24.2):** an approved open whose ladder ended
+   `cancelled` with nothing filled for a no-fill reason (`no fill after N
+   attempt(s)`, `order:stale_band`, `order:band_moved`) is `missed`. It is held
+   (`dedupe:missed_wait`) for `dedupe.missed_retry_after` (default 30m, 5m–240m)
+   after the ladder finished, then re-admitted at the Research and propose stages
+   (`dedupe:missed_retry`) at most `dedupe.missed_retry_max` times per session
+   (default 1, 0–3). Research gets a code-built line per due idea (`Retry: TSLA
+   bearish put debit (missed 13:16 ET, 1/1)`, max 5) and must still rank it; Quant
+   re-prices from fresh quotes and the gate decides again. Budget stops, submit
+   failures and halts are not misses; a miss is never retried in a later session.
+   The restrictive tier doubles the wait and halves the cap (1 → 0). Rollback:
+   `!arc config set dedupe.missed_retry_max 0` (a miss is plain `proposed`).
 
 An empty shortlist is an explicit outcome: the Director's `no_trade_reason`
 (`no_fit | too_volatile | unclear | budget | portfolio_full`) is journalled as
@@ -1290,8 +1397,7 @@ fires without the `arc routines tick` cron (E5.3).
 | job | cadence | what |
 |---|---|---|
 | `rss`, `edgar` | every 15m 06:00-20:00 | sources, at least as often as the Sweep |
-| `sweep` | every 30m 09:00-16:00 (15 runs) | candidates from the last 30 min of sources; ttl 20m, no catch-up |
-| `sweep.overnight` | 22:00 daily | the after-close pass over fast sources; ttl 3h (YouTube moved to `youtube.briefs`, §5.22) |
+| `scalp` | every 30m 06:30-20:00 (28 runs, D91; was 09:00-16:00 + a 22:00 `scalp.overnight`, dropped) | candidates from the last 30 min of sources; ttl 20m, no catch-up |
 | `director` | every 10m 09:40-15:50 (38 slots, D52) | the trading loop: director → quant → risk → propose → execute; ttl 5m |
 | `monitor` | every 10m 09:30-16:00 (40 slots, D52) | positions, Greeks, marks (D35) |
 
@@ -1321,6 +1427,9 @@ up within one slot.
   skipped (no LLM call), `broker.execute` still runs (`on_no_change: run` in `steps:`)
   so pending approvals and ladders carry on. Journal row `loop_no_change`; the
   run manifest carries `loop_inputs` (digest). A manual `arc propose` never skips.
+  E22.3 (D97): while any DTE sleeve has a free slot and some sleeve has had no open
+  today, the bound is `loop.max_idle_with_free_slots` (20m) instead; such a forced
+  full run is journaled `loop_forced_free_slots` with the free-slots line.
   Only a Director run that *completed* its evaluation advances the loop's
   `last_full_run`: a failed LLM call leaves the previous one in place, so the
   next slot evaluates in full again instead of being muted as `no_change`.
@@ -1345,12 +1454,14 @@ D31) get a fixed one-liner.
 
 After the 16:30 `broker.reconcile`, a `:rolled_up_newspaper: Thu Oct 8 · Day Recap` reply
 posts in the day's Session Notes thread with "Also send to #arc-investor" ticked
-(`reply_broadcast`): the bold title, a blank line, then the headline, e.g.:
+(`reply_broadcast`): the bold title, a blank line, then the headline. D109: the recap
+headline may run to 300 chars (2× a loop headline) and keeps, in order, every point that
+fits: the biggest closed P&L, the opposite extreme, the main blocker. No per-sleeve lines.
 
 ```
 :rolled_up_newspaper: *Thu Oct 8 · Day Recap*
 
-_*Red day: -$1,946 (-2.0%) on 2 opens and 5 closes; biggest hit META -$8,765.*_
+_*Red day: -$1,946 (-2.0%) on 2 opens and 5 closes; biggest hit META -$8,765; best win VST +$160; Net EV floor blocked 2 of 2 picks.*_
 ```
 
 The thread under it, in order: `[Sweep] Context: N Candidates • run <stamp>`
@@ -1363,6 +1474,7 @@ off drops the roots of skipped slots; `loop.slack_layout = day_thread` is the
 rollback to the single day thread (cards and heartbeats as before D36).
 
 **Knobs** (`!arc config loop`): `loop.max_idle` (5-240 m, riskier up),
+`loop.max_idle_with_free_slots` (5-240 m, E22.3),
 `loop.max_runtime` (1-8 m, hard ceiling 8; D61), `loop.pnl_bucket_pct`,
 `loop.post_hold_roots`, `loop.slack_layout`. Cadences: `routines.sweep.cadence`,
 `routines.director.cadence` as before.
@@ -1422,6 +1534,29 @@ MIN-SAMPLE gate reads that flag rather than re-deriving it. Slippage is entry
 slippage (fill − mid) summed over trades that have a modelled value, next to
 the modelled `entry_slippage`. `arc journal scorecard` is still the weekly report.
 
+**Which DTE sleeve pays? (E22.5, D97)**
+
+```
+arc scorecard sleeves [--since 2026-10-11] [--json]
+#  short 10–29 DTE: opens 7 · closed n=4 · win 50% · mean +$12.00 · median … ·
+#    mean net … · 90% CI [… , …] · verdict collect (not ready)
+#    P&L/max loss … · days held … · costs … · entry slippage … · MAE … · MFE … · exits …
+```
+
+A trade's sleeve is derived from its **entry DTE** against the effective profile's
+sleeves (never a stored field), so pre-D97 30–60 DTE trades count as `swing` and a
+DTE that fits no sleeve shows as `other`. The keep/shrink rule is fixed in advance
+and the view only reports it, it never changes config: read once a sleeve has ≥ 30
+closed trades or 6 weeks have passed since the `store:epoch` (D80), whichever comes
+first; `keep` if mean net P&L (realised − cost-model fees) ≥ 0, `shrink` (to 2 slots,
+`profiles.cash_debit.sleeves.<s>.max_positions 2` by hand) if the mean < 0 and the
+bootstrap 90% CI of the mean is entirely below 0, otherwise `collect`. The Tower has
+the same split: a `Sleeve` filter (All · Short · Swing) on Trades and Performance
+(`?sleeve=`), a Sleeves card and a Sleeve breakdown tab on Performance, and
+`Short n/5 · Swing n/5` on the Overview Positions card, and the Analyst's
+realised-vs-model tables split by sleeve. Slack shows no sleeve stats (D109: the Day
+Recap's per-sleeve lines and the loop root's `Sleeves:` fact were dropped).
+
 **What would have been better?**
 
 ```
@@ -1475,8 +1610,8 @@ token; they are stripped from every command it runs). It:
    Quant's cost bps) by structure kind × regime, lists halts, the newest
    `docs/RESEARCH/*.md` and the A-id ledger, and prints it (≤ 30k chars).
    E21.3 (D86) adds the XP backlog (`xp_backlog.json`, P-ids, statuses synced
-   from the registry by `proposal_ref`), arm capacity per area, the K=4
-   sessions-needed grid (`arc experiment plan --k 4 --effects …`), the open
+   from the registry by `proposal_ref`), arm capacity per area, the K=3
+   sessions-needed grid (`arc experiment plan --k 3 --effects …`, D108), the open
    idea-seed leads, quick changes shipped since the last run, and strategy PRs
    merged since the last run with their `XP-advisory` lines (`gh pr list`).
 
@@ -1487,7 +1622,7 @@ python3 …/arc_analyst.py check-report RUN_DIR/report.md       # ≤ 3,500 char
 python3 …/arc_analyst.py mark RUN_DIR                         # advance the watermark
 python3 …/arc_analyst.py triage A-3 wontfix "why"             # owner: accepted|wontfix|fixed
 python3 …/arc_analyst.py ship A-4 "note"                      # owner: quick change shipped → next run reviews it
-python3 …/arc_analyst.py approve P-2 "note"                   # owner: proposal → proposals/P-2.yaml + manual steps (E21.4: adopt)
+python3 …/arc_analyst.py approve P-2 "note" --approval slack:<ts>  # owner: proposals/P-2.yaml → arc experiment adopt (E21.4)
 python3 …/arc_analyst.py drop P-3 "why"                       # owner
 python3 …/arc_analyst.py reprioritise P-3 "why" [--score X]   # owner: pin to the top / override value
 python3 …/arc_analyst.py backlog                              # ranked backlog with each value formula
@@ -1497,7 +1632,9 @@ python3 …/arc_analyst.py reset                                # next run revie
 `record` rejects findings that break the strategy gates (D86): a live-evidence
 quick change or XP proposal from a bucket with fewer than 20 closed trades
 (MIN-SAMPLE; a `BT-<n>` holdout study may back a proposal, never a quick
-change), a proposal that is not control + exactly 4 treatments on one leaf set,
+change), a proposal that is not control + exactly 3 treatments on one leaf set (D108;
+an open 4-treatment backlog entry is flagged `needs_rewrite`, unranked and unapprovable
+until re-proposed with 3),
 carries an `id`, or whose `value_score` ≠ effect × share × p ÷ sessions, more
 than 3 quick changes or 2 new proposals, a shipped quick change left
 unreviewed, a backlog over 12 open entries, a `next_experiment` that is not a
@@ -1516,7 +1653,7 @@ Specs live in `config/experiments/live/<id>.yaml`; defaults (alpha 0.05, power
 tunable as `experiments.*` (`!arc config experiments`). The treatment overlay uses
 the same deep-merge format as the backtest overlays in `config/experiments/*.yaml`.
 
-    arc experiment create --spec config/experiments/live/xp1_aa_baseline.yaml --owner-approval P-<n>
+    arc experiment create --spec config/experiments/live/xp1_aa_k3.yaml --owner-approval P-<n>
     arc experiment register XP-1 --owner-approval P-<n>   # locks sha256(canonical spec); queued if the area is busy
     arc experiment show XP-1 [--json]
     arc experiment verify XP-1          # exit 1 when the stored spec no longer matches the lock
@@ -1567,6 +1704,53 @@ stores one `ExperimentReport` in the append-only `experiment_reports` table:
   end and records σ (unlocks ab starts). An A/A whose CI excludes 0 → stop(invalid).
 - Breakdowns by regime / structure kind are reported, never decision inputs.
 
+**Approve → register → owner start (E21.4, D86; D112).** After the owner approves a
+proposal, everything up to `registered` is automatic; the **start is manual**:
+
+    arc experiment adopt P-2 --proposal <P-2.yaml | xp_backlog.json> \
+        --owner-approval slack:<ts> --db <db> [--dry-run] [--no-pr] [--no-slack] [--json]
+    arc experiment verdict XP-11 [--dry-run]     # retry / preview a verdict PR
+
+- **adopt** (the Analyst's `approve P-<n>` runs it on the live store): picks the next free
+  `XP-<n>` across the DB, the committed specs and `origin/main`, fills the defaults from
+  `config/experiments.yaml`, and validates the spec. It must be `ab` with exactly 3
+  treatments (D108; any other count is refused, never trimmed), overlays that validate,
+  and arms (control + 3) that fit `max_parallel_arms`. A v2- or v3-shaped proposal is
+  always written as spec v3 (`spec_version: 3`, `arms.control: {overlay: {}}`), so control
+  runs as the flat-start arm `XP-<n>:control`. Then it runs
+  `create` + `register` with `proposal_ref: P-<n>`, which leaves the experiment
+  `registered`, or `queued` with the reason. It commits
+  `config/experiments/live/xp<n>_<slug>.yaml` on branch `xp/<n>` through a PR with
+  `gh pr merge --auto --squash`, and posts one #arc-investor line ("XP-11 registered
+  (P-2), control + 3 treatments, area entries, owner to start after the spec PR merges:
+  `arc experiment start XP-11`" or "… queued behind XP-9").
+  Re-running for the same P-id only retries what is missing, such as a failed PR.
+- **Owner start (D112; the 09:05 `experiments.autostart` routine and its
+  `experiments.autostart.*` knobs are removed).** A `registered` experiment waits for
+  the owner. The adopt Slack line, the spec PR body and the Analyst's `approve` reply
+  name the command (`owner to start after the spec PR merges: arc experiment start XP-<n>`).
+  Start it before the 09:40 loop, once the spec PR is merged and the A/A calibration
+  verdict is committed:
+
+      arc experiment start XP-<n> --dry-run   # each arm's plan, nothing written
+      arc experiment start XP-<n>             # t0: arm stores, capacity checks, running
+
+  `start` keeps its own checks (A/A sigma unless `--aa-override`, arm stores,
+  `max_parallel_arms`, shared account flat / `shared_capacity_frac`). When a stop frees
+  the area, the next queued experiment becomes `registered` and waits for the owner the
+  same way.
+- **Verdict file for every outcome:** after each evaluation, `experiments.evaluate`
+  opens an auto-merging PR (branch `xp/<n>-verdict`) with
+  `config/experiments/live/verdicts/XP-<n>.yaml` for every concluded experiment that
+  does not have one yet. That covers its own stops and the owner's `arc experiment
+  stop`. The verdict is `win` (+ `winner: t<k>`), `loss` (harm), `futility`, `stopped`
+  (owner) or `invalid`, with the stored `report_hash`. The file unlocks the spec's
+  leaves (§5.20). The store's queue promotion has already made the next queued
+  experiment `registered` for the owner to start (D112). A verdict already on main
+  (hand-committed) is never overwritten. A failed publish raises a notice, and the
+  next day retries it. A `win` appears in the Analyst's context as the "promote XP-<n>
+  winner t<k>" lead.
+
 ### 5.19 Arm runner (E10.2, D44)
 
 The treatment arm is the same trading loop on its own paper account
@@ -1577,12 +1761,52 @@ The treatment arm is the same trading loop on its own paper account
     arc experiment start XP-1 --fixtures --arm-dir <scratch> --db <scratch>.db
     arc experiment pair <control chain id> --db <db> [--fixtures --fixture-set bullish]
     arc experiment arms-tick --db data/arc.db           # what the live tick spawns
+    arc experiment arm-tick XP-1:treatment --db data/arc.db   # one arm (arms-tick spawns these)
 
 - t0: each arm store gets a one-row `arm_identity` and a virtual account opened
   at control's equity (broker equity for live, the fixture account offline);
   control's open structures are the legacy book, their max loss is reserved in
   the arm until each closes on control. The arm account must have no positions
   or open orders: close them in the Alpaca dashboard (no auto-flatten).
+- Spec v3 (E25.1, D108): `control` is its own arm `XP-<n>:control` (runner arm
+  `control` in `config/experiments.yaml`, store `data/arc-exp-<id>-control.db`) that
+  runs production's config (empty overlay) on the shared `ALPACA_EXP_*` account next
+  to t1..tK. Every v3 arm (control included) starts **flat** at production's t0
+  equity: no `legacy_hold` rows. Production's open structures at t0 are recorded
+  as the start book (`running.production_book`, `start --json` `production_book`),
+  for reporting only. Control's fork step is the earliest fork among the
+  treatments (`ArmPlan.fork_step`). The shipped runner is `account_mode: shared`
+  with a `t` treatments template plus the `control` arm; v1/v2 specs never run the
+  control arm (their control is production) and keep the legacy-book reservation.
+  A K=3 v3 experiment is 4 arms: `max_parallel_arms` and the shared capacity check
+  (4 × t0 equity ≤ account equity × `shared_capacity_frac`) count control.
+- v3 reports (E25.3, D108): `arc experiment report|evaluate` on a spec v3 writes
+  `report_version: 3` with `reference: control` for any K. Verdicts are Ti vs the
+  control arm (its `virtual_equity`, nothing subtracted), mSPRT per pair with Holm
+  across the K control pairs, in an A/B and an A/A alike (a v3 A/A is `invalid`
+  when any Ti vs C is rejected; Ti vs Tj stays descriptive). The `production` panel
+  follows the pair table and is descriptive only (never a verdict, stop or
+  promotion input). Per session it shows P P&L, the start book's P&L, P ex start
+  book, C P&L, `d_p_c = start_book + residual` (fractions of t0), the P/C
+  open-structure counts and `ramped` (trailing 5-session median of C's open count
+  ≥ P's, sticky). It also tracks the start book to its last close and gives each
+  arm − P CI on the `total`, `ex_start_book` and `post_ramp` bases. Verdict files
+  of a v3 carry `reference: control`. v1/v2 reports are byte-unchanged.
+- Regime panel (E25.5, D108 (c)): every v3 production-panel session carries
+  `regime` (the SPY `regime` context entry valid at that session's close: trend,
+  vol state, run length / margin z, `transitional` at the E17.2 reference run 3 /
+  margin z 0.10; `null` = no entry) and control's `c_deployed` (held max-loss
+  capital / its virtual equity); the panel carries `regime_at_start`.
+  `arc experiment regime-panel [--json] [--db …]` (opens the store `mode=ro`, never
+  creates or migrates it) pools the latest v3 report of every XP (running and
+  concluded) by `trend`, `vol`, `trend_vol` and `transitional`: n sessions, the XPs,
+  mean + 95% normal CI of `d_p_c`, `residual` and each `XP-<n>:<ti>` − C (plus `all`).
+  Untagged sessions go to `unknown` (counted, never dropped); buckets with n < 10 are
+  marked `thin`. It also lists each XP's start (t0, regime at start, cum P − C /
+  residual) and control's ramp curve (open structures, deployed %) by session index,
+  averaged per regime at start. With no v3 report it prints `no v3 sessions yet`.
+  Descriptive only: no verdict, stop or promotion path imports it. The weekly
+  Analyst gets it as the `## Regime panel` context section (`regime-panel.log`).
 - The arm sizes and gates from its virtual account (`VirtualBroker`): equity
   moves only with its own fills/marks, buying power = min(broker, virtual −
   legacy), and under a cash profile only settled cash (T+1) counts. Control's
@@ -1591,13 +1815,40 @@ The treatment arm is the same trading loop on its own paper account
   steps before the fork step (the first step its overlay changes; never later
   than `propose`) and replays control's market tape (`market_tape`). Every arm
   manifest carries `paired_chain_run_id`, `fork_step`, `arm_id`, `git_sha`.
+- Reference tables (E10.2e, D106): before the arm's first forked step, and before
+  its own jobs on each arm tick, `arc.experiments.reference.sync_reference_tables`
+  upserts control's `betas` and `iv_daily`/`iv_skips` (`day <=` the chain's ET date)
+  and the earnings calendar's `raw_docs` (ingested by the chain time) into the arm
+  store, keyed by each table's primary key, so the β$Δ cap, IV rank and earnings
+  guard read what control read. `arm_pairs.reason` ends `…, N reference rows`; a
+  repeat sync writes 0. `ARM_REFERENCE_TABLES` / `ARM_OWN_TABLES` classify every
+  table the arm's code reads (`tests/test_experiment_reference_sync.py` fails on a
+  new unlisted one).
 - Own book (E10.2b, D75): while the arm holds any open structure of its own, its
   paired chain forks at `research` (its own Research call, own `exit_watchlist`
   and exit cases); `arm_pairs.reason` then reads `forked at research (own book:
   N open; plan exits.mandatory) …`. With an empty book it reuses control's
   Research as before.
 - After each live control tick, `arc routines tick` spawns `arc experiment
-  arms-tick` detached (own lock, own lock dirs), only while an experiment runs.
+  arms-tick` detached, only while an experiment runs.
+- Parallel arms (E15.4, D69): `arms-tick` holds `experiment-arms` only while it
+  plans (tape prune, book invariant, account checks), then runs each arm as its own
+  `arc experiment arm-tick XP-<n>:<arm>` process, at most
+  `experiments.runner.max_parallel_arms` at once. Each child holds its own lock
+  `experiment-arms:<arm>` (`data/locks/experiment-arms_XP-<n>_<arm>.lock`), reads
+  control `mode=ro`, syncs control's context itself and runs its loop with the
+  same `loop.max_runtime` deadline as control. A still-running arm skips its next
+  slot (`skipped: previous arm tick running`); a slow arm never blocks another.
+  The D39 `_llm` lock (local tiers only) stays in control's lock dir, shared by
+  every arm, so local runs stay serialised; remote routes run concurrently.
+  `arms-tick` waits at most 2 × `loop.max_runtime` + 5 min per child, then
+  reports the arm `failed` (the child keeps its lock until it ends).
+- The `arms-tick` report gives each arm `status` (`ok | skipped | failed`),
+  `started_at`, `finished_at`, `wall_ms`, plus `wall_ms` / `arms_wall_ms_max` for
+  the tick. Each arms tick records an `arms_tick` heartbeat on control; the
+  routines `tick` heartbeat carries the latest `arms_wall_ms_max`. Check it:
+
+      sqlite3 "file:data/arc.db?mode=ro" "select at, status, json_extract(detail,'$.arms_wall_ms_max') from heartbeats where component='arms_tick' order by at desc limit 5"
 - Evaluation reads arm rows through `arc.experiments.paired.paired_view`: arm
   stores ATTACHed read-only, `arm_id` projected per store. Nothing is copied
   into the control store (D32 counts and Tower stay control-only).
@@ -1614,6 +1865,30 @@ The treatment arm is the same trading loop on its own paper account
   `--arm-db` defaults to the stores control recorded at t0. Rehearse on
   `.backup` copies first (repoint `routine_state experiment_arm:<arm>` in the
   control copy, or pass `--arm-db`); a live run needs the owner's ok.
+- Shared account (E15.2, D69; `experiments.runner.account_mode: shared`): every
+  treatment arm trades on the one `ALPACA_EXP_*` account. At t0 each arm gets a
+  1-char base62 arm code (`arm_identity.arm_code`, migration 037), unique among
+  the account's running arms and stopped arms that still hold contracts; a
+  stopped, flat arm's code is reused, and t0 fails when none is free (62 codes).
+  Arm orders go out as `arc2.<code>.<token>.s<k>` (`arc.execution.submission`;
+  the gate verifies the id with the code stripped; control's ids carry none).
+- The arm's ledger is booked from the account's activities, not `fills()`:
+  FILL (an mleg leg's id maps to its parent order's tag) → `act:<id>`; FEE →
+  `fee:<id>`, joined to its fill when Alpaca links one, else split over the ET
+  day's contracts per arm to the cent; OPEXP/OPASN/OPEXC → `evt:<id>`, split by
+  the arms holding the contract, with the paired OPTRD share leg. Positions and
+  equity are the arm's own ledger marked at the broker's prices.
+- Book invariant (each arms tick, once per account, before any arm runs, and in
+  each arm's `broker.reconcile`): the arms' net contracts per symbol equal the
+  broker's; broker cash − cash at the first arm's t0 equals the arms' flows
+  within the fees Alpaca has accrued but not posted (≤ $0.05/contract on days
+  with no FEE row yet) + 1¢ per fee row; every order since t0 carries a live arm
+  tag (smoke ids `arc-…`/`test.` are exempt). A one-arm qty drift halts that
+  arm; anything account-wide (untagged order/fill, cash, a symbol no single arm
+  explains) halts every running arm on the account. Halt reason
+  `book_invariant: …`, journal `reconcile:book_invariant`, one `[Ops]` notice
+  per arm; after fixing the cause, the owner resumes the arm with
+  `ARC_DB_PATH=<arm store> arc resume --actor <owner>`.
 
 ### 5.20 Strategy-lane CI check: locked leaves + XP advisory (E21.1, D86; was E10.7 / D44)
 
@@ -1673,7 +1948,7 @@ cards may use `Lane: fast — <reason>` instead. Cards never add files to
 `--owner-approval`), and never add a default-off flag just so an experiment can flip
 it. An idea worth testing goes in the `XP-advisory:` line; the weekly Analyst turns
 leads (those lines, plus `hermes/analyst/idea_seed.yaml`, which holds the retired
-dev drafts) into `P-<n>` proposals with 4 treatments.
+dev drafts) into `P-<n>` proposals with 3 treatments (D108).
 
 - `arc experiment report XP-<n>` lists the strategy-path commits that landed since the
   experiment's t0 under "Changes shipped to all arms during this run" (local
@@ -1685,13 +1960,22 @@ dev drafts) into `P-<n>` proposals with 4 treatments.
 
 ### 5.21 A/A calibration run XP-1: runbook for E10.8 (E10.4, D44)
 
-XP-1 (`config/experiments/live/xp1_aa_baseline.yaml`) runs the production config on
+> **D108 (E25.1):** the shipped runner is `account_mode: shared` with a `t`
+> treatments template and a `control` arm. A new A/A is a spec v3 (control + t1–t3,
+> empty overlays, every arm flat on `ALPACA_EXP_*`; E15.9). Since the D111 registry
+> reset (2026-10-13) XP-1 *is* that K=3 A/A: `config/experiments/live/xp1_aa_k3.yaml`,
+> run in-session under card E15.9. The text below is the historical v1 runbook; the
+> v1 spec it describes now lives as a test fixture
+> (`tests/fixtures/experiments/xp1_aa_baseline.yaml`), and the dry run still uses it
+> with a dedicated-mode copy of the config.
+
+The v1 A/A (`tests/fixtures/experiments/xp1_aa_baseline.yaml`) runs the production config on
 both paper accounts (empty overlay on both arms) for `experiments.aa_sessions` (10)
 sessions. It measures sigma of the paired daily difference d_t, the achievable MDE at
 20/40/60 sessions, the slippage and fill-rate gap between the two accounts and the
 LLM-divergence rate. alpha 0.05 and min 20 / max 60 sessions are owner policy (D44)
 and are not changed by the A/A. The report template is
-`docs/RESEARCH/experiments/XP-1-aa.md` (header "pending live run (E10.8)").
+`docs/RESEARCH/experiments/XP-1-aa.md` (header "pending live run (E15.9)").
 
 Dry run (scratch stores, fixtures, no broker, no orders), any time:
 
@@ -1718,7 +2002,7 @@ Dry run (scratch stores, fixtures, no broker, no orders), any time:
 
 **Start (before the 09:30 ET open, so the first session is the same day):**
 
-    arc experiment create --spec config/experiments/live/xp1_aa_baseline.yaml --owner-approval slack:<ts> --db data/arc.db
+    arc experiment create --spec config/experiments/live/xp1_aa_k3.yaml --owner-approval slack:<ts> --db data/arc.db
     arc experiment register XP-1 --owner-approval slack:<ts> --db data/arc.db
     arc experiment start XP-1 --db data/arc.db
 
@@ -1726,15 +2010,26 @@ Dry run (scratch stores, fixtures, no broker, no orders), any time:
 `data/arc-exp-XP-1.db` and opens the arm's virtual account. From the next tick on,
 the tick spawns `arc experiment arms-tick` after every control loop chain.
 
-**Reading the daily line.** After the 16:40 ET `experiments.evaluate` routine, the
-#arc-investor day thread gets one line per running experiment:
+**Reading the daily status (D108, E25.6).** After the 16:40 ET `experiments.evaluate`
+routine, the #arc-investor day thread gets one status per running experiment (also
+sent to the channel):
 
-    [XP-1] A/A Day 4 • P&L ∆ −0.02%/day (p 1.00) • Sortino ∆ −0.35 (p 0.62)
+    [XP-30] Day 14/40
+    T2 leads control by +0.05%/day (p 1.00 Holm); T1 and T3 within noise after 14 sessions.
+    T1 − C • P&L ∆ +0.03%/day (p 1.00 Holm) • Sortino ∆ +1.62 (p 0.04)
+    T2 − C • P&L ∆ +0.05%/day (p 1.00 Holm) • Sortino ∆ +2.91 (p 0.07)
+    T3 − C • P&L ∆ +0.01%/day (p 1.00 Holm) • Sortino ∆ +0.48 (p 0.19)
 
-- `Day N`: paired sessions so far (both arms have an EOD snapshot). A session one
-  arm missed is skipped and listed under `missing` in the report.
-- `P&L ∆`: mean of d_t, % of t0 equity per day, with its always-valid p. On an A/A
-  it should hover around 0 with a large p.
+- `Day N/max`: paired sessions so far (every arm has an EOD snapshot) over the spec's
+  max. A session an arm missed is skipped and listed under `missing` in the report.
+- The headline (bold italic in Slack) says where the treatments stand: decided arms
+  first, else the arm with the largest gap, then the rest.
+- `Ti − C`: treatment minus the flat control arm (spec v3). `P&L ∆` is the mean of
+  d_t, % of t0 equity per day, with its always-valid p, Holm-adjusted across the K
+  treatments. On an A/A it should hover around 0 with a large p. A v1/v2 report
+  reads `T1 − P` (its reference series was production).
+- Production (P − C = start book + residual, Ti − P) is on the Tower's Experiments
+  page and the stop card, never in the daily status.
 - A stop card posts when the verdict changes: `Futility` after 10 sessions is the
   normal end and records sigma (it unlocks A/B starts); `Invalid` (CI excludes 0)
   means the harness is broken: the arms differ when they should not. Investigate
@@ -1931,7 +2226,7 @@ not recorded, so `arc journal replay` of older calls is unchanged. `relaxed`:
   expiry 0.70 (strict `portfolio.*_max_pct` 0.40 / 0.75 / 0.60; relaxed never goes
   below the strict value).
 
-Unchanged in both modes: the gate's per-underlying cap (`max_alloc_pct`), the
+Unchanged in both modes: the gate's per-underlying cap (D116 tiers), the
 8-position max, the Greek caps, the D33 idea dedupe, and Risk's advisory
 `concentration_warning`. Roll back with `!arc config
 personas.director_diversification strict` (safer, applied at once).
@@ -1941,7 +2236,12 @@ personas.director_diversification strict` (safer, applied at once).
 **Spot.** Every spot used for pricing comes from `arc.data.base.market_spot`: the
 quote mid when both sides are > 0 and the spread is at most `spot_max_spread_pct`
 (5 %), else today's daily close (a wide quote), else the last close (one-sided, e.g.
-after hours `ask=0`, which used to halve TSLA to 171 and read 77 % IV). No spot at
+after hours `ask=0`, which used to halve TSLA to 171 and read 77 % IV). A quote
+stamped after the session close (16:00 ET, 13:00 on early-close days) uses
+today's daily close whenever that bar exists (D102: the closing book can leave a stale
+far bid behind; QQQ 2026-10-12 16:00 quoted 727.10 / 746.09 and read 736.60 vs a
+746.04 close). The monitor's SPY/QQQ benchmark marks use a 0.5 % spread cap
+(`BENCHMARK_MAX_SPREAD_PCT`) instead of 5 %. No spot at
 all fails closed for entries (`NoSpotError` / `LookupError` / `PortfolioError`);
 exits still price at mids without Greeks. `arc chains` prints `spot … (mid|last_close)`.
 
@@ -2073,15 +2373,15 @@ fixtures: `arc/ingest/fixtures/cboe/` (session 2026-10-05).
 
 - **Session read:** a slot at/after 16:30 ET on a session reads that session; earlier
   slots read the previous session (`arc.utils.calendar.completed_session`).
-- **Schedule:** `["23:00", "08:15"]` trading days (E14.2, D60: was 18:30, which was
+- **Schedule:** `["23:00", "08:00"]` trading days (D96: catch-up was 08:15) (E14.2, D60: was 18:30, which was
   always before the publish), `catch_up: {until_written: "<kind>:{day}"}`. Any slot
   whose session already has an entry (payload `as_of`) is planned `skip-written`
-  (`already written: options_daily for 2026-10-05`), so 08:15 runs only when the
+  (`already written: options_daily for 2026-10-05`), so 08:00 runs only when the
   evening slot did not write. Not published (CDN 403/404, empty body, or a
-  header-only CSV) = `skipped` at 23:00, `failed` at 08:15. The 06:00 Scout reads
-  the previous evening's 23:00 write; an 08:15 catch-up lands after the Scout, so it
+  header-only CSV) = `skipped` at 23:00, `failed` at 08:00. The 06:00 Scout reads
+  the previous evening's 23:00 write; an 08:00 catch-up lands after the Scout, so it
   only serves Research and the Scalp that day. `vol_term` uses the same per-session
-  catch-up at 18:30 / 08:15 (a CSV still ending on an older close = not published).
+  catch-up at 18:30 / 08:00 (a CSV still ending on an older close = not published).
 - **Shape:** `flat` when `|slope_1_2_pct| < options_slow.vx_flat_band` (0.5, tunable
   0-10, Risk none); else `contango` / `backwardation`. Weeklies never set front /
   second / back.
@@ -2232,7 +2532,7 @@ Check: `arc routines tick --dry-run --now <today>T10:40-04:00` (Research chain) 
 
 ### 5.33 Betas and the beta-weighted delta cap (E3.6, D62)
 
-**Producer.** The `betas` routine (05:35 ET trading days, `ttl` 3h, background lane,
+**Producer.** The `betas` routine (07:10 ET trading days, after the final active list, D90; `ttl` 2h, background lane,
 `writes: []`) pulls ~400 calendar days of Alpaca daily closes (strictly before today)
 for the active list, every open underlying, today's candidates and SPY/QQQ/IWM, and
 stores one `betas` row per (ticker, day): the raw 1-year β vs SPY over the last 252
@@ -2282,7 +2582,7 @@ key. Code: `arc/ingest/market_movers.py`; handler `market_movers_source`.
   `failed`, nothing written; a failed snapshot call only drops the most-actives
   (`no_price`) and lands in `metrics.snapshot_error`.
 - **Context only (D60):** never a `candidate`, `universe_tier` or discovery/trending
-  input; D56 stands. Only `scalp` / `scalp.overnight` list it in `reads`.
+  input; D56 stands. Only `scalp` lists it in `reads` (D91 dropped `scalp.overnight`).
 - **Scalp block (flag `personas.scalp_movers_context`, default `off`):** with it on,
   the stage-2 prompt gets a `## Tape movers (Alpaca screener, code-built)` section of
   at most `scalp_movers_context.max_lines` (10) lines, listing only active-list names
@@ -2397,7 +2697,22 @@ account profile can only structure as long premium** (long call/put, debit verti
   `max_dist_high20_atr` of the 20-day high/low), kept as a variant.
 - Optional VWAP part (`anti_chase.vwap: on`, default off): one 5-min bars request per
   checked idea (shared `alpaca_data:calls` budget); dropped also when
-  (last 5-min close − session VWAP) / ATR14 ≥ `max_vwap_stretch_atr` (0.75; mirrored).
+  (spot − session VWAP) / ATR14 ≥ `max_vwap_stretch_atr` (0.75; mirrored).
+  Feed (E23.0a, D98): with `data.alpaca_history_feed: sip` (default) the VWAP is the
+  consolidated tape up to now − 16 min (the free tier refuses newer SIP) and the spot is
+  the live IEX quote (`market_spot`, one more budgeted call; the last SIP close if the
+  quote fails). Before 09:51 ET, and with the rollback `iex`, it is IEX bars up to now
+  and the last 5-min close. The verdict payload carries `vwap_feed`.
+
+Stock data feeds (E23.0a, D98): live quotes (`underlying_quote`) stay on
+`ARC_ALPACA_DATA_FEED` (iex; SIP live quotes need a paid plan). Volume-weighted history
+reads go to SIP: the regime step's daily bars (`data.alpaca_history_feed`), the
+anti-chase VWAP (above) and the universe ADV screen (`liquidity_screen.*.adv_feed: sip`
+in `config/universe.yaml`, already so). IEX carries ~2–3% of consolidated volume (AAPL
+20-day ADV 1.09M IEX vs 37.9M SIP). The adapter clamps a SIP request's end to now −
+16 min and falls back to IEX once on a 403 "subscription does not permit querying
+recent SIP data" (logged `feed_fallback`). Price-only reads (spot fallback, monitor,
+reconcile, betas, IV backfill, exits CLI) keep the default feed.
 
 Never filtered: neutral ideas, any stance the profile maps to a credit spread
 (`margin`), exits. Missing technicals keep the idea (an optional filter, not a safety
@@ -2473,7 +2788,7 @@ keep/rollback verdict in `docs/RESEARCH/exit-policy-v2.md`.
 
 ### 5.39 Market health line (E16.4, D76, D44)
 
-The `market_health` job (23:15 ET after the 23:00 `options_daily`, catch-up 08:20, only
+The `market_health` job (23:30 ET after the 23:00 `options_daily`, catch-up 08:30 after the 08:00 options_slow catch-ups (D96; was 23:15 / 08:20), only
 when the evening slot did not write that session) writes one `market_health` entry
 (subject `market`, ttl 1 session) for the session it reads. Pure math in
 `arc/features/market_health.py`; fetch/store in `arc/ingest/market_health.py`. Context
@@ -2509,3 +2824,278 @@ Commands (rehearse on a scratch `--db`):
     arc market-health backfill-pc [--since D] [--until D] [--pace 0.5] [--db P]   # resumable, saves every 20 sessions
     arc market-health show [--json] [--db P]                                       # read-only
     arc routines run market_health --db P --no-slack
+
+## E22.3 frequency levers (D97)
+
+- **Research free slots.** The Research prompt carries a code-built line, e.g.
+  `Free slots: short 3/5, swing 1/5 · settled cash $18,250 · per-name cap $2,500`
+  (single window: `Free slots: 5/8 · …`), and asks Research to rank at least
+  `min(research.min_ranked, free slots × 2, pool)` names. Ranking fewer is journaled
+  `research_under_ranked` (Research says why in `session_notes`); it never forces a
+  trade. `!arc config set research.min_ranked 0` is the rollback (prompt as before).
+- **Cash-fit sizing.** On `cash_settled` profiles sizing caps contracts at
+  `floor(settled cash left / cash per contract)`, where cash per contract is the
+  gate's own count (worst band price × 100 + fees). Opens in one run share the cash
+  in rank order. Journal `sizing:cash_capped` (fewer contracts) or `sizing:cash_zero`
+  (not even one). The gate's settled-cash rule is unchanged and stays the final check.
+- **Loop.** See `loop.max_idle_with_free_slots` above (`loop_forced_free_slots`).
+
+
+## E22.4 switch-on: DTE sleeves live on the cash profiles (D97)
+
+`config/account_profiles.yaml` gives `cash_debit` and `cash_long_only` two entry-DTE
+sleeves instead of one 30-60 window (`margin` is unchanged: global 30-45):
+
+| Profile | Sleeve | Entry DTE | Slots | Exit policy |
+|---|---|---|---|---|
+| `cash_debit`, `cash_long_only` | `short` | 10-29 | 5 | `config/exits.yaml` `sleeves.short` |
+| `cash_debit`, `cash_long_only` | `swing` | 30-60 | 5 | the kind policy (D23/D78) |
+| `margin` | `default` | 30-45 (global) | `max_open_positions` | the kind policy |
+
+DTE 30 belongs to `swing`; a position's sleeve is fixed by its **entry** DTE. Short-sleeve
+debit exits (`vertical_debit`, `long_call`, `long_put`): take profit 40% of the debit,
+stop at 50% of the debit checked intraday on the 10-min marks, profit lock 0.30 → 0.10,
+close at 3 DTE; `expiry_guard` (flat by DTE 1) and the fill-day guard still apply. Swing
+keeps take profit 60%, a 75% EOD-only stop, lock 0.50 → 0.20 and close at 7 DTE.
+
+Baked defaults: `max_open_positions` 10 (was 8) and `dedupe.executed_cooldown` 2
+sessions (was 5). Rollback without a PR: `!arc config set
+profiles.cash_debit.sleeves.short.max_positions 0` closes the short sleeve to new opens
+(held short-sleeve positions keep their exit block). The `sleeves.short` exit values
+are not registry keys; changing them is a PR to `config/exits.yaml`.
+
+## E23.0 levels: volume profile + options OI walls on regime technicals (D98)
+
+**Producer.** The `levels` source (07:20 ET trading days, after the final active list and
+the Scout/Trending catch-up; `ttl` 2h so a missed slot catches up by 09:20, before the
+09:40 research loop; background lane; `reference: true`) covers the active list, open
+underlyings, today's candidates and SPY/QQQ/IWM. Per ticker it makes:
+
+- one `history_bars` request: the 20 completed sessions before today, 15-min bars on the
+  history feed (`data.alpaca_history_feed`, SIP by default, E23.0a), regular hours only;
+- one `option_chain` call over the swing sleeve's expiries (the active profile's sleeve
+  named `swing`, else its longest one). It costs 3 slots of the shared Alpaca data budget.
+
+It writes one `levels` context entry per ticker (`ttl: 1 session`, subject = ticker).
+A ticker's failure is recorded and the rest continue. No new ticker starts after
+`max_runtime_s` (900 s).
+
+**Math** (`arc/features/volume_profile.py`, `arc/features/oi_walls.py`, pure):
+
+- Each bar's volume is spread evenly over the bins its high–low touches.
+- The bin width is `max($0.01, ATR14 × bin_atr)`, with ATR14 taken from the same sessions.
+- POC is the heaviest bin. The value area grows from the POC toward the heavier neighbour until it holds 70% of the volume.
+- HVNs and LVNs are the local maxima and minima of the 3-bin smoothed histogram, above or below `hvn_min_share`.
+- OI walls:
+  - call wall = the strike with the most call OI above spot;
+  - put wall = the strike with the most put OI below spot;
+  - max-OI strike = the strike with the most total OI.
+  - OI is summed over the swing expiries, and a strike below `min_oi` (500) is never a wall.
+  - Spot is the last RTH close of the profile window.
+
+**Consumer.** The Research regime step merges today's `levels` entry into the `regime`
+technicals (schema v5: `vp_poc/vah/val`, `vp_hvn_above/below`,
+`vp_pos = (close − VAL)/(VAH − VAL)` unclipped, `dist_{poc,vah,val}_atr`,
+`oi_call_wall/put_wall/max_strike`, `dist_{call,put}_wall_atr`). It makes no network
+call. A regime row already written today gets the levels merged in place. The `tech`
+segment then ends with, e.g., `vp POC 230.6 (-0.2 ATR) VA 221.0–239.6 pos 0.44 · OI walls
+C245 / P200`, and the legend gains one line. This is context only, never a gate input.
+E23.1–E23.3 read these fields.
+
+**Switches** (`config/strategy.yaml`, registry): `volume_profile.enabled` and
+`oi_walls.enabled` (both on), plus `volume_profile.sessions|bar|value_area|bin_atr|hvn_min_share`
+and `oi_walls.min_oi`. Rollback: `!arc config set volume_profile.enabled off` and/or
+`oi_walls.enabled off`. Off means no fields are merged and Research's prompt is
+byte-identical. With both off the job skips without making any request.
+
+Check: `arc routines run levels --db <scratch copy> --no-slack`, then
+`arc context show --kind levels --latest`.
+
+## E23.1 range-edge entry filter for sideways regimes (D98)
+
+**What it does.** After Research ranks (and after anti-chase), each bullish/bearish idea
+whose account profile structures it as **long premium only** (`cash_debit`; not `margin`,
+whose credit spreads already sell the range) is checked when its `regime.current` is in
+`range_edges.regimes` (default `[sideways]`). A bullish idea is kept only from the bottom
+of its range (position ≤ `bull_max_pos` 0.35), a bearish one only from the top (≥
+`bear_min_pos` 0.65). Anything else, the wrong edge included, is dropped as
+`mid_range_entry` with the numbers on the journal payload; survivors are re-ranked 1..n.
+
+**Which range.** `levels: value_area` (default) reads the E23.0 `vp_pos`
+(`(close − VAL)/(VAH − VAL)`, unclipped, so a close below VAL counts as the low edge).
+With no value area on the entry it falls back to the 20-session high/low and notes
+`vp_missing`. `levels: high_low` reads `range_pos_20d = (close − low20)/(high20 − low20)`
+(clipped to [0, 1], regime schema v6). Example: low20 210.96, high20 230.36, close 225.07
+→ 0.73; bullish → dropped (keep ≤ 0.35).
+
+**Kept without a decision.** Neutral ideas, non-sideways regimes, credit-capable profiles;
+missing technicals (`technicals_missing`, never twice for one idea when anti-chase already
+noted it); a range narrower than `min_range_atr` × ATR14 (1.5; `range_too_narrow`).
+
+**Prompt.** With the switch on, Research's `tech` segment shows `rng 0.73` after the
+20-day-high part, and the legend gains one line. Off = prompt and journal byte-identical
+to before E23.1.
+
+**Switches** (`config/strategy.yaml range_edges:`, registry): `personas.range_edges`
+(on, D86/D98), `range_edges.levels`, `range_edges.bull_max_pos` (0.1–0.5),
+`range_edges.bear_min_pos` (0.5–0.9), `range_edges.min_range_atr` (0.5–5). Rollback:
+`!arc config set personas.range_edges off`. Deterministic, no network, never a gate input.
+
+Check: `arc journal show --reason mid_range_entry` (or `decisions where
+reason_code='mid_range_entry'`) after a Research run on a sideways day.
+
+## E23.2 pullback watch for anti-chase drops (D98)
+
+**What it does.** A bullish/bearish idea that anti-chase drops (`stretched_entry`) goes
+on watch instead of being forgotten: one `pullback_watch` context entry per
+`<TICKER>:<stance>` (supersede latest, journaled `pullback_watch_added`), carrying the
+drop numbers (spot, SMA20, ATR14, stretch, RSI), Research's thesis and confidence, and
+the last session it is watched (`ttl_sessions` 3 trading sessions after the drop
+session). A live watch is never re-extended by a later drop of the same name.
+
+**Each Research run** (also on runs with no new feed ideas) re-checks every live watch
+with the pure rule `arc.pipeline.pullback.rearm_verdict` on today's regime technicals
+and the reference spot:
+- `expired` after its last session (`pullback_expired`);
+- `invalidated` on a regime flip against the stance, or when the stance-signed
+  (spot − SMA20)/ATR14 falls below `invalidate_below_sma20_atr` (−1.0)
+  (`pullback_invalidated`);
+- `ready` when the stretch has reset. `target: value` (default): spot within
+  `rearm_level_atr` (0.5) ATR of the nearest volume-profile support on the stance side
+  (bullish: POC, VAH or the HVN below, under the drop price; bearish: POC, VAL or the
+  HVN above), or already past it;
+  no levels → the SMA20 rule, noted `vp_missing`. `target: sma20`: stance-signed
+  (spot − SMA20)/ATR14 ≤ `rearm_stretch_atr` (1.0). With `anti_chase.vwap` on the
+  session VWAP stretch must also be ≤ `rearm_vwap_atr` (0.25); a failed VWAP read waits
+  (`vwap_missing`). First ready → `pullback_rearmed` (once per watch);
+- `waiting` otherwise; missing spot/technicals also wait.
+A name with an open position or a pending approval request is closed `retired`
+(`pullback_retired`).
+
+**Re-surfacing.** A ready name that is not already a feed candidate today gets a
+`candidates` row (source `pullback_watch:<drop session>`) and a `candidate` entry with
+`origin: pullback_watch` (schema v4, older rows default `feed`), so the normal Research
+→ anti-chase → range edges → Quant path applies to it unchanged. The prompt gains one
+code-built line per ready name (`Pullback watch (ready): PLTR bullish · dropped Fri at
++2.9 ATR / RSI 64 · now 0.4 ATR above POC 178.00, +0.3 ATR vs SMA20 · thesis: …`, at most
+`max_ready_in_prompt` 5, highest confidence first) and one `Pullback watch: N waiting`
+count line. Both are digest facts, so a newly ready watch is a changed loop input.
+
+**Switches** (`config/strategy.yaml pullback_watch:`, registry): `personas.pullback_watch`
+(on, D86/D98), `pullback_watch.target`, `.ttl_sessions` (1–5), `.rearm_stretch_atr`
+(0–2.5), `.rearm_level_atr` (0–2), `.rearm_vwap_atr` (0–1), `.invalidate_below_sma20_atr`
+(−5–0), `.max_ready_in_prompt` (0–10). Rollback: `!arc config set personas.pullback_watch
+off` (no watch writes, prompt and journal byte-identical to before E23.2). Context TTL
+`pullback_watch: 8 sessions` (routines.yaml) outlives any watch so expiry is journaled.
+Deterministic, never a gate input.
+
+Check: `arc context show --kind pullback_watch --latest` and `decisions where reason_code
+like 'pullback_%'` after a run following a `stretched_entry` drop.
+
+### Strike vs level context (E23.3, D98)
+
+Each Quant menu item carries `levels`, e.g. `BE beyond POC 186.1 (+0.5 ATR) · short strike
+at call wall 190`: where the breakeven and the short strike (verticals) sit against the
+E23.0 levels (POC, VAH, VAL, nearest HVNs, call/put wall) between spot and them in the
+trade's direction. Credit verticals and condors read both sides (`upper BE`, `short call`).
+`at` = within 0.1 ATR14 of a level; `beyond` = the move must push through at least one
+level first (the first one met, distance in ATR14 past it); `before` = no level in between
+(the next one past it, negative distance). No level on that side → no text.
+
+The same text is the approval card's `Levels` fact and the Tower trade detail's
+`levels_text`; the structured crossings are stored in `market_contexts` analytics
+(`levels`). Context only: no filter, no ranking change, never a gate input.
+
+**Switch** (`config/strategy.yaml strike_levels:`, registry): `strike_levels.enabled` (on,
+D86/D98). Rollback: `!arc config set strike_levels off` (menu, card and stored analytics
+byte-identical to before E23.3).
+
+### Scanner liquidity inputs: Cboe open interest + today-only volume (E2.5, D116)
+
+The scanner's `low_open_interest` / `low_volume` filters (`scanner_min_open_interest`
+100, `scanner_min_volume` 10) now read:
+
+- **Open interest:** Cboe's delayed chain first
+  (`cdn.cboe.com/api/global/delayed_quotes/options/<T>.json`, the same endpoint and parser
+  as `options_fast`, `arc/ingest/cboe_fast.py`), one GET per scanned ticker per run with
+  the D114 read retry, cached for the run (`arc/data/oi.py`, `CboeOpenInterestMarket`
+  wraps the live provider in `PipelineEnv.live` and `arc chains`; it sits inside the
+  experiment tape, so paired arms replay the merged chain). A contract missing from
+  Cboe falls back to Alpaca's contracts OI only when its `open_interest_date` is on or
+  after the previous session; otherwise OI is unknown and the filter fails it. A Cboe
+  failure (HTTP, non-chain body, empty chain) logs `scanner.oi_source
+  oi_source=alpaca_fallback` and never fails the scan. Each contract carries
+  `oi_source` (`cboe` | `alpaca`, omitted when unset).
+- **Volume** (`arc/data/volume.py`): before 10:00 ET (and on non-session days) the
+  previous session's full-day bar against the full minimum (`volume_source
+  prev_session`). From 10:00 ET today's `dailyBar` only (a bar dated any other day is
+  0; `prevDailyBar` never stands in) against `ceil(min_volume × elapsed)`, floor 1,
+  where elapsed = time since the open ÷ half the regular session (early closes from the
+  exchange calendar), so the full minimum applies from midday. At 10:00 on a normal day
+  the minimum is 2; at 11:15 it is 6.
+- **Log:** `scanner.scan` adds `oi_cboe`, `oi_alpaca`, `oi_unknown`, `volume_source`
+  (counts), `min_volume_today` and `rejected`. `arc chains <T>` prints the same line
+  (`open interest cboe N · alpaca N · unknown N  volume today N …`).
+- **Ops alert:** when Alpaca's modal `open_interest_date` in a Quant run is older than
+  the previous session, one informational `data:alpaca_oi_stale:<date>` row is written
+  to `ops_alerts` per day (recorded resolved; Cboe is primary, nothing to do).
+- No switch: shipped on (D116, D86). Rollback is a revert PR.
+
+## E3.7 tiered per-underlying cap (D116)
+
+The gate rule `per_underlying_limit` caps Σ max loss on one underlying (existing + new) at
+the active tier × equity:
+
+- `max_alloc_pct` **15%** while the book's deployed max loss is below
+  `alloc_tier_threshold_pct` **60%** of equity;
+- `max_alloc_pct_reduced` **10%** at or above it (the exact boundary is reduced), and back
+  to 15% once deployed falls below 60% again.
+
+Deployed = Σ max loss of open positions + Σ max loss reserved by in-flight opens
+(`arc.store.execution.reserved_open_max_loss`: open proposals with a `pending`/`approved`
+approval request, unexpired and not yet executing, at full size; `working`/`unconfirmed`
+executions at their unfilled contracts and the band's worst price). It is measured before
+the trade, so one trade can move the book from 59% to at most 74% deployed. A re-gate
+excludes its own order. Missing or non-positive equity fails the rule (fail closed).
+
+One pure helper (`arc/gate/caps.py`) drives the gate rule, Quant/positions sizing, the
+Research/Risk prompt lines (`… 15% of equity max loss per underlying (15% tier, deployed
+12% < 60%)`), `portfolio_context.thresholds` (`max_alloc_pct` = active tier,
+`alloc_deployed_pct`, `alloc_tier_threshold_pct`, `alloc_tier_reduced`), the backtest and
+the Tower Overview Greeks card ("Deployed N% of equity · Base Tier / Reduced Tier").
+The reduced tier is never above the base tier: an older override that set
+`max_alloc_pct` below 10% caps both tiers at it. All three keys are registry knobs
+(`!arc config set max_alloc_pct_reduced 8%`, ceiling 20%; raising one is riskier and
+needs a confirm code).
+
+## E5.16 stale-pick cooldown (D116)
+
+A `ticker|stance` Research ranked in `research.stale_pick.after_loops` **4** consecutive
+full loops of the session without a tradeable structure is removed from the idea pool for
+the next `suppress_loops` **10** `research` runs (any status: ok, failed, `no_change`;
+~100 min at the 10-min cadence), then comes back with its streak reset.
+
+- **Full loop:** a `research` run that completed its evaluation (journaled
+  `market_read`). `no_change` skips, failed runs and guard/budget no-trade runs neither
+  extend nor break a streak.
+- **Tradeable:** in the run's chain, a proposal for the ticker that sized ≥ 1 contract
+  (`sizing:*` payload `contracts`) and passed the gate (`gate:pass`). A gate fail or a
+  0-contract sizing is not tradeable. A full loop that did not rank the key breaks its
+  streak. Streaks never cross sessions (ET day).
+- Computed from the store's own journal (`arc/pipeline/stale_pick.py`; no table, so it
+  survives restarts and each experiment arm reads its own store). One
+  `stale_pick_suppressed` row per suppression start (payload: stance, streak, trigger
+  run, `back_at`).
+- Research sees each suppressed pick under the dedupe heading, e.g. `- MU bullish —
+  stale: ranked 4 loops, no tradeable structure (back 12:20 ET)`. The shortlist's
+  `suppressed` list and the Slack Research card section **"Suppressed (n)"** (was
+  "Suppressed by dedupe") carry both kinds, each line prefixed `dedupe: …` or `stale: …`.
+  A suppression start/end is a loop-digest fact, so the loop runs in full when it changes.
+
+Replay of 2026-10-14 (live store copy): CAKE / MU / XOM bullish suppressed after the 10:30
+loop (back 12:20), CAKE / XOM again after 13:10 (back 15:00), MU after 14:00 (back 15:50).
+
+**Switches** (`config/strategy.yaml research.stale_pick:`, registry): `stale_pick_after_loops`
+(0–20; 0 = off, prompt byte-identical) and `stale_pick_suppress_loops` (1–40). Shipped on
+(D86/D116). Rollback: `!arc config set stale_pick_after_loops 0`. Never a gate input.
+Check: `select subject, reason_text, at from decisions where reason_code='stale_pick_suppressed'`.

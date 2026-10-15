@@ -30,6 +30,8 @@ __all__ = [
     "day_recap",
     "first_sentence",
     "HEADLINE_CHARS",
+    "RECAP_CHARS",
+    "headline_points",
     "headline_sentence",
     "loop_headline",
     "names",
@@ -43,9 +45,10 @@ _OPEN_BLOCKERS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("order_budget_exhausted",), "budget"),
     (("net_ev_floor",), "ev"),
     (("risk_reject", "risk_declined"), "risk"),
-    (("dedupe_executed", "dedupe_proposed", "dedupe_rejected"), "dedupe"),
+    (("dedupe_executed", "dedupe_proposed", "dedupe_rejected", "dedupe:missed_wait"), "dedupe"),
     (("drop_concentration", "drop_at_cap"), "concentration"),
     (("stretched_entry",), "stretched"),
+    (("mid_range_entry",), "mid_range"),
     (("reprice_failed",), "reprice"),
     (("no_structure", "quant_skipped", "no_chain", "not_structured", "quant_omitted"), "structure"),
 )
@@ -59,6 +62,7 @@ BLOCKER_LABELS = {
     "dedupe": "recently traded",
     "concentration": "concentration",
     "stretched": "move already stretched",
+    "mid_range": "mid-range entry",
     "reprice": "re-price failed",
     "structure": "no workable structure",
     "stopped": "loop cut short",
@@ -106,6 +110,7 @@ class Trade:
     status: str  # filled | working | pending | missed | rejected | expired | proposed
     qty: int | None = None
     price: str = ""
+    reprice: str = ""  # D101: ``re-priced once: 4.65–4.75 → 4.82–4.95, filled 4.88``
 
 
 @dataclass
@@ -168,6 +173,15 @@ def _price(raw: object) -> str:
         return ""
 
 
+_REPRICE = re.compile(r"re-priced (?:once|twice|\d+ times): [^;()]*?, (?:filled [0-9.]+|missed)")
+
+
+def _reprice(detail: object) -> str:
+    """D101: the ladder's re-price note from ``executions.detail`` (``""`` if none)."""
+    m = _REPRICE.search(str(detail or ""))
+    return m.group(0) if m else ""
+
+
 def _status(p: sqlite3.Row) -> str:
     if p["execution"] in ("filled", "partially_filled"):
         return "filled"
@@ -193,7 +207,8 @@ def chain_facts(conn: sqlite3.Connection, chain_run_id: str) -> ChainFacts:
     ).fetchall()
     props = conn.execute(
         """SELECT p.ticker, p.kind, p.structure_json, a.status AS approval,
-                  e.status AS execution, e.filled_qty, e.fill_price, e.contracts
+                  e.status AS execution, e.filled_qty, e.fill_price, e.contracts,
+                  e.detail AS exec_detail
            FROM proposals p
            JOIN routine_runs r ON r.run_id = p.run_id
            LEFT JOIN approval_requests a ON a.proposal_hash = p.proposal_hash
@@ -259,6 +274,7 @@ def chain_facts(conn: sqlite3.Connection, chain_run_id: str) -> ChainFacts:
             status=_status(p),
             qty=p["filled_qty"] or p["contracts"],
             price=_price(p["fill_price"]),
+            reprice=_reprice(p["exec_detail"]),
         )
         (f.closes if trade.kind == "close" else f.opens).append(trade)
     acted = {t.ticker for t in f.opens}
@@ -289,6 +305,9 @@ def chain_facts(conn: sqlite3.Connection, chain_run_id: str) -> ChainFacts:
 
 #: The whole headline in characters (the Slack renderer's ``HEADLINE_MAX``).
 HEADLINE_CHARS = 150
+#: D109: the Day Recap and experiment readout headlines get twice the room
+#: (the Slack renderer's ``RECAP_MAX``).
+RECAP_CHARS = 2 * HEADLINE_CHARS
 
 
 def _bias(f: ChainFacts, t: str) -> str:
@@ -302,7 +321,8 @@ def _open_clause(f: ChainFacts) -> str:
         what = " ".join(x for x in (t.ticker, _bias(f, t.ticker), t.structure) if x)
         at = f" at {t.price}" if t.price else ""
         more = f" (+{len(filled) - 1} more)" if len(filled) > 1 else ""
-        return f"{what} x{t.qty} filled{at}{more}"
+        note = f" ({t.reprice})" if t.reprice else ""
+        return f"{what} x{t.qty} filled{at}{note}{more}"
     for status, words in (
         ("pending", "awaits your approval"),
         ("working", "is working toward a fill"),
@@ -313,7 +333,8 @@ def _open_clause(f: ChainFacts) -> str:
         hit = [t for t in f.opens if t.status == status]
         if hit:
             t = hit[0]
-            return " ".join(x for x in (t.ticker, t.structure or "trade", words) if x)
+            note = f" ({t.reprice})" if t.reprice and status == "missed" else ""
+            return " ".join(x for x in (t.ticker, t.structure or "trade", words) if x) + note
     return ""
 
 
@@ -414,6 +435,26 @@ def headline_sentence(main: str, *more: str, limit: int = HEADLINE_CHARS) -> str
     return f"{main}."
 
 
+def headline_points(main: str, *more: str, limit: int = RECAP_CHARS) -> str:
+    """D109: ``Main; second; third.``: every point of *more* that still fits *limit*.
+
+    Like :func:`headline_sentence`, but a longer recap keeps each extra point that fits
+    (in order) instead of only the first; a point that would overflow is skipped.
+    """
+    main = main.strip().rstrip(" .")
+    if not main:
+        return ""
+    main = main[:1].upper() + main[1:]
+    if len(main) + 1 > limit:
+        return main[: limit - 1].rstrip(" ,;") + "…"
+    out = main
+    for extra in more:
+        point = _clause(extra) if extra else ""
+        if point and len(out) + len(point) + 3 <= limit:
+            out = f"{out}; {point}"
+    return f"{out}."
+
+
 def loop_headline(conn: sqlite3.Connection, chain_run_id: str) -> list[str]:
     """The loop's headline: one sentence, ``<main point>; <second point>.`` (or ``[]``).
 
@@ -468,8 +509,10 @@ def day_recap(
 ) -> list[str]:
     """ET *day* in one headline sentence: ``<P&L and trades>; <what drove it>.``
 
-    The second point is the biggest closed P&L, else the reason that kept the most
-    ranked picks from opening across the day's full loops.
+    D109: up to :data:`RECAP_CHARS` (2× a loop headline). After the main point come,
+    in order and only while they fit: the biggest closed P&L, the opposite extreme
+    (best win on a day led by a hit, or the reverse), and the reason that kept the
+    most ranked picks from opening across the day's full loops.
     """
     lo, hi = _utc_bounds(day)
     fills = conn.execute(
@@ -519,14 +562,16 @@ def day_recap(
         pct = f" ({day_pnl / equity_start:+.1%})" if equity_start else ""
         mood = "Green day" if day_pnl > 0 else "Red day" if day_pnl < 0 else "Flat day"
         main = f"{mood}: {_money(day_pnl)}{pct}{on}"
-    biggest = ""
+    biggest = other = ""
     if realized:
         worst = min(realized, key=lambda kv: kv[1])
         best = max(realized, key=lambda kv: kv[1])
-        pick = worst if abs(worst[1]) >= abs(best[1]) else best
+        pick, rest = (worst, best) if abs(worst[1]) >= abs(best[1]) else (best, worst)
         biggest = f"{'biggest hit' if pick[1] < 0 else 'best win'} {pick[0]} {_money(pick[1])}"
+        if rest[0] != pick[0] and (rest[1] < 0) != (pick[1] < 0) and rest[1] != 0:
+            other = f"{'biggest hit' if rest[1] < 0 else 'best win'} {rest[0]} {_money(rest[1])}"
     blocker = ""
     if blockers:
         key, n = max(blockers.items(), key=lambda kv: kv[1])
         blocker = f"{BLOCKER_LABELS.get(key, key)} blocked {n} of {ranked} picks"
-    return [headline_sentence(main, biggest, blocker)]
+    return [headline_points(main, biggest, other, blocker, limit=RECAP_CHARS)]

@@ -29,7 +29,16 @@ Profile fields:
     strike), i.e. a debit spread. ``any``: no coverage check (margin).
 ``dte_min`` / ``dte_max``
     Optional per-profile entry DTE window; ``None`` falls back to the global
-    ``ARC_DTE_MIN`` / ``ARC_DTE_MAX``.
+    ``ARC_DTE_MIN`` / ``ARC_DTE_MAX``. A profile with one window behaves as one
+    implicit sleeve named ``default``.
+``sleeves``
+    E22.1 (D97): several named entry-DTE sleeves instead of one window, written in
+    YAML as a mapping ``name -> {dte_min, dte_max, max_positions, exit_policy}``.
+    Windows never overlap; ``sleeves`` and ``dte_min/dte_max`` are mutually
+    exclusive. ``max_positions`` caps open positions whose *entry* DTE is in the
+    sleeve (gate rule ``sleeve_max_positions``; ``0`` closes the sleeve, ``None`` = no cap).
+    ``exit_policy`` names a block in ``config/exits.yaml`` ``sleeves:`` (``None`` =
+    the kind policy).
 ``stance_strategies``
     Scanner strategies per Research stance (bullish / bearish / neutral). An empty
     list means the profile has no structure for that stance: no trade, journaled.
@@ -41,10 +50,11 @@ Profile fields:
 
 from __future__ import annotations
 
+import datetime as dt
 from decimal import Decimal
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -52,7 +62,9 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from arc.models import StructureKind
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
+
+    from arc.models import Structure
 
 __all__ = [
     "DEFAULT_ACCOUNT_PROFILE",
@@ -63,8 +75,14 @@ __all__ = [
     "BuyingPower",
     "DayTradeRule",
     "DayTrades",
+    "DteSleeve",
     "ShortLegPolicy",
+    "SleeveSlots",
+    "entry_dte_of",
     "load_account_profiles",
+    "sleeve_for_dte",
+    "sleeve_of",
+    "sleeve_slots",
 ]
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -137,6 +155,128 @@ class DayTrades(BaseModel):
     window_sessions: int = Field(5, ge=1, le=20)
 
 
+#: Name of the one implicit sleeve of a single-window profile.
+DEFAULT_SLEEVE = "default"
+
+
+class DteSleeve(BaseModel):
+    """E22.1 (D97): one named entry-DTE sleeve of an account profile."""
+
+    model_config = _FORBID
+
+    name: str = Field(..., pattern=r"^[a-z][a-z0-9_]*$")
+    dte_min: int = Field(..., ge=1)
+    dte_max: int = Field(..., ge=1)
+    max_positions: int | None = Field(
+        None,
+        ge=0,
+        description="open positions in this sleeve (by entry DTE); None = no cap, "
+        "0 = sleeve closed to new opens (the D97 registry rollback)",
+    )
+    exit_policy: str | None = Field(
+        None, description="block in config/exits.yaml `sleeves:`; None = the kind policy"
+    )
+
+    @model_validator(mode="after")
+    def _window(self) -> DteSleeve:
+        if self.dte_max < self.dte_min:
+            msg = f"sleeve {self.name}: dte_max {self.dte_max} < dte_min {self.dte_min}"
+            raise ValueError(msg)
+        return self
+
+    def contains(self, dte: int) -> bool:
+        return self.dte_min <= dte <= self.dte_max
+
+    @property
+    def label(self) -> str:
+        """``short[10-29]``: how gate messages and summaries name the sleeve."""
+        return f"{self.name}[{self.dte_min}-{self.dte_max}]"
+
+
+def sleeve_for_dte(sleeves: Sequence[DteSleeve], dte: int | None) -> DteSleeve | None:
+    """The sleeve whose window contains *dte*, else ``None`` (windows never overlap)."""
+    if dte is None:
+        return None
+    return next((s for s in sleeves if s.contains(dte)), None)
+
+
+def entry_dte_of(structure: Structure, opened_at: dt.date | dt.datetime | str | None) -> int:
+    """A position's *entry* DTE: the structure's stored ``dte`` (as priced at the open).
+
+    A stored ``dte`` of 0 (the pipeline never opens one) falls back to the nearest
+    leg expiry minus the ``opened_at`` ET date; without ``opened_at`` it stays 0.
+    """
+    if structure.dte > 0 or opened_at is None or not structure.legs:
+        return structure.dte
+    from arc.structures.occ import parse_occ
+    from arc.utils.calendar import ET
+
+    when: dt.date | dt.datetime = (
+        dt.datetime.fromisoformat(opened_at) if isinstance(opened_at, str) else opened_at
+    )
+    if isinstance(when, dt.datetime):
+        aware = when if when.tzinfo is not None else when.replace(tzinfo=dt.UTC)
+        when = aware.astimezone(ET).date()
+    expiry = min(parse_occ(leg.occ_symbol).expiration for leg in structure.legs)
+    return (expiry - when).days
+
+
+def sleeve_of(
+    sleeves: Sequence[DteSleeve],
+    structure: Structure,
+    opened_at: dt.date | dt.datetime | str | None = None,
+) -> DteSleeve | None:
+    """E22.1 (D97): the sleeve of a held or proposed structure, by its *entry* DTE.
+
+    ``None`` when the entry DTE fits no current sleeve (e.g. a window changed after
+    the open); exits then use the kind policy. Pure; never raises on a valid structure.
+    """
+    return sleeve_for_dte(sleeves, entry_dte_of(structure, opened_at))
+
+
+class SleeveSlots(BaseModel):
+    """E22.2 (D97): one sleeve's occupancy (open positions by entry DTE vs its cap)."""
+
+    model_config = _FORBID
+
+    sleeve: DteSleeve
+    held: int = Field(..., ge=0)
+
+    @property
+    def free(self) -> int | None:
+        """Free slots; ``None`` = uncapped (``max_positions`` unset)."""
+        cap = self.sleeve.max_positions
+        return None if cap is None else max(cap - self.held, 0)
+
+    @property
+    def open(self) -> bool:
+        """True while the sleeve can take one more open (uncapped or a free slot)."""
+        free = self.free
+        return free is None or free > 0
+
+    def text(self) -> str:
+        """``short 3/5`` (held/cap) or ``swing 2`` when uncapped."""
+        cap = self.sleeve.max_positions
+        return f"{self.sleeve.name} {self.held}" + ("" if cap is None else f"/{cap}")
+
+
+def sleeve_slots(
+    sleeves: Sequence[DteSleeve], entry_dtes: Sequence[int | None]
+) -> list[SleeveSlots]:
+    """E22.2 (D97): occupancy of each sleeve, counted like gate rule ``sleeve_max_positions``.
+
+    A held position belongs to the sleeve containing its entry DTE; one with an
+    unknown entry DTE (``None``) counts toward every sleeve (fail closed). Pure.
+    """
+    return [
+        SleeveSlots(
+            sleeve=s,
+            held=sum(1 for d in entry_dtes if d is None or sleeve_for_dte(sleeves, d) == s),
+        )
+        for s in sleeves
+    ]
+
+
 class AccountProfile(BaseModel):
     """One account profile (see the module doc for field semantics)."""
 
@@ -150,8 +290,23 @@ class AccountProfile(BaseModel):
     allow_short_legs: ShortLegPolicy
     dte_min: int | None = Field(None, ge=1)
     dte_max: int | None = Field(None, ge=1)
+    sleeves: list[DteSleeve] | None = Field(
+        None, description="E22.1 (D97): named entry-DTE sleeves; excludes dte_min/dte_max"
+    )
     stance_strategies: StanceStrategies
     day_trades: DayTrades = Field(default_factory=lambda: DayTrades())
+
+    @model_validator(mode="before")
+    @classmethod
+    def _sleeve_names(cls, data: Any) -> Any:
+        """YAML writes sleeves as ``name -> spec`` so D26 overrides can address them."""
+        if isinstance(data, dict) and isinstance(data.get("sleeves"), dict):
+            data = dict(data)
+            data["sleeves"] = [
+                {"name": name, **body} if isinstance(body, dict) else body
+                for name, body in data["sleeves"].items()
+            ]
+        return data
 
     @model_validator(mode="after")
     def _check(self) -> AccountProfile:
@@ -164,7 +319,58 @@ class AccountProfile(BaseModel):
         if self.dte_min is not None and self.dte_max is not None and self.dte_max < self.dte_min:
             msg = f"profile {self.name}: dte_max {self.dte_max} < dte_min {self.dte_min}"
             raise ValueError(msg)
+        if self.sleeves is not None:
+            self._check_sleeves(self.sleeves)
         return self
+
+    def _check_sleeves(self, sleeves: list[DteSleeve]) -> None:
+        if self.dte_min is not None:
+            msg = (
+                f"profile {self.name} declares sleeves, so dte_min/dte_max must be unset "
+                f"(tune profiles.{self.name}.sleeves.<sleeve>.dte_min|dte_max instead)"
+            )
+            raise ValueError(msg)
+        if not sleeves:
+            msg = f"profile {self.name}: sleeves must list at least one sleeve (or be omitted)"
+            raise ValueError(msg)
+        names = [s.name for s in sleeves]
+        dupes = sorted({n for n in names if names.count(n) > 1})
+        if dupes:
+            msg = f"profile {self.name}: duplicate sleeve name(s) {', '.join(dupes)}"
+            raise ValueError(msg)
+        ordered = sorted(sleeves, key=lambda s: (s.dte_min, s.dte_max))
+        for a, b in zip(ordered, ordered[1:], strict=False):
+            if b.dte_min <= a.dte_max:
+                msg = f"profile {self.name}: sleeves {a.label} and {b.label} overlap"
+                raise ValueError(msg)
+
+    @property
+    def has_sleeves(self) -> bool:
+        """True when the profile declares named sleeves (not one implicit window)."""
+        return bool(self.sleeves)
+
+    def entry_sleeves(self, fallback: tuple[int, int] | None = None) -> list[DteSleeve]:
+        """The profile's sleeves, ordered by window.
+
+        A single-window profile is one implicit ``default`` sleeve (no slot cap, the
+        kind exit policy). A profile with neither uses *fallback* (the global
+        ``dte_min/dte_max``; a 0 floor becomes 1, 0DTE is never allowed) or, without
+        one, has no sleeve.
+        """
+        if self.sleeves:
+            return sorted(self.sleeves, key=lambda s: s.dte_min)
+        if self.dte_min is not None and self.dte_max is not None:
+            return [DteSleeve(name=DEFAULT_SLEEVE, dte_min=self.dte_min, dte_max=self.dte_max)]
+        if fallback is not None:
+            lo, hi = max(fallback[0], 1), max(fallback[1], 1)
+            return [DteSleeve(name=DEFAULT_SLEEVE, dte_min=lo, dte_max=max(hi, lo))]
+        return []
+
+    def sleeve_for_dte(
+        self, dte: int | None, fallback: tuple[int, int] | None = None
+    ) -> DteSleeve | None:
+        """The sleeve containing entry DTE *dte*, else ``None``."""
+        return sleeve_for_dte(self.entry_sleeves(fallback), dte)
 
     def strategies_for(self, stance: str) -> list[str]:
         """Scanner strategy names for a Research stance; ``[]`` = no trade."""

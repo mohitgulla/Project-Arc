@@ -12,6 +12,11 @@ evaluation stopped (:mod:`arc.slack.experiments`), each its own post. The stop
 card is the alert for an ``invalid`` A/A too (no separate notice: the same state
 is never posted twice in one thread). The routine's own ``[Routines]`` summary is
 folded (``notify: quiet``).
+
+E21.4 (D86): after the evaluation, every concluded experiment without a published
+verdict gets its ``verdicts/XP-<n>.yaml`` PR (auto-merged; :mod:`arc.experiments.verdicts`),
+on a live tick only. Starting the next registered experiment is the owner's manual
+``arc experiment start XP-<n>`` (D112: no pre-open auto-start).
 """
 
 from __future__ import annotations
@@ -27,7 +32,10 @@ if TYPE_CHECKING:
     from arc.routines.handlers import JobContext
     from arc.slack.blocks import CardView
 
-__all__ = ["experiment_posts", "experiments_evaluate_step"]
+__all__ = [
+    "experiment_posts",
+    "experiments_evaluate_step",
+]
 
 log = structlog.get_logger(__name__)
 
@@ -59,6 +67,15 @@ def experiments_evaluate_step(ctx: JobContext) -> JobResult:
             count=r.sessions,
         )
     posts = experiment_posts(reports)
+    verdict_lines: list[str] = []
+    verdict_errors: list[str] = []
+    if _live(ctx):  # D86: the verdict file of every concluded experiment (stops above + owner)
+        from arc.experiments.publish import GitMainView, GitPublisher
+        from arc.experiments.verdicts import publish_pending_verdicts
+
+        verdict_lines, verdict_errors = publish_pending_verdicts(
+            ctx.conn, store, GitPublisher(), now=ctx.now, main=GitMainView()
+        )
     parts = [
         f"{r.experiment_id} {r.verdict} n={r.sessions}"
         + (
@@ -68,8 +85,10 @@ def experiments_evaluate_step(ctx: JobContext) -> JobResult:
         )
         for r in reports
     ]
+    parts += verdict_lines + verdict_errors
     return JobResult(
         summary="; ".join(parts) if parts else "no running experiments",
+        notice="; ".join(verdict_errors),
         extra_cards=posts,
         metrics={
             "experiments": len(reports),
@@ -77,3 +96,9 @@ def experiments_evaluate_step(ctx: JobContext) -> JobResult:
             **{f"verdict_{r.experiment_id}": r.verdict for r in reports},
         },
     )
+
+
+def _live(ctx: JobContext) -> bool:
+    """Side effects outside the store (git, GitHub, broker) only on a live tick."""
+    env = getattr(ctx, "run_env", None)
+    return bool(env is not None and env.slack)

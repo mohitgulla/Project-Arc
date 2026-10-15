@@ -374,12 +374,13 @@ def test_strategy_is_an_overlay_target_and_a_research_input() -> None:
 
 
 def test_registered_spec_hashes_unchanged() -> None:
-    # XP-1 (registered A/A) is the only committed spec (D86); its hash must not move.
+    # Since the D111 registry reset XP-1 (the K=3 A/A, spec v3) is the only committed
+    # spec; its hash must not move once it is registered.
     specs = {p.name: load_spec(p) for p in sorted(LIVE_SPECS_DIR.glob("*.yaml"))}
-    assert set(specs) == {"xp1_aa_baseline.yaml"}
+    assert set(specs) == {"xp1_aa_k3.yaml"}
     assert (
-        spec_hash(specs["xp1_aa_baseline.yaml"])
-        == "7d02a85573156876e3b8d0a4e57e195d9ce04f6399966103843224d8749d8d20"
+        spec_hash(specs["xp1_aa_k3.yaml"])
+        == "4bb58189448a727a4f580a5dd828237f85187e46f2cfe5e83e47c9f890be5367"
     )
 
 

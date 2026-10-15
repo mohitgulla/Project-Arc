@@ -5,7 +5,7 @@ step 4a) after the profile's pre-run gate ``arc_sentinel.py`` has written ``RUN_
 the output lands in ``RUN_DIR/experiments.md``. It reads that private COPY of ``data/arc.db`` (the
 E10.1/E10.3 tables) and the private clone's git history and ``config/``. It never writes the DB, the clone, the board or a PR.
 
-Four checks:
+Five checks:
 
 1. **Pre-registration lock.** For every experiment, the stored spec re-hashes to its
    ``spec_hash`` (the stored text is canonical JSON, so SHA-256 of the canonical re-dump must
@@ -25,6 +25,12 @@ Four checks:
    verdicts (``config/experiments/live/verdicts/XP-<n>.yaml``) are matched to the stored report.
 4. **A/A before any A/B.** Every ab experiment that started has an aa experiment that stopped
    with a recorded sigma before it, or an owner ``aa_override`` on its running event.
+5. **P − C residual (D108, E25.4).** From a spec v3 experiment's latest stored report, the
+   production panel's daily residual (P − C after the start book's P&L; capital tied in the
+   start book, account/fill gap, order budget, pairing lag). Once production's start book has
+   fully closed **and** control has ramped, the residual should converge to 0. When the
+   running mean's 95% CI over those sessions excludes 0 for >= ``RESIDUAL_STREAK`` sessions in
+   a row, it is a ``warn``: a harness/account gap, never a strategy finding or a verdict.
 """
 
 from __future__ import annotations
@@ -48,6 +54,9 @@ LANE_FAST_RE = re.compile(r"^\s*(?:[-*>]\s*)?lane\s*:\s*fast\b(.*)$", re.I | re.
 #: D86 (E21.1): the advisory line every strategy PR carries (`none` or a reason).
 LANE_ADVISORY_RE = re.compile(r"^\s*(?:[-*>]\s*)?xp-advisory\s*:(.*)$", re.I | re.M)
 PR_RE = re.compile(r"\(#(\d+)\)\s*$")
+#: D108: consecutive converged sessions whose running-mean CI excludes 0 before a warn.
+RESIDUAL_STREAK = 10
+RESIDUAL_Z = 1.959963984540054  # two-sided 95%
 OFF_VALUES = ("false", "off", "none", "null", "control", "~", "''", '""')
 
 Git = Callable[..., str]
@@ -276,6 +285,98 @@ def verdict_files(repo: Path, conn: sqlite3.Connection) -> list[dict]:
     return out
 
 
+def residual_check(eid: str, panel: dict) -> dict:
+    """D108 check 5 on one v3 report's ``production`` panel (pure; dicts as stored JSON).
+
+    Converged sessions = ``ramped`` sessions strictly after the start book's last close (all of
+    them when the start book was empty). Over those, the running mean of ``residual`` and its
+    95% normal CI (sample sd / sqrt(n), from n = 2). ``streak`` = how many of the latest
+    converged sessions in a row had a CI excluding 0; ``warn`` when it reaches
+    :data:`RESIDUAL_STREAK`.
+    """
+    book = panel.get("start_book") or {}
+    closes = book.get("close_dates") or {}
+    open_ids = sorted(k for k, d in closes.items() if d is None)
+    open_ids += sorted(set(book.get("ids") or []) - set(closes))  # no close date known
+    last_close = max((d for d in closes.values() if d), default=None)
+    sessions = sorted(panel.get("sessions") or [], key=lambda s: s["day"])
+    out = {
+        "id": eid,
+        "book_open": len(open_ids),
+        "last_close": last_close,
+        "ramped_from": panel.get("ramped_from"),
+        "n": 0,
+        "mean": None,
+        "lo": None,
+        "hi": None,
+        "streak": 0,
+        "state": "",
+        "warn": False,
+    }
+    if open_ids:
+        out["state"] = f"start book still open ({len(open_ids)} structure(s)): not checked yet"
+        return out
+    conv = [
+        float(s["residual"])
+        for s in sessions
+        if s.get("ramped") and (last_close is None or s["day"] > last_close)
+    ]
+    if not conv:
+        out["state"] = (
+            "control not ramped yet: not checked"
+            if not panel.get("ramped_from")
+            else "no converged session yet"
+        )
+        return out
+    streak, total, sq = 0, 0.0, 0.0
+    lo = hi = None
+    for k, x in enumerate(conv, 1):
+        total += x
+        sq += x * x
+        mean = total / k
+        if k < 2:
+            lo = hi = None
+            excludes = False
+        else:
+            var = max(0.0, (sq - k * mean * mean) / (k - 1))
+            half = RESIDUAL_Z * (var / k) ** 0.5
+            lo, hi = mean - half, mean + half
+            excludes = lo > 0 or hi < 0
+        streak = streak + 1 if excludes else 0
+    out.update(n=len(conv), mean=total / len(conv), lo=lo, hi=hi, streak=streak)
+    out["warn"] = streak >= RESIDUAL_STREAK
+    out["state"] = (
+        f"WARN: running-mean CI excludes 0 for {streak} sessions (>= {RESIDUAL_STREAK}): "
+        "harness/account gap between production and control, not strategy"
+        if out["warn"]
+        else f"converging (CI excludes 0 for {streak} trailing session(s), warn at "
+        f"{RESIDUAL_STREAK})"
+    )
+    return out
+
+
+def residual_checks(conn: sqlite3.Connection, exps: list[dict]) -> list[dict]:
+    """Check 5 for every experiment whose latest stored report carries a production panel."""
+    if not has_tables(conn, "experiment_reports"):
+        return []
+    out = []
+    for e in exps:
+        row = conn.execute(
+            "SELECT payload FROM experiment_reports WHERE experiment_id = ? "
+            "ORDER BY id DESC LIMIT 1",
+            (e["id"],),
+        ).fetchone()
+        if row is None:
+            continue
+        try:
+            panel = json.loads(row[0]).get("production")
+        except ValueError:
+            continue
+        if isinstance(panel, dict):
+            out.append(residual_check(e["id"], panel))
+    return out
+
+
 # ---------- git reads (the private clone) ----------
 
 
@@ -382,6 +483,7 @@ def render(
     aa: list[dict],
     verdicts: list[dict],
     note: str = "",
+    residuals: list[dict] | None = None,
 ) -> str:
     out = ["## Experiments integrity (D44 lens; deterministic evidence, verify before reporting)"]
     if note:
@@ -472,6 +574,23 @@ def render(
         else:
             state = "NO A/A before it and no owner override"
         out.append(f"- {a['id']} started {a['running_at']}: {state}")
+    out.append(
+        "### 5. P - C residual (D108: production vs control arm; warn = harness/account gap)"
+    )
+    if not residuals:
+        out.append("- no stored report with a production panel (spec v3) yet")
+    for r in residuals or []:
+        ci = (
+            f"[{r['lo'] * 100:+.3f}%, {r['hi'] * 100:+.3f}%]"
+            if r["lo"] is not None
+            else "n/a"
+        )
+        mean = f"{r['mean'] * 100:+.3f}%/day" if r["mean"] is not None else "n/a"
+        out.append(
+            f"- {r['id']}: start book {r['book_open']} open (last close "
+            f"{r['last_close'] or '-'}), ramped from {r['ramped_from'] or 'not yet'} | "
+            f"converged n={r['n']} residual mean {mean} CI {ci} | {r['state']}"
+        )
     return "\n".join(out)
 
 
@@ -490,7 +609,7 @@ def run(
         areas = load_areas(areas_path)
         globs, lane_source = strategy_globs(repo, areas)
         rng = [f"{last}..{head}"] if last else ["-n", "30", head]
-        exps, windows, aa, verdicts, note = None, [], [], [], ""
+        exps, windows, aa, verdicts, note, residuals = None, [], [], [], "", []
         conn = None
         if db is None or not db.is_file():
             note = "(no copy of data/arc.db: registry checks skipped)"
@@ -508,13 +627,14 @@ def run(
                     window_commits(git, head, e, areas, now) for e in exps if e["running_at"]
                 ]
                 verdicts = verdict_files(repo, conn)
+                residuals = residual_checks(conn, exps)
             lanes = lane_citations(
                 git, rng, globs, areas["exclude"], pr_body, {e["id"] for e in exps or []}
             )
         finally:
             if conn is not None:
                 conn.close()
-        return render(exps, windows, lanes, lane_source, aa, verdicts, note)
+        return render(exps, windows, lanes, lane_source, aa, verdicts, note, residuals)
     except Exception as e:  # noqa: BLE001 - the audit must still run; report the failure
         return (
             "## Experiments integrity (D44 lens)\n"

@@ -51,10 +51,18 @@ def _live() -> ArcSettings:
         return ArcSettings(_env_file=None, env="live")  # type: ignore[call-arg]
 
 
-def test_max_alloc_pct_default_is_ten_percent_at_the_registry_ceiling() -> None:
-    assert get_settings(_env_file=None).max_alloc_pct == 0.10
+def test_max_alloc_pct_default_is_the_d116_tiers_under_the_registry_ceiling() -> None:
+    s = get_settings(_env_file=None)
+    assert (s.max_alloc_pct, s.max_alloc_pct_reduced, s.alloc_tier_threshold_pct) == (
+        0.15,
+        0.10,
+        0.60,
+    )  # D116 (was a flat 0.10, D85)
     t = lookup("max_alloc_pct")
-    assert t.max == 0.10 and t.hard_ceiling == 0.10  # ceiling unchanged (owner decision)
+    assert t.max == 0.20 and t.hard_ceiling == 0.20  # D116 raised it from 0.10
+    r = lookup("max_alloc_pct_reduced")
+    assert r.max == 0.20 and r.hard_ceiling == 0.20
+    assert lookup("alloc_tier_threshold_pct").hard_ceiling == 1.0
 
 
 def test_empty_store_paper_effective_switches(conn: sqlite3.Connection) -> None:
@@ -64,7 +72,8 @@ def test_empty_store_paper_effective_switches(conn: sqlite3.Connection) -> None:
     assert s.auto_approve is True
     assert s.auto_exit_defined_risk is True
     assert s.auto_approve_scorecard_gate is False
-    assert s.max_alloc_pct == 0.10
+    assert s.max_alloc_pct == 0.15  # D116 base tier
+    assert s.max_alloc_pct_reduced == 0.10
 
 
 def test_empty_store_live_stays_off_and_gated(conn: sqlite3.Connection) -> None:

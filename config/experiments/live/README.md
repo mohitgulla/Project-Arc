@@ -10,7 +10,7 @@ deep-merged over it with `arc.utils.yamlpatch.deep_merge` (the function
 
 Lifecycle:
 
-    arc experiment create --spec config/experiments/live/xp1_aa_baseline.yaml --owner-approval P-<n> --db <db>
+    arc experiment create --spec config/experiments/live/xp1_aa_k3.yaml --owner-approval P-<n> --db <db>
     arc experiment register XP-1 --owner-approval P-<n> --db <db>     # locks sha256(canonical spec)
     arc experiment show XP-1 --db <db>
     arc experiment verify XP-1 --db <db>
@@ -28,17 +28,16 @@ single-treatment run = `t1`) and the stored report's `report_hash` (from
 `t<k>` tested. Any verdict file (win, futility, invalid) frees the leaves.
 
 Who adds specs (D86): specs are added only by `arc experiment adopt` (E21.4) after the
-owner approves an Analyst proposal (`approve P-<n>` in #arc-analyst). Cards and PRs never
+owner approves an Analyst proposal (`approve P-<n>` in #arc-analyst). It commits
+`xp<n>_<slug>.yaml` through an auto-merged PR on branch `xp/<n>`, and every concluded
+experiment gets its `verdicts/XP-<n>.yaml` the same way (branch `xp/<n>-verdict`; docs/OPS.md
+§5.18). Cards and PRs never
 draft XP specs here; a strategy PR's only XP touchpoint is its `XP-advisory:` line.
 `create` and `register` refuse without `--owner-approval <P-<n> | slack:<ts> | owner:<note>>`.
 
-Retired drafts (E21.2, D86): the five dev-drafted specs XP-10 (trending velocity;
-registered once, then cleared from the registry with the 2026-10-10 reset) and the four
-after it (Scalp tape movers, Stocktwits sentiment, technicals / anti-chase variants,
-unified menu measure) are gone. Their ideas are leads in the Analyst idea seed
-(`hermes/analyst/idea_seed.yaml`, each with a `git show` ref to the old spec); the flags
-they flipped keep their shipped values. XP-1 stays as history (the A/A on the new
-accounts is E15.9).
+Registry reset (owner, 2026-10-13, PLAN D111): every earlier spec, verdict and history
+file was removed and the live registry cleared; XP-1 is the K=3 calibration A/A
+(`xp1_aa_k3.yaml`, card E15.9), and ids are never reused after this.
 
 Fork at any persona (E13.12, D56): `arc experiment start` computes each arm's plan
 (`arc.experiments.runner.arm_plan`) and stores it on the arm's identity and in the
@@ -53,8 +52,6 @@ writing anything:
     arc experiment start XP-<n> --dry-run --db <db>
     arc experiment arms-tick --dry-run --experiment XP-<n> --now 2026-10-06T06:00-04:00 --db <db>
 
-Retired drafts (E13.15, D56 cutover): XP-4 (`research_idea_pool`), XP-5 (d56 vs d51
-universe), XP-6 (`research_compact_prompt`), XP-7 (`quant_risk_loop`), XP-8
-(`scalp_options_tape`) and XP-9 (`exit_path`) were never registered; the owner cut
-over to their treatments directly (2026-10-07) and the switches are gone. XP-5 is kept
-as a test fixture (`tests/fixtures/experiments/xp5_universe_screen.yaml`).
+The v1 A/A spec (`tests/fixtures/experiments/xp1_aa_baseline.yaml`) and the XP-5 v1 A/B
+(`tests/fixtures/experiments/xp5_universe_screen.yaml`) are test fixtures only; they pin
+the v1 -> v2 hash invariant.

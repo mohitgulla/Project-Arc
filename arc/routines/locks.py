@@ -25,18 +25,42 @@ LLM_LOCK = "_llm"
 _SAFE = re.compile(r"[^A-Za-z0-9_.-]")
 
 
+#: E15.4: an experiment arm's lock dir is ``<control lock dir>/arm-<xp>-<arm>``.
+ARM_LOCK_PREFIX = "arm-"
+
+
+def arm_lock_dir(lock_dir: Path | str, experiment_id: str, arm: str) -> Path:
+    """The lock dir of arm *arm* of *experiment_id* under control's *lock_dir* (D69:
+    two experiments may reuse an arm name, so the dir is per experiment + arm)."""
+    return Path(lock_dir) / f"{ARM_LOCK_PREFIX}{experiment_id}-{arm}"
+
+
+def llm_lock_dir(lock_dir: Path | str) -> Path:
+    """Where *lock_dir*'s :data:`LLM_LOCK` lives: control's dir for an arm's dir."""
+    p = Path(lock_dir)
+    return p.parent if p.name.startswith(ARM_LOCK_PREFIX) else p
+
+
 class LockBusyError(RuntimeError):
     """The lock is held by another process."""
 
 
 class LockManager:
-    """Hands out non-blocking exclusive file locks under *lock_dir*."""
+    """Hands out non-blocking exclusive file locks under *lock_dir*.
 
-    def __init__(self, lock_dir: Path | str) -> None:
+    E15.4 (D69): the global :data:`LLM_LOCK` lives in :func:`llm_lock_dir`, so the
+    experiment arms (each with its own lock dir ``<dir>/arm-<xp>-<arm>``, also handed
+    to their detached children) share control's D39 local-tier lock: local LLM runs
+    stay serialised across control and every arm; remote routes run concurrently.
+    """
+
+    def __init__(self, lock_dir: Path | str, *, llm_dir: Path | str | None = None) -> None:
         self.lock_dir = Path(lock_dir)
+        self.llm_dir = Path(llm_dir) if llm_dir is not None else llm_lock_dir(self.lock_dir)
 
     def _path(self, name: str) -> Path:
-        return self.lock_dir / f"{_SAFE.sub('_', name)}.lock"
+        base = self.llm_dir if name == LLM_LOCK else self.lock_dir
+        return base / f"{_SAFE.sub('_', name)}.lock"
 
     @contextlib.contextmanager
     def hold(self, *names: str) -> Iterator[None]:
@@ -45,7 +69,9 @@ class LockManager:
         fds: list[int] = []
         try:
             for name in names:
-                fd = os.open(self._path(name), os.O_RDWR | os.O_CREAT, 0o644)
+                path = self._path(name)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
                 try:
                     fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except BlockingIOError:

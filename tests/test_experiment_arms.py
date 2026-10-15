@@ -120,12 +120,13 @@ def test_identity_written_once_and_control_has_none() -> None:
         c.execute("DELETE FROM arm_identity")
 
 
-def test_runner_config_ships_one_treatment_arm_on_its_own_keys() -> None:
+def test_runner_config_ships_one_shared_treatments_template_on_its_own_keys() -> None:
     runner = load_experiments_config().runner
-    assert set(runner.arms) == {"treatment"}
-    arm = runner.arms["treatment"]
-    assert arm.keys_env == "ALPACA_EXP" and arm.spec_arm == "treatment"
-    assert arm.db_path("XP-3").endswith("arc-exp-XP-3.db")
+    assert runner.account_mode == "shared"  # D108 (E25.1)
+    assert set(runner.arms) == {"t", "control"}
+    arm = runner.arms["t"]
+    assert arm.keys_env == "ALPACA_EXP" and arm.is_template
+    assert arm.db.endswith("arc-exp-{experiment_id}-{arm}.db")
 
 
 # --- virtual account ----------------------------------------------------------
@@ -250,7 +251,7 @@ class _Market:
 def test_tape_records_control_and_replays_identically() -> None:
     ctl = _db()
     live = _Market()
-    rec = TapeRecorder(live, ctl, "chain-1")  # type: ignore[arg-type]
+    rec = TapeRecorder(live, ctl, "chain-1", clock=lambda: NOW)  # type: ignore[arg-type]
     q = rec.underlying_quote("SPY")
     replay_ = TapeReplay.from_store(ctl, "chain-1", None)
     assert replay_.underlying_quote("SPY") == q
@@ -259,6 +260,46 @@ def test_tape_records_control_and_replays_identically() -> None:
         replay_.underlying_quote("QQQ")
     assert call_key("underlying_quote", "SPY") in replay_.tape
     assert prune_tape(ctl, keep_days=3, now=NOW + dt.timedelta(days=10)) == 1
+
+
+class _Bars:
+    """A provider whose bars differ by feed (SIP vs IEX volume); the default feed is
+    called without a ``feed`` argument (pre-E23.0a providers)."""
+
+    def __init__(self) -> None:
+        self.calls: list[str | None] = []
+
+    def history_bars(self, symbol, start, end, timeframe="1Day", **kw):  # noqa: ANN001, ANN003, ANN201
+        from arc.data.base import HistoryBar
+
+        feed = kw.get("feed")
+        self.calls.append(feed)
+        vol = {"sip": 38e6, "iex": 2e6}.get(feed or "", 1e6)
+        return [HistoryBar(timestamp=NOW, open=1, high=1, low=1, close=1, volume=vol)]
+
+
+def test_tape_keys_bars_on_the_feed() -> None:
+    """E23.0a (D98): SIP and IEX bars are taped apart, so an arm replays the feed it
+    asked for; a read without a feed keeps the pre-E23.0a key."""
+    ctl = _db()
+    live = _Bars()
+    rec = TapeRecorder(live, ctl, "chain-1")  # type: ignore[arg-type]
+    d = NOW.date()
+    sip = rec.history_bars("SPY", d, d, "5Min", feed="sip")
+    iex = rec.history_bars("SPY", d, d, "5Min", feed="iex")
+    plain = rec.history_bars("SPY", d, d, "5Min")
+    assert live.calls == ["sip", "iex", None]  # no feed kwarg forwarded for the default
+    replay_ = TapeReplay.from_store(ctl, "chain-1", None)
+    assert call_key("history_bars", "SPY", d, d, "5Min") in replay_.tape
+    assert call_key("history_bars", "SPY", d, d, "5Min", "sip") in replay_.tape
+    assert replay_.history_bars("SPY", d, d, "5Min", feed="sip") == sip
+    assert replay_.history_bars("SPY", d, d, "5Min", feed="iex") == iex
+    assert replay_.history_bars("SPY", d, d, "5Min") == plain
+    assert sip[0].volume == 38e6 and iex[0].volume == 2e6 and replay_.hits == 3
+    # a feed control never read is a miss that falls through to the live provider
+    fallback = TapeReplay.from_store(ctl, "chain-1", live)  # type: ignore[arg-type]
+    fallback.history_bars("QQQ", d, d, "5Min", feed="sip")
+    assert fallback.misses == 1 and live.calls[-1] == "sip"
 
 
 class _Chain:

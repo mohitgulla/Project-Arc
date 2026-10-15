@@ -177,7 +177,7 @@ def test_arm_owned_personas_from_overlay_keys(overlay: dict, personas: set[str])
 
 def test_persona_prefix_table_covers_the_arm_personas() -> None:
     assert set(PERSONA_OVERLAY_PREFIXES) == set(ARM_PERSONAS)
-    assert persona_jobs(["scalp", "scout", "scalp"]) == ["scalp", "scalp.overnight", "scout"]
+    assert persona_jobs(["scalp", "scout", "scalp"]) == ["scalp", "scout"]  # D91: one Scalp job
 
 
 def test_arm_personas_are_validated_and_never_tunable() -> None:
@@ -211,7 +211,7 @@ def test_plan_for_xp5_runs_its_own_scout_and_syncs_its_inputs() -> None:
 def test_plan_for_a_scalp_arm_shares_raw_docs_and_the_tape() -> None:
     plan = arm_plan(load_routines(), {"routines": {"funnel": {"scalp": {"x": 1}}}}, RunnerConfig())
     assert plan.arm_personas == ["scalp"]
-    assert plan.own_producers == ["scalp", "scalp.overnight"]
+    assert plan.own_producers == ["scalp"]
     assert {"raw_doc_ref", "index_vols", "chain_snapshot"} <= set(plan.shared_kinds)
 
 
@@ -480,7 +480,8 @@ def test_cli_dry_runs(control: Path, capsys: pytest.CaptureFixture[str]) -> None
         == 0
     )  # fmt: skip
     rep = json.loads(capsys.readouterr().out)
-    assert rep["arms"]["treatment"]["plan"]["arm_personas"] == ["scout"]
+    # the shipped runner (D108: shared `t` template) runs the v1 treatment as arm t1
+    assert rep["arms"]["t1"]["plan"]["arm_personas"] == ["scout"]
     assert _arc("experiment", "arms-tick", "--experiment", "XP-5", "--db", str(control)) == 2
 
 

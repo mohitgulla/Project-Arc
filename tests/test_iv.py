@@ -159,7 +159,7 @@ class _Market:
             symbol=symbol, bid=self.bid, ask=self.ask, mid=(self.bid + self.ask) / 2, timestamp=NOW
         )
 
-    def history_bars(self, symbol, start, end, timeframe="1Day"):  # noqa: ANN001, ANN201
+    def history_bars(self, symbol, start, end, timeframe="1Day", feed=None):  # noqa: ANN001, ANN201
         if self.close is None:
             return []
         ts = dt.datetime.combine(DAY, dt.time(4), tzinfo=dt.UTC)

@@ -47,15 +47,22 @@ from typing import TYPE_CHECKING, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from arc.journal import legacy
-from arc.journal.analytics import ProposalAnalytics  # noqa: TC001 - pydantic field
+from arc.journal.analytics import (
+    ProposalAnalytics,  # noqa: TC001 - pydantic field
+    levels_text,
+)
 from arc.journal.floor_exit import FloorExitFacts, floor_exit_facts
 from arc.journal.reasons import gate_reason, reason_label
+from arc.journal.sleeves import OTHER, sleeve_name
 from arc.tower.data import Direction, _dec, _has_table, _json, direction_of, parse_ts
 from arc.tower.data_exits import ExitVerdictView
 from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
     import sqlite3
+    from collections.abc import Sequence
+
+    from arc.account_profiles import DteSleeve
 
 __all__ = [
     "DATE_PRESETS",
@@ -155,6 +162,7 @@ WITH {{stubs}}base AS (
     p.swap_id, p.candidate_id,
     julianday(p.created_at) AS jd,
     json_extract(p.structure_json, '$.kind') AS structure_kind,
+    p.structure_json AS structure_json_full,
     json_extract(p.structure_json, '$.legs') AS legs_json,
     CAST(json_extract(p.structure_json, '$.net_debit_credit') AS REAL) AS limit_px,
     json_extract(p.sizing_json, '$.contracts') AS contracts,
@@ -228,6 +236,9 @@ WITH {{stubs}}base AS (
       ELSE 'proposed'
     END AS stage,
     net_ev_unit * COALESCE(contracts, 1) AS net_ev,
+    -- E22.5 (D97): entry DTE as priced at the open; a close reads the structure it exits
+    CAST(json_extract(CASE WHEN kind = 'close' THEN exited_structure_json
+                           ELSE structure_json_full END, '$.dte') AS INTEGER) AS entry_dte,
     CASE WHEN fill_price IS NOT NULL AND limit_px IS NOT NULL AND limit_px != 0
       THEN (CAST(fill_price AS REAL) - limit_px) / ABS(limit_px) * 10000.0 END AS slippage_bps,
     COALESCE(CAST(outcome_pnl AS REAL), structure_pnl)
@@ -293,6 +304,10 @@ class TradeFilters(BaseModel):
         default=None, ge=0.0, le=1.0, description="managed PoP, else Quant's"
     )
     account_profile: list[str] = Field(default_factory=list)
+    sleeve: list[str] = Field(
+        default_factory=list,
+        description="E22.5 (D97): entry-DTE sleeves (`short`, `swing`, `other`), by entry DTE",
+    )
     q: str | None = Field(
         default=None, description="hash prefix, ticker, run id, chain id, structure id"
     )
@@ -325,6 +340,10 @@ class TradeRow(BaseModel):
     exit_reason: str | None
     stage: Stage
     account_profile: str | None = None
+    entry_dte: int | None = Field(default=None, description="DTE at the open (a close: its open's)")
+    sleeve: str | None = Field(
+        default=None, description="E22.5 (D97): entry-DTE sleeve; `other` = fits none"
+    )
     run_id: str | None = None
     chain_run_id: str | None = None
     structure_id: str | None = Field(default=None, description="The structure this open created")
@@ -385,6 +404,9 @@ class TradeFilterOptions(BaseModel):
     exit_reasons: list[str]
     reason_codes: list[dict[str, str]] = Field(description="[{code, label}]")
     account_profiles: list[str]
+    sleeves: list[str] = Field(
+        default_factory=list, description="E22.5 (D97): the profile's sleeves + `other`"
+    )
     date_presets: list[str] = Field(default_factory=lambda: list(DATE_PRESETS))
     sort_keys: list[str] = Field(default_factory=lambda: list(SORT_KEYS))
 
@@ -489,6 +511,11 @@ class QuantSection(BaseModel):
     analytics: ProposalAnalytics | None = None
     analytics_at: _dt.datetime | None = None
     analytics_error: str | None = None
+    levels_text: str | None = Field(
+        default=None,
+        description="E23.3 (D98): `BE beyond POC 186.1 (+0.4 ATR) · short strike at call "
+        "wall 190`, the trade card's Levels fact; None when no level was stored",
+    )
 
 
 class PersonaCallView(BaseModel):
@@ -644,6 +671,18 @@ class FillView(BaseModel):
     filled_at: _dt.datetime | None
 
 
+class RegatedBand(BaseModel):
+    """D101: a band the ladder re-gated to after the market moved past the approved one."""
+
+    model_config = _STRICT
+
+    n: int
+    band_lo: Decimal | None = None
+    band_hi: Decimal | None = None
+    mid: Decimal | None = None
+    at: _dt.datetime | None = None
+
+
 class ExecutionSection(BaseModel):
     model_config = _STRICT
 
@@ -667,6 +706,10 @@ class ExecutionSection(BaseModel):
     slippage_vs_mid: Decimal | None = None
     orders: list[OrderView] = Field(default_factory=list)
     fills: list[FillView] = Field(default_factory=list)
+    regated_bands: list[RegatedBand] = Field(
+        default_factory=list,
+        description="D101: bands walked after a re-gate (band_lo/band_hi is the approved band)",
+    )
 
 
 class ExitLink(BaseModel):
@@ -930,7 +973,25 @@ def _in(col: str, values: list[str], params: list[Any]) -> str:
     return f"{col} IN ({','.join('?' * len(values))})"
 
 
-def _where(f: TradeFilters, today: _dt.date) -> tuple[str, list[Any]]:
+def _sleeve_clause(names: list[str], sleeves: Sequence[DteSleeve], params: list[Any]) -> str:
+    """E22.5: rows whose entry DTE falls in any named sleeve (``other``: in none)."""
+    windows = {s.name: (s.dte_min, s.dte_max) for s in sleeves}
+    parts: list[str] = []
+    for name in names:
+        if name in windows:
+            parts.append("entry_dte BETWEEN ? AND ?")
+            params.extend(windows[name])
+        elif name == OTHER:
+            inside = " OR ".join("entry_dte BETWEEN ? AND ?" for _ in windows)
+            for lo_hi in windows.values():
+                params.extend(lo_hi)
+            parts.append(f"(entry_dte IS NULL OR NOT ({inside}))" if inside else "1")
+    return "(" + " OR ".join(parts) + ")" if parts else "0"
+
+
+def _where(
+    f: TradeFilters, today: _dt.date, sleeves: Sequence[DteSleeve] = ()
+) -> tuple[str, list[Any]]:
     """WHERE clause over the ``trades`` CTE."""
     clauses: list[str] = []
     params: list[Any] = []
@@ -954,6 +1015,8 @@ def _where(f: TradeFilters, today: _dt.date) -> tuple[str, list[Any]]:
         clauses.append(_in("exit_reason", f.exit_reason, params))
     if f.account_profile:
         clauses.append(_in("profile", f.account_profile, params))
+    if f.sleeve:
+        clauses.append(_sleeve_clause(f.sleeve, sleeves, params))
     if f.reason_code:
         sub = _in("d.reason_code", f.reason_code, params)
         clauses.append(
@@ -996,8 +1059,9 @@ def _f(v: Any) -> float | None:
         return None
 
 
-def _row(r: sqlite3.Row) -> TradeRow:
+def _row(r: sqlite3.Row, sleeves: Sequence[DteSleeve] = ()) -> TradeRow:
     contracts = r["contracts"]
+    dte = r["entry_dte"]
     return TradeRow(
         proposal_hash=r["proposal_hash"],
         created_at=parse_ts(r["created_at"]),
@@ -1023,6 +1087,8 @@ def _row(r: sqlite3.Row) -> TradeRow:
         exit_reason=r["exit_reason"],
         stage=r["stage"],
         account_profile=r["profile"],
+        entry_dte=dte,
+        sleeve=sleeve_name(sleeves, dte) if sleeves else None,
         run_id=r["run_id"],
         chain_run_id=r["chain_run_id"],
         structure_id=r["structure_id"],
@@ -1057,8 +1123,12 @@ def load_trades(
     size: int = 50,
     sort: SortKey = "time",
     direction: Literal["asc", "desc"] = "desc",
+    sleeves: Sequence[DteSleeve] = (),
 ) -> TradeListResponse:
-    """One page of trades matching *filters*, plus the filter-wide summary (SELECT only)."""
+    """One page of trades matching *filters*, plus the filter-wide summary (SELECT only).
+
+    *sleeves* (E22.5): the profile's named sleeves, for the ``sleeve`` filter and column.
+    """
     now_et = now.astimezone(ET)
     today = now_et.date()
     size = max(1, min(size, MAX_PAGE_SIZE))
@@ -1079,7 +1149,7 @@ def load_trades(
     )
     if not _ready(conn):
         return empty
-    where, params = _where(filters, today)
+    where, params = _where(filters, today, sleeves)
     order = _SORT_SQL[sort]
     # Three lean passes instead of one wide window query: the filter-wide summary, the
     # page's row ids (sort keys only), then the full rows for that page (<= size rows).
@@ -1127,7 +1197,7 @@ def load_trades(
             ids,
         ):
             by_rid[r["rid"]] = r
-    items = [_row(by_rid[i]) for i in ids if i in by_rid]
+    items = [_row(by_rid[i], sleeves) for i in ids if i in by_rid]
     return empty.model_copy(update={"total": total, "items": items, "summary": summary})
 
 
@@ -1140,8 +1210,11 @@ def _trade_row(conn: sqlite3.Connection, proposal_hash: str) -> TradeRow | None:
     return _row(row) if row is not None else None
 
 
-def load_filter_options(conn: sqlite3.Connection, *, now: _dt.datetime) -> TradeFilterOptions:
+def load_filter_options(
+    conn: sqlite3.Connection, *, now: _dt.datetime, sleeves: Sequence[DteSleeve] = ()
+) -> TradeFilterOptions:
     """Distinct values for the filter dropdowns (SELECT only)."""
+    sleeve_names = [*(s.name for s in sleeves), OTHER] if sleeves else []
 
     def col(sql: str) -> list[str]:
         return [str(r[0]) for r in conn.execute(sql).fetchall() if r[0] not in (None, "")]
@@ -1157,6 +1230,7 @@ def load_filter_options(conn: sqlite3.Connection, *, now: _dt.datetime) -> Trade
             exit_reasons=[],
             reason_codes=[],
             account_profiles=[],
+            sleeves=sleeve_names,
         )
     codes = (
         col("SELECT DISTINCT reason_code FROM decisions WHERE proposal_hash IS NOT NULL ORDER BY 1")
@@ -1180,6 +1254,7 @@ def load_filter_options(conn: sqlite3.Connection, *, now: _dt.datetime) -> Trade
         )
         if _has_table(conn, "market_contexts")
         else [],
+        sleeves=sleeve_names,
     )
 
 
@@ -1504,6 +1579,9 @@ def _quant(p: sqlite3.Row, mc: sqlite3.Row | None) -> QuantSection:
         analytics=analytics,
         analytics_at=parse_ts(mc["created_at"]) if mc is not None else None,
         analytics_error=error,
+        levels_text=(levels_text(analytics.levels) or None)
+        if analytics is not None and analytics.levels
+        else None,
     )
 
 
@@ -1690,6 +1768,30 @@ def _approval(conn: sqlite3.Connection, h: str) -> ApprovalView | None:
     )
 
 
+def _regated_bands(conn: sqlite3.Connection, h: str) -> list[RegatedBand]:
+    """D101: the re-gated bands, from the ladder's ``order:band_moved`` (selected) rows."""
+    if not _has_table(conn, "decisions"):
+        return []
+    out: list[RegatedBand] = []
+    for r in conn.execute(
+        """SELECT payload, at FROM decisions
+           WHERE proposal_hash = ? AND reason_code = 'order:band_moved' AND choice = 'selected'
+           ORDER BY at, rowid""",
+        (h,),
+    ):
+        p = _json(r["payload"], {})
+        out.append(
+            RegatedBand(
+                n=int(p.get("regate_n") or len(out) + 1),
+                band_lo=_dec(p.get("new_band_lo")),
+                band_hi=_dec(p.get("new_band_hi")),
+                mid=_dec(p.get("mid")),
+                at=parse_ts(r["at"]),
+            )
+        )
+    return out
+
+
 def _execution(
     conn: sqlite3.Connection, h: str, row: TradeRow, approval: ApprovalView | None
 ) -> ExecutionSection | None:
@@ -1752,6 +1854,7 @@ def _execution(
         ]
     if x is None and not orders:
         return None
+    regated = _regated_bands(conn, h)
     mid = row.limit
     limit = approval.limit_price if approval and approval.limit_price is not None else mid
     fill = _dec(x["fill_price"]) if x is not None else None
@@ -1762,6 +1865,7 @@ def _execution(
         slippage_vs_mid=fill - mid if fill is not None and mid is not None else None,
         orders=orders,
         fills=fills,
+        regated_bands=regated,
     )
     if x is None:
         return base

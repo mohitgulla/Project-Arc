@@ -339,6 +339,8 @@ export function QuantBlocks({ d }: { d: TradeDetail }) {
     },
     { label: "Breakeven", value: p.breakevens?.length ? p.breakevens.map((b) => formatNumber(b, 2)).join(" / ") : DASH, hint: beAtrHint(a?.breakevens) },
   ];
+  // E23.3 (D98): the trade card's Levels fact (short strike / breakeven vs volume-profile and OI-wall levels)
+  if (q.levels_text) value.push({ label: "Levels", value: q.levels_text, hint: "vs volume profile / OI walls" });
   if (realized != null && r.net_ev != null && r.net_ev !== 0)
     value.push({
       label: "Realized vs modelled",
@@ -556,6 +558,11 @@ export function Execution({ d }: { d: TradeDetail }) {
         items={[
           { label: "Status", value: <span className="capitalize">{x.status ?? "—"}</span>, hint: x.detail ?? undefined },
           { label: "Band", value: <><M v={x.band_lo} kind="price" /> – <M v={x.band_hi} kind="price" /></> },
+          ...(x.regated_bands ?? []).map((b) => ({
+            label: `Re-gated band ${b.n}`,
+            value: <><M v={b.band_lo} kind="price" /> – <M v={b.band_hi} kind="price" /></>,
+            hint: "Market moved past the approved band; re-priced and re-gated",
+          })),
           { label: "Steps used / max", value: `${x.steps_used ?? "—"} / ${x.max_steps ?? "—"}`, hint: x.attempts != null ? `${x.attempts} attempt${x.attempts === 1 ? "" : "s"}` : undefined },
           { label: "Filled", value: `${x.filled_qty ?? 0} / ${x.contracts ?? "—"}` },
           { label: "Fill price", value: <M v={x.fill_price} kind="fill" /> },

@@ -39,10 +39,12 @@ for (const vp of VIEWPORTS) {
         // E8.8b status row: fixed slots, `Orders n/limit` (never "Orders today").
         await expect(page.getByTestId("order-budget")).toHaveText(/^Orders 31\/200/);
         await expect(strip).not.toContainText("Orders today");
-        await expect(page.getByTestId("slot-tick")).toContainText("Tick");
+        await expect(page.getByTestId("slot-tick")).toHaveText(/^Tick (\d+m|now|\d+h|\d+d)$/);
         await expect(page.getByTestId("slot-health")).toContainText("Health");
-        // D50: the env slot is plain text like the others, Title Case.
-        await expect(page.getByTestId("env-slot")).toHaveText("Paper Trade");
+        // The account slot is the switcher's trigger: "Arc Investor" (owner exception to D108),
+        // never "Control".
+        await expect(page.getByTestId("account-slot")).toHaveText("Paper Trade · Arc Investor");
+        await expect(strip).not.toContainText("Control");
         await expect(page.getByTestId("alerts-toggle")).toContainText("Alerts 1");
         await page.getByTestId("alerts-toggle").click();
         await expect(strip).toContainText("scalp slot 12:00 ET missed");
@@ -83,14 +85,14 @@ for (const vp of VIEWPORTS) {
         await expect(page.getByTestId("activity").locator(":scope > li")).toHaveCount(8);
         await expect(page.getByTestId("activity-more")).toHaveText("Show 1 more");
         await expect(page.getByTestId("activity")).toContainText("missed_window ×12");
-        // D50: the range control sits below the hero block (under the comparison line), with dates.
+        // D50: the range control sits below the hero block (under the comparison line); no dates (D104).
         await expect(page.getByTestId("equity-range").getByRole("tab", { name: "3M" })).toBeVisible();
         const rangeBox = await page.getByTestId("equity-range").boundingBox();
         const cmpBox = await page.getByTestId("equity-comparison").boundingBox();
         expect(rangeBox!.y).toBeGreaterThanOrEqual(cmpBox!.y + cmpBox!.height);
         const chartBox = await page.getByTestId("trend-chart").boundingBox();
         expect(rangeBox!.y + rangeBox!.height).toBeLessThanOrEqual(chartBox!.y);
-        await expect(page.getByTestId("equity-dates")).toHaveText(/^[A-Z][a-z]{2} \d{1,2}(, \d{4})?( – ([A-Z][a-z]{2} )?\d{1,2}, \d{4})?$/);
+        await expect(page.getByTestId("equity-dates")).toHaveCount(0);
         await expect(page.getByTestId("max-loss-caps")).toContainText("SPY");
         // Fresh marks: the Greeks header badge is fresh (one freshness slot, §10).
         await expect(page.getByTestId("greeks-freshness")).toHaveAttribute("data-freshness", "fresh");
@@ -108,7 +110,7 @@ for (const vp of VIEWPORTS) {
 test.describe("overview behaviour", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 
-  test("range control switches the equity series; every range prints its dates", async ({ page }) => {
+  test("range control switches the equity series; no dates beside it", async ({ page }) => {
     await open(page, "/", "dark");
     await page.getByTestId("equity-info").click();
     await expect(page.getByText("Today's 10-min monitor marks.")).toBeVisible();
@@ -121,12 +123,10 @@ test.describe("overview behaviour", () => {
     await expect(page.getByText("Reconciled daily closes.")).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(page.getByText(/vs \$[\d,]+ at \d\d-\d\d/)).toBeVisible();
-    const dates = page.getByTestId("equity-dates");
     for (const r of ["1W", "3M", "YTD", "ALL", "1D", "1M"]) {
       await page.getByRole("tab", { name: r, exact: true }).click();
       await expect(page).toHaveURL(new RegExp(`range=${r}`));
-      await expect(dates).toHaveText(/\d{1,2}, \d{4}$/);
-      if (r === "1M") await expect(dates).toContainText("–"); // a multi-day range spans two dates
+      await expect(page.getByTestId("equity-dates")).toHaveCount(0);
     }
   });
 
@@ -181,18 +181,19 @@ for (const vp of [PHONE_75, { name: "desktop", width: 1440, height: 900 }] as co
           await route.fulfill({ response: res, json: body });
         });
         await page.reload();
-        await expect(page.locator("[data-testid=status-slots] > li").first()).toHaveText("Trading Enabled");
+        await expect(page.locator("[data-testid=status-slots] > li").nth(1)).toHaveText(/^Trading Enabled \(\d+\)$/);
       }
       await expect(page.locator("[data-testid=status-slots] > li")).toHaveCount(6);
       const texts = await page.locator("[data-testid=status-slots] > li").evaluateAll((lis) =>
         lis.map((li) => (li as HTMLElement).innerText.replace(/\s+/g, " ").replace(/ ?[▲▼]$/, "").trim()),
       );
       expect(texts).toHaveLength(6);
-      expect(texts[0]).toMatch(vp.name === "desktop" ? /^HALTED / : /^Trading Enabled$/);
-      expect(texts[1]).toBe("Paper Trade");
-      expect(texts[2]).toMatch(/^Health (OK|Failed|Partial|No data)/);
-      expect(texts[3]).toMatch(/^Orders 31\/200/);
-      expect(texts[4]).toMatch(/^Tick /);
+      // D92: Account · Trading (sessions) · Orders · Tick · Health · Alerts
+      expect(texts[0]).toBe("Paper Trade · Arc Investor");
+      expect(texts[1]).toMatch(vp.name === "desktop" ? /^HALTED / : /^Trading Enabled \(\d+\)$/);
+      expect(texts[2]).toMatch(/^Orders 31\/200/);
+      expect(texts[3]).toMatch(/^Tick /);
+      expect(texts[4]).toMatch(/^Health (OK|Failed|Partial|No data)/);
       expect(texts[5]).toBe("Alerts 1");
       // Visual reading order (top, then left) is the DOM order on both layouts. (The fixture's
       // long halt reason can wrap the desktop row; without a halt it is one row.)
@@ -202,9 +203,15 @@ for (const vp of [PHONE_75, { name: "desktop", width: 1440, height: 900 }] as co
       const reading = [...boxes].sort((a, b) => a.top - b.top || a.left - b.left).map((b) => b.i);
       expect(reading).toEqual([0, 1, 2, 3, 4, 5]);
       if (vp.name !== "desktop") {
-        // phone: 3x2 grid, row 1 Trading | env | Health, row 2 Orders | Tick | Alerts
-        expect(new Set(boxes.slice(0, 3).map((b) => b.top)).size).toBe(1);
-        expect(new Set(boxes.slice(3).map((b) => b.top)).size).toBe(1);
+        // D92 phone (520): row 1 Account | Trading, row 2 Orders | Tick | Health | Alerts;
+        // below 480 px: Account | Trading, Orders | Tick, Health | Alerts.
+        const rows = vp.width < 480 ? [[0, 2], [2, 4], [4, 6]] : [[0, 2], [2, 6]];
+        for (const [a, z] of rows) expect(new Set(boxes.slice(a, z).map((b) => b.top)).size).toBe(1);
+        // D99: no slot text is truncated (`Orders 0/…` was clipped at 520 px)
+        const clipped = await page
+          .locator("[data-testid=status-slots] span.truncate")
+          .evaluateAll((els) => els.filter((e) => e.scrollWidth > e.clientWidth).map((e) => (e as HTMLElement).innerText));
+        expect(clipped).toEqual([]);
       }
     });
   });
@@ -222,7 +229,7 @@ test.describe("overview status row desktop without a halt", () => {
     });
     await open(page, "/", "dark");
     const slots = page.locator("[data-testid=status-slots] > li");
-    await expect(slots.first()).toHaveText("Trading Enabled");
+    await expect(slots.nth(1)).toHaveText(/^Trading Enabled \(\d+\)$/);
     const tops = await slots.evaluateAll((lis) => lis.map((li) => Math.round(li.getBoundingClientRect().top)));
     expect(tops).toHaveLength(6);
     expect(new Set(tops).size).toBe(1);
@@ -231,7 +238,7 @@ test.describe("overview status row desktop without a halt", () => {
 });
 
 test.describe("overview phone-75 layout", { tag: PHONE_75_TAG }, () => {
-  test("single-column order and a 3x2 status grid", async ({ page }) => {
+  test("single-column order and a 4-column status grid", async ({ page }) => {
     await open(page, "/", "dark");
     const titles = await page.locator("[data-testid=overview-grid] h2").evaluateAll((hs) =>
       hs
@@ -242,6 +249,6 @@ test.describe("overview phone-75 layout", { tag: PHONE_75_TAG }, () => {
     const order = ["Equity", "P&L Today", "Movers", "Positions", "Greeks vs Caps", "Today's Proposals", "Today's Pick", "Recent Activity"];
     expect(order.map((o) => titles.findIndex((t) => t.startsWith(o)))).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
     const cols = await page.getByTestId("status-slots").evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(" ").length);
-    expect(cols).toBe(3);
+    expect(cols).toBe(4);
   });
 });

@@ -206,7 +206,7 @@ def run_exits(args: argparse.Namespace) -> int:
         sys.stderr.write("arc exits: no ATM IV for the expiration\n")
         return 1
     rv = _realized_vol(provider, ticker, as_of)
-    policy = cfg.policy_for(c.structure.kind)
+    policy = cfg.policy_for(c.structure.kind, settings.exit_block_for_dte(c.dte))
 
     def run(pol: ExitPolicy) -> ExitModelResult:
         return model_exits(

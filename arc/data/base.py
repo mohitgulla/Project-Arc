@@ -6,9 +6,9 @@ See PLAN.md §2.2 (arc/data/) and §4 (E1.4).
 from __future__ import annotations
 
 import datetime as dt  # noqa: TC003 — used at runtime in pydantic models
-from typing import Literal, NamedTuple, Protocol, runtime_checkable
+from typing import Any, Literal, NamedTuple, Protocol, runtime_checkable
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SerializerFunctionWrapHandler, model_serializer
 
 # ---------------------------------------------------------------------------
 # Data contracts
@@ -55,6 +55,17 @@ class OptionContract(BaseModel):
     volume: int | None = None
     # D66: Penny Program class (Alpaca contracts `ppind`); None = unknown
     penny_program: bool | None = None
+    # E2.5 (D116): where open_interest / volume came from. Left out of dumps when
+    # None, so recordings, tapes and hashes of contracts without them are unchanged.
+    open_interest_date: dt.date | None = Field(
+        None, description="Alpaca contracts `open_interest_date` (the provider's OI as-of)"
+    )
+    oi_source: Literal["cboe", "alpaca"] | None = Field(
+        None, description="Set by the scanner's OI merge (arc.data.oi); None = not merged"
+    )
+    volume_source: Literal["today", "prev_session"] | None = Field(
+        None, description="Which session's daily bar `volume` is (arc.data.volume)"
+    )
 
     # Volatility and Greeks
     implied_volatility: float | None = None
@@ -70,6 +81,17 @@ class OptionContract(BaseModel):
     def is_flagged(self) -> bool:
         """Return True if any data-quality issues were flagged."""
         return len(self.quality_flags) > 0
+
+    @model_serializer(mode="wrap")
+    def _drop_unset_sources(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        out: dict[str, Any] = handler(self)
+        for key in _OPTIONAL_SOURCE_FIELDS:
+            if out.get(key) is None:
+                out.pop(key, None)
+        return out
+
+
+_OPTIONAL_SOURCE_FIELDS = ("open_interest_date", "oi_source", "volume_source")
 
 
 class UnderlyingQuote(BaseModel):
@@ -112,8 +134,10 @@ class MarketDataProvider(Protocol):
         Stale, missing-greeks, and zero-bid contracts are flagged.
     underlying_quote(symbol)
         Latest bid/ask/mid for an underlying equity.
-    history_bars(symbol, start, end, timeframe)
-        OHLCV bars for *symbol* over [start, end].
+    history_bars(symbol, start, end, timeframe, *, feed=None)
+        OHLCV bars for *symbol* over [start, end]. *feed* (E23.0a, D98) names the
+        stock feed (``sip`` / ``iex``) where the venue has several; ``None`` = the
+        provider's default. Providers with one feed ignore it.
     """
 
     def option_chain(
@@ -131,6 +155,8 @@ class MarketDataProvider(Protocol):
         start: dt.date,
         end: dt.date,
         timeframe: str = "1Day",
+        *,
+        feed: str | None = None,
     ) -> list[HistoryBar]: ...
 
 
@@ -177,6 +203,18 @@ def _bar_day(bar: HistoryBar) -> dt.date:
     return (ts.astimezone(ET) if ts.tzinfo is not None else ts).date()
 
 
+def _after_close(stamp: dt.datetime, today: dt.date) -> bool:
+    """True when a quote *stamp* is after *today*'s regular close (D102).
+
+    Naive stamps and non-session days are never "after close" (the old rules apply).
+    """
+    from arc.utils.calendar import is_session, session_close
+
+    if stamp.tzinfo is None or not is_session(today):
+        return False
+    return stamp > session_close(today)
+
+
 def market_spot(
     provider: MarketDataProvider,
     symbol: str,
@@ -187,6 +225,10 @@ def market_spot(
 ) -> Spot:
     """Spot for pricing *symbol* on *today*: never a one-sided half-price mid (E4.12).
 
+    - a quote stamped after *today*'s session close: today's daily close when that
+      bar exists (D102: the closing book can leave a stale far bid behind. QQQ on
+      2026-10-12 at 16:00 ET quoted 727.10 / 746.09, a 2.6% spread inside the 5% cap,
+      so the mid was 736.60 against a 746.04 close); else the rules below;
     - both sides > 0 and spread <= ``max_spread_pct`` of the mid: the mid;
     - both sides > 0 but wider: the latest daily close when that bar is from
       *today* (after hours the close is the real price), else the mid;
@@ -196,6 +238,13 @@ def market_spot(
     *quote* is an already fetched quote (saves a second request).
     """
     q = quote if quote is not None else provider.underlying_quote(symbol)
+    if _after_close(q.timestamp, today):
+        bars = provider.history_bars(
+            symbol, today - dt.timedelta(days=REFERENCE_LOOKBACK_DAYS), today
+        )
+        last = bars[-1] if bars and bars[-1].close > 0 else None
+        if last is not None and _bar_day(last) == today:
+            return Spot(last.close, "last_close")
     two_sided = q.bid > 0 and q.ask > 0
     mid = (q.bid + q.ask) / 2.0 if two_sided else 0.0
     if two_sided and (q.ask - q.bid) <= max_spread_pct * mid:

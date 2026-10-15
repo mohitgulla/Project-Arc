@@ -5,8 +5,7 @@
 import type { TrendPoint } from "../components/TrendChart";
 import type { Stage } from "../components/StatusStepper";
 import { num, type Schemas } from "./api";
-import { ET_ZONE, STALE_FACTOR, formatAge, formatEt, isStale } from "./format";
-import { formatRange } from "./performance";
+import { STALE_FACTOR, formatAge, formatEt, isStale } from "./format";
 
 export type Overview = Schemas["OverviewResponse"];
 export type EquitySection = Schemas["EquitySection"];
@@ -60,28 +59,6 @@ export function equityView(e: EquitySection | undefined, range: OverviewRange): 
 }
 
 // Title Case on the Tower (D50); Slack keeps sentence case (D22).
-const ET_DAY = new Intl.DateTimeFormat("en-CA", { timeZone: ET_ZONE, year: "numeric", month: "2-digit", day: "2-digit" });
-
-/** The ET calendar date (`YYYY-MM-DD`) of an instant. */
-export function etDay(t: string | number | Date): string | null {
-  const d = new Date(t);
-  return Number.isNaN(d.getTime()) ? null : ET_DAY.format(d);
-}
-
-/**
- * Equity card date range (D50), Performance `formatRange` format, ET: from the range start
- * (`start_at`, else the first plotted point) to `value_at`. Without either end it falls back to
- * today (*now*), so a 1D range with no prior close prints just today's date.
- */
-export function equityDates(e: EquitySection | undefined, now: number): string {
-  const today = etDay(now) as string;
-  if (!e) return formatRange(today, today);
-  const first = [...(e.series ?? [])].sort((a, b) => Date.parse(a.t) - Date.parse(b.t))[0]?.t;
-  const end = (e.value_at && etDay(e.value_at)) || today;
-  const start = (e.start_at && etDay(e.start_at)) || (first && etDay(first)) || end;
-  return start > end ? formatRange(end, end) : formatRange(start, end);
-}
-
 const KIND_LABEL: Record<string, string> = {
   vertical_debit: "Debit Vertical",
   vertical_credit: "Credit Vertical",
@@ -244,7 +221,7 @@ export function pnlSplit(realized: number | null, unrealized: number | null): { 
 export type SlotTone = "ok" | "warn" | "neg" | "none";
 
 export interface StatusSlot {
-  key: "trading" | "tick" | "health" | "alerts" | "orders" | "env";
+  key: "account" | "trading" | "orders" | "tick" | "health" | "alerts";
   label: string;
   value: string;
   tone: SlotTone;
@@ -254,12 +231,22 @@ export interface StatusSlot {
   detail?: string;
 }
 
+/** D92: the production account's display name (was "Control" in D69 specs). */
+/**
+ * The account slot is the account switcher's trigger, so it says "Arc Investor" for the
+ * production account: the owner's switcher exception (2026-10-14, E25.6) to D108's
+ * "Production" everywhere else.
+ */
+export const ARC_INVESTOR = "Arc Investor";
+
 export interface StatusContext {
   now: number;
   tickS?: number;
   healthS?: number;
   env?: string;
   accountProfile?: string;
+  /** Account being viewed: Arc Investor (default) or an arm's treatment name (E15.7). */
+  account?: string;
 }
 
 /** `3m ago` -> `3m`; `just now` -> `now`. */
@@ -280,17 +267,31 @@ export function envLabel(env?: string): string {
   return env ? `${titleWords(env)} Trade` : "";
 }
 
+/** D92 account slot: `Paper Trade · Arc Investor` (or an arm's treatment name). */
+export function accountLabel(env?: string, account: string = ARC_INVESTOR): string {
+  return [envLabel(env), account].filter(Boolean).join(" · ");
+}
+
 /**
- * Slot order (fixed, D50): Trading · env · Health · Orders · Tick · Alerts, which reads as a
- * 3x2 grid on mobile (row 1 Trading | env | Health, row 2 Orders | Tick | Alerts) and one row on
- * desktop. A halt replaces the Trading slot (`HALTED`, reason, age); a stale or non-ok heartbeat
- * turns its slot --warn. Values are Title Case.
+ * Slot order (fixed, D92; was D50 Trading · env · Health · Orders · Tick · Alerts):
+ * Account · Trading · Orders · Tick · Health · Alerts. The account slot reads
+ * `Paper Trade · Arc Investor`; Trading carries the account's session count, `Enabled (7)`;
+ * Tick shows minutes (`4m`; D92 rev, owner dropped seconds). A halt replaces the Trading slot (`HALTED`, reason, age);
+ * a stale or non-ok heartbeat turns its slot --warn. Values are Title Case.
  */
 export function statusRow(o: Pick<Overview, "status">, ctx: StatusContext): StatusSlot[] {
   const s = o.status;
   const slots: StatusSlot[] = [];
+  const account = ctx.account ?? ARC_INVESTOR;
+  const envTitle = [account, ctx.env && `environment ${ctx.env}`, ctx.accountProfile && `account profile ${ctx.accountProfile}`]
+    .filter(Boolean)
+    .join(" · ");
+  slots.push({ key: "account", label: "", value: accountLabel(ctx.env, account), tone: "none", title: envTitle });
+  const n = s.sessions ?? null;
+  const since = s.sessions_since ? ` since ${s.sessions_since}` : "";
+  const sessionsTitle = n === null ? "" : ` · ${n} trading session${n === 1 ? "" : "s"}${since}`;
   if (s.halted && s.halt) {
-    const since = s.halt.at ? `${shortAge(s.halt.at, ctx.now)} · since ${formatEt(s.halt.at)}` : "";
+    const at = s.halt.at ? `${shortAge(s.halt.at, ctx.now)} · since ${formatEt(s.halt.at)}` : "";
     const more = s.active_halts > 1 ? ` · ${s.active_halts} active` : "";
     slots.push({
       key: "trading",
@@ -298,14 +299,30 @@ export function statusRow(o: Pick<Overview, "status">, ctx: StatusContext): Stat
       value: s.halt.at ? shortAge(s.halt.at, ctx.now) : "",
       tone: "neg",
       detail: `${s.halt.reason}`,
-      title: `Halted by ${s.halt.actor}: ${s.halt.reason}${since ? ` (${since})` : ""}${more}`,
+      title: `Halted by ${s.halt.actor}: ${s.halt.reason}${at ? ` (${at})` : ""}${more}${sessionsTitle}`,
     });
   } else {
-    slots.push({ key: "trading", label: "Trading", value: "Enabled", tone: "ok", title: "Trading enabled (no active halt)" });
+    slots.push({
+      key: "trading",
+      label: "Trading",
+      value: n === null ? "Enabled" : `Enabled (${n})`,
+      tone: "ok",
+      title: `Trading enabled (no active halt)${sessionsTitle}`,
+    });
   }
-  const env = envLabel(ctx.env);
-  const envTitle = ["Environment", ctx.env, ctx.accountProfile && `account profile ${ctx.accountProfile}`].filter(Boolean).join(" · ");
-  slots.push({ key: "env", label: "", value: env || "—", tone: "none", title: envTitle });
+  const b = s.order_budget;
+  if (b) {
+    const tier = b.tier && b.tier !== "normal" ? ` · ${titleWords(b.tier)}` : "";
+    slots.push({
+      key: "orders",
+      label: "Orders",
+      value: `${b.used}/${b.limit}${tier}`,
+      tone: tier ? "warn" : "ok",
+      title: `D32 order budget: ${b.used} of ${b.limit} today${tier}${b.as_of ? ` · as of ${formatEt(b.as_of)} ET` : ""}`,
+    });
+  } else {
+    slots.push({ key: "orders", label: "Orders", value: "—", tone: "none", title: "No order budget in the monitor heartbeat yet" });
+  }
   const beat = (key: "tick" | "health", label: string, at: string | null | undefined, status: string | null | undefined, cadence?: number): StatusSlot => {
     if (!at) return { key, label, value: "No data", tone: "none", title: `${label}: no heartbeat yet` };
     const stale = cadence !== undefined && isStale(at, cadence, ctx.now);
@@ -321,23 +338,10 @@ export function statusRow(o: Pick<Overview, "status">, ctx: StatusContext): Stat
       title: `${label} ${status ? statusWord(status) : ""} · as of ${formatEt(at)} ET${note}`.replace(/\s+/g, " "),
     };
   };
-  slots.push(beat("health", "Health", s.health_at, s.health_status, ctx.healthS));
-  const b = s.order_budget;
-  if (b) {
-    const tier = b.tier && b.tier !== "normal" ? ` · ${titleWords(b.tier)}` : "";
-    slots.push({
-      key: "orders",
-      label: "Orders",
-      value: `${b.used}/${b.limit}${tier}`,
-      tone: tier ? "warn" : "ok",
-      title: `D32 order budget: ${b.used} of ${b.limit} today${tier}${b.as_of ? ` · as of ${formatEt(b.as_of)} ET` : ""}`,
-    });
-  } else {
-    slots.push({ key: "orders", label: "Orders", value: "—", tone: "none", title: "No order budget in the monitor heartbeat yet" });
-  }
   slots.push(beat("tick", "Tick", s.tick_at, s.tick_status, ctx.tickS));
-  const n = (s.alerts ?? []).length;
-  slots.push({ key: "alerts", label: "Alerts", value: String(n), tone: n > 0 ? "warn" : "ok", title: `${n} open alert${n === 1 ? "" : "s"}` });
+  slots.push(beat("health", "Health", s.health_at, s.health_status, ctx.healthS));
+  const k = (s.alerts ?? []).length;
+  slots.push({ key: "alerts", label: "Alerts", value: String(k), tone: k > 0 ? "warn" : "ok", title: `${k} open alert${k === 1 ? "" : "s"}` });
   return slots;
 }
 

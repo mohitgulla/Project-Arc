@@ -14,7 +14,7 @@ import structlog
 if TYPE_CHECKING:
     from arc.data.base import MarketDataProvider
     from arc.gate.halt import HaltSwitch
-    from arc.scanner import ScanCandidate
+    from arc.scanner import ScanCandidate, ScanInputs
 
 logger = structlog.get_logger()
 
@@ -481,7 +481,9 @@ def _measure_menu(
     pool = list(res.candidates)
     models = {}
     for c in pool:
-        m = candidate_model(c, res.spot, exits, r, rv)
+        m = candidate_model(
+            c, res.spot, exits, r, rv, exit_block=settings.exit_block_for_dte(c.dte)
+        )
         if m is not None:
             models[id(c)] = m
     kept, keys = rank_menu(
@@ -495,6 +497,7 @@ def _measure_menu(
         exits=exits,
         r=r,
         realized_vol=rv,
+        exit_block_for=settings.exit_block_for_dte,
     )
     out = [c.model_copy(update={"rank": i}) for i, c in enumerate(kept, start=1)]
     vals = {(res.ticker, i): keys[id(c)].value for i, c in enumerate(kept, start=1)}
@@ -632,9 +635,11 @@ def _chains(args: argparse.Namespace) -> int:
         provider = recorded = RecordedMarketData.from_files(*paths)
     else:
         from arc.data.alpaca import AlpacaMarketData
+        from arc.data.oi import CboeOpenInterestMarket
 
         try:
-            provider = AlpacaMarketData()
+            # E2.5 (D116): Cboe's delayed open interest first, Alpaca's as fallback.
+            provider = CboeOpenInterestMarket(AlpacaMarketData())
         except RuntimeError as exc:
             sys.stderr.write(f"arc chains: {exc} (or pass --fixture spy to run offline)\n")
             return 2
@@ -696,7 +701,15 @@ def _chains(args: argparse.Namespace) -> int:
 
         store = IvStore(iv_conn) if iv_conn is not None else None
         history = store.series(ticker, until=as_of) if store is not None else {}
-        res = scan(provider, ticker, params, as_of=as_of, iv_history=history)
+        # E2.5: a live scan pro-rates today's volume minimum on the wall clock.
+        res = scan(
+            provider,
+            ticker,
+            params,
+            as_of=as_of,
+            iv_history=history,
+            now=now_et() if recorded is None and args.as_of is None else None,
+        )
         if args.record_iv and store is not None:
             _record_chain_iv(store, provider, ticker, as_of, settings)
         atr14 = _regime_atr14(iv_conn, res.ticker)
@@ -748,6 +761,7 @@ def _chains(args: argparse.Namespace) -> int:
             f"  ATM IV {atm}  IVR {ivr}  IVP {ivp}  ({iv.observations} obs, lookback {iv.lookback})"
         )
         lines.append(f"  contracts {fr.total} -> liquid {fr.kept}  rejected {fr.rejected}")
+        lines.append("  " + _fmt_inputs(r.inputs))
         if not r.candidates:
             lines.append("  no candidates")
         if measure is not None:
@@ -769,6 +783,16 @@ def _chains(args: argparse.Namespace) -> int:
         lines.append("")
     sys.stdout.write("\n".join(lines))
     return 0
+
+
+def _fmt_inputs(inp: ScanInputs) -> str:
+    """E2.5: ``open interest cboe N · alpaca N · unknown N  volume today N (min M)``."""
+    vol = " · ".join(f"{k} {n}" for k, n in inp.volume_source.items()) or "none"
+    low = "" if inp.min_volume_today is None else f"  (volume minimum now {inp.min_volume_today})"
+    return (
+        f"open interest cboe {inp.oi_cboe} · alpaca {inp.oi_alpaca} · unknown {inp.oi_unknown}"
+        f"  volume {vol}{low}"
+    )
 
 
 def _scan(args: argparse.Namespace) -> int:

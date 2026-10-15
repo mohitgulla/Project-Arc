@@ -186,6 +186,22 @@ class Structure(BaseModel):
     buying_power: Decimal | None = Field(
         None, description="Estimated buying-power reduction per unit (Reg-T style)"
     )
+    sleeve: str | None = Field(
+        None,
+        description=(
+            "E22.2 (D97): the account profile's entry-DTE sleeve this structure was "
+            "proposed in (e.g. `short`, `swing`); set by quant.propose for profiles with "
+            "sleeves only. Left out of dumps when None, so single-window proposal hashes "
+            "and stored structures are unchanged."
+        ),
+    )
+
+    @model_serializer(mode="wrap")
+    def _drop_no_sleeve(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        out: dict[str, Any] = handler(self)
+        if out.get("sleeve") is None:
+            out.pop("sleeve", None)
+        return out
 
 
 # ---------------------------------------------------------------------------

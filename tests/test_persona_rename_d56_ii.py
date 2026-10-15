@@ -255,9 +255,7 @@ def test_shipped_routines_use_new_names(shipped: RoutinesConfig) -> None:
     )
     assert p["scorecard"].options["persona"] == "ops"
     ev = p["positions.evaluate"]
-    assert (
-        ev.options["label"] == "Position marks" and ev.options["persona"] == "quant" and not ev.llm
-    )
+    assert ev.options["label"] == "Position marks" and "persona" not in ev.options and not ev.llm
     assert ev.chain == ["exits.mandatory", "broker.execute"]
     assert p["research"].chain[-1] == "broker.execute"
     assert {"exits.mandatory", "broker.execute"} <= set(shipped.steps)
@@ -316,7 +314,8 @@ def test_mandatory_exits_record_quant_persona() -> None:
 # Grep gate: no Investor / Auditor persona names outside history
 # ---------------------------------------------------------------------------
 
-_OLD = re.compile(r"\b(Investor|Auditor|INVESTOR|AUDITOR)\b")
+# D92: "Arc Investor" is the production account's name (Tower), not the removed persona.
+_OLD = re.compile(r"\b((?<!Arc )Investor|Auditor|INVESTOR|AUDITOR)\b")
 _ALLOWED = (
     "arc/journal/legacy.py",
     "arc/journal/reasons.py",  # read-only legacy enum members

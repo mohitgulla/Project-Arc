@@ -213,6 +213,10 @@ def add_history_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser])
 
     add_universe_parser(hs)  # E7.7 (D84): `arc history universe build|show`
 
+    from arc.backtest.option_stats_cli import add_stats_parser
+
+    add_stats_parser(hs)  # E7.16 (D84): `arc history stats build|show`
+
 
 def _concurrency(name: str, args: argparse.Namespace) -> int:
     if name != "thetadata":
@@ -314,6 +318,10 @@ def run_history(args: argparse.Namespace) -> int:
         from arc.backtest.universe_cli import run_universe
 
         return run_universe(args)
+    if args.history_command == "stats":
+        from arc.backtest.option_stats_cli import run_stats
+
+        return run_stats(args)
     tickers = resolve_tickers(args)
     end = args.end or previous_session(now_et().date() + dt.timedelta(days=1))
     store = ParquetHistoryStore(args.data_dir)

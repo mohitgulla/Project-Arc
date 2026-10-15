@@ -94,8 +94,10 @@ DEFAULT_ROUTINES_PATH = REPO_ROOT / "config" / "routines.yaml"
 
 #: E8.8d (D48): Session Timeline bands, in display order (key, label). ``sources`` is
 #: assigned by D47 category (one sub-band per category); ``other`` is the fallback.
+#: The Ops Context Store groups context kinds by the same bands (D89).
 TIMELINE_GROUPS: tuple[tuple[str, str], ...] = (
     ("sources", "Sources"),
+    ("universe", "Universe"),  # D89: active-list resolve + momentum / trending tiers
     ("scout", "Scout"),  # E13.7 (D56): the daily slow-feed read
     ("scalp", "Scalp"),
     ("trading_loop", "Trading loop"),
@@ -544,12 +546,18 @@ class LoopSettings(BaseModel):
     run. ``max_runtime`` is the chain deadline: a step still running at the
     deadline finishes, but no new step starts after it. ``pnl_bucket_pct`` rounds
     P&L (as % of equity) before it enters the digest.
+
+    ``max_idle_with_free_slots`` (E22.3, D97): while any DTE sleeve has a free slot
+    **and** at least one sleeve has had no open today, an unchanged loop still runs
+    in full once that long has passed since the last full run (journaled
+    ``loop_forced_free_slots``); otherwise ``max_idle`` applies as before.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     job: str = "research"
     max_idle: _dt.timedelta = _dt.timedelta(minutes=30)
+    max_idle_with_free_slots: _dt.timedelta = _dt.timedelta(minutes=20)
     max_runtime: _dt.timedelta = _dt.timedelta(minutes=7)
     pnl_bucket_pct: Annotated[float, Field(gt=0, le=10)] = 0.5
     post_hold_roots: bool = True
@@ -563,15 +571,17 @@ class LoopSettings(BaseModel):
     # RoutinesConfig checks them against the chain and the steps' reads/writes.
     parallel_branches: tuple[tuple[str, ...], ...] = ()
 
-    @field_validator("max_idle", "max_runtime", mode="before")
+    @field_validator("max_idle", "max_idle_with_free_slots", "max_runtime", mode="before")
     @classmethod
     def _dur(cls, v: Any) -> Any:
         return parse_duration(v) if isinstance(v, str) else v
 
     @model_validator(mode="after")
     def _positive(self) -> LoopSettings:
-        if self.max_idle <= _dt.timedelta(0) or self.max_runtime <= _dt.timedelta(0):
-            msg = "loop.max_idle and loop.max_runtime must be positive"
+        if min(self.max_idle, self.max_idle_with_free_slots, self.max_runtime) <= _dt.timedelta(0):
+            msg = (
+                "loop.max_idle, loop.max_idle_with_free_slots and loop.max_runtime must be positive"
+            )
             raise ValueError(msg)
         flat = [s for b in self.parallel_branches for s in b]
         if self.parallel_branches and (
@@ -1041,6 +1051,201 @@ class IvBackfillSettings(BaseModel):
     since: _dt.date = _dt.date(2024, 3, 1)
 
 
+class VolumeProfileSettings(BaseModel):
+    """E23.0 (D98): the 20-session composite volume profile on regime technicals.
+
+    Built pre-market by the ``levels`` job from SIP intraday bars (E23.0a feed), stored
+    as the ``levels`` kind and merged into the day's ``technicals`` (``vp_*`` fields)
+    by the regime step. Shipped **on** (D86); ``enabled: off`` is the rollback: no
+    profile is computed or merged and Research's prompt is byte-identical to before.
+    Context only, never a gate input.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    enabled: bool = False
+    sessions: Annotated[int, Field(ge=5, le=60)] = 20
+    bar: Literal["5Min", "15Min", "1Hour"] = "15Min"
+    value_area: Annotated[float, Field(ge=0.5, le=0.95)] = 0.70
+    bin_atr: Annotated[float, Field(gt=0.0, le=1.0)] = 0.1
+    hvn_min_share: Annotated[float, Field(gt=0.0, le=0.5)] = 0.03
+
+    @field_validator("enabled", mode="before")
+    @classmethod
+    def _enabled(cls, v: Any) -> bool:
+        return parse_on_off(v, where="volume_profile.enabled")
+
+
+class OiWallsSettings(BaseModel):
+    """E23.0 (D98): options open-interest walls on regime technicals.
+
+    Per ticker the strike with the largest call OI above spot, the largest put OI below
+    spot and the largest total OI, summed over the swing sleeve's expiries (Alpaca
+    contract OI), computed pre-market by the ``levels`` job. A strike below ``min_oi``
+    is never a wall. Shipped **on** (D86); ``enabled: off`` is the rollback (no chain
+    call, no ``oi_*`` fields, prompt byte-identical). Context only, never a gate input.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    enabled: bool = False
+    min_oi: Annotated[int, Field(ge=0, le=1_000_000)] = 500
+
+    @field_validator("enabled", mode="before")
+    @classmethod
+    def _enabled(cls, v: Any) -> bool:
+        return parse_on_off(v, where="oi_walls.enabled")
+
+
+class RangeEdgesSettings(BaseModel):
+    """E23.1 (D98): the range-edge entry filter for sideways regimes.
+
+    After Research ranks (and after anti-chase), a bullish / bearish idea whose account
+    profile maps it to long premium only, in a regime listed in ``regimes``, is kept only
+    from the right edge of its range: bullish at position <= ``bull_max_pos``, bearish at
+    >= ``bear_min_pos``; otherwise dropped as ``mid_range_entry``. ``levels:
+    value_area`` (default) reads the E23.0 volume-profile ``vp_pos`` (outside the value
+    area counts as that edge); ``high_low`` reads the 20-session ``range_pos_20d``. A
+    missing value area falls back to ``high_low`` (journaled ``vp_missing``); missing
+    technicals keep the idea (``technicals_missing``); a range narrower than
+    ``min_range_atr`` x ATR14 keeps it (``range_too_narrow``). Shipped **on** (D86);
+    ``enabled: off`` is the rollback: the pipeline is byte-identical to before E23.1.
+    Deterministic, never a gate input. The rule is
+    :func:`arc.features.technicals.is_mid_range`.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    enabled: bool = False
+    regimes: tuple[Literal["bull", "bear", "sideways"], ...] = ("sideways",)
+    levels: Literal["value_area", "high_low"] = "value_area"
+    bull_max_pos: Annotated[float, Field(ge=0.0, le=0.5)] = 0.35
+    bear_min_pos: Annotated[float, Field(ge=0.5, le=1.0)] = 0.65
+    min_range_atr: Annotated[float, Field(ge=0.0, le=10.0)] = 1.5
+
+    @field_validator("enabled", mode="before")
+    @classmethod
+    def _enabled(cls, v: Any) -> bool:
+        return parse_on_off(v, where="range_edges.enabled")
+
+    def rule(self) -> Any:
+        """The pure rule's thresholds (:class:`arc.features.technicals.RangeEdgeRule`)."""
+        from arc.features.technicals import RangeEdgeRule
+
+        return RangeEdgeRule(
+            regimes=tuple(self.regimes),
+            levels=self.levels,
+            bull_max_pos=self.bull_max_pos,
+            bear_min_pos=self.bear_min_pos,
+            min_range_atr=self.min_range_atr,
+        )
+
+
+class PullbackWatchSettings(BaseModel):
+    """E23.2 (D98): watch anti-chase drops and re-surface them once the stretch resets.
+
+    A ``stretched_entry`` drop is kept as a ``pullback_watch`` context entry for the
+    ``ttl_sessions`` sessions after the drop session. Each Research run re-checks every
+    live entry against the current spot (:func:`arc.data.base.reference_price`) and
+    today's ``regime`` technicals with :func:`arc.pipeline.pullback.rearm_verdict`:
+    ``ready`` names get a code-built line in Research's prompt (Research may rank them;
+    anti-chase and range edges still apply), ``waiting`` ones one count line, and
+    expired / invalidated / dedupe-retired entries are closed and journaled.
+
+    ``target: value`` (default) is ready once spot is within ``rearm_level_atr`` ATR14
+    above the nearest support level (bullish: POC, VAH, the HVN below; bears mirror with
+    POC, VAL, the HVN above), or below it; missing levels fall back to ``sma20``
+    (journaled ``vp_missing``). ``target: sma20``: stance-signed ``(spot - SMA20) /
+    ATR14 <= rearm_stretch_atr``. With ``anti_chase.vwap`` on, both also need the
+    stance-signed session VWAP stretch ``<= rearm_vwap_atr`` (a failed fetch waits).
+    ``invalidate_below_sma20_atr``: the stance-signed SMA20 stretch below this, or a
+    regime label flipped against the stance, invalidates the watch. Shipped **on**
+    (D86); ``enabled: off`` is the rollback (no writes; prompt byte-identical).
+    Deterministic, never a gate input.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    enabled: bool = False
+    target: Literal["value", "sma20"] = "value"
+    ttl_sessions: Annotated[int, Field(ge=1, le=5)] = 3
+    rearm_stretch_atr: Annotated[float, Field(ge=0.0, le=2.5)] = 1.0
+    rearm_level_atr: Annotated[float, Field(ge=0.0, le=2.0)] = 0.5
+    rearm_vwap_atr: Annotated[float, Field(ge=0.0, le=1.0)] = 0.25
+    invalidate_below_sma20_atr: Annotated[float, Field(ge=-5.0, le=0.0)] = -1.0
+    max_ready_in_prompt: Annotated[int, Field(ge=0, le=10)] = 5
+
+    @field_validator("enabled", mode="before")
+    @classmethod
+    def _enabled(cls, v: Any) -> bool:
+        return parse_on_off(v, where="pullback_watch.enabled")
+
+    def rule(self, *, vwap: bool) -> Any:
+        """The pure rule (:class:`arc.pipeline.pullback.PullbackRule`); *vwap* = anti_chase.vwap."""
+        from arc.pipeline.pullback import PullbackRule
+
+        return PullbackRule(
+            target=self.target,
+            rearm_stretch_atr=self.rearm_stretch_atr,
+            rearm_level_atr=self.rearm_level_atr,
+            rearm_vwap_atr=self.rearm_vwap_atr,
+            invalidate_below_sma20_atr=self.invalidate_below_sma20_atr,
+            vwap=vwap,
+        )
+
+
+class StrikeLevelsSettings(BaseModel):
+    """E23.3 (D98): strike vs level context on the Quant menu and the trade card.
+
+    Each Quant menu item gets a ``levels`` text and each proposal's analytics a
+    ``levels`` list (:class:`arc.journal.analytics.LevelCrossing`): whether the short
+    strike (verticals) and the breakeven sit before, at or beyond the first E23.0
+    volume-profile / OI-wall level between spot and them, in the trade's direction
+    (credit verticals and condors: both sides). Read from the ticker's ``regime``
+    technicals; no data call. Shipped **on** (D86); ``enabled: off`` is the rollback:
+    menu, card and stored analytics byte-identical to before E23.3. Context only: no
+    filter, no ranking change, never a gate input.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    enabled: bool = False
+
+    @field_validator("enabled", mode="before")
+    @classmethod
+    def _enabled(cls, v: Any) -> bool:
+        return parse_on_off(v, where="strike_levels.enabled")
+
+
+class StalePickSettings(BaseModel):
+    """E5.16 (D116): the stale-pick cooldown of Research's ranked shortlist.
+
+    A ``ticker|stance`` Research ranked in ``after_loops`` consecutive full loops of
+    the session without a tradeable structure (a proposal sized >= 1 contract that
+    passed the gate) is removed from the idea pool for the next ``suppress_loops``
+    ``research`` runs (any status), then eligible again with its streak reset.
+    Computed from the journal (:mod:`arc.pipeline.stale_pick`). ``after_loops: 0`` is
+    off: no query, no journal row, the prompt byte-identical to before E5.16.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    after_loops: Annotated[int, Field(ge=0, le=20)] = 0
+    suppress_loops: Annotated[int, Field(ge=1, le=40)] = 10
+
+    @property
+    def enabled(self) -> bool:
+        return self.after_loops > 0
+
+
+class ResearchStrategySettings(BaseModel):
+    """E5.16 (D116): Research knobs in strategy.yaml ``research:``."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    stale_pick: StalePickSettings = Field(default_factory=StalePickSettings)
+
+
 class RoutinesConfig(BaseModel):
     """Top-level ``config/routines.yaml``."""
 
@@ -1096,6 +1301,17 @@ class RoutinesConfig(BaseModel):
     options_slow: OptionsSlowSettings = Field(default_factory=OptionsSlowSettings)  # E13.5
     options_fast: OptionsFastSettings = Field(default_factory=OptionsFastSettings)  # E13.6
     iv_backfill: IvBackfillSettings = Field(default_factory=IvBackfillSettings)  # E16.1 (D76)
+    # E23.0 (D98): levels on regime technicals (strategy.yaml blocks)
+    volume_profile: VolumeProfileSettings = Field(default_factory=VolumeProfileSettings)
+    oi_walls: OiWallsSettings = Field(default_factory=OiWallsSettings)
+    # E23.1 (D98): the range-edge entry filter (strategy.yaml `range_edges:`)
+    range_edges: RangeEdgesSettings = Field(default_factory=RangeEdgesSettings)
+    # E23.2 (D98): the pullback watch for anti-chase drops (strategy.yaml `pullback_watch:`)
+    pullback_watch: PullbackWatchSettings = Field(default_factory=PullbackWatchSettings)
+    # E23.3 (D98): strike vs level context (strategy.yaml `strike_levels:`)
+    strike_levels: StrikeLevelsSettings = Field(default_factory=StrikeLevelsSettings)
+    # E5.16 (D116): the stale-pick cooldown (strategy.yaml `research.stale_pick:`)
+    research: ResearchStrategySettings = Field(default_factory=ResearchStrategySettings)
 
     @model_validator(mode="before")
     @classmethod

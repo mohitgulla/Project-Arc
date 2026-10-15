@@ -317,6 +317,16 @@
           "open": {
             "title": "Open",
             "type": "integer"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Production's data (shared inputs)",
+            "title": "Shared From Control",
+            "type": "boolean"
           }
         },
         "required": [
@@ -522,6 +532,63 @@
           }
         },
         "title": "Arm",
+        "type": "object"
+      },
+      "ArmMeta": {
+        "additionalProperties": false,
+        "description": "One experiment arm the tower can be scoped to (``/api/meta`` ``arms``).",
+        "properties": {
+          "arm": {
+            "description": "Runner arm name (treatment, t1, t2, ...)",
+            "title": "Arm",
+            "type": "string"
+          },
+          "experiment_id": {
+            "title": "Experiment Id",
+            "type": "string"
+          },
+          "id": {
+            "description": "The ?arm= value, '<experiment id>:<arm>'",
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "description": "Display name, e.g. 'XP-12 \u00b7 T1'",
+            "title": "Label",
+            "type": "string"
+          },
+          "status": {
+            "description": "The experiment's status (running, stopped, ...)",
+            "title": "Status",
+            "type": "string"
+          },
+          "store_age_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Seconds since the arm store was last written (null: missing)",
+            "title": "Store Age S"
+          },
+          "viewable": {
+            "description": "True when ?arm=<id> is served (running, store present)",
+            "title": "Viewable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "experiment_id",
+          "arm",
+          "label",
+          "status",
+          "viewable"
+        ],
+        "title": "ArmMeta",
         "type": "object"
       },
       "ArmPlan": {
@@ -909,6 +976,18 @@
             "title": "Beta Dollar Delta",
             "type": "number"
           },
+          "beta_dollar_delta_raw": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D116: dollar_delta_raw \u00d7 \u03b2 used (None before E3.8)",
+            "title": "Beta Dollar Delta Raw"
+          },
           "beta_source": {
             "default": "default",
             "enum": [
@@ -921,6 +1000,18 @@
           "dollar_delta": {
             "title": "Dollar Delta",
             "type": "number"
+          },
+          "dollar_delta_raw": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D116: plain \u03a3 \u0394 \u00d7 spot for this underlying (None before E3.8)",
+            "title": "Dollar Delta Raw"
           }
         },
         "required": [
@@ -1005,7 +1096,8 @@
               "exit_reason",
               "reason_code",
               "profile",
-              "regime"
+              "regime",
+              "sleeve"
             ],
             "title": "By",
             "type": "string"
@@ -1023,6 +1115,27 @@
             },
             "title": "Rows",
             "type": "array"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Production's data (shared inputs)",
+            "title": "Shared From Control",
+            "type": "boolean"
+          },
+          "sleeve": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sleeve"
           }
         },
         "required": [
@@ -1104,6 +1217,14 @@
             "title": "Regime",
             "type": "array"
           },
+          "sleeve": {
+            "description": "E22.5 (D97): by entry-DTE sleeve (derived)",
+            "items": {
+              "$ref": "#/components/schemas/BreakdownItem"
+            },
+            "title": "Sleeve",
+            "type": "array"
+          },
           "structure": {
             "items": {
               "$ref": "#/components/schemas/BreakdownItem"
@@ -1166,6 +1287,67 @@
         "title": "BreakevenStat",
         "type": "object"
       },
+      "Bucket": {
+        "additionalProperties": false,
+        "properties": {
+          "d_p_c": {
+            "$ref": "#/components/schemas/MeanCI"
+          },
+          "grouping": {
+            "enum": [
+              "trend",
+              "vol",
+              "trend_vol",
+              "transitional"
+            ],
+            "title": "Grouping",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "n": {
+            "description": "Sessions in the bucket (P - C rows)",
+            "title": "N",
+            "type": "integer"
+          },
+          "residual": {
+            "$ref": "#/components/schemas/MeanCI"
+          },
+          "thin": {
+            "description": "n < 10",
+            "title": "Thin",
+            "type": "boolean"
+          },
+          "ti_minus_c": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/MeanCI"
+            },
+            "description": "XP-<n>:<ti> (and 'all') -> (Ti - C)/t0 per session",
+            "title": "Ti Minus C",
+            "type": "object"
+          },
+          "xps": {
+            "description": "XPs contributing sessions",
+            "items": {
+              "type": "string"
+            },
+            "title": "Xps",
+            "type": "array"
+          }
+        },
+        "required": [
+          "grouping",
+          "key",
+          "n",
+          "thin",
+          "d_p_c",
+          "residual"
+        ],
+        "title": "Bucket",
+        "type": "object"
+      },
       "BudgetResponse": {
         "additionalProperties": false,
         "properties": {
@@ -1226,6 +1408,16 @@
           "restrict_at": {
             "title": "Restrict At",
             "type": "integer"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Production's data (shared inputs)",
+            "title": "Shared From Control",
+            "type": "boolean"
           },
           "tier": {
             "title": "Tier",
@@ -2037,6 +2229,10 @@
             ],
             "title": "Note"
           },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
           "scorecard_gate": {
             "anyOf": [
               {
@@ -2048,6 +2244,12 @@
             ],
             "description": "E6.6a: scorecard gate line, e.g. 'scorecard gate: OFF (opt-out) \u2014 3 closed trades < 30 required; \u2026' (null when the store has no trade tables)",
             "title": "Scorecard Gate"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Production's data (shared inputs)",
+            "title": "Shared From Control",
+            "type": "boolean"
           }
         },
         "required": [
@@ -2182,6 +2384,16 @@
             "title": "Schema Version",
             "type": "integer"
           },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Production's data (shared inputs)",
+            "title": "Shared From Control",
+            "type": "boolean"
+          },
           "status": {
             "title": "Status",
             "type": "string"
@@ -2233,6 +2445,35 @@
         "title": "ContextEntryResponse",
         "type": "object"
       },
+      "ContextGroup": {
+        "additionalProperties": false,
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "integer"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "kinds": {
+            "title": "Kinds",
+            "type": "integer"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "active",
+          "kinds"
+        ],
+        "title": "ContextGroup",
+        "type": "object"
+      },
       "ContextKindRead": {
         "additionalProperties": false,
         "properties": {
@@ -2270,6 +2511,12 @@
           "expired_24h": {
             "title": "Expired 24H",
             "type": "integer"
+          },
+          "group": {
+            "default": "other",
+            "description": "D89: Session Timeline group of the kind's main writer",
+            "title": "Group",
+            "type": "string"
           },
           "kind": {
             "title": "Kind",
@@ -2332,6 +2579,14 @@
             ],
             "title": "Next Expiry"
           },
+          "readers": {
+            "description": "D89: jobs / chain steps declaring it in `reads:`",
+            "items": {
+              "type": "string"
+            },
+            "title": "Readers",
+            "type": "array"
+          },
           "remaining_fraction": {
             "anyOf": [
               {
@@ -2355,6 +2610,14 @@
             ],
             "description": "Configured TTL (context_ttl in routines.yaml)",
             "title": "Ttl"
+          },
+          "writers": {
+            "description": "D89: jobs / chain steps declaring it in `writes:`",
+            "items": {
+              "type": "string"
+            },
+            "title": "Writers",
+            "type": "array"
           }
         },
         "required": [
@@ -2411,12 +2674,30 @@
             "title": "Expired 24H",
             "type": "integer"
           },
+          "groups": {
+            "description": "D89: Timeline-group order; only groups with kinds",
+            "items": {
+              "$ref": "#/components/schemas/ContextGroup"
+            },
+            "title": "Groups",
+            "type": "array"
+          },
           "kinds": {
             "items": {
               "$ref": "#/components/schemas/ContextKindRow"
             },
             "title": "Kinds",
             "type": "array"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Production's data (shared inputs)",
+            "title": "Shared From Control",
+            "type": "boolean"
           },
           "total_active": {
             "title": "Total Active",
@@ -3797,6 +4078,14 @@
             "title": "Orders",
             "type": "array"
           },
+          "regated_bands": {
+            "description": "D101: bands walked after a re-gate (band_lo/band_hi is the approved band)",
+            "items": {
+              "$ref": "#/components/schemas/RegatedBand"
+            },
+            "title": "Regated Bands",
+            "type": "array"
+          },
           "slippage_vs_limit": {
             "anyOf": [
               {
@@ -4447,6 +4736,17 @@
           "experiment": {
             "$ref": "#/components/schemas/ExperimentListItem"
           },
+          "regime_panel": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RegimePanel"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "E25.5 (D108 c): P \u2212 C and Ti \u2212 C pooled across every v3 XP by regime; descriptive only. Present when this experiment's latest report is v3."
+          },
           "registered_hash": {
             "anyOf": [
               {
@@ -4494,6 +4794,16 @@
                 "type": "null"
               }
             ]
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Production's data (shared inputs)",
+            "title": "Shared From Control",
+            "type": "boolean"
           },
           "spec": {
             "$ref": "#/components/schemas/ExperimentSpec"
@@ -4597,6 +4907,14 @@
             "title": "Area",
             "type": "string"
           },
+          "arm_verdicts": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Treatment arm -> its reference-vs-arm verdict",
+            "title": "Arm Verdicts",
+            "type": "object"
+          },
           "as_of_day": {
             "anyOf": [
               {
@@ -4637,6 +4955,18 @@
             "title": "Experiment Id",
             "type": "string"
           },
+          "headline_arm": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Arm the headline numbers compare with the reference (v2+: best-ranked)",
+            "title": "Headline Arm"
+          },
           "kind": {
             "$ref": "#/components/schemas/ExperimentKind"
           },
@@ -4649,7 +4979,7 @@
                 "type": "null"
               }
             ],
-            "description": "The daily [XP-n] Slack line, verbatim",
+            "description": "The daily [XP-n] Slack status (D108), plain text, one line per row",
             "title": "Line"
           },
           "max_sessions": {
@@ -4729,6 +5059,18 @@
                 "type": "null"
               }
             ]
+          },
+          "reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D108: 'control' when the verdicts compare with the spec v3 control arm; null when they compare with production (v1/v2) or before the first evaluation",
+            "title": "Reference"
           },
           "secondary": {
             "anyOf": [
@@ -4813,6 +5155,12 @@
             "title": "Title",
             "type": "string"
           },
+          "variants": {
+            "default": 1,
+            "description": "Treatment arms in the spec (K)",
+            "title": "Variants",
+            "type": "integer"
+          },
           "verdict": {
             "anyOf": [
               {
@@ -4851,7 +5199,7 @@
       },
       "ExperimentReport": {
         "additionalProperties": false,
-        "description": "One evaluation of one experiment (stored append-only in ``experiment_reports``).\n\n``report_version`` 1: one treatment (D44). ``report_version`` 2 (D69, E15.5): K > 1\ntreatments. A v2 report adds ``pairwise``, ``omnibus`` and ``headline_arm`` (omitted\nfrom v1 JSON) and fills the all-arms fields of ``arms`` (Control first, then t1..tK).\nIts top-level ``primary`` / ``secondary`` / ``series`` are the **headline** pair\n(Control vs the best-ranked arm, ``headline_arm``) so one-line surfaces keep a\nsingle number; verdicts live per arm in ``pairwise``. ``calibration`` is pooled\nover the Control-vs-Ti pairs.",
+        "description": "One evaluation of one experiment (stored append-only in ``experiment_reports``).\n\n``report_version`` 1: one treatment (D44). ``report_version`` 2 (D69, E15.5): K > 1\ntreatments. ``report_version`` 3 (D108, E25.3): a spec v3 (any K), whose reference\nis the control arm ``XP-<n>:control`` (``reference``) and which adds the descriptive\n``production`` panel; otherwise shaped like v2. A v2 report adds ``pairwise``,\n``omnibus`` and ``headline_arm`` (omitted\nfrom v1 JSON) and fills the all-arms fields of ``arms`` (Control first, then t1..tK).\nIts top-level ``primary`` / ``secondary`` / ``series`` are the **headline** pair\n(Control vs the best-ranked arm, ``headline_arm``) so one-line surfaces keep a\nsingle number; verdicts live per arm in ``pairwise``. ``calibration`` is pooled\nover the Control-vs-Ti pairs.",
         "properties": {
           "alpha": {
             "title": "Alpha",
@@ -4995,6 +5343,30 @@
           "primary": {
             "$ref": "#/components/schemas/Primary"
           },
+          "production": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProductionPanel"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "v3: production vs control vs treatments (descriptive, never a verdict)"
+          },
+          "reference": {
+            "anyOf": [
+              {
+                "const": "control",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "v3: the verdict's reference series is the control arm XP-<n>:control",
+            "title": "Reference"
+          },
           "registered_hash": {
             "anyOf": [
               {
@@ -5010,7 +5382,8 @@
             "default": 1,
             "enum": [
               1,
-              2
+              2,
+              3
             ],
             "title": "Report Version",
             "type": "integer"
@@ -5239,7 +5612,8 @@
             "default": 2,
             "enum": [
               1,
-              2
+              2,
+              3
             ],
             "title": "Spec Version",
             "type": "integer"
@@ -5288,6 +5662,16 @@
             },
             "title": "Items",
             "type": "array"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Production's data (shared inputs)",
+            "title": "Shared From Control",
+            "type": "boolean"
           }
         },
         "required": [
@@ -5594,10 +5978,20 @@
             "title": "Discovery Fill",
             "type": "object"
           },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
           "sessions": {
             "description": "Trading sessions in the range",
             "title": "Sessions",
             "type": "integer"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Production's data (shared inputs)",
+            "title": "Shared From Control",
+            "type": "boolean"
           },
           "since": {
             "title": "Since",
@@ -5724,6 +6118,42 @@
         "additionalProperties": false,
         "description": "The gate's portfolio caps (PLAN \u00a75), from the effective settings.",
         "properties": {
+          "alloc_tier_threshold_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D116: deployed max loss / equity at which the cap drops",
+            "title": "Alloc Tier Threshold Pct"
+          },
+          "max_alloc_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D116: per-underlying cap, base tier (deployed below the threshold)",
+            "title": "Max Alloc Pct"
+          },
+          "max_alloc_pct_reduced": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D116: per-underlying cap, reduced tier (deployed at/above the threshold)",
+            "title": "Max Alloc Pct Reduced"
+          },
           "portfolio_beta_delta_cap_pct": {
             "description": "D62: |beta-weighted net dollar delta| cap as a fraction of equity",
             "title": "Portfolio Beta Delta Cap Pct",
@@ -5933,6 +6363,59 @@
       "GreeksSection": {
         "additionalProperties": false,
         "properties": {
+          "alloc_tier": {
+            "anyOf": [
+              {
+                "enum": [
+                  "base",
+                  "reduced"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D116: active per-underlying tier (None: equity unknown)",
+            "title": "Alloc Tier"
+          },
+          "alloc_tier_threshold_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D116: deployed share of equity at which the cap drops",
+            "title": "Alloc Tier Threshold Pct"
+          },
+          "deployed_max_loss": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D116: \u03a3 open max loss + max loss reserved by in-flight opens, dollars",
+            "title": "Deployed Max Loss"
+          },
+          "deployed_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D116: deployed_max_loss / equity (None: equity unknown)",
+            "title": "Deployed Pct"
+          },
           "gamma": {
             "anyOf": [
               {
@@ -5948,8 +6431,33 @@
             "$ref": "#/components/schemas/GreeksView"
           },
           "max_alloc_pct": {
+            "description": "D116: the active tier's cap, share of equity",
             "title": "Max Alloc Pct",
             "type": "number"
+          },
+          "max_alloc_pct_base": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D116 base tier",
+            "title": "Max Alloc Pct Base"
+          },
+          "max_alloc_pct_reduced": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D116 reduced tier",
+            "title": "Max Alloc Pct Reduced"
           },
           "max_loss_by_underlying": {
             "additionalProperties": {
@@ -5969,7 +6477,7 @@
                 "type": "null"
               }
             ],
-            "description": "max_alloc_pct \u00d7 equity (gate rule)",
+            "description": "active tier's cap \u00d7 equity (gate rule, D116)",
             "title": "Per Underlying Cap"
           },
           "theta": {
@@ -6028,8 +6536,20 @@
                 "type": "null"
               }
             ],
-            "description": "D62: beta-weighted net dollar delta \u03a3 (\u0394 \u00d7 spot \u00d7 max(\u03b2 vs SPY, 1)), $ (SPY-equivalent); None on a heartbeat written before D62 (rendered \u2014)",
+            "description": "D62/D116: beta-weighted net dollar delta (the dollar_delta terms \u00d7 max(\u03b2 vs SPY, 1)), $ (SPY-equivalent); None on a heartbeat written before D62 (rendered \u2014)",
             "title": "Beta Dollar Delta"
+          },
+          "beta_dollar_delta_raw": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D116: plain \u03a3 (\u0394 \u00d7 spot \u00d7 max(\u03b2, 1)), $, display only; None on a heartbeat written before E3.8 (rendered \u2014)",
+            "title": "Beta Dollar Delta Raw"
           },
           "delta": {
             "anyOf": [
@@ -6059,7 +6579,7 @@
                 "type": "null"
               }
             ],
-            "description": "D57: net dollar delta \u03a3 (\u0394 share-eq \u00d7 spot), $; None on a heartbeat written before D57 (rendered \u2014)",
+            "description": "D57/D116: net dollar delta as the gate counts it: \u03a3 (\u0394 share-eq \u00d7 spot), debit verticals / long options at sign(\u0394) \u00d7 max loss (E3.8), $; None on a heartbeat written before D57 (rendered \u2014)",
             "title": "Dollar Delta"
           },
           "dollar_delta_cap": {
@@ -6073,6 +6593,18 @@
             ],
             "description": "D57: |$\u0394| cap, $ (portfolio_dollar_delta_cap_pct \u00d7 equity)",
             "title": "Dollar Delta Cap"
+          },
+          "dollar_delta_raw": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D116: plain \u03a3 (\u0394 share-eq \u00d7 spot), $, display only; None on a heartbeat written before E3.8 (rendered \u2014)",
+            "title": "Dollar Delta Raw"
           },
           "equity": {
             "anyOf": [
@@ -6382,6 +6914,16 @@
             },
             "title": "Halts",
             "type": "array"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Production's data (shared inputs)",
+            "title": "Shared From Control",
+            "type": "boolean"
           }
         },
         "required": [
@@ -6424,12 +6966,24 @@
             "title": "Chip",
             "type": "string"
           },
+          "detail": {
+            "default": "",
+            "description": "D89: tile value line, e.g. `OK \u00b7 3m`",
+            "title": "Detail",
+            "type": "string"
+          },
           "key": {
             "title": "Key",
             "type": "string"
           },
           "label": {
             "title": "Label",
+            "type": "string"
+          },
+          "name": {
+            "default": "",
+            "description": "D89: short tile name, e.g. `Tick`",
+            "title": "Name",
             "type": "string"
           },
           "status": {
@@ -6475,6 +7029,15 @@
             "title": "Db",
             "type": "string"
           },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "title": "Shared From Control",
+            "type": "boolean"
+          },
           "status": {
             "const": "ok",
             "title": "Status",
@@ -6514,6 +7077,16 @@
             },
             "title": "Items",
             "type": "array"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Production's data (shared inputs)",
+            "title": "Shared From Control",
+            "type": "boolean"
           }
         },
         "required": [
@@ -7053,6 +7626,92 @@
         "title": "LegView",
         "type": "object"
       },
+      "LevelCrossing": {
+        "additionalProperties": false,
+        "description": "E23.3 (D98): where one target (short strike / breakeven) sits vs the levels.\n\nThe levels are the E23.0 volume-profile (POC, VAH, VAL, nearest HVNs) and OI-wall\nprices on the ticker's regime technicals. Walking from spot toward the target:\n\n* ``at``: the target is within :data:`AT_LEVEL_ATR` ATR14 of a level (that level);\n* ``beyond``: the move must push through at least one level first (the first one\n  it meets from spot; ``crossed`` counts them all);\n* ``before``: no level between spot and the target (the first level past it).\n\n``beyond_first`` (the replay split): the target sits beyond the first level, i.e.\n``crossed >= 1`` (an ``at`` target with a level crossed on the way counts too).\n\n``dist_atr`` = (target \u2212 level) / ATR14 measured in the direction of travel\n(> 0 beyond, < 0 before); ``None`` without ATR14. Context only, never a gate input.",
+        "properties": {
+          "crossed": {
+            "default": 0,
+            "description": "Levels strictly between spot and the target",
+            "minimum": 0.0,
+            "title": "Crossed",
+            "type": "integer"
+          },
+          "direction": {
+            "description": "+1 = above spot, -1 = below",
+            "enum": [
+              1,
+              -1
+            ],
+            "title": "Direction",
+            "type": "integer"
+          },
+          "dist_atr": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dist Atr"
+          },
+          "label": {
+            "description": "Rendered name, e.g. `BE`, `upper BE`, `short call`",
+            "title": "Label",
+            "type": "string"
+          },
+          "level_kind": {
+            "enum": [
+              "poc",
+              "vah",
+              "val",
+              "hvn",
+              "call_wall",
+              "put_wall"
+            ],
+            "title": "Level Kind",
+            "type": "string"
+          },
+          "price": {
+            "title": "Price",
+            "type": "number"
+          },
+          "side": {
+            "enum": [
+              "before",
+              "at",
+              "beyond"
+            ],
+            "title": "Side",
+            "type": "string"
+          },
+          "target": {
+            "title": "Target",
+            "type": "number"
+          },
+          "which": {
+            "enum": [
+              "short_strike",
+              "breakeven"
+            ],
+            "title": "Which",
+            "type": "string"
+          }
+        },
+        "required": [
+          "which",
+          "target",
+          "direction",
+          "level_kind",
+          "price",
+          "side",
+          "label"
+        ],
+        "title": "LevelCrossing",
+        "type": "object"
+      },
       "LinkRef": {
         "additionalProperties": false,
         "properties": {
@@ -7213,12 +7872,22 @@
             "title": "Personas",
             "type": "array"
           },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
           "series": {
             "items": {
               "$ref": "#/components/schemas/LlmDay"
             },
             "title": "Series",
             "type": "array"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Production's data (shared inputs)",
+            "title": "Shared From Control",
+            "type": "boolean"
           },
           "today": {
             "items": {
@@ -7699,6 +8368,44 @@
         "title": "MarketSection",
         "type": "object"
       },
+      "MeanCI": {
+        "additionalProperties": false,
+        "description": "Mean of a per-session series (fraction of t0 equity) with a 95% normal CI.",
+        "properties": {
+          "ci": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Interval"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "mean +- 1.96 sd/sqrt(n); None if n < 2"
+          },
+          "mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean"
+          },
+          "n": {
+            "title": "N",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "n",
+          "mean"
+        ],
+        "title": "MeanCI",
+        "type": "object"
+      },
       "MetaResponse": {
         "additionalProperties": false,
         "properties": {
@@ -7708,6 +8415,14 @@
           },
           "app": {
             "$ref": "#/components/schemas/AppInfo"
+          },
+          "arms": {
+            "description": "E15.6 (D69): experiment arms the tower can be scoped to with ?arm=<id>, running first (the default view is Production, never listed here)",
+            "items": {
+              "$ref": "#/components/schemas/ArmMeta"
+            },
+            "title": "Arms",
+            "type": "array"
           },
           "as_of": {
             "format": "date-time",
@@ -7766,6 +8481,23 @@
             "description": "Default client poll interval",
             "title": "Refresh Interval S",
             "type": "integer"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "title": "Shared From Control",
+            "type": "boolean"
+          },
+          "sleeves": {
+            "description": "E22.5 (D97): the profile's entry-DTE sleeves (window, slots, exit policy per kind); [] for a single-window profile",
+            "items": {
+              "$ref": "#/components/schemas/SleeveMeta"
+            },
+            "title": "Sleeves",
+            "type": "array"
           },
           "theme_default": {
             "default": "system",
@@ -8923,6 +9655,24 @@
             "title": "Range",
             "type": "string"
           },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Production's data (shared inputs)",
+            "title": "Shared From Control",
+            "type": "boolean"
+          },
+          "sleeves": {
+            "description": "E22.5 (D97): open positions per entry-DTE sleeve vs its slots",
+            "items": {
+              "$ref": "#/components/schemas/SleeveUsage"
+            },
+            "title": "Sleeves",
+            "type": "array"
+          },
           "stale_after_s": {
             "description": "Monitor marks older than this are stale",
             "title": "Stale After S",
@@ -9481,6 +10231,36 @@
             ],
             "title": "Preset",
             "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Production's data (shared inputs)",
+            "title": "Shared From Control",
+            "type": "boolean"
+          },
+          "sleeve": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "E22.5 (D97): entry-DTE sleeve filter; trade cards (Net P&L from realised, costs, win/loss, model, breakdowns, calibration) cover that sleeve only, Equity and the funnel stay account-wide",
+            "title": "Sleeve"
+          },
+          "sleeve_stats": {
+            "description": "E22.5 (D97): per-sleeve closed-trade stats + keep/shrink verdict, period",
+            "items": {
+              "$ref": "#/components/schemas/SleeveStats"
+            },
+            "title": "Sleeve Stats",
+            "type": "array"
           },
           "win_loss": {
             "$ref": "#/components/schemas/WinLossCard"
@@ -10591,6 +11371,16 @@
             ],
             "title": "Marks At"
           },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Production's data (shared inputs)",
+            "title": "Shared From Control",
+            "type": "boolean"
+          },
           "stale_after_s": {
             "title": "Stale After S",
             "type": "integer"
@@ -10715,6 +11505,285 @@
         "title": "Primary",
         "type": "object"
       },
+      "ProductionCompare": {
+        "additionalProperties": false,
+        "description": "``arm - production`` (fraction of t0 equity per session): descriptive CI only.",
+        "properties": {
+          "arm": {
+            "title": "Arm",
+            "type": "string"
+          },
+          "basis": {
+            "enum": [
+              "total",
+              "ex_start_book",
+              "post_ramp"
+            ],
+            "title": "Basis",
+            "type": "string"
+          },
+          "ci": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Interval"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Always-valid (mSPRT) CI, 1 - alpha"
+          },
+          "mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean"
+          },
+          "n": {
+            "title": "N",
+            "type": "integer"
+          },
+          "p_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Always-valid p (descriptive, no Holm)",
+            "title": "P Value"
+          }
+        },
+        "required": [
+          "arm",
+          "basis",
+          "n",
+          "mean"
+        ],
+        "title": "ProductionCompare",
+        "type": "object"
+      },
+      "ProductionPanel": {
+        "additionalProperties": false,
+        "description": "D108: production vs control vs treatments. Never a verdict, stop or promotion input.",
+        "properties": {
+          "compare": {
+            "items": {
+              "$ref": "#/components/schemas/ProductionCompare"
+            },
+            "title": "Compare",
+            "type": "array"
+          },
+          "cum_c_pnl": {
+            "default": 0.0,
+            "title": "Cum C Pnl",
+            "type": "number"
+          },
+          "cum_d_p_c": {
+            "default": 0.0,
+            "title": "Cum D P C",
+            "type": "number"
+          },
+          "cum_p_pnl": {
+            "default": 0.0,
+            "title": "Cum P Pnl",
+            "type": "number"
+          },
+          "cum_residual": {
+            "default": 0.0,
+            "title": "Cum Residual",
+            "type": "number"
+          },
+          "cum_start_book": {
+            "default": 0.0,
+            "title": "Cum Start Book",
+            "type": "number"
+          },
+          "descriptive": {
+            "const": true,
+            "default": true,
+            "title": "Descriptive",
+            "type": "boolean"
+          },
+          "missing_sessions": {
+            "items": {
+              "format": "date",
+              "type": "string"
+            },
+            "title": "Missing Sessions",
+            "type": "array"
+          },
+          "ramp_window": {
+            "default": 5,
+            "title": "Ramp Window",
+            "type": "integer"
+          },
+          "ramped_from": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "First ramped session",
+            "title": "Ramped From"
+          },
+          "regime_at_start": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionRegime"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "E25.5: SPY regime at the first session's close (the XP's start)"
+          },
+          "sessions": {
+            "items": {
+              "$ref": "#/components/schemas/ProductionSession"
+            },
+            "title": "Sessions",
+            "type": "array"
+          },
+          "start_book": {
+            "$ref": "#/components/schemas/StartBook"
+          }
+        },
+        "required": [
+          "start_book"
+        ],
+        "title": "ProductionPanel",
+        "type": "object"
+      },
+      "ProductionSession": {
+        "additionalProperties": false,
+        "description": "One session of the production panel ($ amounts; fractions of t0 equity).",
+        "properties": {
+          "c_deployed": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Control's held max-loss capital / its virtual equity at EOD; None = unknown",
+            "title": "C Deployed"
+          },
+          "c_open": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Control's open structures at EOD",
+            "title": "C Open"
+          },
+          "c_pnl": {
+            "description": "Control arm's virtual-equity delta ($)",
+            "title": "C Pnl",
+            "type": "number"
+          },
+          "d_p_c": {
+            "description": "start_book + residual (~ (p_pnl - c_pnl) / t0)",
+            "title": "D P C",
+            "type": "number"
+          },
+          "day": {
+            "format": "date",
+            "title": "Day",
+            "type": "string"
+          },
+          "p_ex_start_pnl": {
+            "description": "p_pnl - p_start_book_pnl ($)",
+            "title": "P Ex Start Pnl",
+            "type": "number"
+          },
+          "p_open": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Production's open structures at EOD",
+            "title": "P Open"
+          },
+          "p_pnl": {
+            "description": "Production broker equity delta ($)",
+            "title": "P Pnl",
+            "type": "number"
+          },
+          "p_start_book_pnl": {
+            "description": "Start book's day P&L ($)",
+            "title": "P Start Book Pnl",
+            "type": "number"
+          },
+          "ramped": {
+            "default": false,
+            "title": "Ramped",
+            "type": "boolean"
+          },
+          "regime": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionRegime"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "SPY regime at the session close; None = no entry (bucket unknown)"
+          },
+          "residual": {
+            "description": "(p_ex_start_pnl - c_pnl) / t0",
+            "title": "Residual",
+            "type": "number"
+          },
+          "start_book": {
+            "description": "p_start_book_pnl / t0",
+            "title": "Start Book",
+            "type": "number"
+          },
+          "ti_pnl": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "description": "Treatment -> virtual-equity delta ($); absent = missing",
+            "title": "Ti Pnl",
+            "type": "object"
+          }
+        },
+        "required": [
+          "day",
+          "p_pnl",
+          "p_start_book_pnl",
+          "p_ex_start_pnl",
+          "c_pnl",
+          "d_p_c",
+          "start_book",
+          "residual"
+        ],
+        "title": "ProductionSession",
+        "type": "object"
+      },
       "ProfitLock": {
         "additionalProperties": false,
         "description": "E18.1 (D78) trailing take profit, in units of the take-profit basis.\n\nArmed once the peak P&L since entry \u2265 ``arm_pct \u00b7 B``; then closes when the\ncurrent P&L \u2264 ``floor_pct \u00b7 B`` (``B`` = max gain for credit, debit for debit).\n``eod_only``: evaluated on end-of-day marks only (default: every mark).",
@@ -10834,6 +11903,21 @@
             "title": "Legs",
             "type": "array"
           },
+          "levels": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/LevelCrossing"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "E23.3 (D98): short strike / breakeven vs the volume-profile and OI-wall levels; None = strike_levels off (or analytics stored before E23.3)",
+            "title": "Levels"
+          },
           "prev_close": {
             "anyOf": [
               {
@@ -10869,6 +11953,18 @@
             ],
             "description": "ATM IV \u00b7 \u221a(DTE/365)",
             "title": "Sigma T"
+          },
+          "sleeve_window": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "E22.2 (D97): the proposal's DTE sleeve window, e.g. `10\u201329 DTE`",
+            "title": "Sleeve Window"
           },
           "spot": {
             "title": "Spot",
@@ -11398,6 +12494,18 @@
             "description": "Quant's EV per contract (model inputs)",
             "title": "Ev"
           },
+          "levels_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "E23.3 (D98): `BE beyond POC 186.1 (+0.4 ATR) \u00b7 short strike at call wall 190`, the trade card's Levels fact; None when no level was stored",
+            "title": "Levels Text"
+          },
           "max_gain": {
             "anyOf": [
               {
@@ -11504,6 +12612,180 @@
           }
         },
         "title": "QuantSection",
+        "type": "object"
+      },
+      "RampPoint": {
+        "additionalProperties": false,
+        "description": "Control's ramp at one session index since t0 (0 = first session).",
+        "properties": {
+          "c_deployed": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Mean deployed fraction of equity",
+            "title": "C Deployed"
+          },
+          "c_open": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Mean open structures over the XPs",
+            "title": "C Open"
+          },
+          "index": {
+            "title": "Index",
+            "type": "integer"
+          },
+          "n_xps": {
+            "title": "N Xps",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "index",
+          "n_xps"
+        ],
+        "title": "RampPoint",
+        "type": "object"
+      },
+      "RegatedBand": {
+        "additionalProperties": false,
+        "description": "D101: a band the ladder re-gated to after the market moved past the approved one.",
+        "properties": {
+          "at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "At"
+          },
+          "band_hi": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Band Hi"
+          },
+          "band_lo": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Band Lo"
+          },
+          "mid": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mid"
+          },
+          "n": {
+            "title": "N",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "n"
+        ],
+        "title": "RegatedBand",
+        "type": "object"
+      },
+      "RegimePanel": {
+        "additionalProperties": false,
+        "description": "E25.5 (D108 (c)): pooled across v3 XPs. Never a verdict, stop or promotion input.",
+        "properties": {
+          "buckets": {
+            "items": {
+              "$ref": "#/components/schemas/Bucket"
+            },
+            "title": "Buckets",
+            "type": "array"
+          },
+          "descriptive": {
+            "const": true,
+            "default": true,
+            "title": "Descriptive",
+            "type": "boolean"
+          },
+          "panel_version": {
+            "const": 1,
+            "default": 1,
+            "title": "Panel Version",
+            "type": "integer"
+          },
+          "ramp_by_start_regime": {
+            "additionalProperties": {
+              "items": {
+                "$ref": "#/components/schemas/RampPoint"
+              },
+              "type": "array"
+            },
+            "title": "Ramp By Start Regime",
+            "type": "object"
+          },
+          "sessions": {
+            "default": 0,
+            "title": "Sessions",
+            "type": "integer"
+          },
+          "starts": {
+            "items": {
+              "$ref": "#/components/schemas/StartRow"
+            },
+            "title": "Starts",
+            "type": "array"
+          },
+          "thin_n": {
+            "default": 10,
+            "title": "Thin N",
+            "type": "integer"
+          },
+          "unknown_sessions": {
+            "default": 0,
+            "description": "Sessions without a regime tag",
+            "title": "Unknown Sessions",
+            "type": "integer"
+          },
+          "xps": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Xps",
+            "type": "array"
+          }
+        },
+        "title": "RegimePanel",
         "type": "object"
       },
       "RegimeView": {
@@ -11804,6 +13086,16 @@
             "title": "Run Id",
             "type": "string"
           },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Production's data (shared inputs)",
+            "title": "Shared From Control",
+            "type": "boolean"
+          },
           "step": {
             "$ref": "#/components/schemas/StepView",
             "description": "The requested run"
@@ -11866,6 +13158,16 @@
             },
             "title": "Rows",
             "type": "array"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Production's data (shared inputs)",
+            "title": "Shared From Control",
+            "type": "boolean"
           },
           "size": {
             "title": "Size",
@@ -12027,7 +13329,7 @@
       },
       "RunningDetail": {
         "additionalProperties": false,
-        "description": "What ``running`` records at t0 (E10.2 fills it).",
+        "description": "What ``running`` records at t0 (E10.2 fills it).\n\nD108: ``production_book`` (the start book) is production's open structure ids at\nt0. Up to spec v2 it was the *legacy book* (stored as ``legacy_book``; still read),\nreserved in every arm and excluded from metrics; from v3 every arm starts flat and\nit is recorded for reporting only.",
         "properties": {
           "aa_override": {
             "default": false,
@@ -12054,12 +13356,12 @@
             "title": "Control Sha",
             "type": "string"
           },
-          "legacy_book": {
-            "description": "open_structures ids open at t0 (excluded from metrics)",
+          "production_book": {
+            "description": "production's open_structures ids at t0 (the start book; v1/v2 events stored it as legacy_book)",
             "items": {
               "type": "string"
             },
-            "title": "Legacy Book",
+            "title": "Production Book",
             "type": "array"
           },
           "t0": {
@@ -12079,6 +13381,26 @@
           "control_sha"
         ],
         "title": "RunningDetail",
+        "type": "object"
+      },
+      "ScopeInfo": {
+        "additionalProperties": false,
+        "description": "Which store a response was read from.",
+        "properties": {
+          "arm_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "'<experiment id>:<arm>' for an arm; null = Production",
+            "title": "Arm Id"
+          }
+        },
+        "title": "ScopeInfo",
         "type": "object"
       },
       "SearchMatch": {
@@ -12135,6 +13457,16 @@
           "q": {
             "title": "Q",
             "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Production's data (shared inputs)",
+            "title": "Shared From Control",
+            "type": "boolean"
           }
         },
         "required": [
@@ -12231,6 +13563,107 @@
         "title": "Secondary",
         "type": "object"
       },
+      "SessionRegime": {
+        "additionalProperties": false,
+        "description": "The SPY regime read visible at a session's close (D77 v2; v1 rows: trend only).",
+        "properties": {
+          "as_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The read's as_of session",
+            "title": "As Of"
+          },
+          "entry_id": {
+            "description": "context_entries id the tag was read from",
+            "title": "Entry Id",
+            "type": "string"
+          },
+          "margin_z": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Margin Z"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Regime labelling model (v1 / v2)",
+            "title": "Model"
+          },
+          "run_length": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Length"
+          },
+          "transitional": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "run_length < 3 or margin_z < 0.10 (E17.2 reference); None without both",
+            "title": "Transitional"
+          },
+          "trend": {
+            "enum": [
+              "bull",
+              "bear",
+              "sideways"
+            ],
+            "title": "Trend",
+            "type": "string"
+          },
+          "vol_state": {
+            "anyOf": [
+              {
+                "enum": [
+                  "low",
+                  "mid",
+                  "high"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "v2 realised-vol state; None on v1",
+            "title": "Vol State"
+          }
+        },
+        "required": [
+          "trend",
+          "entry_id"
+        ],
+        "title": "SessionRegime",
+        "type": "object"
+      },
       "SessionResponse": {
         "additionalProperties": false,
         "properties": {
@@ -12256,11 +13689,13 @@
             "type": "object"
           },
           "day": {
+            "description": "The ET day (rolling: the day of `as_of`)",
             "format": "date",
             "title": "Day",
             "type": "string"
           },
           "end": {
+            "description": "Window end (exclusive, ET)",
             "format": "date-time",
             "title": "End",
             "type": "string"
@@ -12287,7 +13722,18 @@
             "title": "Rows",
             "type": "array"
           },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Production's data (shared inputs)",
+            "title": "Shared From Control",
+            "type": "boolean"
+          },
           "start": {
+            "description": "Window start (inclusive, ET)",
             "format": "date-time",
             "title": "Start",
             "type": "string"
@@ -12299,6 +13745,16 @@
             },
             "title": "Unscheduled",
             "type": "array"
+          },
+          "window": {
+            "default": "day",
+            "description": "D93: `day` (00:00-24:00 ET) or `rolling` (-8 h .. +4 h)",
+            "enum": [
+              "day",
+              "rolling"
+            ],
+            "title": "Window",
+            "type": "string"
           }
         },
         "required": [
@@ -12361,6 +13817,373 @@
           "d"
         ],
         "title": "SessionRow",
+        "type": "object"
+      },
+      "SleeveExitView": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "summary": {
+            "description": "ExitPolicy.summary() of the kind in this sleeve",
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "summary"
+        ],
+        "title": "SleeveExitView",
+        "type": "object"
+      },
+      "SleeveMeta": {
+        "additionalProperties": false,
+        "description": "One named sleeve of the active profile (the InfoTip's window and exit policy).",
+        "properties": {
+          "dte_max": {
+            "title": "Dte Max",
+            "type": "integer"
+          },
+          "dte_min": {
+            "title": "Dte Min",
+            "type": "integer"
+          },
+          "exit_policy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "exits.yaml `sleeves:` block; None = kind",
+            "title": "Exit Policy"
+          },
+          "exits": {
+            "items": {
+              "$ref": "#/components/schemas/SleeveExitView"
+            },
+            "title": "Exits",
+            "type": "array"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "max_positions": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Slot cap; None = uncapped",
+            "title": "Max Positions"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "label",
+          "dte_min",
+          "dte_max"
+        ],
+        "title": "SleeveMeta",
+        "type": "object"
+      },
+      "SleeveStats": {
+        "additionalProperties": false,
+        "description": "One sleeve's closed-trade statistics over the window.",
+        "properties": {
+          "ci_high": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ci High"
+          },
+          "ci_low": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Bootstrap 90% CI of mean net",
+            "title": "Ci Low"
+          },
+          "closed": {
+            "default": 0,
+            "title": "Closed",
+            "type": "integer"
+          },
+          "costs": {
+            "default": 0.0,
+            "description": "\u03a3 cost-model commission + fees of the trades' fills",
+            "title": "Costs",
+            "type": "number"
+          },
+          "dte_max": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dte Max"
+          },
+          "dte_min": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "None for `other`",
+            "title": "Dte Min"
+          },
+          "entry_slippage": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "\u03a3 entry fill \u2212 mid, $ (+ = worse)",
+            "title": "Entry Slippage"
+          },
+          "exit_reasons": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Exit Reasons",
+            "type": "object"
+          },
+          "max_positions": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Slot cap (None = uncapped / other)",
+            "title": "Max Positions"
+          },
+          "mean_days_held": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean Days Held"
+          },
+          "mean_entry_slippage": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean Entry Slippage"
+          },
+          "mean_mae": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Mean max adverse excursion, $ (\u2264 0)",
+            "title": "Mean Mae"
+          },
+          "mean_mfe": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Mean max favourable excursion, $ (\u2265 0)",
+            "title": "Mean Mfe"
+          },
+          "mean_net_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Mean of realised \u2212 costs (the rule's)",
+            "title": "Mean Net Pnl"
+          },
+          "mean_pct_of_max_loss": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Mean realised \u00f7 (max loss \u00d7 contracts), over trades with a max loss",
+            "title": "Mean Pct Of Max Loss"
+          },
+          "mean_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean Pnl"
+          },
+          "median_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Median Pnl"
+          },
+          "n_excursion": {
+            "default": 0,
+            "title": "N Excursion",
+            "type": "integer"
+          },
+          "opens": {
+            "default": 0,
+            "description": "Positions opened in the window",
+            "title": "Opens",
+            "type": "integer"
+          },
+          "ready": {
+            "default": false,
+            "title": "Ready",
+            "type": "boolean"
+          },
+          "realised": {
+            "default": 0.0,
+            "description": "\u03a3 realised P&L, fills only, before fees",
+            "title": "Realised",
+            "type": "number"
+          },
+          "sleeve": {
+            "title": "Sleeve",
+            "type": "string"
+          },
+          "verdict": {
+            "anyOf": [
+              {
+                "enum": [
+                  "keep",
+                  "shrink",
+                  "collect"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "None for `other`",
+            "title": "Verdict"
+          },
+          "win_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Win Rate"
+          },
+          "wins": {
+            "default": 0,
+            "title": "Wins",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sleeve"
+        ],
+        "title": "SleeveStats",
+        "type": "object"
+      },
+      "SleeveUsage": {
+        "additionalProperties": false,
+        "description": "Open positions in one sleeve vs its slot cap (Overview: ``Short 3/5``).",
+        "properties": {
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "max_positions": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Positions"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "open": {
+            "title": "Open",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "label",
+          "open"
+        ],
+        "title": "SleeveUsage",
         "type": "object"
       },
       "Slot": {
@@ -12711,6 +14534,16 @@
             "title": "Categories",
             "type": "array"
           },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Production's data (shared inputs)",
+            "title": "Shared From Control",
+            "type": "boolean"
+          },
           "sources": {
             "items": {
               "$ref": "#/components/schemas/SourceRow"
@@ -12724,6 +14557,182 @@
           "sources"
         ],
         "title": "SourcesResponse",
+        "type": "object"
+      },
+      "StartBook": {
+        "additionalProperties": false,
+        "description": "Production's open book at t0, tracked to its last close (reporting only).",
+        "properties": {
+          "close_dates": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Structure id -> ET close day (None = still open)",
+            "title": "Close Dates",
+            "type": "object"
+          },
+          "cum_pnl": {
+            "default": 0.0,
+            "title": "Cum Pnl",
+            "type": "number"
+          },
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/StartBookDay"
+            },
+            "title": "Days",
+            "type": "array"
+          },
+          "ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ids"
+        ],
+        "title": "StartBook",
+        "type": "object"
+      },
+      "StartBookDay": {
+        "additionalProperties": false,
+        "properties": {
+          "closed": {
+            "description": "Start-book structures closed by this day",
+            "title": "Closed",
+            "type": "integer"
+          },
+          "cum_pnl": {
+            "description": "Cumulative start-book P&L since t0 ($)",
+            "title": "Cum Pnl",
+            "type": "number"
+          },
+          "day": {
+            "format": "date",
+            "title": "Day",
+            "type": "string"
+          },
+          "open": {
+            "description": "Start-book structures still held at EOD",
+            "title": "Open",
+            "type": "integer"
+          },
+          "pnl": {
+            "description": "Start book's day P&L ($)",
+            "title": "Pnl",
+            "type": "number"
+          }
+        },
+        "required": [
+          "day",
+          "open",
+          "closed",
+          "pnl",
+          "cum_pnl"
+        ],
+        "title": "StartBookDay",
+        "type": "object"
+      },
+      "StartRow": {
+        "additionalProperties": false,
+        "properties": {
+          "cum_d_p_c": {
+            "title": "Cum D P C",
+            "type": "number"
+          },
+          "cum_residual": {
+            "title": "Cum Residual",
+            "type": "number"
+          },
+          "experiment_id": {
+            "title": "Experiment Id",
+            "type": "string"
+          },
+          "first_session": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Session"
+          },
+          "ramp": {
+            "items": {
+              "$ref": "#/components/schemas/RampPoint"
+            },
+            "title": "Ramp",
+            "type": "array"
+          },
+          "ramped_from": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ramped From"
+          },
+          "regime_at_start": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionRegime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sessions": {
+            "title": "Sessions",
+            "type": "integer"
+          },
+          "start_regime": {
+            "description": "trend_vol bucket at the first session",
+            "title": "Start Regime",
+            "type": "string"
+          },
+          "status_verdict": {
+            "description": "Latest report's verdict",
+            "title": "Status Verdict",
+            "type": "string"
+          },
+          "t0": {
+            "format": "date-time",
+            "title": "T0",
+            "type": "string"
+          }
+        },
+        "required": [
+          "experiment_id",
+          "status_verdict",
+          "t0",
+          "first_session",
+          "start_regime",
+          "regime_at_start",
+          "sessions",
+          "cum_d_p_c",
+          "cum_residual",
+          "ramped_from"
+        ],
+        "title": "StartRow",
         "type": "object"
       },
       "StaticStats": {
@@ -12859,6 +14868,31 @@
               }
             ],
             "description": "Absent until the monitor heartbeat carries it (E6.5)"
+          },
+          "sessions": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D92: trading sessions the account has traded since its start (``store:epoch`` fresh start, else the first reconciled day); today counts from the 09:30 ET open",
+            "title": "Sessions"
+          },
+          "sessions_since": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D92: the ET day the session count starts from",
+            "title": "Sessions Since"
           },
           "tick_at": {
             "anyOf": [
@@ -13524,6 +15558,16 @@
             "title": "Proposals",
             "type": "array"
           },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Production's data (shared inputs)",
+            "title": "Shared From Control",
+            "type": "boolean"
+          },
           "structures": {
             "items": {
               "$ref": "#/components/schemas/StructureView"
@@ -13649,6 +15693,16 @@
           },
           "quant": {
             "$ref": "#/components/schemas/QuantSection"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Production's data (shared inputs)",
+            "title": "Shared From Control",
+            "type": "boolean"
           }
         },
         "required": [
@@ -13714,6 +15768,24 @@
               "type": "object"
             },
             "title": "Reason Codes",
+            "type": "array"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Production's data (shared inputs)",
+            "title": "Shared From Control",
+            "type": "boolean"
+          },
+          "sleeves": {
+            "description": "E22.5 (D97): the profile's sleeves + `other`",
+            "items": {
+              "type": "string"
+            },
+            "title": "Sleeves",
             "type": "array"
           },
           "sort_keys": {
@@ -13870,6 +15942,14 @@
               "type": "string"
             },
             "title": "Reason Code",
+            "type": "array"
+          },
+          "sleeve": {
+            "description": "E22.5 (D97): entry-DTE sleeves (`short`, `swing`, `other`), by entry DTE",
+            "items": {
+              "type": "string"
+            },
+            "title": "Sleeve",
             "type": "array"
           },
           "stage": {
@@ -14068,6 +16148,16 @@
             "title": "Page",
             "type": "integer"
           },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Production's data (shared inputs)",
+            "title": "Shared From Control",
+            "type": "boolean"
+          },
           "size": {
             "title": "Size",
             "type": "integer"
@@ -14239,6 +16329,18 @@
             "description": "D50: bullish / bearish / neutral from leg sides and strikes; a close inherits the structure it exits; null without legs",
             "title": "Direction"
           },
+          "entry_dte": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "DTE at the open (a close: its open's)",
+            "title": "Entry Dte"
+          },
           "execution": {
             "anyOf": [
               {
@@ -14396,6 +16498,18 @@
               }
             ],
             "title": "Run Id"
+          },
+          "sleeve": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "E22.5 (D97): entry-DTE sleeve; `other` = fits none",
+            "title": "Sleeve"
           },
           "slippage_bps": {
             "anyOf": [
@@ -15181,6 +17295,19 @@
             "title": "Model",
             "type": "string"
           },
+          "next_resolve_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "E14.11: the Scalp's next slot (ET) when state = pending; null otherwise or when the Scalp job is disabled / missing",
+            "title": "Next Resolve At"
+          },
           "note": {
             "anyOf": [
               {
@@ -15229,10 +17356,21 @@
             "description": "The stored resolve's as_of day",
             "title": "Resolved For"
           },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Production's data (shared inputs)",
+            "title": "Shared From Control",
+            "type": "boolean"
+          },
           "state": {
-            "description": "today = resolved today; stale = latest resolve is older (consumers use the core list until the next one); none = never resolved (core list shown)",
+            "description": "today = resolved today; pending = the previous session's resolve and today's first Scalp resolve is not due yet (window start + one `every`; D110); stale = a resolve is due and missing, or the stored one is older or expired (consumers use the core list until the next one); none = never resolved (core list shown)",
             "enum": [
               "today",
+              "pending",
               "stale",
               "none"
             ],
@@ -15638,6 +17776,27 @@
       "get": {
         "description": "Every forward experiment with the latest stored evaluation's numbers.",
         "operationId": "experiments_api_experiments_get",
+        "parameters": [
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+              "title": "Arm"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -15648,6 +17807,26 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           },
           "503": {
             "content": {
@@ -15678,6 +17857,25 @@
             "schema": {
               "title": "Experiment Id",
               "type": "string"
+            }
+          },
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+              "title": "Arm"
             }
           }
         ],
@@ -15731,8 +17929,29 @@
     },
     "/api/health": {
       "get": {
-        "description": "200 when the audit store opens read-only and answers a query.",
+        "description": "200 when the (scoped) audit store opens read-only and answers a query.",
         "operationId": "health_api_health_get",
+        "parameters": [
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+              "title": "Arm"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -15743,6 +17962,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           },
           "503": {
             "content": {
@@ -15763,8 +17992,29 @@
     },
     "/api/meta": {
       "get": {
-        "description": "App/env info, cadences with stale thresholds, gate caps, client defaults and the\npersona / category catalogue (E13.14: every Tower label comes from here).",
+        "description": "App/env info, cadences with stale thresholds, gate caps, client defaults and the\npersona / category catalogue (E13.14: every Tower label comes from here), plus the\nexperiment arms the tower can be scoped to (E15.6). With ``?arm=`` the settings\nare the arm's (control's overrides + its overlay); ``arms`` always come from control.",
         "operationId": "meta_api_meta_get",
+        "parameters": [
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+              "title": "Arm"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -15775,6 +18025,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           },
           "503": {
             "content": {
@@ -15797,6 +18057,27 @@
       "get": {
         "description": "``ops_alerts``: open first, then resolved in the last 7 days.",
         "operationId": "alerts_api_ops_alerts_get",
+        "parameters": [
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+              "title": "Arm"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -15807,6 +18088,26 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           },
           "503": {
             "content": {
@@ -15827,8 +18128,29 @@
     },
     "/api/ops/budget": {
       "get": {
-        "description": "Today's D32 options-order budget from the local store (``null`` without E6.5).",
+        "description": "Today's D32 options-order budget from the local store (``null`` without E6.5);\nan arm's own orders with ``?arm=``.",
         "operationId": "budget_api_ops_budget_get",
+        "parameters": [
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+              "title": "Arm"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -15847,6 +18169,26 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           },
           "503": {
             "content": {
@@ -15867,8 +18209,29 @@
     },
     "/api/ops/config": {
       "get": {
-        "description": "The D26 effective config and override log (read-only).",
+        "description": "The D26 effective config and override log (read-only). Control's: an arm runs\ncontrol's overrides plus its spec overlay (shown on the Experiments page).",
         "operationId": "config_api_ops_config_get",
+        "parameters": [
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+              "title": "Arm"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -15879,6 +18242,26 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           },
           "503": {
             "content": {
@@ -15899,8 +18282,29 @@
     },
     "/api/ops/context": {
       "get": {
-        "description": "Active ``context_entries`` per kind, TTL left, latest entry, expired in 24 h.",
+        "description": "Active ``context_entries`` per kind, TTL left, latest entry, expired in 24 h (with\n``?arm=``: the arm store's entries, i.e. what its chains read and wrote).",
         "operationId": "context_api_ops_context_get",
+        "parameters": [
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+              "title": "Arm"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -15911,6 +18315,26 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           },
           "503": {
             "content": {
@@ -15941,6 +18365,25 @@
             "schema": {
               "title": "Entry Id",
               "type": "string"
+            }
+          },
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+              "title": "Arm"
             }
           }
         ],
@@ -15994,8 +18437,29 @@
     },
     "/api/ops/halts": {
       "get": {
-        "description": "Halts, active first, with the trades raised in each halt's window.",
+        "description": "Halts, active first, with the trades raised in each halt's window (an arm's own\nwith ``?arm=``, e.g. a D69 ``book_invariant`` one).",
         "operationId": "halts_api_ops_halts_get",
+        "parameters": [
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+              "title": "Arm"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -16006,6 +18470,26 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           },
           "503": {
             "content": {
@@ -16028,6 +18512,27 @@
       "get": {
         "description": "Tick / health heartbeat ages, gateway and remote access, log size, with thresholds.",
         "operationId": "health_api_ops_health_get",
+        "parameters": [
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+              "title": "Arm"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -16038,6 +18543,26 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           },
           "503": {
             "content": {
@@ -16058,7 +18583,7 @@
     },
     "/api/ops/llm": {
       "get": {
-        "description": "LLM calls, tokens and cost per day / persona / model.",
+        "description": "LLM calls, tokens and cost per day / persona / model (control's spend).",
         "operationId": "llm_api_ops_llm_get",
         "parameters": [
           {
@@ -16072,6 +18597,25 @@
               "title": "Days",
               "type": "integer"
             }
+          },
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+              "title": "Arm"
+            }
           }
         ],
         "responses": {
@@ -16084,6 +18628,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
           },
           "422": {
             "content": {
@@ -16211,6 +18765,25 @@
               "title": "Size",
               "type": "integer"
             }
+          },
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+              "title": "Arm"
+            }
           }
         ],
         "responses": {
@@ -16223,6 +18796,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
           },
           "422": {
             "content": {
@@ -16263,6 +18846,25 @@
             "schema": {
               "title": "Run Id",
               "type": "string"
+            }
+          },
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+              "title": "Arm"
             }
           }
         ],
@@ -16316,7 +18918,7 @@
     },
     "/api/ops/session": {
       "get": {
-        "description": "The ET day's scheduled slots (05:00-22:00) with each one's run, plus the loop row.",
+        "description": "Scheduled slots with each one's run, plus the loop row (D93): ``window=day`` is the\nET day 00:00-24:00, ``window=rolling`` the last 8 h and the next 4 h (``day`` ignored).",
         "operationId": "session_api_ops_session_get",
         "parameters": [
           {
@@ -16334,6 +18936,39 @@
               ],
               "title": "Day"
             }
+          },
+          {
+            "in": "query",
+            "name": "window",
+            "required": false,
+            "schema": {
+              "default": "day",
+              "enum": [
+                "day",
+                "rolling"
+              ],
+              "title": "Window",
+              "type": "string"
+            }
+          },
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+              "title": "Arm"
+            }
           }
         ],
         "responses": {
@@ -16346,6 +18981,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
           },
           "422": {
             "content": {
@@ -16376,8 +19021,29 @@
     },
     "/api/ops/sources": {
       "get": {
-        "description": "Per registry source: last fetch, docs today, budget skips, backoff, error rate.",
+        "description": "Per registry source: last fetch, docs today, budget skips, backoff, error rate.\nSources run once, in control (shared by every arm).",
         "operationId": "sources_api_ops_sources_get",
+        "parameters": [
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+              "title": "Arm"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -16388,6 +19054,26 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           },
           "503": {
             "content": {
@@ -16408,8 +19094,29 @@
     },
     "/api/ops/universe": {
       "get": {
-        "description": "E12.6 (D51): the stored active list by tier, tier feeds, drops, ignored override.",
+        "description": "E12.6 (D51): the stored active list by tier, tier feeds, drops, ignored override.\n\nControl's list, unless the arm runs the Scout / Trending itself (then its own).",
         "operationId": "universe_api_ops_universe_get",
+        "parameters": [
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+              "title": "Arm"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -16420,6 +19127,26 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           },
           "503": {
             "content": {
@@ -16440,7 +19167,7 @@
     },
     "/api/overview": {
       "get": {
-        "description": "Status strip, equity (by range), day P&L, positions, Greeks vs caps, proposals,\nmovers and recent activity (rolling window), read in one pass (SELECT only).",
+        "description": "Status strip, equity (by range), day P&L, positions, Greeks vs caps, proposals,\nmovers and recent activity (rolling window), read in one pass (SELECT only).\n\n``?arm=``: the arm's store, so equity / P&L are its virtual account (E15.2). The\nstatus strip's Tick is production's (D113): arms run on production's 10-min tick\nand write no ``tick`` heartbeat of their own.",
         "operationId": "overview_api_overview_get",
         "parameters": [
           {
@@ -16480,6 +19207,25 @@
               "description": "Recent Activity window in hours (default: config `tower.overview.activity_hours`, 24)",
               "title": "Activity Hours"
             }
+          },
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+              "title": "Arm"
+            }
           }
         ],
         "responses": {
@@ -16492,6 +19238,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
           },
           "422": {
             "content": {
@@ -16522,7 +19278,7 @@
     },
     "/api/performance": {
       "get": {
-        "description": "Every Performance card for the period, with the comparison computed server-side.",
+        "description": "Every Performance card for the period, with the comparison computed server-side.\n\n``sleeve`` (E22.5, D97) filters the trade cards to one entry-DTE sleeve (or ``other``).",
         "operationId": "performance_api_performance_get",
         "parameters": [
           {
@@ -16605,6 +19361,42 @@
               ],
               "title": "To"
             }
+          },
+          {
+            "in": "query",
+            "name": "sleeve",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9_]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sleeve"
+            }
+          },
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+              "title": "Arm"
+            }
           }
         ],
         "responses": {
@@ -16617,6 +19409,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
           },
           "422": {
             "content": {
@@ -16662,7 +19464,8 @@
                 "exit_reason",
                 "reason_code",
                 "profile",
-                "regime"
+                "regime",
+                "sleeve"
               ],
               "title": "By",
               "type": "string"
@@ -16733,6 +19536,42 @@
               ],
               "title": "To"
             }
+          },
+          {
+            "in": "query",
+            "name": "sleeve",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9_]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sleeve"
+            }
+          },
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+              "title": "Arm"
+            }
           }
         ],
         "responses": {
@@ -16745,6 +19584,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
           },
           "422": {
             "content": {
@@ -16827,6 +19676,25 @@
               ],
               "title": "To"
             }
+          },
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+              "title": "Arm"
+            }
           }
         ],
         "responses": {
@@ -16839,6 +19707,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
           },
           "422": {
             "content": {
@@ -16886,6 +19764,25 @@
               "title": "Status",
               "type": "string"
             }
+          },
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+              "title": "Arm"
+            }
           }
         ],
         "responses": {
@@ -16898,6 +19795,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
           },
           "422": {
             "content": {
@@ -16941,6 +19848,25 @@
               "title": "Q",
               "type": "string"
             }
+          },
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+              "title": "Arm"
+            }
           }
         ],
         "responses": {
@@ -16953,6 +19879,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
           },
           "422": {
             "content": {
@@ -17003,6 +19939,25 @@
               ],
               "title": "Lookback Days"
             }
+          },
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+              "title": "Arm"
+            }
           }
         ],
         "responses": {
@@ -17015,6 +19970,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
           },
           "422": {
             "content": {
@@ -17045,7 +20010,7 @@
     },
     "/api/trades": {
       "get": {
-        "description": "Every proposal (opens and closes), filtered, sorted and paged server-side, with\nthe summary over the whole filter.",
+        "description": "Every proposal (opens and closes), filtered, sorted and paged server-side, with\nthe summary over the whole filter. ``sleeve`` (E22.5, D97) filters by entry-DTE sleeve\n(``short`` / ``swing`` / ``other``) derived from the open's entry DTE.",
         "operationId": "trades_api_trades_get",
         "parameters": [
           {
@@ -17270,6 +20235,25 @@
           },
           {
             "in": "query",
+            "name": "sleeve",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sleeve"
+            }
+          },
+          {
+            "in": "query",
             "name": "q",
             "required": false,
             "schema": {
@@ -17341,6 +20325,25 @@
               "title": "Dir",
               "type": "string"
             }
+          },
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+              "title": "Arm"
+            }
           }
         ],
         "responses": {
@@ -17353,6 +20356,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
           },
           "422": {
             "content": {
@@ -17385,6 +20398,27 @@
       "get": {
         "description": "Distinct values for the Trades filter dropdowns.",
         "operationId": "trade_filters_api_trades_filters_get",
+        "parameters": [
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+              "title": "Arm"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -17395,6 +20429,26 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           },
           "503": {
             "content": {
@@ -17427,6 +20481,25 @@
               "minLength": 4,
               "title": "Proposal Hash",
               "type": "string"
+            }
+          },
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+              "title": "Arm"
             }
           }
         ],

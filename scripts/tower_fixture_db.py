@@ -21,6 +21,8 @@ monitor's stale threshold (3 x 5 min) to see the stale state. The DB holds:
   regime snapshot, run manifest, order events) and AMD has a close-to-reallocate pair
   (AMD close -> XLE open), an outcome and an owner review;
 - with ``--ops``, the E8.7d Ops page rows (``scripts/tower_fixture_ops.py``);
+- with ``--arms``, a running K=3 experiment ``XP-12`` and its three arm stores beside the
+  DB (``scripts/tower_fixture_arms.py``), for the E15.7 arm switcher;
 - a real ``arc2`` gate token (minted with :data:`FIXTURE_GATE_SECRET`, a test-only
   secret) on every executed proposal's ``gate_decisions.token`` and the matching
   ``<token>.s1`` as its ``orders.client_order_id``, exactly as the ladder writes them, so
@@ -264,6 +266,7 @@ def build(
     history: bool = False,
     ops: bool = False,
     exits: bool = False,
+    arms: bool = False,
 ) -> Path:
     """Create *path* (must not exist), migrate it and fill it with the fixture rows.
 
@@ -273,6 +276,7 @@ def build(
     simulated schedule with run manifests, alerts, context, LLM usage, config changes).
     *exits* adds the E13.14 Research exit chain (``scripts/tower_fixture_exits.py``:
     watchlist, exit cases, Risk verdicts).
+    *arms* adds a running K=3 experiment with its arm stores (``scripts/tower_fixture_arms.py``).
     """
     if path.exists():
         msg = f"{path} exists; the fixture builder never overwrites a DB"
@@ -571,6 +575,8 @@ def build(
         run = ops_mod.undeclared_run_id(conn)
         if run:
             ops_mod.write_log(path, run, now)
+    if arms:
+        _load_script("tower_fixture_arms").add_arms(conn, path, now)
     conn.commit()
     conn.close()
     log.info("tower_fixture.built", path=str(path), now=now.isoformat())
@@ -590,12 +596,17 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--exits", action="store_true", help="add the E13.14 shadow exit chain (Positions)"
     )
+    ap.add_argument(
+        "--arms", action="store_true", help="add a running K=3 experiment + arm stores (E15.7)"
+    )
     args = ap.parse_args(argv)
     now = dt.datetime.fromisoformat(args.now) if args.now else None
     if now is not None and now.tzinfo is None:
         now = now.replace(tzinfo=ET)
     try:
-        build(args.out, now, history=args.history, ops=args.ops, exits=args.exits)
+        build(
+            args.out, now, history=args.history, ops=args.ops, exits=args.exits, arms=args.arms
+        )
     except FileExistsError as exc:
         log.error("tower_fixture.refused", error=str(exc))
         return 2

@@ -14,6 +14,12 @@
   computed as of now, or the latest stored report)
 - ``arc experiment evaluate [<id>] [--now ISO]``  run the daily evaluation now: stores
   the report and applies its verdict (the ``experiments.evaluate`` routine does this)
+- ``arc experiment adopt P-<n> --proposal <backlog json | P-<n>.yaml> --owner-approval
+  slack:<ts>``  E21.4 (D86): next free XP id, defaults, validate, create + register, the
+  spec PR (auto-merge) and one Slack line; idempotent per P-<n>; ``--dry-run`` writes
+  nothing
+- ``arc experiment verdict <id> [--dry-run]``  E21.4: the concluded experiment's verdict
+  file PR (the daily evaluation opens these itself; this retries or previews one)
 
 Every subcommand takes ``--db`` (default ``data/arc.db``). Exit 0 on success,
 1 on a failed verify, 2 on a refusal (locked spec, bad transition, bad spec).
@@ -114,6 +120,34 @@ def add_experiment_parser(sub: argparse._SubParsersAction[argparse.ArgumentParse
         default=None,
         help="E21.3: comma list of daily effects; sessions needed at --k for each",
     )
+    ad = common(
+        esub.add_parser(
+            "adopt", help="E21.4: register an owner-approved Analyst proposal P-<n> (D86)"
+        )
+    )
+    ad.add_argument("proposal_id", nargs="?", default=None, help="P-<n>")
+    ad.add_argument(
+        "--proposal",
+        required=True,
+        help="the proposal: an xp_backlog.json entry (or the whole backlog), or the "
+        "Analyst's approved proposals/P-<n>.yaml",
+    )
+    ad.add_argument("--owner-approval", default=None, help=OWNER_APPROVAL_HELP)
+    ad.add_argument("--now", default=None, help="ISO time (default: now)")
+    ad.add_argument("--dry-run", action="store_true", help="Change nothing; print the plan")
+    ad.add_argument("--no-pr", action="store_true", help="Register only; no spec PR")
+    ad.add_argument("--no-slack", action="store_true", help="No #arc-investor line")
+    ad.add_argument("--no-fetch", action="store_true", help="Do not read origin/main")
+    common(
+        esub.add_parser(
+            "regime-panel",
+            help="E25.5 (D108): P - C and Ti - C pooled across v3 XPs by regime "
+            "(descriptive, read-only)",
+        )
+    )
+    vd = common(esub.add_parser("verdict", help="E21.4: a concluded experiment's verdict PR"))
+    vd.add_argument("experiment_id")
+    vd.add_argument("--dry-run", action="store_true", help="Print the verdict file only")
     # E10.2 arm runner: start | pair | arms-tick
     from arc.experiments.cli_arms import add_arm_parsers
 
@@ -155,6 +189,11 @@ def _detail(s: ExperimentState) -> list[str]:
         f"sessions {sp.min_sessions}-{sp.max_sessions}",
     ]
     many = len(sp.arms.treatments) > 1
+    if sp.control_runs:
+        lines.append(
+            f"  control: arm {sp.arm_id_for('control')} (spec v{sp.spec_version}, D108): "
+            "verdict = Ti vs control (Holm); production is a descriptive panel only"
+        )
     for name, arm in sp.arms.treatments.items():
         over = arm.overlay
         label = f"{name} overlay" if many else "treatment overlay"
@@ -203,7 +242,13 @@ def report_lines(r: ExperimentReport) -> list[str]:
         f"{r.experiment_id}  {r.kind.value}/{r.area}  {r.status.value}  "
         f"verdict {r.verdict.upper()}: {r.verdict_reason}",
         f"  evaluated {r.evaluated_at:%Y-%m-%d %H:%M %Z}; t0 {r.t0:%Y-%m-%d %H:%M %Z} "
-        f"equity {r.t0_equity:,.2f}; legacy book {len(r.legacy_book)}",
+        f"equity {r.t0_equity:,.2f}; "
+        + (
+            f"reference control arm (D108); production start book "
+            f"{len(r.production.start_book.ids) if r.production else 0}"
+            if r.reference == "control"
+            else f"legacy book {len(r.legacy_book)}"
+        ),
         f"  sessions {r.sessions} (min {r.min_sessions}, max {r.max_sessions}); "
         f"as of {r.as_of_day or '-'}"
         + (f"; missing {', '.join(map(str, r.missing_sessions))}" if r.missing_sessions else ""),
@@ -228,6 +273,8 @@ def report_lines(r: ExperimentReport) -> list[str]:
         )
     if r.multi_arm:
         lines += _multi_arm_lines(r)
+    if r.production is not None:
+        lines += production_lines(r)
     c = r.calibration
     lines.append(
         f"  calibration: sigma {_pct(c.sigma)}  MDE "
@@ -302,6 +349,53 @@ def _multi_arm_lines(r: ExperimentReport) -> list[str]:
             f"    {p.b} vs {p.a:8} n {p.n:3}  mean {_pct(p.mean)}/day  CI {ci}  p {pv}  "
             f"Holm p {hp}  {tag}"
         )
+    return lines
+
+
+def production_lines(r: ExperimentReport) -> list[str]:
+    """D108 (E25.3): the descriptive Production panel, printed after the Ti vs C table."""
+    pp = r.production
+    if pp is None:
+        return []
+    sb = pp.start_book
+    still = sum(1 for d in sb.close_dates.values() if d is None)
+    lines = [
+        "  production panel (descriptive only: never a verdict, stop or promotion input):",
+        f"    P total {pp.cum_p_pnl:+,.2f}  C total {pp.cum_c_pnl:+,.2f}  "
+        f"P - C {_pct(pp.cum_d_p_c)} = start book {_pct(pp.cum_start_book)} "
+        f"+ residual {_pct(pp.cum_residual)} (of t0 equity)",
+        f"    start book {len(sb.ids)} structure(s), {still} still open, "
+        f"cum P&L {sb.cum_pnl:+,.2f}"
+        + (
+            "; closed "
+            + ", ".join(f"{i[:8]} {d}" for i, d in sorted(sb.close_dates.items()) if d is not None)
+            if any(d is not None for d in sb.close_dates.values())
+            else ""
+        ),
+        f"    ramped (C open structures >= P, median of {pp.ramp_window}): "
+        f"{pp.ramped_from or 'not yet'}",
+        "    arm - production (always-valid CI, no Holm, no verdict):",
+    ]
+    for c in pp.compare:
+        ci = f"[{_pct(c.ci.lo)}, {_pct(c.ci.hi)}]" if c.ci else "-"
+        pv = "-" if c.p_value is None else f"{c.p_value:.4f}"
+        lines.append(
+            f"      {c.arm:9} {c.basis:13} n {c.n:3}  mean {_pct(c.mean)}/day  CI {ci}  p {pv}"
+        )
+    if pp.sessions:
+        lines.append(
+            "    sessions (day: P pnl, start book, P ex-start, C pnl, d_p_c, residual, "
+            "P/C open, ramped):"
+        )
+        for s in pp.sessions:
+            lines.append(
+                f"      {s.day}  {s.p_pnl:+10,.2f}  {s.p_start_book_pnl:+9,.2f}  "
+                f"{s.p_ex_start_pnl:+10,.2f}  {s.c_pnl:+10,.2f}  {_pct(s.d_p_c)}  "
+                f"{_pct(s.residual)}  {s.p_open if s.p_open is not None else '-'}/"
+                f"{s.c_open if s.c_open is not None else '-'}  {'yes' if s.ramped else 'no'}"
+            )
+    if pp.missing_sessions:
+        lines.append(f"    missing {', '.join(map(str, pp.missing_sessions))}")
     return lines
 
 
@@ -547,13 +641,144 @@ def _run_eval(args: argparse.Namespace, store: Any, conn: sqlite3.Connection) ->
     return 0
 
 
+def _proposal_from(args: argparse.Namespace) -> Any:
+    from pathlib import Path
+
+    from arc.experiments.adopt import AdoptError, load_proposal, read_proposal_file
+
+    path = Path(args.proposal)
+    if path.suffix == ".json":
+        data = json.loads(path.read_text())
+        if isinstance(data, dict) and isinstance(data.get("items"), dict):  # the whole backlog
+            if not args.proposal_id:
+                msg = "name the proposal: arc experiment adopt P-<n> --proposal <backlog>"
+                raise AdoptError(msg)
+            entry = next(
+                (e for e in data["items"].values() if e.get("id") == args.proposal_id), None
+            )
+            if entry is None:
+                msg = f"no {args.proposal_id} in {path}"
+                raise AdoptError(msg)
+            data = entry
+        return load_proposal(data, proposal_id=args.proposal_id)
+    return read_proposal_file(path, args.proposal_id)
+
+
+def _run_adopt(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
+    from arc.control.effective import effective_settings, experiments_config
+    from arc.experiments.adopt import adopt
+    from arc.experiments.publish import GitMainView, GitPublisher
+    from arc.experiments.store import check_owner_approval
+
+    check_owner_approval(args.owner_approval)  # refuse before reading anything
+    proposal = _proposal_from(args)
+    cfg = experiments_config(effective_settings(conn))
+    now = _parse_now(args.now)
+    post = None
+    if not (args.dry_run or args.no_slack):
+        from arc.approvals.auto import post_day_notice
+
+        def post(text: str) -> None:
+            post_day_notice(conn, text, now)
+
+    res = adopt(
+        conn,
+        proposal,
+        cfg,
+        owner_approval=args.owner_approval,
+        now=now,
+        main=None if args.no_fetch else GitMainView(),
+        publisher=None if (args.dry_run or args.no_pr) else GitPublisher(),
+        dry_run=args.dry_run,
+        post=post,
+    )
+    if args.json:
+        _out(json.dumps(res.as_json(), indent=2, default=str))
+        return 0
+    head = "dry-run (nothing written)" if res.dry_run else ("adopted" if res.created else "found")
+    _out(f"{head}: {res.proposal_id} -> {res.experiment_id} [{res.status}]")
+    if res.queue_reason:
+        _out(f"  queued: {res.queue_reason}")
+    _out(f"  area {res.area} · {res.arms} treatments · spec sha256 {res.spec_hash}")
+    _out(f"  owner start: {res.start_cmd or 'when the queue frees a slot'} (D112, manual)")
+    _out(f"  file: {res.path} (branch {res.branch})")
+    if res.pr_url or res.pr_status:
+        _out(f"  PR: {res.pr_url or '-'} ({res.pr_status})")
+    _out(f"  slack: {res.slack}")
+    if res.dry_run:
+        _out(f"  PR title: {res.pr_title}")
+        _out("  PR body:")
+        _out("\n".join("    " + line for line in res.pr_body.splitlines()))
+        _out("  spec file:")
+        _out("\n".join("    " + line for line in res.file_text.splitlines()))
+    return 0
+
+
+def run_regime_panel(args: argparse.Namespace) -> int:
+    """``arc experiment regime-panel``: the store is opened ``mode=ro`` (never migrated)."""
+    from arc.experiments.regime_panel import (
+        build_regime_panel,
+        load_v3_reports,
+        panel_json,
+        panel_lines,
+    )
+    from arc.store.db import connect_ro
+
+    try:
+        conn = connect_ro(args.db)
+    except FileNotFoundError as exc:
+        _err(f"arc experiment regime-panel: {exc}")
+        return 2
+    try:
+        panel = build_regime_panel(load_v3_reports(conn))
+    finally:
+        conn.close()
+    if args.json:
+        _out(panel_json(panel))
+    else:
+        panel_lines(panel, out=_out)
+    return 0
+
+
+def _run_verdict(args: argparse.Namespace, store: Any, conn: sqlite3.Connection) -> int:
+    from arc.experiments.evaluate import latest_report
+    from arc.experiments.publish import GitPublisher
+    from arc.experiments.verdicts import publish_verdict, verdict_file_text
+
+    st = store.require(args.experiment_id)
+    if st.reason is None:
+        _err(f"arc experiment verdict: {st.experiment_id} is {st.status.value}, not concluded")
+        return 2
+    if args.dry_run:
+        _out(verdict_file_text(st, latest_report(conn, st.experiment_id)).rstrip())
+        return 0
+    from arc.experiments.publish import GitMainView
+
+    pr = publish_verdict(
+        conn, store, st.experiment_id, GitPublisher(), now=_parse_now(None), main=GitMainView()
+    )
+    _out(
+        f"{st.experiment_id}: verdict already published"
+        if pr is None
+        else f"{st.experiment_id}: verdict PR {pr.url or pr.status}"
+    )
+    return 0
+
+
 def run_experiment(args: argparse.Namespace) -> int:
     from pydantic import ValidationError
 
     from arc.experiments.models import ExperimentStatus, StopDetail, StopReason
+    from arc.experiments.publish import PublishError
     from arc.experiments.store import ExperimentError, ExperimentStore
 
     cmd = args.experiment_command
+    if cmd == "arm-tick":  # E15.4: control is read mode=ro only; never migrated here
+        from arc.experiments.cli_arms import run_arm_tick
+
+        return run_arm_tick(args)
+    if cmd == "regime-panel":  # E25.5: read-only view, never opens the store read-write
+        return run_regime_panel(args)
     conn = _open(args.db)
     try:
         from arc.control.effective import effective_settings, experiments_config
@@ -606,6 +831,10 @@ def run_experiment(args: argparse.Namespace) -> int:
             return _run_eval(args, store, conn)
         elif cmd == "plan":
             return _run_plan(args, store, conn)
+        elif cmd == "adopt":
+            return _run_adopt(args, conn)
+        elif cmd == "verdict":
+            return _run_verdict(args, store, conn)
         elif cmd in ("start", "pair", "arms-tick", "repair-ledger"):
             from arc.experiments.cli_arms import run_arm_command
 
@@ -620,11 +849,19 @@ def run_experiment(args: argparse.Namespace) -> int:
                 actor=args.actor,
                 detail=StopDetail(note=args.note),
             )
+            # E21.4: the verdict file PR follows at the 16:40 experiments.evaluate
+            _err(
+                f"{args.experiment_id}: verdict file PR opens at the next experiments.evaluate "
+                f"(16:40 ET), or now: arc experiment verdict {args.experiment_id}"
+            )
         else:  # pragma: no cover - argparse enforces the choice
             return 2
     except ExperimentError as exc:
         _err(f"arc experiment {cmd}: {exc}")
         return 2
+    except PublishError as exc:  # E21.4: git / gh failed; the registry state is kept
+        _err(f"arc experiment {cmd}: publishing failed (re-run to retry): {exc}")
+        return 3
     finally:
         conn.close()
     if args.json:

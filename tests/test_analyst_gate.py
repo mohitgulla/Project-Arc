@@ -220,9 +220,18 @@ def test_context_contains_scorecard_and_ledger(
     run_dir = _run_dir(p)
     assert out.startswith(f"RUN_DIR={run_dir}")
     assert "CLOSED_TRADES: week=1 all_time=1" in out
-    # realised-vs-model table by kind x regime
-    assert "## Realised vs model, this week (kind x regime)" in out
-    assert re.search(r"\| iron_condor \| risk_on \| 1 \| 98\.00 \| 40\.00 \| \+58\.00 \|", out)
+    # realised-vs-model table by kind x regime x sleeve (E22.5: the fixture condor
+    # maps to `swing` by its entry DTE, windows from `arc scorecard sleeves --json`)
+    assert "## Realised vs model, this week (kind x regime x DTE sleeve)" in out
+    assert re.search(
+        r"\| iron_condor \| risk_on \| swing \| 1 \| 98\.00 \| 40\.00 \| \+58\.00 \|", out
+    )
+    # E22.5 (D97): the per-sleeve report with the keep/shrink rule
+    assert "## DTE sleeves, all time (E22.5, D97" in out
+    assert "- rule (D97, fixed in advance, report only): Read after >= 30 closed" in out
+    assert "- short (10-29 DTE): opens 0, closed n=0" in out
+    assert "verdict collect (not ready)" in out
+    assert (run_dir / "sleeves-all.log").read_text().strip().startswith("{")
     assert "LOW (n<20)" in out
     assert "slippage_frac = 0.25" in out
     # scorecard (attribution + weekly), gaps, counterfactual, config
@@ -244,14 +253,20 @@ def test_context_contains_scorecard_and_ledger(
     assert "## Experiment idea seed (D86: leads from retired dev drafts" in out
     assert "- S-1 [entries] Velocity-weighted trending tier" in out
     assert "- S-5 [entries] Unified managed-EV menu measure" in out
-    # E21.3 (D86): capacity, the K=4 plan grid, the (empty) backlog, reviews, merged PRs
-    assert "## Experiment capacity (D69/D86" in out
-    assert "- max_parallel_arms 10: 0 arm(s) registered/running (none)" in out
-    assert "## Sessions needed at K=4" in out
+    # E21.3 (D86) / E25.4 (D108): capacity, the K=3 plan grid, the (empty) backlog, ...
+    assert "## Experiment capacity (D69/D108" in out
+    assert (
+        "- max_parallel_arms 10: 0 arm(s) registered/running (none); "
+        "a K=3 experiment needs 4 (control + 3 treatments, D108)"
+    ) in out
+    assert "## Sessions needed at K=3" in out
+    # E25.5 (D108): the regime panel, from `arc experiment regime-panel --json`
+    assert "## Regime panel (E25.5, D108" in out and "- no v3 sessions yet" in out
+    assert json.loads((run_dir / "regime-panel.log").read_text())["sessions"] == 0
     # no A/A sigma in the fixture store: the grid uses the documented XP-1 A/A sigma
     assert "- sigma +0.036%/day (docs/RESEARCH/experiments/XP-1-aa.md (no A/A sigma" in out
-    assert "- effect +0.020%/day -> 63 sessions (> max_sessions: too small to detect)" in out
-    assert "- effect +0.050%/day -> 11 sessions (runs at least min_sessions: use 20)" in out
+    assert "- effect +0.020%/day -> 60 sessions\n" in out  # K=3 (D108): 63 at K=4
+    assert "- effect +0.050%/day -> 10 sessions (runs at least min_sessions: use 20)" in out
     assert "## XP backlog (yours;" in out and "- empty (no P-<n> yet" in out
     assert "## Quick changes shipped since the last review" in out
     assert "- none shipped since the last review" in out
@@ -498,7 +513,7 @@ def _spec(**over: Any) -> dict[str, Any]:
         "title": "Take-profit level", "area": "exits",
         "hypothesis": "an earlier take-profit adds ~0.05%/day net",
         "arms": {"control": {}, "treatments": {
-            f"t{i}": _overlay(v) for i, v in enumerate((0.3, 0.4, 0.6, 0.75), 1)}},
+            f"t{i}": _overlay(v) for i, v in enumerate((0.3, 0.6, 0.75), 1)}},
         "non_inferiority_margin": 0.5, "backtest_ref": "BT-3",
     }  # fmt: skip
     spec.update(over)
@@ -514,7 +529,7 @@ def _prop(key: str = "xp-proposal:tp-level", n: int = 6, **over: Any) -> dict[st
     }  # fmt: skip
     p.setdefault("value_score", aa.proposal_value(p))
     return {
-        "key": key, "title": "take-profit level x4", "severity": "info",
+        "key": key, "title": "take-profit level x3", "severity": "info",
         "category": "xp-proposal", "bucket": "kind=iron_condor", "n": n,
         "theme": "exit-policy", "evidence": "BT-3", "recommendation": "run it",
         "action": "owner-decision", "proposal": {k: v for k, v in p.items() if v is not None},
@@ -626,18 +641,22 @@ def test_quick_change_track_needs_items_or_a_reason() -> None:
         (_prop(spec=_spec(non_inferiority_margin=0)), "non_inferiority_margin"),
         (_prop(spec=_spec(arms={"treatment": _overlay(0.4)})), "control and treatments only"),
         (_prop(spec=_spec(arms={"control": {}, "treatments": {
-            "t1": _overlay(0.3), "t2": _overlay(0.4)}})), "FOUR-TREATMENTS"),
+            "t1": _overlay(0.3), "t2": _overlay(0.4)}})), "THREE-TREATMENTS"),
         (_prop(spec=_spec(arms={"control": {}, "treatments": {
-            "t1": _overlay(0.3), "t2": _overlay(0.4), "t3": _overlay(0.6),
-            "t4": {"overlay": {"ranking": {"rank_by": "x"}}}}})), "SAME-LEAVES"),
-        (_prop(spec=_spec(arms={"control": {}, "treatments": {
-            "t1": _overlay(0.3), "t2": _overlay(0.3), "t3": _overlay(0.6),
-            "t4": _overlay(0.7)}})), "identical to t1"),
-        (_prop(spec=_spec(arms={"control": _overlay(0.5), "treatments": {
             f"t{i}": _overlay(v) for i, v in enumerate((0.3, 0.4, 0.6, 0.7), 1)}})),
+         "THREE-TREATMENTS"),
+        (_prop(spec=_spec(spec_version=4)), "spec_version must be 3"),
+        (_prop(spec=_spec(arms={"control": {}, "treatments": {
+            "t1": _overlay(0.3), "t2": _overlay(0.4),
+            "t3": {"overlay": {"ranking": {"rank_by": "x"}}}}})), "SAME-LEAVES"),
+        (_prop(spec=_spec(arms={"control": {}, "treatments": {
+            "t1": _overlay(0.3), "t2": _overlay(0.3), "t3": _overlay(0.6)}})),
+         "identical to t1"),
+        (_prop(spec=_spec(arms={"control": _overlay(0.5), "treatments": {
+            f"t{i}": _overlay(v) for i, v in enumerate((0.3, 0.6, 0.7), 1)}})),
          "control arm is the production config"),
         (_prop(spec=_spec(arms={"control": {}, "treatments": {
-            f"t{i}": {"overlay": {"gate": {"x": v}}} for i, v in enumerate((1, 2, 3, 4), 1)}})),
+            f"t{i}": {"overlay": {"gate": {"x": v}}} for i, v in enumerate((1, 2, 3), 1)}})),
          "not in"),
         (_prop(spec=_spec(backtest_ref="BT-4")), "backtest_ref must equal"),
         (_prop(evidence_ref="docs/x"), "BT-<n> study id"),
@@ -655,14 +674,14 @@ def test_proposal_rules(finding: dict[str, Any], needle: str) -> None:
 
 
 def test_proposal_spec_is_the_live_format_once_approved() -> None:
-    """The proposal spec plus what approval fills is a real v2 ``ExperimentSpec``."""
+    """The proposal spec plus what approval fills is a real v3 ``ExperimentSpec`` (D108)."""
     from arc.experiments.models import ExperimentSpec
 
     assert _errs([_prop()]) == []
     spec = ExperimentSpec.model_validate(
-        {**_spec(), "id": "XP-9", "kind": "ab", "spec_version": 2, "proposed_by": "A-1"}
+        {**_spec(), "id": "XP-9", "kind": "ab", "spec_version": 3, "proposed_by": "A-1"}
     )
-    assert len(spec.arms.treatments) == 4
+    assert len(spec.arms.treatments) == 3 and spec.control_runs
     # the gate's mirror tracks the model's fields
     assert set(aa.SPEC_KEYS) == set(ExperimentSpec.model_fields)
 
@@ -764,7 +783,7 @@ def test_next_experiment_names_a_ranked_proposal_and_its_slot() -> None:
     errs = _ferrs([_prop()], next_experiment="P-1", next_slot="soon")
     assert any("XP-2, XP-3" in e and "next_slot must name" in e for e in errs), errs
     assert _ferrs([_prop()], next_experiment="P-1", next_slot="after XP-2 + XP-3 ~Nov 12") == []
-    # another area is free now, but capacity counts arms: 7 used + 4 > 10
+    # another area is free now, but capacity counts arms: 7 used + (control + 3) > 10
     ranking = _prop(spec=_spec(area="ranking"))
     assert _ferrs([ranking], next_experiment="P-1", next_slot="free now") == []
     heavy = [{**REGISTRY[1], "arms": 7}, REGISTRY[0], REGISTRY[2]]
@@ -793,6 +812,147 @@ def test_sync_backlog_follows_the_registry_by_proposal_ref() -> None:
     assert aa.backlog_by_id(b, "P-1")["status"] == "concluded"
     assert aa._proposal_ref({"owner_approval": "P-3"}) == "P-3"
     assert aa._proposal_ref({"owner_approval": "thread ts 1"}) is None
+
+
+def _k4_backlog(status: str = "proposed") -> dict[str, Any]:
+    """A backlog holding one D86-era four-treatment entry (``P-1``)."""
+    b = aa.empty_backlog()
+    four = _spec(arms={"control": {}, "treatments": {
+        f"t{i}": _overlay(v) for i, v in enumerate((0.3, 0.4, 0.6, 0.75), 1)}})  # fmt: skip
+    aa.apply_backlog(b, {"findings": [_prop(spec=four)]}, "r0", "t0")
+    aa.backlog_by_id(b, "P-1")["status"] = status
+    return b
+
+
+def test_d108_constants() -> None:
+    assert aa.K_TREATMENTS == 3 and aa.TREATMENT_NAMES == ("t1", "t2", "t3")
+    assert aa.ARMS_PER_XP == 4 and aa.PROPOSAL_SPEC_VERSION == 3
+    assert aa.PLAN_VIEW == "plan-k3"
+    # capacity counts control as an arm from spec v3; v2 (D86) did not
+    assert aa._treatment_count(_spec()) == 3
+    assert aa._treatment_count({**_spec(), "spec_version": 3}) == 4
+    assert aa._treatment_count({"arms": {"treatment": {}}}) == 1
+
+
+@pytest.mark.parametrize("status", ["proposed", "approved"])
+def test_k4_backlog_entry_is_flagged_needs_rewrite_never_trimmed(status: str) -> None:
+    b = _k4_backlog(status)
+    lines = aa.flag_needs_rewrite(b, "t1")
+    e = aa.backlog_by_id(b, "P-1")
+    assert lines == [f"P-1: needs_rewrite ({e['needs_rewrite']['reason']})"]
+    assert "4 treatment(s) (t1, t2, t3, t4)" in e["needs_rewrite"]["reason"]
+    assert sorted(e["spec"]["arms"]["treatments"]) == ["t1", "t2", "t3", "t4"]  # untouched
+    assert e["status"] == status and e["history"][-1]["event"] == "needs_rewrite"
+    assert aa.flag_needs_rewrite(b, "t2") == []  # idempotent
+    assert aa.ranked_backlog(b) == []
+    assert any("NEEDS REWRITE, not ranked" in ln for ln in aa.backlog_lines(b, [], 10))
+    # registered/running/concluded entries are history: never flagged
+    done = _k4_backlog("running")
+    assert aa.flag_needs_rewrite(done, "t1") == []
+
+
+def test_k4_entry_cannot_be_next_experiment_until_rewritten() -> None:
+    b = _k4_backlog("approved")
+    aa.flag_needs_rewrite(b, "t1")
+    errs = _errs([], backlog=b, next_experiment="P-1")
+    assert any("P-1 needs a rewrite (D108" in e for e in errs), errs
+    # re-proposing the same key with 3 treatments clears the flag (frozen-spec rule waived),
+    # and the old K=4 approval does not carry over
+    assert _errs([_prop()], backlog=b, next_experiment="P-1") == []
+    aa.apply_backlog(b, {"findings": [_prop()]}, "r1", "t2")
+    e = aa.backlog_by_id(b, "P-1")
+    assert "needs_rewrite" not in e and e["status"] == "proposed"
+    assert sorted(e["spec"]["arms"]["treatments"]) == ["t1", "t2", "t3"]
+    assert e["history"][-1]["event"] == "rewritten"
+    assert [x["id"] for x in aa.ranked_backlog(b)] == ["P-1"]
+
+
+def test_approve_refuses_a_k4_entry(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    p = _paths(tmp_path, tmp_path / "unused.db")
+    aa.save_json(p.backlog, _k4_backlog("proposed"))
+    approval = ["--approval", "slack:1791668051.305679"]
+    assert aa.main(["approve", "P-1", "go", *approval], p, NOW) == 2
+    assert "P-1 needs a rewrite before approval" in capsys.readouterr().out
+    e = aa.backlog_by_id(aa.load_backlog(p.backlog), "P-1")
+    assert e["status"] == "proposed" and e["needs_rewrite"]
+    assert not (p.home / "proposals" / "P-1.yaml").exists()
+    assert aa.main(["backlog"], p, NOW) == 0
+    assert "P-1 [proposed] NEEDS REWRITE (D108: 3 treatments)" in capsys.readouterr().out
+
+
+def test_v3_report_lines_show_verdicts_vs_control_and_production_as_context() -> None:
+    ci = {"estimate": 0.001, "lo": -0.001, "hi": 0.003, "level": 0.95}
+    payload = {
+        "reference": "control",
+        "pairwise": [
+            {"kind": "control_vs_treatment", "a": "control", "b": f"t{i}", "n": 20,
+             "mean": 0.001, "ci": ci, "holm_p": 0.4, "verdict": "continue"}
+            for i in (1, 2, 3)
+        ] + [{"kind": "treatment_vs_treatment", "a": "t1", "b": "t2"}],
+        "production": {
+            "cum_p_pnl": 120.0, "cum_c_pnl": 80.0, "cum_d_p_c": 0.0016,
+            "cum_start_book": 0.001, "cum_residual": 0.0006, "ramped_from": None,
+            "start_book": {"ids": ["s1", "s2"], "close_dates": {"s1": "2026-10-10", "s2": None}},
+            "compare": [
+                {"arm": "t1", "basis": "total", "n": 20, "mean": -0.001, "ci": ci},
+                {"arm": "control", "basis": "total", "n": 20, "mean": -0.002, "ci": ci},
+                {"arm": "control", "basis": "post_ramp", "n": 0, "mean": None, "ci": None},
+            ],
+        },
+    }  # fmt: skip
+    v = aa._verdict_pair_lines(payload)
+    assert v[0] == "- verdicts (Ti vs C, C = control arm; Holm across K=3):"
+    assert v[1].startswith("  - t1 vs control: CONTINUE n=20 mean +0.100%/day")
+    assert len(v) == 4  # Ti vs Tj is descriptive, not listed as a verdict
+    prod = aa._production_lines(payload)
+    assert prod[0].startswith("- production panel (DESCRIPTIVE, never a winner")
+    assert "start book 2 structures, 1 still open | ramped from not yet" in prod[0]
+    assert "P - C +0.160% = start book +0.100% + residual +0.060%" in prod[0]
+    assert [ln.split(" (")[0] for ln in prod[1:]] == ["  - t1 - P", "  - control - P"]
+    assert "post_ramp" in prod[2]
+    # a v2 report: no production panel; C named as production
+    v2 = {"pairwise": payload["pairwise"][:1]}
+    assert aa._production_lines(v2) == []
+    assert "C = control (production, v2)" in aa._verdict_pair_lines(v2)[0]
+
+
+def test_regime_panel_lines_render_buckets_and_starts(tmp_path: Path) -> None:
+    """E25.5 (D108): the pooled regime panel as compact, descriptive context lines."""
+    ci = {"estimate": 0.001, "lo": -0.001, "hi": 0.003, "level": 0.95}
+    mc = {"n": 4, "mean": 0.001, "ci": ci}
+    panel = {
+        "panel_version": 1, "descriptive": True, "thin_n": 10, "xps": ["XP-20", "XP-21"],
+        "sessions": 16, "unknown_sessions": 1,
+        "buckets": [
+            {"grouping": "trend", "key": "bull", "n": 12, "thin": False, "xps": ["XP-20"],
+             "d_p_c": mc, "residual": mc, "ti_minus_c": {"all": mc}},
+            {"grouping": "trend", "key": "unknown", "n": 1, "thin": True, "xps": ["XP-21"],
+             "d_p_c": {"n": 1, "mean": -0.002, "ci": None}, "residual": mc,
+             "ti_minus_c": {}},
+        ],
+        "starts": [{"experiment_id": "XP-20", "t0": "2026-10-05T09:00:00-04:00",
+                    "start_regime": "bull/low", "sessions": 12, "cum_d_p_c": 0.0072,
+                    "cum_residual": 0.0072, "ramped_from": None, "status_verdict": "win"}],
+    }  # fmt: skip
+    lines = aa.regime_panel_lines(json.dumps(panel), tmp_path)
+    assert lines[0] == "- XPs XP-20, XP-21; sessions 16; untagged (unknown) 1; thin = n < 10"
+    assert lines[1] == (
+        "- trend=bull: n 12 P-C +0.100% [-0.100%, +0.300%] residual +0.100% "
+        "[-0.100%, +0.300%] Ti-C(all) +0.100% [-0.100%, +0.300%]"
+    )
+    assert lines[2].startswith("- trend=unknown: n 1 THIN P-C -0.200% residual")
+    assert lines[2].endswith("Ti-C(all) n/a")
+    assert lines[3] == (
+        "- start XP-20 t0 2026-10-05 regime bull/low: 12 sessions, cum P-C +0.720%, "
+        "residual +0.720%, ramped not yet [win]"
+    )
+    assert (tmp_path / "regime-buckets.log").read_text().count("trend=") == 2
+    empty = {**panel, "sessions": 0, "buckets": [], "starts": []}
+    assert aa.regime_panel_lines(json.dumps(empty), tmp_path) == ["- no v3 sessions yet"]
+    assert aa.regime_panel_lines("(exit 2; boom)", tmp_path)[0].startswith("- unavailable:")
+    assert aa.regime_panel_lines(json.dumps({"panel_version": 9}), tmp_path) == [
+        "- unsupported regime panel shape (want v1)"
+    ]
 
 
 @pytest.fixture(scope="module")
@@ -860,7 +1020,7 @@ def test_context_has_backlog_and_record_writes_p_ids(
     assert "- P-1 [running] -> XP-2 (in the registry)" in out
     entry = aa.backlog_by_id(aa.load_backlog(p.backlog), "P-1")
     assert entry["status"] == "running" and entry["experiment_id"] == "XP-2"
-    # a proposed entry is ranked with its formula, slot and four arms
+    # a proposed entry is ranked with its formula, slot and three treatments
     b = aa.load_backlog(p.backlog)
     aa.apply_backlog(b, {"findings": [_prop(key="xp-proposal:other")]}, "r", "t")
     aa.save_json(p.backlog, b)
@@ -872,11 +1032,12 @@ def test_context_has_backlog_and_record_writes_p_ids(
     assert "- #1 P-2 [proposed] exits: Take-profit level" in out
     assert "waits: area exits held by XP-2, XP-3" in out
     assert "value 0.000225 = +0.050%/day x share 0.60 x p 0.30 / 40 sessions" in out
-    assert '  t4: {"exits": {"default": {"take_profit_pct": 0.75}}}' in out
+    assert '  t3: {"exits": {"default": {"take_profit_pct": 0.75}}}' in out
+    assert "  t4:" not in out
 
 
 def test_owner_approve_drop_reprioritise_backlog(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     p = _paths(tmp_path, tmp_path / "unused.db")
     b = aa.empty_backlog()
@@ -884,19 +1045,42 @@ def test_owner_approve_drop_reprioritise_backlog(
                                       _prop(key="xp-proposal:b", p_success=0.6)]},
                      "r", "t")  # fmt: skip
     aa.save_json(p.backlog, b)
-    assert aa.main(["approve", "P-9"], p, NOW) == 2
-    assert aa.main(["approve", "P-1", "go"], p, NOW) == 0
+    assert aa.main(["approve", "P-9", "--approval", "slack:1791668051.305679"], p, NOW) == 2
+    assert aa.main(["approve", "P-1", "go"], p, NOW) == 2  # E21.4: the owner's Slack ts
+    assert "needs --approval slack:<ts>" in capsys.readouterr().out
+    calls: list[tuple[str, Path, str]] = []
+
+    def fake_adopt(paths: Any, pid: str, spec_path: Path, approval: str) -> tuple[int, Any]:
+        calls.append((pid, spec_path, approval))
+        return 0, {
+            "experiment_id": "XP-3", "status": "registered", "area": "exits", "arms": 4,
+            "pr_url": "https://github.com/o/r/pull/9", "start_cmd": "arc experiment start XP-3",
+            "queued_behind": [], "queue_reason": None,
+        }  # fmt: skip
+
+    monkeypatch.setattr(aa, "adopt_proposal", fake_adopt)
+    approval = ["--approval", "slack:1791668051.305679"]
+    assert aa.main(["approve", "P-1", "go", *approval], p, NOW) == 0
     out = capsys.readouterr().out
     spec_path = p.home / "proposals" / "P-1.yaml"
-    assert f"P-1 approved. Spec: {spec_path}" in out
-    assert "--owner-approval P-1" in out
+    assert calls == [("P-1", spec_path, "slack:1791668051.305679")]
+    assert "P-1 -> XP-3 [registered], area exits, 4 arms" in out
+    assert "Spec PR: https://github.com/o/r/pull/9" in out
+    assert "owner to start: `arc experiment start XP-3`" in out
     spec = yaml.safe_load(spec_path.read_text())
-    assert spec["id"] == "XP-<next>" and spec["kind"] == "ab" and spec["spec_version"] == 2
+    assert spec["id"] == "XP-<next>" and spec["kind"] == "ab" and spec["spec_version"] == 3
+    assert spec["arms"]["control"] == {"overlay": {}}  # D108: control runs as its own arm
     from arc.experiments.models import ExperimentSpec
 
-    assert len(ExperimentSpec.model_validate({**spec, "id": "XP-9"}).arms.treatments) == 4
+    adopted = ExperimentSpec.model_validate({**spec, "id": "XP-9"})
+    assert len(adopted.arms.treatments) == 3 and adopted.control_runs
     b = aa.load_backlog(p.backlog)
-    assert aa.backlog_by_id(b, "P-1")["status"] == "approved"
+    entry = aa.backlog_by_id(b, "P-1")
+    assert entry["status"] == "registered" and entry["experiment_id"] == "XP-3"
+    assert aa.main(["approve", "P-1", *approval], p, NOW) == 2  # already registered
+    capsys.readouterr()
+    aa.backlog_by_id(b, "P-1")["status"] = "approved"  # back to approved for the ranking part
+    aa.save_json(p.backlog, b)
     assert aa.main(["reprioritise", "P-1", "owner wants exits first"], p, NOW) == 0
     assert "P-1 -> rank #1" in capsys.readouterr().out
     assert aa.main(["reprioritise", "P-2", "why", "--score", "x"], p, NOW) == 2
@@ -996,19 +1180,19 @@ def test_merged_pr_lines_and_max_arms(tmp_path: Path, _pipeline_db: bytes) -> No
 
 
 def test_experiment_plan_effect_grid_matches_stats() -> None:
-    """The `arc experiment plan --k 4 --effects` grid the gate reads (D86)."""
+    """The `arc experiment plan --k 3 --effects` grid the gate reads (D86, K=3 per D108)."""
     from arc.experiments import cli as xcli
     from arc.experiments import stats
 
     grid = xcli.effect_grid(
-        sigma=0.004, effects=[0.0005, 0.002], k=4, alpha=0.05, power=0.8,
+        sigma=0.004, effects=[0.0005, 0.002], k=aa.K_TREATMENTS, alpha=0.05, power=0.8,
         min_sessions=20, max_sessions=60, mde=0.001,
     )  # fmt: skip
     tau = stats.mixing_tau(0.004, mde=0.001, min_sessions=20)
-    want = stats.sessions_needed(0.004, 0.002, tau=tau, alpha=0.05, power=0.8, k=4)
+    want = stats.sessions_needed(0.004, 0.002, tau=tau, alpha=0.05, power=0.8, k=3)
     assert grid[1] == {"effect": 0.002, "sessions_needed": want, "fits_window": want <= 60}
     k1 = stats.sessions_needed(0.004, 0.002, tau=tau, alpha=0.05, power=0.8, k=1)
-    assert want >= k1  # Holm over 4 treatments costs sessions
+    assert want >= k1  # Holm over 3 treatments costs sessions
     with pytest.raises(ValueError, match="positive"):
         xcli._parse_effects("0.001,-1")
 
@@ -1222,7 +1406,7 @@ def test_bt_ref_accepts_a_c500_holdout_and_grandfathers_legacy_refs() -> None:
                   current={"BT-3": {"spec_hash": "a" * 64}})  # fmt: skip
     menu = _prop(spec=_spec(area="ranking", arms={"control": {}, "treatments": {
         f"t{i}": {"overlay": {"exits": {"pipeline": {"rank_menu_by": v}}}}
-        for i, v in enumerate(("managed_net_ev", "rorc_day", "vrp", "scanner_x"), 1)
+        for i, v in enumerate(("managed_net_ev", "rorc_day", "vrp"), 1)
     }}))  # fmt: skip
     assert _errs([menu], studies=rk) == []
     # a live proposal may cite none, or a known study
@@ -1416,7 +1600,7 @@ def test_skill_documents_the_two_tracks_and_the_backlog() -> None:
         "XP PROPOSALS (D86",
         "PRIORITISATION",
         "you never register, start, stop or promote",
-        "**exactly 4** treatments",
+        "**exactly 3** treatments",
         "value_score = pct_per_day × affected_share × p_success ÷ sessions_needed",
         "xp_backlog.json",
         "`quick_change_reviews`",

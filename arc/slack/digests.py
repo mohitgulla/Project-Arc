@@ -610,7 +610,7 @@ def research_card(
         pool_line,
         f"{len(inside)} to Quant (budget {budget})" if beyond else "",
         f"{len(dropped) + len(unranked)} dropped" if dropped or unranked else "",
-        f"{len(suppressed)} suppressed (dedupe)" if suppressed else "",
+        f"{len(suppressed)} suppressed" if suppressed else "",
         f"Portfolio {B.esc(_title_case(pview.verdict))}" if pview is not None else "",
         f"{len(exits)} watched · {reviews} review" if exits else "",
     )
@@ -701,7 +701,7 @@ def research_card(
         blocks.append(B.divider())
         blocks.append(
             _section(
-                f"Suppressed by dedupe ({len(suppressed)})",
+                f"Suppressed ({len(suppressed)})",  # E5.16 (D116): dedupe + stale picks
                 [f"• {B.esc(_clip_line(x))}" for x in suppressed],
             )
         )

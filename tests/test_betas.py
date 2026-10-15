@@ -173,7 +173,7 @@ class _Bars:
             "THIN": _series(days[-60:], [r for r in rm[-59:]]),
         }
 
-    def history_bars(self, symbol, start, end, timeframe="1Day"):  # noqa: ANN001, ANN201
+    def history_bars(self, symbol, start, end, timeframe="1Day", feed=None):  # noqa: ANN001, ANN201
         self.calls.append((symbol, start, end))
         if symbol == "BAD":
             raise RuntimeError("bars down")
@@ -243,7 +243,7 @@ def test_betas_handler(conn: sqlite3.Connection) -> None:
 
 def test_betas_handler_partial_and_total_failure(conn: sqlite3.Connection) -> None:
     class _Down(_Bars):
-        def history_bars(self, symbol, start, end, timeframe="1Day"):  # noqa: ANN001, ANN201
+        def history_bars(self, symbol, start, end, timeframe="1Day", feed=None):  # noqa: ANN001, ANN201
             if symbol != "SPY":
                 raise RuntimeError("down")
             return super().history_bars(symbol, start, end)
@@ -252,7 +252,7 @@ def test_betas_handler_partial_and_total_failure(conn: sqlite3.Connection) -> No
     assert res.metrics["errors"] == 3 and res.summary.endswith("· 3 errors")  # MU, QQQ, IWM
 
     class _NoBench(_Bars):
-        def history_bars(self, symbol, start, end, timeframe="1Day"):  # noqa: ANN001, ANN201
+        def history_bars(self, symbol, start, end, timeframe="1Day", feed=None):  # noqa: ANN001, ANN201
             return []
 
     with pytest.raises(LookupError):
@@ -261,12 +261,30 @@ def test_betas_handler_partial_and_total_failure(conn: sqlite3.Connection) -> No
 
 def test_shipped_betas_job() -> None:
     kind, spec = load_routines().jobs()["betas"]
-    assert [t.isoformat(timespec="minutes") for t in spec.schedule] == ["05:35"]
+    assert [t.isoformat(timespec="minutes") for t in spec.schedule] == ["07:10"]
     assert spec.writes == []
     assert BUILTIN_HANDLERS["betas"] == "arc.routines.handlers:betas_source"
-    # before the 06:00 Scout and the open: today's betas exist before any proposal
-    scout = load_routines().jobs()["scout"][1]
-    assert min(spec.schedule) < min(scout.schedule)
+    # D90: after every pre-market active-list writer, including the Scout / trending
+    # catch-up windows, so late-added names (GCT, GLD, PR on 2026-10-09) get a beta ...
+    jobs = load_routines().jobs()
+    slot = spec.schedule[0]
+    day = dt.date(2026, 10, 12)
+    writers = {
+        n: j
+        for n, (_, j) in jobs.items()
+        if "active_universe" in (j.writes or []) and j.schedule and min(j.schedule) < slot
+    }
+    assert {"symbols", "universe.trending", "scout"} <= set(writers)
+    for name, j in writers.items():
+        assert max(j.schedule) < slot, name
+        if name in ("scout", "universe.trending"):
+            assert j.ttl is not None and j.ttl.duration is not None
+            assert (dt.datetime.combine(day, max(j.schedule)) + j.ttl.duration).time() <= slot
+    # ... and its catch-up window ends before the research loop opens any position
+    research = jobs["research"][1]
+    assert spec.ttl is not None and spec.ttl.duration is not None
+    assert research.window is not None
+    assert (dt.datetime.combine(day, slot) + spec.ttl.duration).time() <= research.window.start
 
 
 # ---------------------------------------------------------------------------

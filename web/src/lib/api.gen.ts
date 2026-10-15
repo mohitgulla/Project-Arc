@@ -53,7 +53,7 @@ export interface paths {
         };
         /**
          * Health
-         * @description 200 when the audit store opens read-only and answers a query.
+         * @description 200 when the (scoped) audit store opens read-only and answers a query.
          */
         get: operations["health_api_health_get"];
         put?: never;
@@ -74,7 +74,9 @@ export interface paths {
         /**
          * Meta
          * @description App/env info, cadences with stale thresholds, gate caps, client defaults and the
-         *     persona / category catalogue (E13.14: every Tower label comes from here).
+         *     persona / category catalogue (E13.14: every Tower label comes from here), plus the
+         *     experiment arms the tower can be scoped to (E15.6). With ``?arm=`` the settings
+         *     are the arm's (control's overrides + its overlay); ``arms`` always come from control.
          */
         get: operations["meta_api_meta_get"];
         put?: never;
@@ -114,7 +116,8 @@ export interface paths {
         };
         /**
          * Budget
-         * @description Today's D32 options-order budget from the local store (``null`` without E6.5).
+         * @description Today's D32 options-order budget from the local store (``null`` without E6.5);
+         *     an arm's own orders with ``?arm=``.
          */
         get: operations["budget_api_ops_budget_get"];
         put?: never;
@@ -134,7 +137,8 @@ export interface paths {
         };
         /**
          * Config
-         * @description The D26 effective config and override log (read-only).
+         * @description The D26 effective config and override log (read-only). Control's: an arm runs
+         *     control's overrides plus its spec overlay (shown on the Experiments page).
          */
         get: operations["config_api_ops_config_get"];
         put?: never;
@@ -154,7 +158,8 @@ export interface paths {
         };
         /**
          * Context
-         * @description Active ``context_entries`` per kind, TTL left, latest entry, expired in 24 h.
+         * @description Active ``context_entries`` per kind, TTL left, latest entry, expired in 24 h (with
+         *     ``?arm=``: the arm store's entries, i.e. what its chains read and wrote).
          */
         get: operations["context_api_ops_context_get"];
         put?: never;
@@ -194,7 +199,8 @@ export interface paths {
         };
         /**
          * Halts
-         * @description Halts, active first, with the trades raised in each halt's window.
+         * @description Halts, active first, with the trades raised in each halt's window (an arm's own
+         *     with ``?arm=``, e.g. a D69 ``book_invariant`` one).
          */
         get: operations["halts_api_ops_halts_get"];
         put?: never;
@@ -234,7 +240,7 @@ export interface paths {
         };
         /**
          * Llm
-         * @description LLM calls, tokens and cost per day / persona / model.
+         * @description LLM calls, tokens and cost per day / persona / model (control's spend).
          */
         get: operations["llm_api_ops_llm_get"];
         put?: never;
@@ -294,7 +300,8 @@ export interface paths {
         };
         /**
          * Session
-         * @description The ET day's scheduled slots (05:00-22:00) with each one's run, plus the loop row.
+         * @description Scheduled slots with each one's run, plus the loop row (D93): ``window=day`` is the
+         *     ET day 00:00-24:00, ``window=rolling`` the last 8 h and the next 4 h (``day`` ignored).
          */
         get: operations["session_api_ops_session_get"];
         put?: never;
@@ -315,6 +322,7 @@ export interface paths {
         /**
          * Sources
          * @description Per registry source: last fetch, docs today, budget skips, backoff, error rate.
+         *     Sources run once, in control (shared by every arm).
          */
         get: operations["sources_api_ops_sources_get"];
         put?: never;
@@ -335,6 +343,8 @@ export interface paths {
         /**
          * Universe
          * @description E12.6 (D51): the stored active list by tier, tier feeds, drops, ignored override.
+         *
+         *     Control's list, unless the arm runs the Scout / Trending itself (then its own).
          */
         get: operations["universe_api_ops_universe_get"];
         put?: never;
@@ -356,6 +366,10 @@ export interface paths {
          * Overview
          * @description Status strip, equity (by range), day P&L, positions, Greeks vs caps, proposals,
          *     movers and recent activity (rolling window), read in one pass (SELECT only).
+         *
+         *     ``?arm=``: the arm's store, so equity / P&L are its virtual account (E15.2). The
+         *     status strip's Tick is production's (D113): arms run on production's 10-min tick
+         *     and write no ``tick`` heartbeat of their own.
          */
         get: operations["overview_api_overview_get"];
         put?: never;
@@ -376,6 +390,8 @@ export interface paths {
         /**
          * Performance
          * @description Every Performance card for the period, with the comparison computed server-side.
+         *
+         *     ``sleeve`` (E22.5, D97) filters the trade cards to one entry-DTE sleeve (or ``other``).
          */
         get: operations["performance_api_performance_get"];
         put?: never;
@@ -498,7 +514,8 @@ export interface paths {
         /**
          * Trades
          * @description Every proposal (opens and closes), filtered, sorted and paged server-side, with
-         *     the summary over the whole filter.
+         *     the summary over the whole filter. ``sleeve`` (E22.5, D97) filters by entry-DTE sleeve
+         *     (``short`` / ``swing`` / ``other``) derived from the open's entry DTE.
          */
         get: operations["trades_api_trades_get"];
         put?: never;
@@ -697,6 +714,14 @@ export interface components {
             as_of: string;
             /** Open */
             open: number;
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Production's data (shared inputs)
+             * @default false
+             */
+            shared_from_control: boolean;
         };
         /** AppInfo */
         AppInfo: {
@@ -767,6 +792,44 @@ export interface components {
                     [key: string]: unknown;
                 };
             };
+        };
+        /**
+         * ArmMeta
+         * @description One experiment arm the tower can be scoped to (``/api/meta`` ``arms``).
+         */
+        ArmMeta: {
+            /**
+             * Arm
+             * @description Runner arm name (treatment, t1, t2, ...)
+             */
+            arm: string;
+            /** Experiment Id */
+            experiment_id: string;
+            /**
+             * Id
+             * @description The ?arm= value, '<experiment id>:<arm>'
+             */
+            id: string;
+            /**
+             * Label
+             * @description Display name, e.g. 'XP-12 · T1'
+             */
+            label: string;
+            /**
+             * Status
+             * @description The experiment's status (running, stopped, ...)
+             */
+            status: string;
+            /**
+             * Store Age S
+             * @description Seconds since the arm store was last written (null: missing)
+             */
+            store_age_s?: number | null;
+            /**
+             * Viewable
+             * @description True when ?arm=<id> is served (running, store present)
+             */
+            viewable: boolean;
         };
         /**
          * ArmPlan
@@ -955,6 +1018,11 @@ export interface components {
             /** Beta Dollar Delta */
             beta_dollar_delta: number;
             /**
+             * Beta Dollar Delta Raw
+             * @description D116: dollar_delta_raw × β used (None before E3.8)
+             */
+            beta_dollar_delta_raw?: number | null;
+            /**
              * Beta Source
              * @default default
              * @enum {string}
@@ -962,6 +1030,11 @@ export interface components {
             beta_source: "stored" | "default";
             /** Dollar Delta */
             dollar_delta: number;
+            /**
+             * Dollar Delta Raw
+             * @description D116: plain Σ Δ × spot for this underlying (None before E3.8)
+             */
+            dollar_delta_raw?: number | null;
         };
         /** BreakdownItem */
         BreakdownItem: {
@@ -998,12 +1071,22 @@ export interface components {
              * By
              * @enum {string}
              */
-            by: "ticker" | "structure" | "exit_reason" | "reason_code" | "profile" | "regime";
+            by: "ticker" | "structure" | "exit_reason" | "reason_code" | "profile" | "regime" | "sleeve";
             /** Include Tests */
             include_tests: boolean;
             period: components["schemas"]["PeriodView"];
             /** Rows */
             rows: components["schemas"]["BreakdownItem"][];
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Production's data (shared inputs)
+             * @default false
+             */
+            shared_from_control: boolean;
+            /** Sleeve */
+            sleeve?: string | null;
         };
         /** BreakdownRow */
         BreakdownRow: {
@@ -1031,6 +1114,11 @@ export interface components {
             reason_code?: components["schemas"]["BreakdownItem"][];
             /** Regime */
             regime?: components["schemas"]["BreakdownItem"][];
+            /**
+             * Sleeve
+             * @description E22.5 (D97): by entry-DTE sleeve (derived)
+             */
+            sleeve?: components["schemas"]["BreakdownItem"][];
             /** Structure */
             structure?: components["schemas"]["BreakdownItem"][];
             /** Ticker */
@@ -1055,6 +1143,40 @@ export interface components {
              * @description ln(BE/S) / (ATM IV · √t)
              */
             sigma?: number | null;
+        };
+        /** Bucket */
+        Bucket: {
+            d_p_c: components["schemas"]["MeanCI"];
+            /**
+             * Grouping
+             * @enum {string}
+             */
+            grouping: "trend" | "vol" | "trend_vol" | "transitional";
+            /** Key */
+            key: string;
+            /**
+             * N
+             * @description Sessions in the bucket (P - C rows)
+             */
+            n: number;
+            residual: components["schemas"]["MeanCI"];
+            /**
+             * Thin
+             * @description n < 10
+             */
+            thin: boolean;
+            /**
+             * Ti Minus C
+             * @description XP-<n>:<ti> (and 'all') -> (Ti - C)/t0 per session
+             */
+            ti_minus_c?: {
+                [key: string]: components["schemas"]["MeanCI"];
+            };
+            /**
+             * Xps
+             * @description XPs contributing sessions
+             */
+            xps?: string[];
         };
         /** BudgetResponse */
         BudgetResponse: {
@@ -1094,6 +1216,14 @@ export interface components {
             reserved: number;
             /** Restrict At */
             restrict_at: number;
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Production's data (shared inputs)
+             * @default false
+             */
+            shared_from_control: boolean;
             /** Tier */
             tier: string;
             /** Used */
@@ -1455,11 +1585,19 @@ export interface components {
             keys: components["schemas"]["ConfigKeyRow"][];
             /** Note */
             note?: string | null;
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
             /**
              * Scorecard Gate
              * @description E6.6a: scorecard gate line, e.g. 'scorecard gate: OFF (opt-out) — 3 closed trades < 30 required; …' (null when the store has no trade tables)
              */
             scorecard_gate?: string | null;
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Production's data (shared inputs)
+             * @default false
+             */
+            shared_from_control: boolean;
         };
         /** ContextEntryRef */
         ContextEntryRef: {
@@ -1497,6 +1635,14 @@ export interface components {
             run_id: string | null;
             /** Schema Version */
             schema_version: number;
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Production's data (shared inputs)
+             * @default false
+             */
+            shared_from_control: boolean;
             /** Status */
             status: string;
             /** Subject */
@@ -1505,6 +1651,17 @@ export interface components {
             supersedes_id: string | null;
             /** Valid From */
             valid_from: string | null;
+        };
+        /** ContextGroup */
+        ContextGroup: {
+            /** Active */
+            active: number;
+            /** Key */
+            key: string;
+            /** Kinds */
+            kinds: number;
+            /** Label */
+            label: string;
         };
         /** ContextKindRead */
         ContextKindRead: {
@@ -1524,6 +1681,12 @@ export interface components {
             active: number;
             /** Expired 24H */
             expired_24h: number;
+            /**
+             * Group
+             * @description D89: Session Timeline group of the kind's main writer
+             * @default other
+             */
+            group: string;
             /** Kind */
             kind: string;
             /** Latest At */
@@ -1537,6 +1700,11 @@ export interface components {
             /** Next Expiry */
             next_expiry: string | null;
             /**
+             * Readers
+             * @description D89: jobs / chain steps declaring it in `reads:`
+             */
+            readers?: string[];
+            /**
              * Remaining Fraction
              * @description Latest entry's TTL left (0..1); None when it never expires
              */
@@ -1546,6 +1714,11 @@ export interface components {
              * @description Configured TTL (context_ttl in routines.yaml)
              */
             ttl: string | null;
+            /**
+             * Writers
+             * @description D89: jobs / chain steps declaring it in `writes:`
+             */
+            writers?: string[];
         };
         /**
          * ContextReads
@@ -1571,8 +1744,21 @@ export interface components {
             as_of: string;
             /** Expired 24H */
             expired_24h: number;
+            /**
+             * Groups
+             * @description D89: Timeline-group order; only groups with kinds
+             */
+            groups?: components["schemas"]["ContextGroup"][];
             /** Kinds */
             kinds: components["schemas"]["ContextKindRow"][];
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Production's data (shared inputs)
+             * @default false
+             */
+            shared_from_control: boolean;
             /** Total Active */
             total_active: number;
         };
@@ -2111,6 +2297,11 @@ export interface components {
             /** Orders */
             orders?: components["schemas"]["OrderView"][];
             /**
+             * Regated Bands
+             * @description D101: bands walked after a re-gate (band_lo/band_hi is the approved band)
+             */
+            regated_bands?: components["schemas"]["RegatedBand"][];
+            /**
              * Slippage Vs Limit
              * @description $/share, + = worse
              */
@@ -2393,6 +2584,8 @@ export interface components {
             /** Events */
             events: components["schemas"]["ExperimentEvent"][];
             experiment: components["schemas"]["ExperimentListItem"];
+            /** @description E25.5 (D108 c): P − C and Ti − C pooled across every v3 XP by regime; descriptive only. Present when this experiment's latest report is v3. */
+            regime_panel?: components["schemas"]["RegimePanel"] | null;
             /** Registered Hash */
             registered_hash: string | null;
             /** @description Latest stored E10.3 report */
@@ -2405,6 +2598,14 @@ export interface components {
             /** Revision */
             revision: number;
             running: components["schemas"]["RunningDetail"] | null;
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Production's data (shared inputs)
+             * @default false
+             */
+            shared_from_control: boolean;
             spec: components["schemas"]["ExperimentSpec"];
             /** Spec Hash */
             spec_hash: string;
@@ -2444,6 +2645,13 @@ export interface components {
         ExperimentListItem: {
             /** Area */
             area: string;
+            /**
+             * Arm Verdicts
+             * @description Treatment arm -> its reference-vs-arm verdict
+             */
+            arm_verdicts?: {
+                [key: string]: string;
+            };
             /** As Of Day */
             as_of_day?: string | null;
             /**
@@ -2455,10 +2663,15 @@ export interface components {
             evaluated_at?: string | null;
             /** Experiment Id */
             experiment_id: string;
+            /**
+             * Headline Arm
+             * @description Arm the headline numbers compare with the reference (v2+: best-ranked)
+             */
+            headline_arm?: string | null;
             kind: components["schemas"]["ExperimentKind"];
             /**
              * Line
-             * @description The daily [XP-n] Slack line, verbatim
+             * @description The daily [XP-n] Slack status (D108), plain text, one line per row
              */
             line?: string | null;
             /** Max Sessions */
@@ -2480,6 +2693,11 @@ export interface components {
              */
             primary_p?: number | null;
             reason?: components["schemas"]["StopReason"] | null;
+            /**
+             * Reference
+             * @description D108: 'control' when the verdicts compare with the spec v3 control arm; null when they compare with production (v1/v2) or before the first evaluation
+             */
+            reference?: string | null;
             /**
              * Secondary
              * @description Sortino non-inferiority: ok | not_shown | aa | pending
@@ -2508,6 +2726,12 @@ export interface components {
             /** Title */
             title: string;
             /**
+             * Variants
+             * @description Treatment arms in the spec (K)
+             * @default 1
+             */
+            variants: number;
+            /**
              * Verdict
              * @description Latest verdict: continue|win|futility|invalid
              */
@@ -2520,7 +2744,10 @@ export interface components {
          * @description One evaluation of one experiment (stored append-only in ``experiment_reports``).
          *
          *     ``report_version`` 1: one treatment (D44). ``report_version`` 2 (D69, E15.5): K > 1
-         *     treatments. A v2 report adds ``pairwise``, ``omnibus`` and ``headline_arm`` (omitted
+         *     treatments. ``report_version`` 3 (D108, E25.3): a spec v3 (any K), whose reference
+         *     is the control arm ``XP-<n>:control`` (``reference``) and which adds the descriptive
+         *     ``production`` panel; otherwise shaped like v2. A v2 report adds ``pairwise``,
+         *     ``omnibus`` and ``headline_arm`` (omitted
          *     from v1 JSON) and fills the all-arms fields of ``arms`` (Control first, then t1..tK).
          *     Its top-level ``primary`` / ``secondary`` / ``series`` are the **headline** pair
          *     (Control vs the best-ranked arm, ``headline_arm``) so one-line surfaces keep a
@@ -2583,6 +2810,13 @@ export interface components {
             /** Power */
             power: number;
             primary: components["schemas"]["Primary"];
+            /** @description v3: production vs control vs treatments (descriptive, never a verdict) */
+            production?: components["schemas"]["ProductionPanel"] | null;
+            /**
+             * Reference
+             * @description v3: the verdict's reference series is the control arm XP-<n>:control
+             */
+            reference?: "control" | null;
             /** Registered Hash */
             registered_hash: string | null;
             /**
@@ -2590,7 +2824,7 @@ export interface components {
              * @default 1
              * @enum {integer}
              */
-            report_version: 1 | 2;
+            report_version: 1 | 2 | 3;
             secondary: components["schemas"]["Secondary"];
             /** Series */
             series: components["schemas"]["SessionRow"][];
@@ -2681,7 +2915,7 @@ export interface components {
              * @default 2
              * @enum {integer}
              */
-            spec_version: 1 | 2;
+            spec_version: 1 | 2 | 3;
             /** Title */
             title: string;
         };
@@ -2699,6 +2933,14 @@ export interface components {
             as_of: string;
             /** Items */
             items: components["schemas"]["ExperimentListItem"][];
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Production's data (shared inputs)
+             * @default false
+             */
+            shared_from_control: boolean;
         };
         /**
          * FeeBreakdown
@@ -2820,11 +3062,19 @@ export interface components {
             discovery_fill?: {
                 [key: string]: number;
             };
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
             /**
              * Sessions
              * @description Trading sessions in the range
              */
             sessions: number;
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Production's data (shared inputs)
+             * @default false
+             */
+            shared_from_control: boolean;
             /** Since */
             since: string;
             /** Stages */
@@ -2875,6 +3125,21 @@ export interface components {
          * @description The gate's portfolio caps (PLAN §5), from the effective settings.
          */
         GateCaps: {
+            /**
+             * Alloc Tier Threshold Pct
+             * @description D116: deployed max loss / equity at which the cap drops
+             */
+            alloc_tier_threshold_pct?: number | null;
+            /**
+             * Max Alloc Pct
+             * @description D116: per-underlying cap, base tier (deployed below the threshold)
+             */
+            max_alloc_pct?: number | null;
+            /**
+             * Max Alloc Pct Reduced
+             * @description D116: per-underlying cap, reduced tier (deployed at/above the threshold)
+             */
+            max_alloc_pct_reduced?: number | null;
             /**
              * Portfolio Beta Delta Cap Pct
              * @description D62: |beta-weighted net dollar delta| cap as a fraction of equity
@@ -2955,18 +3220,51 @@ export interface components {
         };
         /** GreeksSection */
         GreeksSection: {
+            /**
+             * Alloc Tier
+             * @description D116: active per-underlying tier (None: equity unknown)
+             */
+            alloc_tier?: ("base" | "reduced") | null;
+            /**
+             * Alloc Tier Threshold Pct
+             * @description D116: deployed share of equity at which the cap drops
+             */
+            alloc_tier_threshold_pct?: number | null;
+            /**
+             * Deployed Max Loss
+             * @description D116: Σ open max loss + max loss reserved by in-flight opens, dollars
+             */
+            deployed_max_loss?: string | null;
+            /**
+             * Deployed Pct
+             * @description D116: deployed_max_loss / equity (None: equity unknown)
+             */
+            deployed_pct?: number | null;
             /** @description D87: dollar gamma, $Δ change for a 1% move (Σ Γ × spot² / 100 per underlying; uncapped; advisory band only) */
             gamma?: components["schemas"]["GreekAdvisory"] | null;
             greeks: components["schemas"]["GreeksView"];
-            /** Max Alloc Pct */
+            /**
+             * Max Alloc Pct
+             * @description D116: the active tier's cap, share of equity
+             */
             max_alloc_pct: number;
+            /**
+             * Max Alloc Pct Base
+             * @description D116 base tier
+             */
+            max_alloc_pct_base?: number | null;
+            /**
+             * Max Alloc Pct Reduced
+             * @description D116 reduced tier
+             */
+            max_alloc_pct_reduced?: number | null;
             /** Max Loss By Underlying */
             max_loss_by_underlying?: {
                 [key: string]: string;
             };
             /**
              * Per Underlying Cap
-             * @description max_alloc_pct × equity (gate rule)
+             * @description active tier's cap × equity (gate rule, D116)
              */
             per_underlying_cap?: string | null;
             /** @description D87: Θ, $ per day (uncapped; advisory band only) */
@@ -2987,9 +3285,14 @@ export interface components {
             beta_delta_cap?: number | null;
             /**
              * Beta Dollar Delta
-             * @description D62: beta-weighted net dollar delta Σ (Δ × spot × max(β vs SPY, 1)), $ (SPY-equivalent); None on a heartbeat written before D62 (rendered —)
+             * @description D62/D116: beta-weighted net dollar delta (the dollar_delta terms × max(β vs SPY, 1)), $ (SPY-equivalent); None on a heartbeat written before D62 (rendered —)
              */
             beta_dollar_delta?: number | null;
+            /**
+             * Beta Dollar Delta Raw
+             * @description D116: plain Σ (Δ × spot × max(β, 1)), $, display only; None on a heartbeat written before E3.8 (rendered —)
+             */
+            beta_dollar_delta_raw?: number | null;
             /** Delta */
             delta?: number | null;
             /**
@@ -3001,7 +3304,7 @@ export interface components {
             };
             /**
              * Dollar Delta
-             * @description D57: net dollar delta Σ (Δ share-eq × spot), $; None on a heartbeat written before D57 (rendered —)
+             * @description D57/D116: net dollar delta as the gate counts it: Σ (Δ share-eq × spot), debit verticals / long options at sign(Δ) × max loss (E3.8), $; None on a heartbeat written before D57 (rendered —)
              */
             dollar_delta?: number | null;
             /**
@@ -3009,6 +3312,11 @@ export interface components {
              * @description D57: |$Δ| cap, $ (portfolio_dollar_delta_cap_pct × equity)
              */
             dollar_delta_cap?: number | null;
+            /**
+             * Dollar Delta Raw
+             * @description D116: plain Σ (Δ share-eq × spot), $, display only; None on a heartbeat written before E3.8 (rendered —)
+             */
+            dollar_delta_raw?: number | null;
             /** Equity */
             equity?: number | null;
             /** Gamma */
@@ -3114,6 +3422,14 @@ export interface components {
             as_of: string;
             /** Halts */
             halts: components["schemas"]["HaltRow"][];
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Production's data (shared inputs)
+             * @default false
+             */
+            shared_from_control: boolean;
         };
         /** HealthItem */
         HealthItem: {
@@ -3127,10 +3443,22 @@ export interface components {
              * @default
              */
             chip: string;
+            /**
+             * Detail
+             * @description D89: tile value line, e.g. `OK · 3m`
+             * @default
+             */
+            detail: string;
             /** Key */
             key: string;
             /** Label */
             label: string;
+            /**
+             * Name
+             * @description D89: short tile name, e.g. `Tick`
+             * @default
+             */
+            name: string;
             /**
              * Status
              * @enum {string}
@@ -3156,6 +3484,13 @@ export interface components {
              * @description Audit store path, opened read-only
              */
             db: string;
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @default false
+             */
+            shared_from_control: boolean;
             /**
              * Status
              * @constant
@@ -3180,6 +3515,14 @@ export interface components {
             };
             /** Items */
             items: components["schemas"]["HealthItem"][];
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Production's data (shared inputs)
+             * @default false
+             */
+            shared_from_control: boolean;
         };
         /**
          * Interval
@@ -3360,6 +3703,64 @@ export interface components {
             /** Unrealized Pl */
             unrealized_pl?: string | null;
         };
+        /**
+         * LevelCrossing
+         * @description E23.3 (D98): where one target (short strike / breakeven) sits vs the levels.
+         *
+         *     The levels are the E23.0 volume-profile (POC, VAH, VAL, nearest HVNs) and OI-wall
+         *     prices on the ticker's regime technicals. Walking from spot toward the target:
+         *
+         *     * ``at``: the target is within :data:`AT_LEVEL_ATR` ATR14 of a level (that level);
+         *     * ``beyond``: the move must push through at least one level first (the first one
+         *       it meets from spot; ``crossed`` counts them all);
+         *     * ``before``: no level between spot and the target (the first level past it).
+         *
+         *     ``beyond_first`` (the replay split): the target sits beyond the first level, i.e.
+         *     ``crossed >= 1`` (an ``at`` target with a level crossed on the way counts too).
+         *
+         *     ``dist_atr`` = (target − level) / ATR14 measured in the direction of travel
+         *     (> 0 beyond, < 0 before); ``None`` without ATR14. Context only, never a gate input.
+         */
+        LevelCrossing: {
+            /**
+             * Crossed
+             * @description Levels strictly between spot and the target
+             * @default 0
+             */
+            crossed: number;
+            /**
+             * Direction
+             * @description +1 = above spot, -1 = below
+             * @enum {integer}
+             */
+            direction: 1 | -1;
+            /** Dist Atr */
+            dist_atr?: number | null;
+            /**
+             * Label
+             * @description Rendered name, e.g. `BE`, `upper BE`, `short call`
+             */
+            label: string;
+            /**
+             * Level Kind
+             * @enum {string}
+             */
+            level_kind: "poc" | "vah" | "val" | "hvn" | "call_wall" | "put_wall";
+            /** Price */
+            price: number;
+            /**
+             * Side
+             * @enum {string}
+             */
+            side: "before" | "at" | "beyond";
+            /** Target */
+            target: number;
+            /**
+             * Which
+             * @enum {string}
+             */
+            which: "short_strike" | "breakeven";
+        };
         /** LinkRef */
         LinkRef: {
             /** Id */
@@ -3431,8 +3832,16 @@ export interface components {
             period: components["schemas"]["LlmGroup"][];
             /** Personas */
             personas: string[];
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
             /** Series */
             series: components["schemas"]["LlmDay"][];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Production's data (shared inputs)
+             * @default false
+             */
+            shared_from_control: boolean;
             /** Today */
             today: components["schemas"]["LlmGroup"][];
             /** Today Cost */
@@ -3562,11 +3971,28 @@ export interface components {
             /** Subject */
             subject?: string | null;
         };
+        /**
+         * MeanCI
+         * @description Mean of a per-session series (fraction of t0 equity) with a 95% normal CI.
+         */
+        MeanCI: {
+            /** @description mean +- 1.96 sd/sqrt(n); None if n < 2 */
+            ci?: components["schemas"]["Interval"] | null;
+            /** Mean */
+            mean: number | null;
+            /** N */
+            n: number;
+        };
         /** MetaResponse */
         MetaResponse: {
             /** Account Profile */
             account_profile: string;
             app: components["schemas"]["AppInfo"];
+            /**
+             * Arms
+             * @description E15.6 (D69): experiment arms the tower can be scoped to with ?arm=<id>, running first (the default view is Production, never listed here)
+             */
+            arms?: components["schemas"]["ArmMeta"][];
             /**
              * As Of
              * Format: date-time
@@ -3609,6 +4035,18 @@ export interface components {
              * @description Default client poll interval
              */
             refresh_interval_s: number;
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @default false
+             */
+            shared_from_control: boolean;
+            /**
+             * Sleeves
+             * @description E22.5 (D97): the profile's entry-DTE sleeves (window, slots, exit policy per kind); [] for a single-window profile
+             */
+            sleeves?: components["schemas"]["SleeveMeta"][];
             /**
              * Theme Default
              * @default system
@@ -4015,6 +4453,19 @@ export interface components {
              * @enum {string}
              */
             range: "1D" | "1W" | "1M" | "3M" | "YTD" | "ALL";
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Production's data (shared inputs)
+             * @default false
+             */
+            shared_from_control: boolean;
+            /**
+             * Sleeves
+             * @description E22.5 (D97): open positions per entry-DTE sleeve vs its slots
+             */
+            sleeves?: components["schemas"]["SleeveUsage"][];
             /**
              * Stale After S
              * @description Monitor marks older than this are stale
@@ -4213,6 +4664,24 @@ export interface components {
              * @enum {string}
              */
             preset: "1d" | "7d" | "week" | "mtd" | "qtd" | "ytd" | "30d" | "90d" | "all" | "custom";
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Production's data (shared inputs)
+             * @default false
+             */
+            shared_from_control: boolean;
+            /**
+             * Sleeve
+             * @description E22.5 (D97): entry-DTE sleeve filter; trade cards (Net P&L from realised, costs, win/loss, model, breakdowns, calibration) cover that sleeve only, Equity and the funnel stay account-wide
+             */
+            sleeve?: string | null;
+            /**
+             * Sleeve Stats
+             * @description E22.5 (D97): per-sleeve closed-trade stats + keep/shrink verdict, period
+             */
+            sleeve_stats?: components["schemas"]["SleeveStats"][];
             win_loss: components["schemas"]["WinLossCard"];
         };
         /** PeriodView */
@@ -4547,6 +5016,14 @@ export interface components {
             items: components["schemas"]["PositionRow"][];
             /** Marks At */
             marks_at?: string | null;
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Production's data (shared inputs)
+             * @default false
+             */
+            shared_from_control: boolean;
             /** Stale After S */
             stale_after_s: number;
             /**
@@ -4591,6 +5068,161 @@ export interface components {
              * @description Normal-mixture scale (spec mde or MDE@min)
              */
             tau?: number | null;
+        };
+        /**
+         * ProductionCompare
+         * @description ``arm - production`` (fraction of t0 equity per session): descriptive CI only.
+         */
+        ProductionCompare: {
+            /** Arm */
+            arm: string;
+            /**
+             * Basis
+             * @enum {string}
+             */
+            basis: "total" | "ex_start_book" | "post_ramp";
+            /** @description Always-valid (mSPRT) CI, 1 - alpha */
+            ci?: components["schemas"]["Interval"] | null;
+            /** Mean */
+            mean: number | null;
+            /** N */
+            n: number;
+            /**
+             * P Value
+             * @description Always-valid p (descriptive, no Holm)
+             */
+            p_value?: number | null;
+        };
+        /**
+         * ProductionPanel
+         * @description D108: production vs control vs treatments. Never a verdict, stop or promotion input.
+         */
+        ProductionPanel: {
+            /** Compare */
+            compare?: components["schemas"]["ProductionCompare"][];
+            /**
+             * Cum C Pnl
+             * @default 0
+             */
+            cum_c_pnl: number;
+            /**
+             * Cum D P C
+             * @default 0
+             */
+            cum_d_p_c: number;
+            /**
+             * Cum P Pnl
+             * @default 0
+             */
+            cum_p_pnl: number;
+            /**
+             * Cum Residual
+             * @default 0
+             */
+            cum_residual: number;
+            /**
+             * Cum Start Book
+             * @default 0
+             */
+            cum_start_book: number;
+            /**
+             * Descriptive
+             * @default true
+             * @constant
+             */
+            descriptive: true;
+            /** Missing Sessions */
+            missing_sessions?: string[];
+            /**
+             * Ramp Window
+             * @default 5
+             */
+            ramp_window: number;
+            /**
+             * Ramped From
+             * @description First ramped session
+             */
+            ramped_from?: string | null;
+            /** @description E25.5: SPY regime at the first session's close (the XP's start) */
+            regime_at_start?: components["schemas"]["SessionRegime"] | null;
+            /** Sessions */
+            sessions?: components["schemas"]["ProductionSession"][];
+            start_book: components["schemas"]["StartBook"];
+        };
+        /**
+         * ProductionSession
+         * @description One session of the production panel ($ amounts; fractions of t0 equity).
+         */
+        ProductionSession: {
+            /**
+             * C Deployed
+             * @description Control's held max-loss capital / its virtual equity at EOD; None = unknown
+             */
+            c_deployed?: number | null;
+            /**
+             * C Open
+             * @description Control's open structures at EOD
+             */
+            c_open?: number | null;
+            /**
+             * C Pnl
+             * @description Control arm's virtual-equity delta ($)
+             */
+            c_pnl: number;
+            /**
+             * D P C
+             * @description start_book + residual (~ (p_pnl - c_pnl) / t0)
+             */
+            d_p_c: number;
+            /**
+             * Day
+             * Format: date
+             */
+            day: string;
+            /**
+             * P Ex Start Pnl
+             * @description p_pnl - p_start_book_pnl ($)
+             */
+            p_ex_start_pnl: number;
+            /**
+             * P Open
+             * @description Production's open structures at EOD
+             */
+            p_open?: number | null;
+            /**
+             * P Pnl
+             * @description Production broker equity delta ($)
+             */
+            p_pnl: number;
+            /**
+             * P Start Book Pnl
+             * @description Start book's day P&L ($)
+             */
+            p_start_book_pnl: number;
+            /**
+             * Ramped
+             * @default false
+             */
+            ramped: boolean;
+            /** @description SPY regime at the session close; None = no entry (bucket unknown) */
+            regime?: components["schemas"]["SessionRegime"] | null;
+            /**
+             * Residual
+             * @description (p_ex_start_pnl - c_pnl) / t0
+             */
+            residual: number;
+            /**
+             * Start Book
+             * @description p_start_book_pnl / t0
+             */
+            start_book: number;
+            /**
+             * Ti Pnl
+             * @description Treatment -> virtual-equity delta ($); absent = missing
+             */
+            ti_pnl?: {
+                [key: string]: number;
+            };
         };
         /**
          * ProfitLock
@@ -4655,6 +5287,11 @@ export interface components {
             /** Legs */
             legs: components["schemas"]["LegAnalytics"][];
             /**
+             * Levels
+             * @description E23.3 (D98): short strike / breakeven vs the volume-profile and OI-wall levels; None = strike_levels off (or analytics stored before E23.3)
+             */
+            levels?: components["schemas"]["LevelCrossing"][] | null;
+            /**
              * Prev Close
              * @description Last close in the regime snapshot
              */
@@ -4666,6 +5303,11 @@ export interface components {
              * @description ATM IV · √(DTE/365)
              */
             sigma_t?: number | null;
+            /**
+             * Sleeve Window
+             * @description E22.2 (D97): the proposal's DTE sleeve window, e.g. `10–29 DTE`
+             */
+            sleeve_window?: string | null;
             /** Spot */
             spot: number;
             /** Spot As Of */
@@ -4779,6 +5421,11 @@ export interface components {
              */
             ev?: string | null;
             /**
+             * Levels Text
+             * @description E23.3 (D98): `BE beyond POC 186.1 (+0.4 ATR) · short strike at call wall 190`, the trade card's Levels fact; None when no level was stored
+             */
+            levels_text?: string | null;
+            /**
              * Max Gain
              * @description Per unit, $
              */
@@ -4802,6 +5449,86 @@ export interface components {
             pop_hold?: number | null;
             /** Pop Managed */
             pop_managed?: number | null;
+        };
+        /**
+         * RampPoint
+         * @description Control's ramp at one session index since t0 (0 = first session).
+         */
+        RampPoint: {
+            /**
+             * C Deployed
+             * @description Mean deployed fraction of equity
+             */
+            c_deployed?: number | null;
+            /**
+             * C Open
+             * @description Mean open structures over the XPs
+             */
+            c_open?: number | null;
+            /** Index */
+            index: number;
+            /** N Xps */
+            n_xps: number;
+        };
+        /**
+         * RegatedBand
+         * @description D101: a band the ladder re-gated to after the market moved past the approved one.
+         */
+        RegatedBand: {
+            /** At */
+            at?: string | null;
+            /** Band Hi */
+            band_hi?: string | null;
+            /** Band Lo */
+            band_lo?: string | null;
+            /** Mid */
+            mid?: string | null;
+            /** N */
+            n: number;
+        };
+        /**
+         * RegimePanel
+         * @description E25.5 (D108 (c)): pooled across v3 XPs. Never a verdict, stop or promotion input.
+         */
+        RegimePanel: {
+            /** Buckets */
+            buckets?: components["schemas"]["Bucket"][];
+            /**
+             * Descriptive
+             * @default true
+             * @constant
+             */
+            descriptive: true;
+            /**
+             * Panel Version
+             * @default 1
+             * @constant
+             */
+            panel_version: 1;
+            /** Ramp By Start Regime */
+            ramp_by_start_regime?: {
+                [key: string]: components["schemas"]["RampPoint"][];
+            };
+            /**
+             * Sessions
+             * @default 0
+             */
+            sessions: number;
+            /** Starts */
+            starts?: components["schemas"]["StartRow"][];
+            /**
+             * Thin N
+             * @default 10
+             */
+            thin_n: number;
+            /**
+             * Unknown Sessions
+             * @description Sessions without a regime tag
+             * @default 0
+             */
+            unknown_sessions: number;
+            /** Xps */
+            xps?: string[];
         };
         /** RegimeView */
         RegimeView: {
@@ -4882,6 +5609,14 @@ export interface components {
             log_available: boolean;
             /** Run Id */
             run_id: string;
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Production's data (shared inputs)
+             * @default false
+             */
+            shared_from_control: boolean;
             /** @description The requested run */
             step: components["schemas"]["StepView"];
         };
@@ -4904,6 +5639,14 @@ export interface components {
             page: number;
             /** Rows */
             rows: components["schemas"]["RunRow"][];
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Production's data (shared inputs)
+             * @default false
+             */
+            shared_from_control: boolean;
             /** Size */
             size: number;
             /** Total */
@@ -4951,6 +5694,11 @@ export interface components {
         /**
          * RunningDetail
          * @description What ``running`` records at t0 (E10.2 fills it).
+         *
+         *     D108: ``production_book`` (the start book) is production's open structure ids at
+         *     t0. Up to spec v2 it was the *legacy book* (stored as ``legacy_book``; still read),
+         *     reserved in every arm and excluded from metrics; from v3 every arm starts flat and
+         *     it is recorded for reporting only.
          */
         RunningDetail: {
             /**
@@ -4972,10 +5720,10 @@ export interface components {
             /** Control Sha */
             control_sha: string;
             /**
-             * Legacy Book
-             * @description open_structures ids open at t0 (excluded from metrics)
+             * Production Book
+             * @description production's open_structures ids at t0 (the start book; v1/v2 events stored it as legacy_book)
              */
-            legacy_book?: string[];
+            production_book?: string[];
             /**
              * T0
              * Format: date-time
@@ -4983,6 +5731,17 @@ export interface components {
             t0: string;
             /** T0 Equity */
             t0_equity: number;
+        };
+        /**
+         * ScopeInfo
+         * @description Which store a response was read from.
+         */
+        ScopeInfo: {
+            /**
+             * Arm Id
+             * @description '<experiment id>:<arm>' for an arm; null = Production
+             */
+            arm_id?: string | null;
         };
         /** SearchMatch */
         SearchMatch: {
@@ -5009,6 +5768,14 @@ export interface components {
             matches: components["schemas"]["SearchMatch"][];
             /** Q */
             q: string;
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Production's data (shared inputs)
+             * @default false
+             */
+            shared_from_control: boolean;
         };
         /** Secondary */
         Secondary: {
@@ -5040,6 +5807,46 @@ export interface components {
             /** Sortino Treatment */
             sortino_treatment: number | null;
         };
+        /**
+         * SessionRegime
+         * @description The SPY regime read visible at a session's close (D77 v2; v1 rows: trend only).
+         */
+        SessionRegime: {
+            /**
+             * As Of
+             * @description The read's as_of session
+             */
+            as_of?: string | null;
+            /**
+             * Entry Id
+             * @description context_entries id the tag was read from
+             */
+            entry_id: string;
+            /** Margin Z */
+            margin_z?: number | null;
+            /**
+             * Model
+             * @description Regime labelling model (v1 / v2)
+             */
+            model?: string | null;
+            /** Run Length */
+            run_length?: number | null;
+            /**
+             * Transitional
+             * @description run_length < 3 or margin_z < 0.10 (E17.2 reference); None without both
+             */
+            transitional?: boolean | null;
+            /**
+             * Trend
+             * @enum {string}
+             */
+            trend: "bull" | "bear" | "sideways";
+            /**
+             * Vol State
+             * @description v2 realised-vol state; None on v1
+             */
+            vol_state?: ("low" | "mid" | "high") | null;
+        };
         /** SessionResponse */
         SessionResponse: {
             /**
@@ -5062,11 +5869,13 @@ export interface components {
             /**
              * Day
              * Format: date
+             * @description The ET day (rolling: the day of `as_of`)
              */
             day: string;
             /**
              * End
              * Format: date-time
+             * @description Window end (exclusive, ET)
              */
             end: string;
             loop: components["schemas"]["TimelineRow"] | null;
@@ -5077,9 +5886,18 @@ export interface components {
             loop_job: string;
             /** Rows */
             rows: components["schemas"]["TimelineRow"][];
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Production's data (shared inputs)
+             * @default false
+             */
+            shared_from_control: boolean;
             /**
              * Start
              * Format: date-time
+             * @description Window start (inclusive, ET)
              */
             start: string;
             /**
@@ -5087,6 +5905,13 @@ export interface components {
              * @description Root runs on the day with no slot (manual / event)
              */
             unscheduled?: components["schemas"]["RunRow"][];
+            /**
+             * Window
+             * @description D93: `day` (00:00-24:00 ET) or `rolling` (-8 h .. +4 h)
+             * @default day
+             * @enum {string}
+             */
+            window: "day" | "rolling";
         };
         /** SessionRow */
         SessionRow: {
@@ -5119,6 +5944,165 @@ export interface components {
             treatment_equity: number;
             /** Treatment Pnl */
             treatment_pnl: number;
+        };
+        /** SleeveExitView */
+        SleeveExitView: {
+            /** Kind */
+            kind: string;
+            /**
+             * Summary
+             * @description ExitPolicy.summary() of the kind in this sleeve
+             */
+            summary: string;
+        };
+        /**
+         * SleeveMeta
+         * @description One named sleeve of the active profile (the InfoTip's window and exit policy).
+         */
+        SleeveMeta: {
+            /** Dte Max */
+            dte_max: number;
+            /** Dte Min */
+            dte_min: number;
+            /**
+             * Exit Policy
+             * @description exits.yaml `sleeves:` block; None = kind
+             */
+            exit_policy?: string | null;
+            /** Exits */
+            exits?: components["schemas"]["SleeveExitView"][];
+            /** Label */
+            label: string;
+            /**
+             * Max Positions
+             * @description Slot cap; None = uncapped
+             */
+            max_positions?: number | null;
+            /** Name */
+            name: string;
+        };
+        /**
+         * SleeveStats
+         * @description One sleeve's closed-trade statistics over the window.
+         */
+        SleeveStats: {
+            /** Ci High */
+            ci_high?: number | null;
+            /**
+             * Ci Low
+             * @description Bootstrap 90% CI of mean net
+             */
+            ci_low?: number | null;
+            /**
+             * Closed
+             * @default 0
+             */
+            closed: number;
+            /**
+             * Costs
+             * @description Σ cost-model commission + fees of the trades' fills
+             * @default 0
+             */
+            costs: number;
+            /** Dte Max */
+            dte_max?: number | null;
+            /**
+             * Dte Min
+             * @description None for `other`
+             */
+            dte_min?: number | null;
+            /**
+             * Entry Slippage
+             * @description Σ entry fill − mid, $ (+ = worse)
+             */
+            entry_slippage?: number | null;
+            /** Exit Reasons */
+            exit_reasons?: {
+                [key: string]: number;
+            };
+            /**
+             * Max Positions
+             * @description Slot cap (None = uncapped / other)
+             */
+            max_positions?: number | null;
+            /** Mean Days Held */
+            mean_days_held?: number | null;
+            /** Mean Entry Slippage */
+            mean_entry_slippage?: number | null;
+            /**
+             * Mean Mae
+             * @description Mean max adverse excursion, $ (≤ 0)
+             */
+            mean_mae?: number | null;
+            /**
+             * Mean Mfe
+             * @description Mean max favourable excursion, $ (≥ 0)
+             */
+            mean_mfe?: number | null;
+            /**
+             * Mean Net Pnl
+             * @description Mean of realised − costs (the rule's)
+             */
+            mean_net_pnl?: number | null;
+            /**
+             * Mean Pct Of Max Loss
+             * @description Mean realised ÷ (max loss × contracts), over trades with a max loss
+             */
+            mean_pct_of_max_loss?: number | null;
+            /** Mean Pnl */
+            mean_pnl?: number | null;
+            /** Median Pnl */
+            median_pnl?: number | null;
+            /**
+             * N Excursion
+             * @default 0
+             */
+            n_excursion: number;
+            /**
+             * Opens
+             * @description Positions opened in the window
+             * @default 0
+             */
+            opens: number;
+            /**
+             * Ready
+             * @default false
+             */
+            ready: boolean;
+            /**
+             * Realised
+             * @description Σ realised P&L, fills only, before fees
+             * @default 0
+             */
+            realised: number;
+            /** Sleeve */
+            sleeve: string;
+            /**
+             * Verdict
+             * @description None for `other`
+             */
+            verdict?: ("keep" | "shrink" | "collect") | null;
+            /** Win Rate */
+            win_rate?: number | null;
+            /**
+             * Wins
+             * @default 0
+             */
+            wins: number;
+        };
+        /**
+         * SleeveUsage
+         * @description Open positions in one sleeve vs its slot cap (Overview: ``Short 3/5``).
+         */
+        SleeveUsage: {
+            /** Label */
+            label: string;
+            /** Max Positions */
+            max_positions?: number | null;
+            /** Name */
+            name: string;
+            /** Open */
+            open: number;
         };
         /** Slot */
         Slot: {
@@ -5283,8 +6267,99 @@ export interface components {
              * @description E8.8d: D47 categories in display order
              */
             categories?: components["schemas"]["SourceCategoryRow"][];
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Production's data (shared inputs)
+             * @default false
+             */
+            shared_from_control: boolean;
             /** Sources */
             sources: components["schemas"]["SourceRow"][];
+        };
+        /**
+         * StartBook
+         * @description Production's open book at t0, tracked to its last close (reporting only).
+         */
+        StartBook: {
+            /**
+             * Close Dates
+             * @description Structure id -> ET close day (None = still open)
+             */
+            close_dates?: {
+                [key: string]: string | null;
+            };
+            /**
+             * Cum Pnl
+             * @default 0
+             */
+            cum_pnl: number;
+            /** Days */
+            days?: components["schemas"]["StartBookDay"][];
+            /** Ids */
+            ids: string[];
+        };
+        /** StartBookDay */
+        StartBookDay: {
+            /**
+             * Closed
+             * @description Start-book structures closed by this day
+             */
+            closed: number;
+            /**
+             * Cum Pnl
+             * @description Cumulative start-book P&L since t0 ($)
+             */
+            cum_pnl: number;
+            /**
+             * Day
+             * Format: date
+             */
+            day: string;
+            /**
+             * Open
+             * @description Start-book structures still held at EOD
+             */
+            open: number;
+            /**
+             * Pnl
+             * @description Start book's day P&L ($)
+             */
+            pnl: number;
+        };
+        /** StartRow */
+        StartRow: {
+            /** Cum D P C */
+            cum_d_p_c: number;
+            /** Cum Residual */
+            cum_residual: number;
+            /** Experiment Id */
+            experiment_id: string;
+            /** First Session */
+            first_session: string | null;
+            /** Ramp */
+            ramp?: components["schemas"]["RampPoint"][];
+            /** Ramped From */
+            ramped_from: string | null;
+            regime_at_start: components["schemas"]["SessionRegime"] | null;
+            /** Sessions */
+            sessions: number;
+            /**
+             * Start Regime
+             * @description trend_vol bucket at the first session
+             */
+            start_regime: string;
+            /**
+             * Status Verdict
+             * @description Latest report's verdict
+             */
+            status_verdict: string;
+            /**
+             * T0
+             * Format: date-time
+             */
+            t0: string;
         };
         /**
          * StaticStats
@@ -5346,6 +6421,16 @@ export interface components {
             health_status?: string | null;
             /** @description Absent until the monitor heartbeat carries it (E6.5) */
             order_budget?: components["schemas"]["OrderBudgetView"] | null;
+            /**
+             * Sessions
+             * @description D92: trading sessions the account has traded since its start (``store:epoch`` fresh start, else the first reconciled day); today counts from the 09:30 ET open
+             */
+            sessions?: number | null;
+            /**
+             * Sessions Since
+             * @description D92: the ET day the session count starts from
+             */
+            sessions_since?: string | null;
             /** Tick At */
             tick_at?: string | null;
             /** Tick Status */
@@ -5605,6 +6690,14 @@ export interface components {
             pnl: components["schemas"]["PnlView"];
             /** Proposals */
             proposals: components["schemas"]["ProposalView"][];
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Production's data (shared inputs)
+             * @default false
+             */
+            shared_from_control: boolean;
             /** Structures */
             structures: components["schemas"]["StructureView"][];
             /** Violation Counts */
@@ -5639,6 +6732,14 @@ export interface components {
             payoff: components["schemas"]["PayoffSection"];
             position: components["schemas"]["PositionSection"] | null;
             quant: components["schemas"]["QuantSection"];
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Production's data (shared inputs)
+             * @default false
+             */
+            shared_from_control: boolean;
         };
         /**
          * TradeFilterOptions
@@ -5665,6 +6766,19 @@ export interface components {
             reason_codes: {
                 [key: string]: string;
             }[];
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Production's data (shared inputs)
+             * @default false
+             */
+            shared_from_control: boolean;
+            /**
+             * Sleeves
+             * @description E22.5 (D97): the profile's sleeves + `other`
+             */
+            sleeves?: string[];
             /** Sort Keys */
             sort_keys?: string[];
             /** Stages */
@@ -5721,6 +6835,11 @@ export interface components {
              * @description any decision's code
              */
             reason_code?: string[];
+            /**
+             * Sleeve
+             * @description E22.5 (D97): entry-DTE sleeves (`short`, `swing`, `other`), by entry DTE
+             */
+            sleeve?: string[];
             /** Stage */
             stage?: ("proposed" | "gate_pass" | "gate_fail" | "approved" | "rejected" | "expired" | "filled" | "cancelled" | "open" | "closed")[];
             /**
@@ -5788,6 +6907,14 @@ export interface components {
             items: components["schemas"]["TradeRow"][];
             /** Page */
             page: number;
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Production's data (shared inputs)
+             * @default false
+             */
+            shared_from_control: boolean;
             /** Size */
             size: number;
             /**
@@ -5837,6 +6964,11 @@ export interface components {
              * @description D50: bullish / bearish / neutral from leg sides and strikes; a close inherits the structure it exits; null without legs
              */
             direction?: ("bullish" | "bearish" | "neutral") | null;
+            /**
+             * Entry Dte
+             * @description DTE at the open (a close: its open's)
+             */
+            entry_dte?: number | null;
             /** Execution */
             execution: string | null;
             /** Exit Reason */
@@ -5885,6 +7017,11 @@ export interface components {
             realized_pnl: number | null;
             /** Run Id */
             run_id?: string | null;
+            /**
+             * Sleeve
+             * @description E22.5 (D97): entry-DTE sleeve; `other` = fits none
+             */
+            sleeve?: string | null;
             /**
              * Slippage Bps
              * @description Fill vs the proposal net; + = worse
@@ -6217,6 +7354,11 @@ export interface components {
              * @enum {string}
              */
             model: "d51" | "d56";
+            /**
+             * Next Resolve At
+             * @description E14.11: the Scalp's next slot (ET) when state = pending; null otherwise or when the Scalp job is disabled / missing
+             */
+            next_resolve_at?: string | null;
             /** Note */
             note?: string | null;
             /**
@@ -6231,12 +7373,20 @@ export interface components {
              * @description The stored resolve's as_of day
              */
             resolved_for: string | null;
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Production's data (shared inputs)
+             * @default false
+             */
+            shared_from_control: boolean;
             /**
              * State
-             * @description today = resolved today; stale = latest resolve is older (consumers use the core list until the next one); none = never resolved (core list shown)
+             * @description today = resolved today; pending = the previous session's resolve and today's first Scalp resolve is not due yet (window start + one `every`; D110); stale = a resolve is due and missing, or the stored one is older or expired (consumers use the core list until the next one); none = never resolved (core list shown)
              * @enum {string}
              */
-            state: "today" | "stale" | "none";
+            state: "today" | "pending" | "stale" | "none";
             /**
              * Tail Cuts
              * @description E13.14: names cut past the active cap (over_active_cap), with tier + rank
@@ -6388,7 +7538,10 @@ export type $defs = Record<string, never>;
 export interface operations {
     experiments_api_experiments_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
+                arm?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -6404,6 +7557,24 @@ export interface operations {
                     "application/json": components["schemas"]["ExperimentsResponse"];
                 };
             };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
             /** @description Service Unavailable */
             503: {
                 headers: {
@@ -6417,7 +7588,10 @@ export interface operations {
     };
     experiment_api_experiments__experiment_id__get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
+                arm?: string | null;
+            };
             header?: never;
             path: {
                 experiment_id: string;
@@ -6466,7 +7640,10 @@ export interface operations {
     };
     health_api_health_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
+                arm?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -6482,6 +7659,15 @@ export interface operations {
                     "application/json": components["schemas"]["HealthResponse"];
                 };
             };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
             /** @description Service Unavailable */
             503: {
                 headers: {
@@ -6495,7 +7681,10 @@ export interface operations {
     };
     meta_api_meta_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
+                arm?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -6511,6 +7700,15 @@ export interface operations {
                     "application/json": components["schemas"]["MetaResponse"];
                 };
             };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
             /** @description Service Unavailable */
             503: {
                 headers: {
@@ -6524,7 +7722,10 @@ export interface operations {
     };
     alerts_api_ops_alerts_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
+                arm?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -6540,6 +7741,24 @@ export interface operations {
                     "application/json": components["schemas"]["AlertsResponse"];
                 };
             };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
             /** @description Service Unavailable */
             503: {
                 headers: {
@@ -6553,7 +7772,10 @@ export interface operations {
     };
     budget_api_ops_budget_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
+                arm?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -6569,6 +7791,24 @@ export interface operations {
                     "application/json": components["schemas"]["BudgetResponse"] | null;
                 };
             };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
             /** @description Service Unavailable */
             503: {
                 headers: {
@@ -6582,7 +7822,10 @@ export interface operations {
     };
     config_api_ops_config_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
+                arm?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -6598,6 +7841,24 @@ export interface operations {
                     "application/json": components["schemas"]["ConfigResponse"];
                 };
             };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
             /** @description Service Unavailable */
             503: {
                 headers: {
@@ -6611,7 +7872,10 @@ export interface operations {
     };
     context_api_ops_context_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
+                arm?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -6627,6 +7891,24 @@ export interface operations {
                     "application/json": components["schemas"]["ContextResponse"];
                 };
             };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
             /** @description Service Unavailable */
             503: {
                 headers: {
@@ -6640,7 +7922,10 @@ export interface operations {
     };
     context_entry_api_ops_context__entry_id__get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
+                arm?: string | null;
+            };
             header?: never;
             path: {
                 entry_id: string;
@@ -6689,7 +7974,10 @@ export interface operations {
     };
     halts_api_ops_halts_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
+                arm?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -6705,6 +7993,24 @@ export interface operations {
                     "application/json": components["schemas"]["HaltsResponse"];
                 };
             };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
             /** @description Service Unavailable */
             503: {
                 headers: {
@@ -6718,7 +8024,10 @@ export interface operations {
     };
     health_api_ops_health_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
+                arm?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -6732,6 +8041,24 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HealthStripResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
             /** @description Service Unavailable */
@@ -6749,6 +8076,8 @@ export interface operations {
         parameters: {
             query?: {
                 days?: number;
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
+                arm?: string | null;
             };
             header?: never;
             path?: never;
@@ -6763,6 +8092,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LlmResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Validation Error */
@@ -6798,6 +8136,8 @@ export interface operations {
                 chain?: string | null;
                 page?: number;
                 size?: number;
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
+                arm?: string | null;
             };
             header?: never;
             path?: never;
@@ -6812,6 +8152,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunListResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Unprocessable Entity */
@@ -6836,7 +8185,10 @@ export interface operations {
     };
     run_detail_api_ops_runs__run_id__get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
+                arm?: string | null;
+            };
             header?: never;
             path: {
                 run_id: string;
@@ -6887,6 +8239,9 @@ export interface operations {
         parameters: {
             query?: {
                 day?: string | null;
+                window?: "day" | "rolling";
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
+                arm?: string | null;
             };
             header?: never;
             path?: never;
@@ -6901,6 +8256,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SessionResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Unprocessable Entity */
@@ -6925,7 +8289,10 @@ export interface operations {
     };
     sources_api_ops_sources_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
+                arm?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -6941,6 +8308,24 @@ export interface operations {
                     "application/json": components["schemas"]["SourcesResponse"];
                 };
             };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
             /** @description Service Unavailable */
             503: {
                 headers: {
@@ -6954,7 +8339,10 @@ export interface operations {
     };
     universe_api_ops_universe_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
+                arm?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -6968,6 +8356,24 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UniverseResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
             /** @description Service Unavailable */
@@ -6987,6 +8393,8 @@ export interface operations {
                 range?: "1D" | "1W" | "1M" | "3M" | "YTD" | "ALL";
                 /** @description Recent Activity window in hours (default: config `tower.overview.activity_hours`, 24) */
                 activity_hours?: number | null;
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
+                arm?: string | null;
             };
             header?: never;
             path?: never;
@@ -7001,6 +8409,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OverviewResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Validation Error */
@@ -7031,6 +8448,9 @@ export interface operations {
                 include_tests?: boolean;
                 from?: string | null;
                 to?: string | null;
+                sleeve?: string | null;
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
+                arm?: string | null;
             };
             header?: never;
             path?: never;
@@ -7045,6 +8465,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PerformanceResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Unprocessable Entity */
@@ -7070,11 +8499,14 @@ export interface operations {
     performance_breakdown_api_performance_breakdown_get: {
         parameters: {
             query?: {
-                by?: "ticker" | "structure" | "exit_reason" | "reason_code" | "profile" | "regime";
+                by?: "ticker" | "structure" | "exit_reason" | "reason_code" | "profile" | "regime" | "sleeve";
                 preset?: "1d" | "7d" | "week" | "mtd" | "qtd" | "ytd" | "30d" | "90d" | "all" | "custom";
                 include_tests?: boolean;
                 from?: string | null;
                 to?: string | null;
+                sleeve?: string | null;
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
+                arm?: string | null;
             };
             header?: never;
             path?: never;
@@ -7089,6 +8521,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BreakdownResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Unprocessable Entity */
@@ -7117,6 +8558,8 @@ export interface operations {
                 range?: "1D" | "1W" | "1M" | "3M";
                 from?: string | null;
                 to?: string | null;
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
+                arm?: string | null;
             };
             header?: never;
             path?: never;
@@ -7131,6 +8574,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FunnelReport"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Unprocessable Entity */
@@ -7157,6 +8609,8 @@ export interface operations {
         parameters: {
             query?: {
                 status?: "open" | "closed" | "all";
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
+                arm?: string | null;
             };
             header?: never;
             path?: never;
@@ -7171,6 +8625,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PositionsResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Validation Error */
@@ -7197,6 +8660,8 @@ export interface operations {
         parameters: {
             query?: {
                 q?: string;
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
+                arm?: string | null;
             };
             header?: never;
             path?: never;
@@ -7211,6 +8676,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SearchResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Validation Error */
@@ -7237,6 +8711,8 @@ export interface operations {
         parameters: {
             query?: {
                 lookback_days?: number | null;
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
+                arm?: string | null;
             };
             header?: never;
             path?: never;
@@ -7251,6 +8727,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TowerSnapshot"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Validation Error */
@@ -7288,11 +8773,14 @@ export interface operations {
                 min_net_ev?: number | null;
                 min_pop?: number | null;
                 account_profile?: string[] | null;
+                sleeve?: string[] | null;
                 q?: string | null;
                 page?: number;
                 size?: number;
                 sort?: "time" | "ticker" | "contracts" | "limit" | "net_ev" | "pop" | "slippage_bps" | "realized_pnl";
                 dir?: "asc" | "desc";
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
+                arm?: string | null;
             };
             header?: never;
             path?: never;
@@ -7307,6 +8795,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TradeListResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Validation Error */
@@ -7331,7 +8828,10 @@ export interface operations {
     };
     trade_filters_api_trades_filters_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
+                arm?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -7347,6 +8847,24 @@ export interface operations {
                     "application/json": components["schemas"]["TradeFilterOptions"];
                 };
             };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
             /** @description Service Unavailable */
             503: {
                 headers: {
@@ -7360,7 +8878,10 @@ export interface operations {
     };
     trade_api_trades__proposal_hash__get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
+                arm?: string | null;
+            };
             header?: never;
             path: {
                 proposal_hash: string;

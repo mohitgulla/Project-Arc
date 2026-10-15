@@ -158,7 +158,25 @@ class TestHelpers:
         text = 'Sure!\n```json\n{"candidates": [{"x": {"y": 1}}]}\n```\nDone.'
         assert extract_json_object(text) == {"candidates": [{"x": {"y": 1}}]}
 
-    @pytest.mark.parametrize("text", ["no json here", "} backwards {", "{not: json}"])
+    @pytest.mark.parametrize(
+        "text",
+        [
+            '{"a": {"b": 1}}\n\nNote: tickers verified.',  # trailing chatter
+            '{"a": {"b": 1}}\n}',  # stray closing brace
+            '```json\n{"a": {"b": 1}}\n```\n```json\n{"a": 2}\n```',  # second object
+        ],
+    )
+    def test_extract_json_ignores_trailing_text(self, text: str) -> None:
+        # 2026-10-12 Warrior Trading brief: "Extra data: line 149 column 1" from the
+        # first-{ .. last-} slice when the model appended text after the object.
+        assert extract_json_object(text) == {"a": {"b": 1}}
+
+    def test_extract_json_tolerates_trailing_commas(self) -> None:
+        # 2026-10-15 StockedUp brief: `"quote": "...",\n  },` -> "Expecting property
+        # name enclosed in double quotes". Same shared parser as the Scalp.
+        assert extract_json_object('{"a": {"b": [1, 2,],},}\nok') == {"a": {"b": [1, 2]}}
+
+    @pytest.mark.parametrize("text", ["no json here", "} backwards {", "{not: json}", '{"a": 1,,}'])
     def test_extract_json_errors(self, text: str) -> None:
         with pytest.raises(ValueError):
             extract_json_object(text)

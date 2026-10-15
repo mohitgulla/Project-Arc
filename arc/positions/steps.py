@@ -257,6 +257,7 @@ def evaluate(ctx: JobContext, env: PipelineEnv, *, exit_cfg: ExitConfig | None =
                 peak_pnl=_peak(
                     stored_peak_pnl(ctx.conn, str(row["id"]), opened_at=row.get("opened_at"))
                 ),
+                exit_block=settings.exit_block_of(st, row.get("opened_at")),
             )
         except (LookupError, ValueError) as exc:
             errors.append(f"{t}: cannot review ({exc})")
@@ -593,7 +594,10 @@ def _open_leg(
     )
     from arc.pipeline.steps import (
         band_for,
+        cash_fit_enabled,
+        cash_per_contract,
         existing_max_loss,
+        portfolio_alloc_tier,
         worst_loss_per_contract,
     )
     from arc.sizing import apply_live_cap, size_contracts
@@ -627,12 +631,17 @@ def _open_leg(
     )
     limit = limit_price(st.net_debit_credit, grid_for(st.legs, market, settings))
     band = band_for(st, limit, market, settings)
+    cash_fit = cash_fit_enabled(settings)  # E22.3 (D97): fit a cash-account open to cash
+    tier = portfolio_alloc_tier(portfolio, info.equity, settings)
     size = size_contracts(
         suggestion=int(src["suggestion"]),
         max_loss_per_contract=worst_loss_per_contract(st, band),
         equity=info.equity,
-        cap_pct=settings.max_alloc_pct,
+        cap_pct=tier.pct,  # D116: the gate's tier for this book
         existing_max_loss=existing_max_loss(portfolio, t),
+        cap_label=tier.describe(),
+        cash_available=account.settled_cash if cash_fit else None,
+        cash_per_contract=cash_per_contract(st, band, settings) if cash_fit else None,
     )
     # D70: a live swap open is clamped like any live open (closes never are).
     size = apply_live_cap(size, live_size_cap(settings, account), info.equity)

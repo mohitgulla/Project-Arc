@@ -1,0 +1,183 @@
+{
+  "additionalProperties": false,
+  "description": "E23.2 (D98): an anti-chase drop kept on watch for a pullback; kind ``pullback_watch``.\n\nSubject ``<TICKER>:<stance>`` (one live entry per ticker and stance; supersede\nlatest). Written by the Research step in the run that journals ``stretched_entry``;\nevery later Research run re-checks it (:func:`arc.pipeline.pullback.rearm_verdict`).\nA watch is closed by writing a successor with ``status`` ``expired`` /\n``invalidated`` / ``retired`` (dedupe: an open position or pending proposal on\nthe ticker), so the store keeps the history. ``rearmed_at`` is set the first time\nthe watch is ready (journaled ``pullback_rearmed`` once). Numbers only, plus\nResearch's thesis text (<= 400 chars) for the ready line; never a gate input.",
+  "properties": {
+    "atr14": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Atr14"
+    },
+    "closed_reason": {
+      "anyOf": [
+        {
+          "maxLength": 240,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Closed Reason"
+    },
+    "confidence": {
+      "description": "Research's confidence",
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Confidence",
+      "type": "number"
+    },
+    "drop_session": {
+      "description": "YYYY-MM-DD session of the drop",
+      "title": "Drop Session",
+      "type": "string"
+    },
+    "dropped_at": {
+      "description": "ISO-8601 ET time of the stretched_entry drop",
+      "title": "Dropped At",
+      "type": "string"
+    },
+    "expires_session": {
+      "description": "YYYY-MM-DD: last session it is watched",
+      "title": "Expires Session",
+      "type": "string"
+    },
+    "price_at_drop": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Daily close behind the drop",
+      "title": "Price At Drop"
+    },
+    "rearmed_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Rearmed At"
+    },
+    "research_call_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Research Call Id"
+    },
+    "rsi14_at_drop": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Rsi14 At Drop"
+    },
+    "schema_version": {
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "sma20": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Sma20"
+    },
+    "stance": {
+      "enum": [
+        "bullish",
+        "bearish"
+      ],
+      "title": "Stance",
+      "type": "string"
+    },
+    "status": {
+      "default": "watching",
+      "enum": [
+        "watching",
+        "expired",
+        "invalidated",
+        "retired"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "stretch_atr_at_drop": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Stretch Atr At Drop"
+    },
+    "thesis": {
+      "default": "",
+      "maxLength": 400,
+      "title": "Thesis",
+      "type": "string"
+    },
+    "ticker": {
+      "pattern": "^[A-Z][A-Z0-9.]{0,9}$",
+      "title": "Ticker",
+      "type": "string"
+    },
+    "vwap_stretch_at_drop": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Vwap Stretch At Drop"
+    }
+  },
+  "required": [
+    "ticker",
+    "stance",
+    "dropped_at",
+    "drop_session",
+    "expires_session",
+    "confidence"
+  ],
+  "title": "PullbackWatchPayload",
+  "type": "object"
+}

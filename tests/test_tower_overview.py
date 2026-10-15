@@ -24,13 +24,12 @@ from arc.tower.api import create_app
 from arc.tower.data import connect_ro
 from arc.tower.data_overview import (
     RANGES,
-    OverviewResponse,
-    PositionsResponse,
     equity_intraday,
     load_overview,
     load_positions,
     range_start,
 )
+from arc.tower.routes.overview import OverviewOut, PositionsOut
 from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
@@ -262,6 +261,85 @@ def test_shared_leg_leaves_pnl_blank(tmp_path: Path) -> None:
     assert len(spys) == 2 and all(p.unrealized_pl is None and p.mark_net is None for p in spys)
 
 
+def _strip_leg_pnl(path: Path) -> None:
+    """Make every monitor mark look like a shared-account arm's (``arm_positions``): the
+    arm's own qty and the broker's per-share mark, no cost basis or broker P&L."""
+    c = connect(path)
+    c.execute("DROP TRIGGER heartbeats_no_update")  # fixture surgery on a scratch copy
+    for rowid, detail in c.execute(
+        "SELECT rowid, detail FROM heartbeats WHERE component = 'monitor'"
+    ).fetchall():
+        d = json.loads(detail)
+        for leg in d.get("legs", []):
+            leg.pop("unrealized_pl", None)
+            leg.pop("avg_entry_price", None)
+        c.execute("UPDATE heartbeats SET detail = ? WHERE rowid = ?", (json.dumps(d), rowid))
+    c.commit()
+    c.close()
+
+
+def test_shared_account_arm_pnl_from_entry_and_mark(
+    conn: sqlite3.Connection, tmp_path: Path
+) -> None:
+    """D115: a shared-account arm's legs carry no broker P&L; P&L $ / % (and the Movers
+    spark) come from the structure's entry and mark and match the broker's figure."""
+    broker = _overview(conn)
+    path = tmp_path / "arm.db"
+    fixture.build(path, NOW)
+    _strip_leg_pnl(path)
+    ro = connect_ro(path)
+    try:
+        arm = _overview(ro)
+        arm_pos = load_positions(ro, now=NOW, stale_after=STALE)
+    finally:
+        ro.close()
+    want = {p.ticker: p for p in broker.positions}
+    assert want and all(p.unrealized_pl is not None for p in want.values())
+    for rows in (arm.positions, arm_pos.items):
+        assert {p.ticker for p in rows} == set(want)
+        for p in rows:
+            w = want[p.ticker]
+            assert p.mark_net == w.mark_net
+            assert p.unrealized_pl == w.unrealized_pl
+            assert p.unrealized_pct == pytest.approx(w.unrealized_pct)
+            assert p.day_change == w.day_change
+    b_movers = {m.ticker: m for m in broker.movers}
+    for m in arm.movers:
+        assert m.unrealized_pct == pytest.approx(b_movers[m.ticker].unrealized_pct)
+        assert m.spark == pytest.approx(b_movers[m.ticker].spark)
+    assert arm.day_pnl.unrealized == sum(
+        (p.unrealized_pl or D(0) for p in arm.positions), start=D(0)
+    )
+
+
+def test_shared_account_arm_shared_leg_stays_blank(tmp_path: Path) -> None:
+    """The D115 fallback keeps the shared-leg rule: a leg two structures hold can't be split."""
+    path = tmp_path / "shared-arm.db"
+    fixture.build(path, NOW)
+    _strip_leg_pnl(path)
+    c = connect(path)
+    spy = c.execute("SELECT * FROM open_structures WHERE ticker = 'SPY'").fetchone()
+    c.execute(
+        """INSERT INTO open_structures (id, ticker, open_proposal_hash, candidate_id,
+               structure_json, contracts, entry_net, opened_at)
+           SELECT 'os-dup', ticker, ?, candidate_id, structure_json, 1, entry_net, opened_at
+           FROM open_structures WHERE id = ?""",
+        (fixture.phash("p-googl"), spy["id"]),
+    )
+    c.commit()
+    c.close()
+    ro = connect_ro(path)
+    try:
+        o = _overview(ro)
+    finally:
+        ro.close()
+    spys = [p for p in o.positions if p.ticker == "SPY"]
+    assert len(spys) == 2 and all(
+        p.unrealized_pl is None and p.unrealized_pct is None for p in spys
+    )
+    assert all(m.spark == [] for m in o.movers if m.ticker == "SPY")
+
+
 def test_load_positions_status(conn: sqlite3.Connection) -> None:
     open_ = load_positions(conn, now=NOW, status="open", stale_after=STALE)
     assert {p.ticker for p in open_.items} == {"SPY", "QQQ", "NVDA"}
@@ -446,7 +524,7 @@ def client(fx_db: Path, tmp_path: Path) -> TestClient:
 def test_api_overview_contract(client: TestClient, rng: str) -> None:
     r = client.get("/api/overview", params={"range": rng})
     assert r.status_code == 200
-    o = OverviewResponse.model_validate(r.json())
+    o = OverviewOut.model_validate(r.json())
     assert o.range == rng and o.as_of == NOW and o.stale_after_s == 1800  # 3 x 10-min monitor (D52)
     assert len(o.positions) == 3 and o.status.halted and o.equity.value is not None
 
@@ -494,7 +572,7 @@ def test_api_positions(client: TestClient) -> None:
     for status, n in (("open", 3), ("closed", 1), ("all", 4)):
         r = client.get("/api/positions", params={"status": status})
         assert r.status_code == 200
-        body = PositionsResponse.model_validate(r.json())
+        body = PositionsOut.model_validate(r.json())
         assert body.status == status and len(body.items) == n
     assert len(client.get("/api/positions").json()["items"]) == 3
 
@@ -627,6 +705,51 @@ def test_benchmark_without_a_start_price_is_left_out(fx_db: Path, tmp_path: Path
     assert syms == ["SPY"]
 
 
+def test_benchmark_start_on_a_non_session_uses_the_prior_close(fx_db: Path, tmp_path: Path) -> None:
+    """D105: the portfolio's range can start on a day with no benchmark close (the D80
+    store epoch was a Sunday). The benchmark then starts at its last close before that day
+    instead of vanishing from every range but 1D."""
+    import shutil
+    import sqlite3 as _sq
+
+    db = tmp_path / "weekend.db"
+    shutil.copy(fx_db, db)
+    c = connect_ro(db)
+    try:
+        start_day = _overview(c, "1W").equity.start_at.astimezone(ET).date()  # type: ignore[union-attr]
+    finally:
+        c.close()
+    w = _sq.connect(db)
+    w.execute("DELETE FROM iv_daily WHERE day = ?", (start_day.isoformat(),))
+    prior = w.execute(
+        "SELECT ticker, spot FROM iv_daily WHERE spot_basis = 'last_close' AND day < ?"
+        " ORDER BY day",
+        (start_day.isoformat(),),
+    ).fetchall()
+    w.commit()
+    w.close()
+    expected = {t: D(str(s)) for t, s in prior}  # last close before the start day wins
+    c = connect_ro(db)
+    try:
+        week = _overview(c, "1W").equity
+    finally:
+        c.close()
+    got = {b.symbol: b.start_value for b in week.benchmarks}
+    assert set(got) == {"SPY", "QQQ"}
+    assert got == {s: expected[s] for s in got}
+
+
+def test_close_on_or_before_looks_back_one_week_only() -> None:
+    from arc.tower.data_overview import _close_on_or_before
+
+    fri, sun = dt.date(2026, 10, 9), dt.date(2026, 10, 11)
+    closes = {fri: D("778.51")}
+    assert _close_on_or_before(closes, fri) == D("778.51")
+    assert _close_on_or_before(closes, sun) == D("778.51")
+    assert _close_on_or_before(closes, fri + dt.timedelta(days=8)) is None
+    assert _close_on_or_before(closes, fri - dt.timedelta(days=1)) is None
+
+
 def test_account_split_is_cash_vs_equity_minus_cash(conn: sqlite3.Connection) -> None:
     a = _overview(conn).account
     assert a is not None
@@ -699,3 +822,59 @@ def test_movers_carry_the_stocks_own_day_change(conn: sqlite3.Connection) -> Non
     # not in the heartbeat's delta_by_underlying -> no spot -> no value, never a guess
     assert movers["NVDA"].underlying_change is None
     assert movers["QQQ"].underlying_change is None
+
+
+def test_status_session_count_from_store_epoch(tmp_path: Path) -> None:
+    """D92: Trading Enabled (n) counts sessions since the D80 fresh start (epoch wins over
+    older snapshots); today counts only from the 09:30 ET open; weekends never count."""
+    path = tmp_path / "sess.db"
+    c = connect(path)
+    migrate(c)
+    PnlSnapshotRepo(c).insert(
+        realized="0", unrealized="0", total="0",
+        details_json=json.dumps({"day": "2026-09-01", "equity": "1"}),
+        snapshot_at="2026-09-01T20:35:00.000000Z",
+    )  # fmt: skip
+    c.execute(
+        "INSERT INTO routine_state (key, value, updated_at) VALUES ('store:epoch', ?, ?)",
+        (json.dumps({"started_at": "2026-09-18T13:15:34-04:00"}), "2026-09-18T17:15:34Z"),
+    )
+    c.commit()
+    c.close()
+    ro = connect_ro(path)
+    try:
+        # Fri 09-18 .. Mon 09-28 15:40 = 18, 21, 22, 23, 24, 25, 28 -> 7
+        s = _overview(ro).status
+        assert (s.sessions, s.sessions_since) == (7, dt.date(2026, 9, 18))
+        pre_open = dt.datetime(2026, 9, 28, 9, 0, tzinfo=ET)
+        assert _overview(ro, now=pre_open).status.sessions == 6
+        sunday = dt.datetime(2026, 9, 27, 14, 0, tzinfo=ET)
+        assert _overview(ro, now=sunday).status.sessions == 6
+    finally:
+        ro.close()
+
+
+def test_status_session_count_falls_back_to_first_snapshot(tmp_path: Path) -> None:
+    path = tmp_path / "nosess.db"
+    c = connect(path)
+    migrate(c)
+    c.close()
+    ro = connect_ro(path)
+    try:
+        s = _overview(ro).status
+        assert s.sessions is None and s.sessions_since is None
+    finally:
+        ro.close()
+    c = connect(path)
+    PnlSnapshotRepo(c).insert(
+        realized="0", unrealized="0", total="0",
+        details_json=json.dumps({"day": "2026-09-25", "equity": "1"}),
+        snapshot_at="2026-09-25T20:35:00.000000Z",
+    )  # fmt: skip
+    c.close()
+    ro = connect_ro(path)
+    try:
+        s = _overview(ro).status
+        assert (s.sessions, s.sessions_since) == (2, dt.date(2026, 9, 25))
+    finally:
+        ro.close()

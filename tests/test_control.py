@@ -144,7 +144,13 @@ def test_summary_lists_options_for_categorical_keys(svc: ControlService) -> None
     assert "_(options: scanner | managed_net_ev | rorc_day | vrp)_" in card.text
     assert "_(options: intraday | eod)_" in card.text
     # the active profile's DTE window, the E6.4 knobs and routines are all in the summary
-    for key in ("profiles.cash_debit.dte_min", "realloc_min_edge", "routines.scalp.cadence"):
+    # (E22.4, D97: the shipped cash_debit profile's windows are its sleeves)
+    for key in (
+        "profiles.cash_debit.sleeves.short.dte_min",
+        "profiles.cash_debit.sleeves.swing.max_positions",
+        "realloc_min_edge",
+        "routines.scalp.cadence",
+    ):
         assert f"`{key}`" in card.text
     assert all(len(b["text"]["text"]) <= 3000 for b in card.blocks if "text" in b)
 
@@ -188,7 +194,7 @@ def test_aliases_and_patterns() -> None:
 @pytest.mark.parametrize(
     ("key", "raw", "match"),
     [
-        ("max_alloc_pct", "11%", "hard ceiling"),
+        ("max_alloc_pct", "21%", "hard ceiling"),
         ("max_alloc_pct", "0.2%", "outside"),
         ("max_alloc_pct", "abc", "not a number"),
         ("max_alloc_pct", "nan", "finite"),
@@ -281,7 +287,7 @@ def test_format_value() -> None:
     )
     assert lookup("account_profile").bounds == "cash_long_only | cash_debit | margin"
     assert lookup("auto_approve.paper").bounds == "on | off"
-    assert lookup("max_alloc_pct").bounds == "0.5% – 10%"
+    assert lookup("max_alloc_pct").bounds == "0.5% – 20%"  # D116 (was 10%)
 
 
 # ---------------------------------------------------------------------------
@@ -365,7 +371,7 @@ def test_local_cli_is_owner_but_slack_local_is_not(svc: ControlService) -> None:
 
 
 def test_bounds_and_ceiling_refused(svc: ControlService) -> None:
-    r = svc.set("max_alloc_pct", "11%", actor=OWNER, source="slack")
+    r = svc.set("max_alloc_pct", "21%", actor=OWNER, source="slack")
     assert r.outcome == "refused" and "hard ceiling" in r.message
     r = svc.set("env", "live", actor=OWNER, source="slack")
     assert r.outcome == "refused" and "never tunable" in r.message
@@ -562,12 +568,16 @@ def test_profile_switch_changes_scanner_strategies(svc: ControlService) -> None:
 
 
 def test_profile_dte_override_reaches_entry_window(svc: ControlService) -> None:
+    # E22.4 (D97): the shipped cash_debit window is the envelope of its sleeves; the
+    # short sleeve's dte_min is its lower edge
     lo, hi = svc.settings().entry_dte_window
-    r = svc.set("profiles.cash_debit.dte_min", str(lo + 5), actor=OWNER, source="slack")
+    key = "profiles.cash_debit.sleeves.short.dte_min"
+    r = svc.set(key, str(lo + 5), actor=OWNER, source="slack")
     assert r.outcome == "applied"
     assert svc.settings().entry_dte_window == (lo + 5, hi)
-    bad = svc.set("profiles.cash_debit.dte_min", str(hi + 10), actor=OWNER, source="slack")
-    assert bad.outcome == "refused"  # the profile model rejects min > max
+    short_max = svc.view("profiles.cash_debit.sleeves.short.dte_max").value
+    bad = svc.set(key, str(short_max + 5), actor=OWNER, source="slack")
+    assert bad.outcome == "refused"  # the sleeve model rejects min > max
 
 
 def test_exit_and_cost_overrides(svc: ControlService) -> None:
@@ -745,7 +755,7 @@ def test_cli_round_trip(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> N
 
     code, out = run("set", "pipeline_scan_top", "3", "--reason", "wider menu")
     assert code == 0 and out["result"]["outcome"] == "applied"
-    code, out = run("set", "max_alloc_pct", "11%")
+    code, out = run("set", "max_alloc_pct", "21%")
     assert code == 2 and out["result"]["outcome"] == "refused"
     code, out = run("set", "max_alloc_pct", "3%", "--actor", OTHER)
     assert code == 2 and "owner only" in out["result"]["message"]
@@ -885,7 +895,7 @@ def test_yaml_parse_is_cached_per_file_version(
     assert len(views) > 100
     assert len(parses) == len(set(parses))  # one parse per file, not one per key
     assert len(parses) <= 10  # a handful of config files, not ~560 key reads
-    lo = svc.view("profiles.cash_debit.dte_min").value
+    lo = svc.view("profiles.cash_debit.sleeves.short.dte_min").value
     assert len(parses) == len(set(parses))  # still cached
     # an edit to the file is picked up (mtime changes the cache key)
     text = prof.read_text()
@@ -893,7 +903,7 @@ def test_yaml_parse_is_cached_per_file_version(
     prof.write_text(text.replace(f"dte_min: {lo}", f"dte_min: {lo + 3}", 1))
     st = prof.stat()
     os.utime(prof, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000))
-    assert svc.view("profiles.cash_debit.dte_min").value == lo + 3
+    assert svc.view("profiles.cash_debit.sleeves.short.dte_min").value == lo + 3
 
 
 def test_cached_yaml_is_never_mutated_by_callers(svc: ControlService) -> None:

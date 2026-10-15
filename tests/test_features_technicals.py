@@ -413,8 +413,8 @@ class TestSnapshot:
         assert f"technicals: need {MIN_TECH_BARS} OHLC bars" in snap.warnings
         assert build_snapshot("X", df["close"], df.index[-1]).technicals is None
 
-    def test_regime_kind_v4_round_trip_and_old_rows_load(self) -> None:
-        assert KINDS["regime"].schema_version == 4
+    def test_regime_kind_v6_round_trip_and_old_rows_load(self) -> None:
+        assert KINDS["regime"].schema_version == 6  # E23.1 (D98): range_pos_20d
         snap = build_snapshot_from_bars("NVDA", _bars_from(_nvda()), AS_OF, benchmark=_spy())
         stored = json.loads(
             json.dumps(RegimePayload.model_validate(snap.model_dump()).model_dump(mode="json"))
@@ -428,6 +428,22 @@ class TestSnapshot:
         v3 = build_snapshot("SPY", _spy(), AS_OF).model_dump(mode="json")
         v3.pop("technicals")
         assert validate_payload("regime", v3).technicals is None  # type: ignore[attr-defined]
+        # a v4 row (technicals without the E23.0 level fields) still validates
+        v4 = json.loads(json.dumps(stored))
+        new = {"vp_poc", "vp_vah", "vp_val", "vp_hvn_above", "vp_hvn_below", "vp_pos",
+               "dist_poc_atr", "dist_vah_atr", "dist_val_atr", "oi_call_wall", "oi_put_wall",
+               "oi_max_strike", "dist_call_wall_atr", "dist_put_wall_atr"}  # fmt: skip
+        assert new <= set(v4["technicals"])
+        v4["technicals"] = {k: v for k, v in v4["technicals"].items() if k not in new}
+        assert "vp_poc" not in v4["technicals"]
+        back4 = validate_payload("regime", v4)
+        assert back4.technicals is not None and back4.technicals.vp_poc is None  # type: ignore[attr-defined]
+        # a v5 row (technicals without range_pos_20d) still validates
+        assert stored["technicals"]["range_pos_20d"] is not None
+        v5 = json.loads(json.dumps(stored))
+        v5["technicals"].pop("range_pos_20d")
+        back5 = validate_payload("regime", v5)
+        assert back5.technicals.range_pos_20d is None  # type: ignore[attr-defined]
 
     def test_extra_fields_rejected(self) -> None:
         f = compute_technicals(_nvda(), AS_OF)
@@ -565,6 +581,7 @@ def test_sector_etf_map_lives_in_sectors_yaml(tmp_path: Path) -> None:
 class _Market:
     def __init__(self, fail: frozenset[str] = frozenset()) -> None:
         self.calls: list[str] = []
+        self.feeds: list[str | None] = []
         self.fail = fail
         self.frames = {
             "NVDA": _nvda(),
@@ -573,8 +590,9 @@ class _Market:
             "XLK": _nvda() * 0.9,
         }
 
-    def history_bars(self, symbol, start, end, timeframe="1Day"):  # noqa: ANN001, ANN201
+    def history_bars(self, symbol, start, end, timeframe="1Day", feed=None):  # noqa: ANN001, ANN201
         self.calls.append(symbol)
+        self.feeds.append(feed)
         if symbol in self.fail:
             raise RuntimeError("bars down")
         return _bars_from(self.frames[symbol])
@@ -634,6 +652,7 @@ def test_regime_step_stores_technicals_and_fetches_refs_once() -> None:
     written, snap = _step(conn, m, ["AAPL", "NVDA", "SPY"])
     assert written == ["AAPL", "NVDA", "SPY"]
     assert sorted(m.calls) == ["AAPL", "NVDA", "SPY", "XLK"]  # SPY + XLK once each
+    assert set(m.feeds) == {"sip"}  # E23.0a (D98): daily bars read consolidated volume
     nv = snap.latest("regime", "NVDA").payload["technicals"]
     assert nv["sector_etf"] == "XLK" and nv["rs_sector_20d"] is not None
     assert nv["rs_spy_20d"] == pytest.approx(

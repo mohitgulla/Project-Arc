@@ -135,7 +135,7 @@ class OneSided(FakeMarket):
     def underlying_quote(self, symbol: str) -> UnderlyingQuote:
         return UnderlyingQuote(symbol=symbol, bid=580.0, ask=0.0, mid=290.0, timestamp=NOW)
 
-    def history_bars(self, symbol, start, end, timeframe="1Day"):  # noqa: ANN001, ANN201
+    def history_bars(self, symbol, start, end, timeframe="1Day", feed=None):  # noqa: ANN001, ANN201
         from arc.data.base import HistoryBar
 
         if self.close is None:
@@ -259,6 +259,33 @@ def test_build_portfolio_prices_greeks() -> None:
     assert build_portfolio(
         conn, [], FakeMarket({}), now=NOW, wash_sale_days=30, r=0.04
     ).dollar_delta == D(0)
+    # D116: a credit vertical keeps Δ × spot, so the cap measure equals the raw one
+    assert pf.dollar_delta_raw == pf.dollar_delta
+    assert pf.beta_dollar_delta_raw == pf.beta_dollar_delta
+
+
+def test_build_portfolio_debit_vertical_counts_signed_max_loss() -> None:
+    """D116 (E3.8): a held put debit (long 570 / short 565, paid 2.10 − 1.25) counts
+    −$85 (sign of its Δ × max loss) in both delta caps; the raw Δ × spot is kept apart
+    and in the monitor breakdown."""
+    conn = open_db(":memory:", copy=False)
+    debit = [
+        BrokerPosition(symbol=SP, qty=D("1"), side="long", avg_entry_price=D("2.10")),
+        BrokerPosition(symbol=LP, qty=D("-1"), side="short", avg_entry_price=D("1.25")),
+    ]
+    breakdown: dict[str, dict[str, float | str]] = {}
+    pf = build_portfolio(
+        conn, debit, FakeMarket({LP: 0.2, SP: 0.19}), now=NOW, wash_sale_days=30, r=0.04,
+        delta_breakdown=breakdown,
+    )  # fmt: skip
+    assert pf.greeks.delta < 0
+    assert pf.dollar_delta == D("-85.00") and pf.beta_dollar_delta == D("-85.00")
+    assert float(pf.dollar_delta_raw) == pytest.approx(pf.greeks.delta * 580.0)
+    assert pf.beta_dollar_delta_raw == pf.dollar_delta_raw  # no stored β: 1.0
+    row = breakdown["SPY"]
+    assert row["dollar_delta"] == -85.0 and row["beta_dollar_delta"] == -85.0
+    assert row["dollar_delta_raw"] == pytest.approx(round(pf.greeks.delta * 580.0, 2))
+    assert row["gamma"] == pytest.approx(pf.greeks.gamma)
 
 
 def test_build_portfolio_missing_iv_blocks() -> None:
@@ -346,3 +373,33 @@ def test_propose_skips_reprice_failed_on_missing_iv(monkeypatch: pytest.MonkeyPa
     ).fetchall()
     assert len(rows) == 1
     assert leg in rows[0]["reason_text"]
+
+
+def test_build_portfolio_carries_entry_dte() -> None:
+    """E22.1 (D97): an attributed structure's position carries its entry DTE; legs no
+    open structure accounts for carry None (the sleeve rule counts them everywhere)."""
+    from arc.store.execution import OpenStructureRepo
+    from arc.structures import credit_vertical
+
+    conn = open_db(":memory:", copy=False)
+    conn.execute("PRAGMA foreign_keys = OFF")
+    st = credit_vertical(
+        "put", "SPY", EXP, short_strike=570, short_premium="2.10", long_strike=565,
+        long_premium="1.25", as_of=EXP - dt.timedelta(days=22),
+    )  # fmt: skip
+    assert st.dte == 22
+    mk = FakeMarket({LP: 0.2, SP: 0.19})
+    pf = build_portfolio(conn, positions(), mk, now=NOW, wash_sale_days=30, r=0.04)
+    assert [p.entry_dte for p in pf.positions] == [None]
+    OpenStructureRepo(conn).open(
+        ticker="SPY", open_proposal_hash="h1", candidate_id="c1",
+        structure_json=st.model_dump_json(), contracts=1, entry_net=D("-0.85"), now=NOW,
+    )  # fmt: skip
+    pf = build_portfolio(conn, positions(), mk, now=NOW, wash_sale_days=30, r=0.04)
+    assert [p.entry_dte for p in pf.positions] == [22]
+    # an unreadable stored structure: its legs fall back to unknown (fail closed)
+    conn.execute("UPDATE open_structures SET structure_json = '{bad'")
+    from arc.pipeline.market import _entry_dtes
+
+    assert _entry_dtes(conn) == {}
+    assert _entry_dtes(None) == {}

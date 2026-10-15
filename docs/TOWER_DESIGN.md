@@ -138,6 +138,26 @@ Charts: Recharts, wrapped so no page imports Recharts directly. Tooltips share o
 - Verified with Playwright at 390×844, 768×1024 and 1440×900 in both themes (screenshots
   attached to the PR).
 
+### 6.1 Account under view (E15.7, D69/D92)
+
+- The Tower reads one account at a time: **Production** (the production account; the default, never
+  called "Control" in UI text) or one running experiment arm, shown as `XP-12 · T1`.
+- The choice lives only in the URL (`?arm=XP-12:t1`, shareable). Every API call carries it;
+  in-app links that drop it get it back (`ArmProvider`, `web/src/lib/armContext.tsx`). A load
+  without `?arm` is Production; nothing is stored in `localStorage`. Back/forward follows the
+  URL.
+- Switcher (D103): one master control, Overview's status-strip account slot. The choice
+  applies to every page; other pages have no per-page account control (the header pill was
+  removed), and show the banner below while an arm is under view. Menu = Arc Investor, then an
+  `Experiment Arms` group of running arms (dot in the arm's Experiments-page colour,
+  `Virtual account · updated 2m ago`), one checked item, 44 px rows on phones, Esc / outside
+  tap closes, arrow keys move.
+- Banner under the header on every page while an arm is selected: `Viewing XP-12 · T1`
+  (owner 2026-10-14: no subtitle) + **Back to Arc Investor**. No per-panel
+  "from Control" tags (owner). An arm the API refuses (stopped, unknown) gets a `--neg` banner
+  `XP-n · Tn is not a running experiment arm` with the same way back.
+- Helpers: `web/src/lib/arm.ts` (pure, vitest); component `web/src/components/ArmSwitcher.tsx`.
+
 ## 7. Data freshness and polling
 
 - TanStack Query, `refetchInterval` 60 s (configurable in Settings: 30/60/120 s), paused when
@@ -161,9 +181,13 @@ Charts: Recharts, wrapped so no page imports Recharts directly. Tooltips share o
 - Loaders in `arc/tower/data_ops.py`, routes `GET /api/ops/{session,health,alerts,halts,
   runs,runs/{run_id},budget,context,context/{entry_id},sources,llm,config}`.
 - Session timeline slots are `config/routines.yaml` slots (`arc.routines.schedule
-  .slots_between`, 05:00–22:00 ET) joined to root `routine_runs` on `(job, scheduled_for)`.
-  Colours: done `--accent`, running pulsing `--accent`, failed `--neg`, skipped / no_change
-  muted, missed `--warn`, future `--track`. The D31 trading loop (`loop.job`) is its own row.
+  .slots_between`) in the requested window, joined to root `routine_runs` on
+  `(job, scheduled_for)`. D93: `GET /api/ops/session?window=rolling` is the last 8 h and the
+  next 4 h around the current ET hour (`[hour − 8 h, hour + 5 h)`, may span midnight, `day`
+  ignored); `window=day&day=…` (the API default) is the full ET day `[00:00, 24:00)`, so the
+  23:00 jobs show (the old 02:00–22:00 span cut them off). Colours: done `--accent`, running
+  pulsing `--accent`, failed `--neg`, skipped / no_change muted, missed `--warn`, upcoming
+  (`future`) `--track`. The D31 trading loop (`loop.job`) is its own row.
 - Run detail renders the stored D27 manifest (`run_manifests.payload`) and the trace from
   `arc.context.trace.trace_runs`, the same serializer `arc context trace` prints. A read or
   write of a kind outside the job's declared contract is highlighted `--neg`.
@@ -222,24 +246,29 @@ they are never dropped.
 
 ### 10.1 Overview (E8.8b)
 
-- **Status row** (order and wording D50, E8.8g): fixed slots `● Trading Enabled` ·
-  `● Paper Trade` · `Health Failed 25m` · `Orders 8/200` (+ tier when not normal; never "Orders
-  today") · `Tick 4m` · `Alerts n` (button; expands the open alerts inline, capped).
-  Values are Title Case (`Enabled`, `OK`, `Failed`, `No data`; ages unchanged). The env slot is
-  `<Env> Trade` (`Paper Trade`); the account profile (`cash_debit`) is in its tooltip only. It is
-  styled exactly like the other values (caption, semibold, `text-primary`, neutral dot),
-  never a pill. Each slot is `label value` with a status dot, no nested pills. A stale or non-ok
-  heartbeat turns the value `--warn` (stale = 3× the cadence from `/api/meta`
-  `cadences.tick|health`). A halt replaces slot 1 with the red `HALTED` pill + reason + actor ·
-  age. ≤ 768 px: a 3×2 grid of equal cells (≥ 44 px), row 1 `Trading | env | Health`, row 2
-  `Orders | Tick | Alerts`; wider: one row in the same order. Model: `statusRow()` in
-  `lib/overview.ts`.
+- **Status row** (order and wording D92; was D50 `Trading · env · Health · Orders · Tick ·
+  Alerts`): fixed slots `● Paper Trade · Arc Investor` · `● Trading Enabled (7)` · `Orders 8/200`
+  (+ tier when not normal; never "Orders today") · `Tick 4m` · `Health OK 1m` · `Alerts n`
+  (button; expands the open alerts inline, capped). The account slot names the account under view:
+  **Production** for the production account (D108; was "Arc Investor" under D92; "Control" is only a v3 XP's control arm), except the account switcher (trigger, production menu row, Back button), which says **Arc Investor** (owner, 2026-10-14), an arm's treatment name (`XP-12 · T1`) in
+  E15.7's arm view, which also has no "from Control" tag. On Overview this slot **is** the arm
+  switcher (a button with a chevron opening the account menu) and the Tower's only account
+  control (D103): the pick applies to every page, which carry no per-page switcher. The account profile (`cash_debit`) is
+  in its tooltip only; neutral dot, never a pill. `(n)` = trading sessions since the account
+  started (`status.sessions`; tooltip `n trading sessions since <day>`). Tick shows minutes only
+  (D92 rev; seconds dropped). Values are Title Case (`Enabled`, `OK`, `Failed`, `No data`). Each slot is `label
+  value` with a status dot, no nested pills. A stale or non-ok heartbeat turns the value `--warn`
+  (stale = 3× the cadence from `/api/meta` `cadences.tick|health`). A halt replaces the Trading
+  slot with the red `HALTED` pill + reason + actor · age. ≤ 768 px: a 4-column grid, row 1
+  `Account | Trading` (2 + 2), row 2 `Orders | Tick | Health | Alerts`; wider: one row in the same
+  order, with a divider before Trading and before Orders. Phone cells are tight (card `px-3`,
+  cell `px-1`, columns `1.15 / 0.8 / 1.35 / 0.9fr`; < 480 px `1.1 / 0.9fr`) so no slot text
+  truncates at 390–520 px (D99). Model: `statusRow()` in `lib/overview.ts`.
 - **Equity** (D50): the `1D 1W 1M 3M YTD ALL` control sits **below the hero block** (value,
-  pill, $ change, `vs … at prev close`), followed by the range's dates in the Performance
-  `formatRange` format (`Sep 4 – Oct 4, 2026`; one day prints `Oct 4, 2026`), ET, from
-  `start_at` (else the first series point, else today) to `value_at`; then the chart. Same
-  layout as the Performance RangeBar (dates wrap under the control when narrow). The series
-  caption is an InfoTip in the header. Model: `equityDates()` in `lib/overview.ts`.
+  pill, $ change, `vs … at prev close`), then the chart. No date range beside the control
+  (D104; it printed the range's `formatRange` dates until then), and the Performance RangeBar
+  likewise shows only the range control and the sleeve filter. The series caption is an
+  InfoTip in the header.
 - **Structure labels** (D50, every Tower surface: Trades, Positions, trade detail, Overview,
   Performance breakdowns): Title Case (`Debit Vertical`, `Credit Vertical`, `Long Call`,
   `Long Put`, `Iron Condor`, `Covered Call`, `Cash-Secured Put`; unknown kinds Title Case each
@@ -272,26 +301,45 @@ they are never dropped.
 ### 10.2 Ops (E8.8d)
 
 - **Widget order** (`OPS_WIDGETS` in `lib/ops.ts`, same on phone and desktop): Session
-  Timeline · Sources · Health · LLM Usage · Context Store · Auto-Approve · Config · Alerts ·
-  Halts · Runs (the last three collapsible, closed on a first visit). Config (D50) is two
+  Timeline · Sources · LLM Usage · Context Store · Auto-Approve · Config · Health · Alerts ·
+  Halts · Runs (D89: Health moved from under Sources to under Config) (the last three collapsible, closed on a first visit). Config (D50) is two
   buttons, **Effective Config** (`/ops/config`) and **Change Log** (`/ops/config/changes`),
   plus the `v7 · 196 keys · 7 changes` caption. No Order Budget widget.
 - **Timeline bands come from `config/routines.yaml`**, never code: each job may carry `label`,
-  `group` (`sources | sweep | trading_loop | position_management | post_market | other`),
+  `group` (`sources | universe | scout | scalp | trading_loop | position_management | post_market | other`;
+  D89: `universe` = the active-list resolve and the momentum / trending tiers),
   `persona` (chip; sources declare none) and `about` (one line ≤ 160 chars, the ⓘ text).
   A typo fails config load. Sources band by their D47 category (`sources.<category>`, labels
   from the category registry, so a rename needs no UI change); anything else falls under
-  Other. The band header rolls up settled slots (`14/16 ok · 1 missed`).
-- **≤ 768 px** the Gantt becomes a grouped list: band header → job rows (label, persona chip,
-  `9/12 done · 1 missed · next 10:30`, ⓘ) with a dot strip that scrolls inside the row; tap a
-  row for per-slot details. A band starts open only when it has a failed or missed slot.
+  Other. The group row rolls up settled slots (`14/16 ok · 1 missed`).
+- **Session Timeline (D93)** is one fixed-scale, interactive cron timeline at **every** width
+  (it replaced the desktop Gantt and the ≤ 768 px section list; `pages/SessionTimeline.tsx`):
+  - Window control `Rolling | Day` (`?tl=day`; Rolling is the default and drops `?day=`).
+    Rolling opens scrolled to now (now ≈ ⅔ across the visible track); Day shows
+    `Today · Yesterday · date` and covers 00:00–24:00 ET.
+  - Fixed scale: 96 px per hour (120 on a phone), hour labels in ET, faint ticks every 10 min
+    (the routines tick). A vertical `--accent` now-line re-renders every 60 s without a reload
+    (`useNow(60_000)`; the payload still polls on its own cadence).
+  - Job names (Title Case label, persona chip, ⓘ with persona · cadence · window · LLM · writes ·
+    `9/12 done · next 10:30`) sit in a pinned left column **outside** the horizontal scroller (no
+    `position: sticky`); both columns render one item list with fixed row heights so a name and
+    its marks share a line. On a phone the chip moves into the ⓘ.
+  - Each `TIMELINE_GROUPS` group is a collapsible label row on the same scale (name + rollup,
+    warn-coloured when a slot failed or was missed); Sources keeps its D47 category sub-labels.
+  - Each scheduled run is a mark coloured by state; clicking or tapping a mark with a run opens
+    `/ops/runs/<run_id>` (upcoming and missed slots have no run and are disabled).
 - **Sources** group by D47 category: share, `max_age`, newest doc, worst-wins status
   (`ok < idle < pending < backoff < late < failed`). Category and in-category shares are read
   from `SourceRegistry`, never recomputed. Rows add `skipped (stale)` (E4.7) and, for YouTube
   channels, the E4.6 brief state (brief ok / pending: reason / no video in window). On a phone a
   category shows its header only unless its status is pending or worse.
-- **Health** is one chip row (`Tick ok 1m`, `Log 0.2 / 50 MB`); the long text is in each chip's
-  ⓘ, and a degraded or failed chip expands inline with its message.
+- **Health** (D89) is a grid of equal-size tiles (5 across ≥ 768 px, 3 on a phone), each the
+  check name + a Title Case value line (`OK · 1m`, `0.2 / 50 MB`); the long text is in each
+  tile's ⓘ, and a degraded or failed check adds its message under the grid.
+- **Context Store** (D89) groups kinds by the Timeline group of their writer jobs, one
+  collapsible block per group (active count, kinds live, newest entry); each kind shows its ttl,
+  active count, next expiry, **From** / **Read by** (routines.yaml `writes:` / `reads:`) and its
+  latest entry.
 - **Auto-Approve** is a key/value list (paper, live, scorecard gate, last flip), with no
   sub-text (D50: the gate's full reason is on `/ops/config`, `auto_approve.*`); **Alerts /
   Halts** collapse repeats like the Overview (`missed_window ×12`).
@@ -321,7 +369,12 @@ they are never dropped.
   Ops Config card): what can Arc trade today, and why each name is there.
   - Data: `GET /api/ops/universe` reads the **stored** `active_universe` resolve and the latest
     `universe_tier` entry per feed tier (`arc/tower/data_universe.py`); it never re-resolves.
-    No resolve today → the latest one with its age and a `Not Resolved Today` note; none at
+    No resolve today → the latest one with its age. Before the Scalp's first resolve of the
+    day is due (window start + one `every`, from the effective `scalp` job; overnight,
+    weekends, holidays) and while that is the previous session's resolve, the pill reads
+    `Awaiting Today's Resolve` in the neutral tone with a muted `Next resolve at 06:30 ET
+    (Scalp)` note (`state = pending`, `next_resolve_at`; E14.11 / D110). A missed, older or
+    expired resolve keeps the warn `Not Resolved Today` pill and note; none at
     all → the core list (`Never Resolved`). Never a blank page.
   - Pinned summary card: `Active 50/50 · Core 25 · Momentum 17 · Trending 0 · Discovery 8`,
     the resolve state, its age and config version.

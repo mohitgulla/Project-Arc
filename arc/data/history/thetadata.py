@@ -159,6 +159,18 @@ def _f(v: str | None) -> float | None:
     return float(v)
 
 
+def _nn(v: str | None) -> float | None:
+    """Like ``_f`` but a negative value becomes ``None``.
+
+    Theta's EOD report occasionally carries a negative ``count`` (seen: -1, -3) on
+    a handful of contracts. The row model requires these fields to be >= 0, and one
+    bad row used to fail the whole request and strand the rest of the ticker's
+    history. Treat a negative count/volume/size/price as missing instead.
+    """
+    f = _f(v)
+    return None if f is None or f < 0 else f
+
+
 def _date(v: str) -> dt.date:
     """Parse ``YYYY-MM-DD``, ``YYYYMMDD`` or an ISO datetime to a date."""
     v = v.strip()
@@ -206,12 +218,12 @@ def parse_eod_csv(text: str, underlying: str, provider: str = "thetadata") -> li
                 high=_f(rec.get("high")),
                 low=_f(rec.get("low")),
                 close=_f(rec.get("close")),
-                volume=_f(rec.get("volume")),
-                trade_count=_f(rec.get("count")),
-                bid=_f(rec.get("bid")),
-                ask=_f(rec.get("ask")),
-                bid_size=_f(rec.get("bid_size")),
-                ask_size=_f(rec.get("ask_size")),
+                volume=_nn(rec.get("volume")),
+                trade_count=_nn(rec.get("count")),
+                bid=_nn(rec.get("bid")),
+                ask=_nn(rec.get("ask")),
+                bid_size=_nn(rec.get("bid_size")),
+                ask_size=_nn(rec.get("ask_size")),
                 last_trade=_ts(rec.get("last_trade")),
                 created=_ts(rec.get("created")),
             )

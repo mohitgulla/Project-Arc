@@ -32,18 +32,23 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ANALYTICS_VERSION",
+    "LEVEL_NAMES",
     "BreakevenStat",
     "LegAnalytics",
+    "LevelCrossing",
     "ProposalAnalytics",
     "VolStats",
     "be_atr_multiple",
     "debit_direction",
     "directional_breakeven",
     "expected_move",
+    "level_crossings",
+    "levels_text",
     "moneyness_pct",
     "otm",
     "sigma_distance",
     "sigma_t",
+    "tech_levels",
 ]
 
 ANALYTICS_VERSION = 1
@@ -119,6 +124,192 @@ def debit_direction(net_debit_credit: float, long_kinds: Sequence[str]) -> int:
     if net_debit_credit <= 0 or len(kinds) != 1:
         return 0
     return 1 if kinds == {"call"} else -1 if kinds == {"put"} else 0
+
+
+# ---------------------------------------------------------------------------
+# E23.3 (D98): strike vs level context
+# ---------------------------------------------------------------------------
+
+LevelKind = Literal["poc", "vah", "val", "hvn", "call_wall", "put_wall"]
+#: Display names of the level kinds, in tie-break priority order (same price: first wins).
+LEVEL_NAMES: dict[str, str] = {
+    "call_wall": "call wall",
+    "put_wall": "put wall",
+    "poc": "POC",
+    "vah": "VAH",
+    "val": "VAL",
+    "hvn": "HVN",
+}
+#: A target within this many ATR14 of a level (or $0.01 without ATR14) sits ``at`` it.
+AT_LEVEL_ATR = 0.1
+_AT_LEVEL_TICK = 0.01
+
+# regime-technicals field -> level kind (E23.0 fields; the HVNs are the nearest ones)
+_TECH_LEVELS: tuple[tuple[str, LevelKind], ...] = (
+    ("oi_call_wall", "call_wall"),
+    ("oi_put_wall", "put_wall"),
+    ("vp_poc", "poc"),
+    ("vp_vah", "vah"),
+    ("vp_val", "val"),
+    ("vp_hvn_above", "hvn"),
+    ("vp_hvn_below", "hvn"),
+)
+
+
+class LevelCrossing(BaseModel):
+    """E23.3 (D98): where one target (short strike / breakeven) sits vs the levels.
+
+    The levels are the E23.0 volume-profile (POC, VAH, VAL, nearest HVNs) and OI-wall
+    prices on the ticker's regime technicals. Walking from spot toward the target:
+
+    * ``at``: the target is within :data:`AT_LEVEL_ATR` ATR14 of a level (that level);
+    * ``beyond``: the move must push through at least one level first (the first one
+      it meets from spot; ``crossed`` counts them all);
+    * ``before``: no level between spot and the target (the first level past it).
+
+    ``beyond_first`` (the replay split): the target sits beyond the first level, i.e.
+    ``crossed >= 1`` (an ``at`` target with a level crossed on the way counts too).
+
+    ``dist_atr`` = (target − level) / ATR14 measured in the direction of travel
+    (> 0 beyond, < 0 before); ``None`` without ATR14. Context only, never a gate input.
+    """
+
+    model_config = _FORBID
+
+    which: Literal["short_strike", "breakeven"]
+    target: float
+    direction: Literal[1, -1] = Field(..., description="+1 = above spot, -1 = below")
+    level_kind: LevelKind
+    price: float
+    side: Literal["before", "at", "beyond"]
+    dist_atr: float | None = None
+    crossed: int = Field(0, ge=0, description="Levels strictly between spot and the target")
+    label: str = Field(..., description="Rendered name, e.g. `BE`, `upper BE`, `short call`")
+
+    @property
+    def beyond_first(self) -> bool:
+        """The target sits beyond the first level toward it (the replay split)."""
+        return self.crossed >= 1
+
+
+def tech_levels(tech: dict[str, object] | None) -> list[tuple[LevelKind, float]]:
+    """The E23.0 levels on a stored ``technicals`` dump, ``(kind, price)``, deduplicated
+    by price (the first kind in :data:`LEVEL_NAMES` order wins a tie)."""
+    if not isinstance(tech, dict):
+        return []
+    out: dict[float, LevelKind] = {}
+    for field, kind in _TECH_LEVELS:
+        v = tech.get(field)
+        if isinstance(v, int | float) and not isinstance(v, bool) and math.isfinite(v) and v > 0:
+            out.setdefault(round(float(v), 4), kind)
+    return [(k, p) for p, k in out.items()]
+
+
+def _crossing(
+    which: Literal["short_strike", "breakeven"],
+    target: float,
+    spot: float,
+    levels: Sequence[tuple[LevelKind, float]],
+    atr14: float | None,
+    label: str,
+) -> LevelCrossing | None:
+    d = 1 if target > spot else -1 if target < spot else 0
+    if d == 0:
+        return None
+    # levels on the target's side of spot, nearest to spot first
+    side_levels = sorted(
+        ((k, p) for k, p in levels if d * (p - spot) > 0), key=lambda kp: d * (kp[1] - spot)
+    )
+    if not side_levels:
+        return None
+    tol = AT_LEVEL_ATR * atr14 if atr14 else _AT_LEVEL_TICK
+    near = min(side_levels, key=lambda kp: abs(kp[1] - target))
+    crossed = [kp for kp in side_levels if d * (target - kp[1]) > tol]
+    kind: LevelKind
+    side: Literal["before", "at", "beyond"]
+    if abs(near[1] - target) <= tol:
+        (kind, price), side = near, "at"
+    elif crossed:
+        (kind, price), side = crossed[0], "beyond"  # the first level the move meets
+    else:
+        (kind, price), side = side_levels[0], "before"
+    dist = None if not atr14 else round(d * (target - price) / atr14 + 0.0, 4)
+    return LevelCrossing(
+        which=which,
+        target=round(target, 4),
+        direction=d,
+        level_kind=kind,
+        price=price,
+        side=side,
+        dist_atr=dist,
+        crossed=len(crossed),
+        label=label,
+    )
+
+
+def level_crossings(
+    *,
+    spot: float,
+    net_debit_credit: float,
+    legs: Sequence[tuple[Literal["long", "short"], Literal["call", "put"], float]],
+    breakevens: Sequence[float],
+    tech: dict[str, object] | None,
+) -> list[LevelCrossing]:
+    """E23.3 (D98): each target of a structure vs the first level(s) toward it.
+
+    *legs* are ``(side, kind, strike)``. A **debit** bought on one option type (long
+    call/put, debit vertical) has one direction: its directional breakeven and the
+    short strike (verticals) on that side. Anything else (credit verticals, condors)
+    checks every breakeven and short strike on its own side of spot. Labels carry a
+    side word (``upper BE`` / ``short call``) only when targets sit on both sides.
+    ``[]`` without levels in *tech*, or for a target with no level on its side.
+    """
+    levels = tech_levels(tech)
+    if not levels or spot <= 0:
+        return []
+    atr = tech.get("atr14") if isinstance(tech, dict) else None
+    atr14 = float(atr) if isinstance(atr, int | float) and atr > 0 else None
+    longs = [k for s, k, _ in legs if s == "long"]
+    direction = debit_direction(net_debit_credit, longs)
+    shorts = [(k, float(x)) for s, k, x in legs if s == "short"]
+    bes = [float(b) for b in breakevens]
+    if direction != 0:
+        be = directional_breakeven(bes, direction)
+        bes = [be] if be is not None and direction * (be - spot) > 0 else []
+        shorts = [(k, x) for k, x in shorts if direction * (x - spot) > 0]
+    targets = [("short_strike", k, x) for k, x in shorts] + [("breakeven", None, b) for b in bes]
+    sides = {1 if x > spot else -1 for _, _, x in targets if x != spot}
+    two = len(sides) == 2
+    out: list[LevelCrossing] = []
+    for which, kind, x in targets:
+        up = x > spot
+        if which == "breakeven":
+            label = ("upper BE" if up else "lower BE") if two else "BE"
+        else:
+            label = f"short {kind}" if two else "short strike"
+        c = _crossing(which, x, spot, levels, atr14, label)  # type: ignore[arg-type]
+        if c is not None:
+            out.append(c)
+    return out
+
+
+def _price(v: float) -> str:
+    return f"{v:.2f}".rstrip("0").rstrip(".")
+
+
+def levels_text(crossings: Sequence[LevelCrossing]) -> str:
+    """``BE beyond POC 186.1 (+0.4 ATR) · short strike at call wall 190``; ``""`` if none.
+
+    Breakevens first, then short strikes, upper side before lower.
+    """
+    order = sorted(crossings, key=lambda c: (c.which != "breakeven", -c.direction))
+    parts = []
+    for c in order:
+        s = f"{c.label} {c.side} {LEVEL_NAMES[c.level_kind]} {_price(c.price)}"
+        if c.side != "at" and c.dist_atr is not None:
+            s += f" ({round(c.dist_atr, 1) + 0.0:+.1f} ATR)"
+        parts.append(s)
+    return " · ".join(parts)
 
 
 class LegAnalytics(BaseModel):
@@ -200,6 +391,15 @@ class ProposalAnalytics(BaseModel):
     entry_fees: FeeBreakdown = Field(default_factory=FeeBreakdown)
     exit_model: ExitModelResult | None = Field(None, description="E2.4 managed vs static")
     account_profile: str | None = Field(None, description="D25 account profile, when configured")
+    sleeve_window: str | None = Field(
+        None, description="E22.2 (D97): the proposal's DTE sleeve window, e.g. `10–29 DTE`"
+    )
+    levels: list[LevelCrossing] | None = Field(
+        None,
+        exclude_if=lambda v: v is None,  # off: the stored payload is byte-identical
+        description="E23.3 (D98): short strike / breakeven vs the volume-profile and OI-wall "
+        "levels; None = strike_levels off (or analytics stored before E23.3)",
+    )
     depth: Literal["top_of_book"] = Field(
         "top_of_book", description="Alpaca gives top-of-book only; no order-book depth"
     )

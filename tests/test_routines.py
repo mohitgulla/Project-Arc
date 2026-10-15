@@ -204,7 +204,13 @@ class TestConfig:
         assert c.personas["research"].ttl is not None
         assert c.personas["research"].ttl.duration == dt.timedelta(minutes=5)
         assert c.personas["scalp"].every == dt.timedelta(minutes=30)
-        assert c.personas["scalp.overnight"].schedule == [dt.time(22, 0)]
+        # D91: one Scalp job across the news window, no overnight run
+        scalp = c.personas["scalp"]
+        assert str(scalp.window) == "06:30-20:00" and "scalp.overnight" not in c.personas
+        for n in ("rss", "edgar", "ticker_news"):  # never outside the news sources' window
+            w = c.sources[n].window
+            assert w is not None and scalp.window is not None
+            assert w.start <= scalp.window.start and scalp.window.end <= w.end, n
         assert c.sources["youtube.briefs"].schedule == [dt.time(2, 0)]  # D45 / E4.6 (02:00 ET)
         assert c.monitoring.stuck_after_for("research") == dt.timedelta(minutes=20)
         assert c.loop.max_idle == dt.timedelta(minutes=15)  # D85 (was 30m)

@@ -7,7 +7,9 @@ import { PHONE_75_DEVICE } from "./e2e/mobile";
 // (scripts/tower_fixture_db.py, see e2e/overview.spec.ts); the Performance page (E8.7c)
 // against the fixture plus its performance history (--history, e2e/performance.spec.ts);
 // the Ops page (E8.7d) against the fixture plus its ops rows (--ops, e2e/ops.spec.ts);
-// the E8.7e cutover smoke over all five pages on the same --ops store (e2e/cutover.spec.ts).
+// the E8.7e cutover smoke over all five pages on the same --ops store (e2e/cutover.spec.ts);
+// the E15.7 arm switcher on the --ops store plus a running K=3 experiment (--arms,
+// e2e/arms.spec.ts).
 // `make web-e2e` builds the SPA,
 // then Playwright starts `arc tower serve --local` on each (e2e/serve.mjs).
 // Screenshots land in e2e/screenshots/ for the PR.
@@ -19,6 +21,8 @@ const historyPort = process.env.ARC_E2E_HISTORY_PORT ?? "4183";
 const historyURL = process.env.ARC_E2E_HISTORY_URL ?? `http://127.0.0.1:${historyPort}`;
 const opsPort = process.env.ARC_E2E_OPS_PORT ?? "4184";
 const opsURL = process.env.ARC_E2E_OPS_URL ?? `http://127.0.0.1:${opsPort}`;
+const armsPort = process.env.ARC_E2E_ARMS_PORT ?? "4185";
+const armsURL = process.env.ARC_E2E_ARMS_URL ?? `http://127.0.0.1:${armsPort}`;
 
 export default defineConfig({
   testDir: "./e2e",
@@ -66,6 +70,12 @@ export default defineConfig({
         {
           command: "node e2e/serve.mjs --ops",
           url: `${opsURL}/api/health`,
+          reuseExistingServer: false,
+          timeout: 90_000,
+        },
+        {
+          command: "node e2e/serve.mjs --arms",
+          url: `${armsURL}/api/health`,
           reuseExistingServer: false,
           timeout: 90_000,
         },

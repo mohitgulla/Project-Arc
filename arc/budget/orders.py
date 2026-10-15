@@ -22,6 +22,22 @@ Tiers (``used`` against the config, ``limit = daily_max``)::
 Everything in the "pure" section reads only its arguments; the gate rule in
 :mod:`arc.gate.rules` uses :func:`can_submit` semantics without importing
 this package (the gate stays self-contained).
+
+Shared experiment account (D69, E15.3; D108)
+--------------------------------------------
+Every arm on the shared paper account gets production's **full** budget (D108:
+``daily_max`` / ``restrict_at`` / ``close_reserve`` unchanged, 200 / 100 / 25 by
+default; the D69 per-arm slice is gone). The arm's ``broker`` count is the account's
+option orders carrying *its* arm code, and an **account guard**
+(:meth:`OrderBudgetConfig.shared_account`: ``account_max = arms on the account x
+daily_max``) refuses any arm's order once the whole account reached it that ET day::
+
+    used = max(local, broker_arm) + reserved     (the arm's own count)
+    effective used = account_max  if account >= account_max  else used
+
+so every consumer (gate rule, ladder guard, pipeline tier) sees one number.
+:func:`arc.control.effective.effective_settings` sets the guard on a shared arm
+store's settings, so nothing downstream knows it is an arm.
 """
 
 from __future__ import annotations
@@ -54,12 +70,20 @@ _FORBID = ConfigDict(extra="forbid", frozen=True)
 #: raise the cap above this (D32: 200 options orders per ET day).
 HARD_CEILING = 200
 
+#: D108: most arms one shared account carries (``experiments.runner.max_parallel_arms``'s
+#: code ceiling, ``arc.experiments.config.MAX_PARALLEL_ARMS_CEILING``; a test pins them
+#: equal). The account guard is at most ``MAX_SHARED_ARMS x HARD_CEILING``.
+MAX_SHARED_ARMS = 16
+ACCOUNT_HARD_CEILING = MAX_SHARED_ARMS * HARD_CEILING
+
 #: ``order_events.detail`` prefix the ladder writes when ``submit()`` refused an
 #: attempt before the broker saw it. Such rows never count against the budget.
 REFUSED_DETAIL_PREFIX = "refused before the broker"
 
 __all__ = [
+    "ACCOUNT_HARD_CEILING",
     "HARD_CEILING",
+    "MAX_SHARED_ARMS",
     "OrderBudget",
     "OrderBudgetConfig",
     "OrderCount",
@@ -126,6 +150,9 @@ class OrderBudgetConfig(BaseModel):
     restrict_at: int = Field(100, ge=0)
     close_reserve: int = Field(25, ge=0)
     restrictive: RestrictiveConfig = Field(default_factory=RestrictiveConfig)
+    #: D69/D108 shared-account guard: the whole account's daily cap, arms x daily_max
+    #: (None = not a shared-account arm)
+    account_max: int | None = Field(None, ge=1, le=ACCOUNT_HARD_CEILING)
 
     @model_validator(mode="after")
     def _ordered(self) -> OrderBudgetConfig:
@@ -145,12 +172,27 @@ class OrderBudgetConfig(BaseModel):
         """Opens stop once ``used`` reaches this (``daily_max - close_reserve``)."""
         return self.daily_max - self.close_reserve
 
+    def shared_account(self, *, arms: int) -> OrderBudgetConfig:
+        """D108: one shared-account arm's budget (pure; see the module doc).
+
+        The arm keeps this config's full budget (``daily_max``, ``restrict_at``,
+        ``close_reserve`` unchanged: production's numbers) and gains the account
+        guard ``account_max = arms x daily_max``, where *arms* is how many arms of
+        running experiments trade on the account (this one included, 1 to
+        :data:`MAX_SHARED_ARMS`).
+        """
+        if not 1 <= arms <= MAX_SHARED_ARMS:
+            msg = f"arms must be 1..{MAX_SHARED_ARMS} on one shared account (got {arms})"
+            raise ValueError(msg)
+        return self.model_validate(self.model_dump() | {"account_max": arms * self.daily_max})
+
     @classmethod
     def from_settings(cls, settings: ArcSettings) -> OrderBudgetConfig:
         return cls(
             daily_max=settings.order_budget_daily_max,
             restrict_at=settings.order_budget_restrict_at,
             close_reserve=settings.order_budget_close_reserve,
+            account_max=settings.order_budget_account_max,
             restrictive=RestrictiveConfig(
                 research_max_shortlist=settings.order_budget_restrictive_research_max_shortlist,
                 max_new_opens_per_loop=settings.order_budget_restrictive_max_new_opens_per_loop,
@@ -165,7 +207,12 @@ class OrderBudgetConfig(BaseModel):
 
 
 class OrderCount(BaseModel):
-    """What :func:`count_orders` saw. ``broker`` is None when it was not checked."""
+    """What :func:`count_orders` saw. ``broker`` is None when it was not checked.
+
+    D69 shared-account arm: ``broker`` counts only the arm's tagged orders,
+    ``account`` every option order on the account, and ``account_max`` is the
+    account guard (both None for control).
+    """
 
     model_config = _FORBID
 
@@ -173,10 +220,26 @@ class OrderCount(BaseModel):
     local: int = Field(ge=0)
     broker: int | None = Field(None, ge=0)
     reserved: int = Field(0, ge=0)
+    account: int | None = Field(None, ge=0)
+    account_max: int | None = Field(None, ge=1)
+
+    @property
+    def account_blocked(self) -> bool:
+        """D69: the whole shared account reached its daily cap (every arm stops)."""
+        return (
+            self.account_max is not None
+            and self.account is not None
+            and self.account >= self.account_max
+        )
 
     @property
     def used(self) -> int:
-        return max(self.local, self.broker or 0) + self.reserved
+        """``max(local, broker) + reserved``; at the account guard, at least the account
+        count (>= the arm's own daily_max, so every tier check reads exhausted)."""
+        base = max(self.local, self.broker or 0) + self.reserved
+        if self.account_blocked:
+            return max(base, self.account or 0)
+        return base
 
     @property
     def mismatch(self) -> bool:
@@ -200,6 +263,9 @@ class OrderBudget(BaseModel):
     local: int | None = None
     broker: int | None = None
     reserved: int | None = None
+    # D69 shared-account arm: the whole account's count and cap (None for control)
+    account: int | None = None
+    account_max: int | None = None
 
     @property
     def open_limit(self) -> int:
@@ -247,6 +313,8 @@ def budget_state(
         local=None if count is None else count.local,
         broker=None if count is None else count.broker,
         reserved=None if count is None else count.reserved,
+        account=None if count is None else count.account,
+        account_max=None if count is None else count.account_max,
     )
 
 
@@ -380,20 +448,35 @@ def _reserved(conn: sqlite3.Connection, exclude_proposal_hash: str | None) -> in
     return total
 
 
-def _broker_count(broker: AnyBroker | None, day: _dt.date) -> int | None:
-    """Option orders the broker lists for *day*, or None when unavailable."""
-    if broker is None:
-        return None
-    lister = getattr(broker, "option_orders_since", None)
-    if lister is None:
-        return None
+def _in_day(refs: Any, day: _dt.date) -> int:
     lo, hi = _day_bounds(day)
+    return sum(1 for o in refs if o.submitted_at is None or lo <= o.submitted_at < hi)
+
+
+def _broker_count(broker: AnyBroker | None, day: _dt.date) -> tuple[int | None, int | None]:
+    """``(the store's option orders, the whole account's)`` the broker lists for *day*.
+
+    A shared-mode arm broker (D69) exposes ``option_orders_split(since)`` ->
+    ``(arm orders, account orders)`` (one broker call; the arm's are those carrying
+    its arm code). Any other broker: ``(its option orders, None)``. ``None`` when
+    unavailable.
+    """
+    if broker is None:
+        return None, None
+    lo, _ = _day_bounds(day)
+    splitter = getattr(broker, "option_orders_split", None)
+    lister = getattr(broker, "option_orders_since", None)
+    if splitter is None and lister is None:
+        return None, None
     try:
-        ids = lister(lo)
+        if splitter is not None:
+            mine, everyone = splitter(lo)
+            return _in_day(mine, day), (None if everyone is None else _in_day(everyone, day))
+        assert lister is not None  # noqa: S101 - checked above
+        return _in_day(lister(lo), day), None
     except Exception as exc:  # noqa: BLE001 - the local count still stands; log it
         log.warning("order_budget.broker_unavailable", error=f"{type(exc).__name__}: {exc}")
-        return None
-    return sum(1 for o in ids if o.submitted_at is None or lo <= o.submitted_at < hi)
+        return None, None
 
 
 def count_orders(
@@ -402,17 +485,32 @@ def count_orders(
     day: _dt.date,
     *,
     exclude_proposal_hash: str | None = None,
+    account_max: int | None = None,
 ) -> OrderCount:
     """Local ``orders`` rows for *day*, the broker's option orders (when a broker
     is given and supports ``option_orders_since``) and the reserved attempts of
     working ladders (*exclude_proposal_hash* leaves the caller's own ladder out).
+
+    D69: for a shared-mode arm broker ``broker`` is the arm's tagged orders and
+    ``account`` the whole account's; *account_max* arms the account guard.
     """
     local = _local_count(conn, day)
-    remote = _broker_count(broker, day)
+    remote, account = _broker_count(broker, day)
     reserved = _reserved(conn, exclude_proposal_hash)
-    count = OrderCount(day=day, local=local, broker=remote, reserved=reserved)
+    count = OrderCount(
+        day=day,
+        local=local,
+        broker=remote,
+        reserved=reserved,
+        account=account,
+        account_max=account_max if account is not None else None,
+    )
     if count.mismatch:
         log.warning("order_budget.mismatch", day=day.isoformat(), local=local, broker=remote)
+    if count.account_blocked:
+        log.warning(
+            "order_budget.account_guard", day=day.isoformat(), account=account, cap=account_max
+        )
     return count
 
 
@@ -427,5 +525,11 @@ def current_budget(
     """:func:`count_orders` for the ET day of *now*, as an :class:`OrderBudget`."""
     day = now.astimezone(ET).date()
     cfg = OrderBudgetConfig.from_settings(settings)
-    count = count_orders(conn, broker, day, exclude_proposal_hash=exclude_proposal_hash)
+    count = count_orders(
+        conn,
+        broker,
+        day,
+        exclude_proposal_hash=exclude_proposal_hash,
+        account_max=cfg.account_max,
+    )
     return budget_state(count.used, cfg, day=day, count=count)

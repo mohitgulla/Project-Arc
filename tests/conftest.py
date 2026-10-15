@@ -9,11 +9,17 @@ import pytest
 import yaml
 
 from arc.universe.config import DEFAULT_UNIVERSE_CONFIG
+from tests.hermes_env import refresh_alpaca_env
 from tests.pre_d85_env import PRE_D85_ENV
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """~/.hermes/.env wins over stale inherited ALPACA_* keys (see tests/hermes_env.py)."""
+    refresh_alpaca_env()
 
 
 @pytest.fixture(autouse=True)

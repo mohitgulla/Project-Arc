@@ -181,7 +181,7 @@ class TestLayout:
         summary = blocks[1]["elements"][0]["text"]
         assert summary == (  # item 1: sentence case, Net EV, x14, gate
             "Credit 1.66 · Max gain $165.55 · Max loss $334.45 · PoP 62% · "
-            "Net EV $9.22 managed / $32.36 hold · x14 · Account margin · "
+            "Net EV $9.19 managed / $32.34 hold · x14 · Account margin · "
             ":white_check_mark: Gate PASS"
         )
 
@@ -234,7 +234,7 @@ class TestCard:
         assert "*Position (x14)*" in text and "$2,317.70" in text and "$4,682.30" in text
         assert "*Breakevens*" in text and "BE 743.34" in text and "BE 799.66" in text
         assert "*Net Greeks (position)*" in text
-        assert "PoP 62%" in text and "Quant EV -$18.74" in text
+        assert "PoP 62%" in text and "Quant EV -$18.78" in text
         assert "*Gate*" in text and "PASS" in text and "Token issued" in text
         # D18/D24: sizing is at the band's worst price (max loss $4,760, not $4,682.30 at mid)
         assert "14 contract(s)" in text and "4.76% of equity" in text

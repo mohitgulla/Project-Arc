@@ -36,7 +36,7 @@ from arc.broker.base import (
     Fill,
     MlegOrder,
 )
-from arc.broker.http import install_timeouts
+from arc.broker.http import TimeoutSession, install_timeouts
 
 if TYPE_CHECKING:
     from arc.broker.registry import BrokerInfo
@@ -272,6 +272,18 @@ class AlpacaPaperBroker:
         _require_paper()
         self._client = client or _make_client(api_key, secret_key, timeouts=timeouts)
         self._account_label = account_label
+        #: the key id (never the secret): names the D69 rate bucket file
+        self.key_id = api_key if api_key is not None else os.environ.get("ALPACA_API_KEY", "")
+        self.rate_bucket: Any = None
+
+    def use_rate_bucket(self, bucket: Any) -> None:
+        """D69 (E15.3): draw every REST call from *bucket* (the account's shared bucket)."""
+        session = getattr(self._client, "_session", None)
+        if not isinstance(session, TimeoutSession):
+            connect_s, read_s = _default_timeouts()
+            session = install_timeouts(self._client, connect_s=connect_s, read_s=read_s)
+        session.bucket = bucket
+        self.rate_bucket = bucket
 
     # -- identity (E13.11: registered as alpaca/paper/rest) -------------------
 
@@ -421,6 +433,75 @@ class AlpacaPaperBroker:
             if not last or last == params.get("page_token"):
                 return out
             params["page_token"] = last
+
+    def raw_activities(
+        self,
+        since: dt.date,
+        *,
+        types: tuple[str, ...] = ("FILL", "FEE", "OPEXP", "OPASN", "OPEXC", "OPTRD"),  # fmt: skip
+    ) -> list[dict[str, Any]]:
+        """E15.2: raw ``/v2/account/activities`` rows of *types* on/after *since* (read-only).
+
+        The shared-account attributor (:mod:`arc.experiments.attribution`) needs the
+        wire rows (FILL ``order_id``, FEE ``execution_id``/``net_amount``), so nothing
+        is parsed here beyond dropping ``account_id``. Paged by ``page_token``.
+        """
+        out: list[dict[str, Any]] = []
+        params: dict[str, Any] = {
+            "activity_types": ",".join(types),
+            "after": (since - dt.timedelta(days=1)).isoformat(),
+            "direction": "asc",
+            "page_size": 100,
+        }
+        seen: set[str] = set()
+        while True:
+            page = self._client.get("/account/activities", params)
+            rows = page if isinstance(page, list) else []
+            for raw in rows:
+                if not isinstance(raw, dict):
+                    continue
+                rid = str(raw.get("id") or "")
+                if rid and rid in seen:
+                    continue
+                seen.add(rid)
+                out.append({k: v for k, v in raw.items() if k != "account_id"})
+            if len(rows) < params["page_size"]:
+                return out
+            last = str(rows[-1].get("id") or "")
+            if not last or last == params.get("page_token"):
+                return out
+            params["page_token"] = last
+
+    def raw_orders(self, since: dt.datetime) -> list[dict[str, Any]]:
+        """E15.2: raw ``/v2/orders?status=all&nested=true`` since *since* (read-only).
+
+        Parents with their nested legs: an mleg leg's FILL activity carries the leg's
+        own id, which maps to the parent's ``client_order_id`` through this list.
+        """
+        out: list[dict[str, Any]] = []
+        after = since
+        seen: set[str] = set()
+        while True:
+            page = self._client.get(
+                "/orders",
+                {
+                    "status": "all",
+                    "nested": "true",
+                    "direction": "asc",
+                    "limit": 500,
+                    "after": after.isoformat(),
+                },
+            )
+            rows = [r for r in (page if isinstance(page, list) else []) if isinstance(r, dict)]
+            fresh = [r for r in rows if str(r.get("id")) not in seen]
+            seen.update(str(r.get("id")) for r in fresh)
+            out.extend(fresh)
+            if len(rows) < 500 or not fresh:
+                return out
+            last = rows[-1].get("submitted_at") or rows[-1].get("created_at")
+            if not last:
+                return out
+            after = dt.datetime.fromisoformat(str(last).replace("Z", "+00:00"))
 
     def do_not_exercise(self, occ: str) -> None:
         """``POST /v2/positions/{occ}/do-not-exercise`` (BETA; expiry day only).

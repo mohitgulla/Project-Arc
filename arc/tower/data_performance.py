@@ -53,6 +53,7 @@ from arc.journal.scorecard import (
     funnel,
     model_vs_realised,
 )
+from arc.journal.sleeves import SleeveStats, sleeve_report, sleeves_by_structure
 from arc.journal.tradestats import (
     BreakdownRow,
     TradeStats,
@@ -71,12 +72,14 @@ from arc.reconcile.performance import (
 )
 from arc.routines.config import TIMELINE_PERSONAS
 from arc.tower.data import _has_table, _json
+from arc.tower.data_sleeves import sleeve_label
 from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
     import sqlite3
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Sequence
 
+    from arc.account_profiles import DteSleeve
     from arc.journal.scorecard import ClosedPosition, SlippageRow
 
 __all__ = [
@@ -96,7 +99,9 @@ __all__ = [
 # ``1d`` / ``7d`` back the page range selector's 1D / 1W (E8.8c); 1M = ``30d``, 3M = ``90d``.
 Preset = Literal["1d", "7d", "week", "mtd", "qtd", "ytd", "30d", "90d", "all", "custom"]
 Compare = Literal["prev", "yoy", "none"]
-BreakdownBy = Literal["ticker", "structure", "exit_reason", "reason_code", "profile", "regime"]
+BreakdownBy = Literal[
+    "ticker", "structure", "exit_reason", "reason_code", "profile", "regime", "sleeve"
+]
 BREAKDOWNS: tuple[BreakdownBy, ...] = (
     "ticker",
     "structure",
@@ -104,6 +109,7 @@ BREAKDOWNS: tuple[BreakdownBy, ...] = (
     "reason_code",
     "profile",
     "regime",
+    "sleeve",
 )
 Bucket = Literal["day", "week", "month"]
 
@@ -428,6 +434,9 @@ class Breakdowns(BaseModel):
     reason_code: list[BreakdownItem] = Field(default_factory=list)
     profile: list[BreakdownItem] = Field(default_factory=list)
     regime: list[BreakdownItem] = Field(default_factory=list)
+    sleeve: list[BreakdownItem] = Field(
+        default_factory=list, description="E22.5 (D97): by entry-DTE sleeve (derived)"
+    )
 
 
 class CalibrationItem(BaseModel):
@@ -477,6 +486,16 @@ class PerformanceResponse(BaseModel):
     preset: Preset
     compare: Compare
     include_tests: bool
+    sleeve: str | None = Field(
+        default=None,
+        description="E22.5 (D97): entry-DTE sleeve filter; trade cards (Net P&L from "
+        "realised, costs, win/loss, model, breakdowns, calibration) cover that sleeve only, "
+        "Equity and the funnel stay account-wide",
+    )
+    sleeve_stats: list[SleeveStats] = Field(
+        default_factory=list,
+        description="E22.5 (D97): per-sleeve closed-trade stats + keep/shrink verdict, period",
+    )
     period: PeriodView
     compare_period: PeriodView | None
     net_pnl: NetPnlCard
@@ -496,6 +515,7 @@ class BreakdownResponse(BaseModel):
     by: BreakdownBy
     period: PeriodView
     include_tests: bool
+    sleeve: str | None = None
     rows: list[BreakdownItem]
 
 
@@ -553,8 +573,11 @@ def _inception(conn: sqlite3.Connection, series: list[DailyEquity]) -> _dt.date 
     return min(days) if days else None
 
 
-def _attrs(conn: sqlite3.Connection, hashes: Iterable[str]) -> dict[str, dict[str, Any]]:
-    """Per open proposal: account profile, regime at entry, persona reason codes."""
+def _attrs(
+    conn: sqlite3.Connection, hashes: Iterable[str], sleeves: dict[str, str] | None = None
+) -> dict[str, dict[str, Any]]:
+    """Per open proposal: account profile, regime at entry, persona reason codes and the
+    derived entry-DTE sleeve (*sleeves*: structure id -> sleeve, E22.5)."""
     out: dict[str, dict[str, Any]] = {}
     exits = _exit_hashes(conn)
     by_open = {
@@ -589,6 +612,7 @@ def _attrs(conn: sqlite3.Connection, hashes: Iterable[str]) -> dict[str, dict[st
             "profile": analytics.get("account_profile"),
             "regime": (p[0] if p and p[0] else None) or payload.get("regime"),
             "codes": codes,
+            "sleeve": (sleeves or {}).get(by_open.get(h, "")),
         }
     return out
 
@@ -613,6 +637,8 @@ def _net_pnl(  # noqa: PLR0913 - the card joins several reads
     tests_closed: list[ClosedPosition],
     today: _dt.date,
     compare_net: float | None,
+    *,
+    realised_only: bool = False,
 ) -> NetPnlCard:
     bucket = bucket_for(p.days if p.slot_end == p.last else (p.slot_end - p.first).days + 1)
     changes = _daily_change(series)
@@ -626,7 +652,8 @@ def _net_pnl(  # noqa: PLR0913 - the card joins several reads
     realised_by_day: dict[_dt.date, float] = defaultdict(float)
     for c in closed:
         realised_by_day[_local_day(c.closed_at)] += c.realised_pnl
-    has_equity = any(p.first <= d <= p.last for d in changes)
+    # E22.5: a sleeve filter has no per-sleeve equity series, so it books realised P&L
+    has_equity = not realised_only and any(p.first <= d <= p.last for d in changes)
     source: Literal["equity", "realised", "none"] = (
         "equity" if has_equity else ("realised" if closed else "none")
     )
@@ -683,7 +710,7 @@ def _net_pnl(  # noqa: PLR0913 - the card joins several reads
 def _net_value(
     p: Period, series: list[DailyEquity], closed: list[ClosedPosition], tests: list[ClosedPosition]
 ) -> float | None:
-    """The Net P&L hero alone (for the comparison period)."""
+    """The Net P&L hero alone (for the comparison period; *series* [] = realised only)."""
     changes = {d: v for d, v in _daily_change(series).items() if p.first <= d <= p.last}
     if changes:
         return sum(changes.values()) - sum(c.realised_pnl for c in tests)
@@ -842,6 +869,7 @@ def _items(by: BreakdownBy, rows: list[BreakdownRow]) -> list[BreakdownItem]:
         "reason_code": "reason_code",
         "profile": "account_profile",
         "regime": None,
+        "sleeve": "sleeve",
     }[by]
     out = []
     for r in rows:
@@ -853,6 +881,8 @@ def _items(by: BreakdownBy, rows: list[BreakdownRow]) -> list[BreakdownItem]:
             label = reason_label(r.key)
         elif by == "ticker":
             label = r.key
+        elif by == "sleeve":
+            label = sleeve_label(r.key)
         else:
             label = _humanise(r.key)
         if not (param and r.key):
@@ -879,6 +909,8 @@ def _breakdown(
         pairs = [(attrs[c.open_proposal_hash]["profile"], c) for c in closed]
     elif by == "regime":
         pairs = [(attrs[c.open_proposal_hash]["regime"], c) for c in closed]
+    elif by == "sleeve":
+        pairs = [(attrs[c.open_proposal_hash].get("sleeve"), c) for c in closed]
     else:  # a trade counts under each persona reason code on its open / close decisions
         pairs = [(code, c) for c in closed for code in attrs[c.open_proposal_hash]["codes"]]
     return _items(by, breakdown(pairs))
@@ -951,16 +983,25 @@ class _Scope:
         exits: dict[str, str],
         *,
         include_tests: bool,
+        sleeve: str | None = None,
+        sleeves: dict[str, str] | None = None,
     ) -> None:
         self.start, self.end = _bounds(p)
         everything = closed_positions(conn, start=self.start, end=self.end, now=now)
         drop = set() if include_tests else tests
-        self.closed = [c for c in everything if not _is_test(c, drop, exits)]
-        self.tests = [c for c in everything if _is_test(c, drop, exits)]
+        by_sid = sleeves or {}
+
+        def keep(sid: str | None) -> bool:  # E22.5: the sleeve filter (None = every sleeve)
+            return sleeve is None or (sid is not None and by_sid.get(sid) == sleeve)
+
+        self.closed = [
+            c for c in everything if not _is_test(c, drop, exits) and keep(c.structure_id)
+        ]
+        self.tests = [c for c in everything if _is_test(c, drop, exits) and keep(c.structure_id)]
         self.fills = [
             r
             for r in execution_costs(conn, self.start, self.end).rows
-            if r.proposal_hash not in drop
+            if r.proposal_hash not in drop and keep(r.structure_id)
         ]
 
 
@@ -977,8 +1018,14 @@ def load_performance(  # noqa: PLR0913 - one argument per URL parameter
     include_tests: bool = False,
     date_from: _dt.date | None = None,
     date_to: _dt.date | None = None,
+    sleeve: str | None = None,
+    sleeves: Sequence[DteSleeve] = (),
 ) -> PerformanceResponse:
-    """Every Performance card for *preset* (as of *now*), read-only."""
+    """Every Performance card for *preset* (as of *now*), read-only.
+
+    E22.5 (D97): *sleeves* are the active profile's entry-DTE sleeves; *sleeve* filters
+    the trade cards to one of them (or ``other``). Equity and the funnel stay account-wide.
+    """
     today = now.astimezone(ET).date()
     series = daily_equity(conn) if _has_table(conn, "pnl_snapshots") else []
     p = resolve_period(
@@ -986,22 +1033,50 @@ def load_performance(  # noqa: PLR0913 - one argument per URL parameter
     )
     cp = comparison_period(p, compare)
     tests, exits = smoke_test_hashes(conn), _exit_hashes(conn)
-    cur = _Scope(conn, p, now, tests, exits, include_tests=include_tests)
-    prev = _Scope(conn, cp, now, tests, exits, include_tests=include_tests) if cp else None
+    by_sid = sleeves_by_structure(conn, sleeves)
+    cur = _Scope(
+        conn, p, now, tests, exits, include_tests=include_tests, sleeve=sleeve, sleeves=by_sid
+    )
+    prev = (
+        _Scope(
+            conn, cp, now, tests, exits, include_tests=include_tests, sleeve=sleeve, sleeves=by_sid
+        )
+        if cp
+        else None
+    )
+    net_series = [] if sleeve else series
     net = _net_pnl(
         p,
         series,
         cur.closed,
         cur.tests,
         today,
-        _net_value(cp, series, prev.closed, prev.tests) if cp and prev else None,
+        _net_value(cp, net_series, prev.closed, prev.tests) if cp and prev else None,
+        realised_only=sleeve is not None,
     )
     history = [
         c
         for c in closed_positions(conn, start=cur.start, end=cur.end, now=now, all_time=True)
         if not _is_test(c, set() if include_tests else tests, exits)
+        and (sleeve is None or by_sid.get(c.structure_id) == sleeve)
     ]
-    attrs = _attrs(conn, {c.open_proposal_hash for c in cur.closed})
+    attrs = _attrs(conn, {c.open_proposal_hash for c in cur.closed}, by_sid)
+    # every sleeve's stats over the period, account-wide (the filter picks the row to read)
+    all_closed = _Scope(conn, p, now, tests, exits, include_tests=include_tests).closed
+    drop = set() if include_tests else tests
+    sleeve_rep = (
+        sleeve_report(
+            conn,
+            sleeves,
+            since=cur.start,
+            until=cur.end,
+            now=now,
+            closed=all_closed,
+            exclude_hashes=drop,
+        )
+        if sleeves
+        else None
+    )
     stats = trade_stats(cur.closed)
     prev_stats = trade_stats(prev.closed) if prev else None
     gross = sum(c.realised_pnl for c in cur.closed) if cur.closed else None
@@ -1010,6 +1085,8 @@ def load_performance(  # noqa: PLR0913 - one argument per URL parameter
         preset=preset,
         compare=compare,
         include_tests=include_tests,
+        sleeve=sleeve,
+        sleeve_stats=sleeve_rep.sleeves if sleeve_rep else [],
         period=_view(p),
         compare_period=_view(cp) if cp else None,
         net_pnl=net,
@@ -1037,6 +1114,8 @@ def load_breakdown(  # noqa: PLR0913 - one argument per URL parameter
     include_tests: bool = False,
     date_from: _dt.date | None = None,
     date_to: _dt.date | None = None,
+    sleeve: str | None = None,
+    sleeves: Sequence[DteSleeve] = (),
 ) -> BreakdownResponse:
     """One breakdown tab (the same rows :func:`load_performance` returns)."""
     today = now.astimezone(ET).date()
@@ -1045,12 +1124,16 @@ def load_breakdown(  # noqa: PLR0913 - one argument per URL parameter
         preset, today, date_from=date_from, date_to=date_to, inception=_inception(conn, series)
     )
     tests, exits = smoke_test_hashes(conn), _exit_hashes(conn)
-    cur = _Scope(conn, p, now, tests, exits, include_tests=include_tests)
-    attrs = _attrs(conn, {c.open_proposal_hash for c in cur.closed})
+    by_sid = sleeves_by_structure(conn, sleeves)
+    cur = _Scope(
+        conn, p, now, tests, exits, include_tests=include_tests, sleeve=sleeve, sleeves=by_sid
+    )
+    attrs = _attrs(conn, {c.open_proposal_hash for c in cur.closed}, by_sid)
     return BreakdownResponse(
         as_of=now.astimezone(ET),
         by=by,
         period=_view(p),
         include_tests=include_tests,
+        sleeve=sleeve,
         rows=_breakdown(by, cur.closed, attrs),
     )

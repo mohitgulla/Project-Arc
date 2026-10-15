@@ -12,6 +12,13 @@
 #                      margin: broker margin buying power (per-underlying cap still binds)
 #   allow_short_legs   none | covered_only (same type + expiry, long worth >= short) | any
 #   dte_min/dte_max    optional entry DTE window override (else ARC_DTE_MIN/ARC_DTE_MAX)
+#   sleeves            E22.1 (D97), optional, instead of dte_min/dte_max: named entry-DTE
+#                      sleeves `name: {dte_min, dte_max, max_positions, exit_policy}`.
+#                      Windows never overlap; max_positions caps open positions by entry
+#                      DTE (gate rule sleeve_max_positions; 0 closes the sleeve, null = no
+#                      cap); exit_policy names a config/exits.yaml `sleeves:` block (null
+#                      = the kind policy). A dte_min/dte_max profile is one implicit
+#                      sleeve `default`. Switched on for the cash profiles by E22.4 (D97).
 #   stance_strategies  scanner strategies per Research stance; [] = no trade (journaled)
 
 profiles:
@@ -34,8 +41,12 @@ profiles:
     require_net_debit: true
     buying_power: cash_settled
     allow_short_legs: covered_only
-    dte_min: 30
-    dte_max: 60
+    # D97 (E22.4): two entry-DTE sleeves, 5 + 5 slots (= max_open_positions 10);
+    # DTE 30 belongs to swing. Close the short sleeve without a PR (Slack):
+    # `profiles.cash_debit.sleeves.short.max_positions 0`.
+    sleeves:
+      short: {dte_min: 10, dte_max: 29, max_positions: 5, exit_policy: short}
+      swing: {dte_min: 30, dte_max: 60, max_positions: 5}
     stance_strategies:
       bullish: [bull_call_debit, long_call]
       bearish: [bear_put_debit, long_put]
@@ -47,8 +58,9 @@ profiles:
     require_net_debit: true
     buying_power: cash_settled
     allow_short_legs: none
-    dte_min: 30
-    dte_max: 60
+    sleeves:  # D97 (E22.4): same sleeves as cash_debit
+      short: {dte_min: 10, dte_max: 29, max_positions: 5, exit_policy: short}
+      swing: {dte_min: 30, dte_max: 60, max_positions: 5}
     stance_strategies:
       bullish: [long_call]
       bearish: [long_put]

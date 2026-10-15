@@ -11,8 +11,8 @@ import { DataTable } from "../components/DataTable";
 import { EmptyState } from "../components/EmptyState";
 import { InfoTip } from "../components/InfoTip";
 import { KeyValueList } from "../components/KeyValueList";
-import { ProgressRow } from "../components/ProgressRow";
 import { Section } from "../components/Section";
+import { SegmentedControl } from "../components/SegmentedControl";
 import { StackedBars } from "../components/StackedBars";
 import { formatAge, formatNumber, titleCase } from "../lib/format";
 import { useLayout } from "../lib/layout";
@@ -21,31 +21,32 @@ import {
   SLOT_CLASS,
   SLOT_LABEL,
   SOURCE_STATUS_TONE,
-  bandHasProblem,
-  bandRollup,
+  TIMELINE_WINDOWS,
   bandRows,
+  contextGroups,
   dayParam,
   formatDuration,
   formatSeconds,
   groupRepeats,
-  hourTicks,
   isSourceProblem,
+  kindLabel,
   llmBars,
   llmCost,
   loopSplit,
-  rowFacts,
-  rowSummary,
   runApiQuery,
   runQuery,
+  sessionQuery,
   sharePct,
+  shortList,
   slotCounts,
-  slotTitle,
   sourceGroups,
   timeLeft,
-  timelinePct,
+  windowCaption,
+  windowParam,
   type Alerts,
   type AutoApprove,
-  type BandView,
+  type ContextGroupView,
+  type ContextKind,
   type ContextStore,
   type Halts,
   type HealthItem,
@@ -58,268 +59,66 @@ import {
   type SourceCategory,
   type SourceRow,
   type Sources,
-  type TimelineRow,
+  type TimelineWindow,
 } from "../lib/ops";
 import { personaName, useCatalogue } from "../lib/personas";
 import { useContextEntry, useOps } from "../lib/useApi";
-import { CONTROL, Loading, PersonaChip, Pill, RunStatus, et, shortId, type PillTone } from "./opsShared";
+import { SessionTimeline } from "./SessionTimeline";
+import { CONTROL, Loading, Pill, RunStatus, et, shortId, type PillTone } from "./opsShared";
 
 // ---------------------------------------------------------------------------
-// 1. Session timeline (E8.8d: bands from routines.yaml, persona chips, ⓘ per job)
+// 1. Session timeline (D93: one fixed-scale timeline, Rolling / Day; SessionTimeline.tsx)
 // ---------------------------------------------------------------------------
 
-function JobInfo({ row }: { row: TimelineRow }) {
-  return (
-    <InfoTip label={`About ${titleCase(row.label)}`} testid="job-info" formula={rowFacts(row).join(" · ")}>
-      {row.about ?? `${row.job} (no about line in routines.yaml)`}
-    </InfoTip>
-  );
-}
-
-function JobLabel({ row, strong }: { row: TimelineRow; strong?: boolean }) {
-  return (
-    <span className="flex min-w-0 items-center gap-1">
-      <span className={`min-w-0 truncate text-caption ${strong ? "font-semibold text-primary" : "text-secondary"}`} title={`${row.job} · ${row.cadence}`} data-testid="job-label">
-        {titleCase(row.label)}
-      </span>
-      <PersonaChip persona={row.persona} />
-      <JobInfo row={row} />
-    </span>
-  );
-}
-
-function SlotTicks({ row, s }: { row: TimelineRow; s: Session }) {
-  const navigate = useNavigate();
-  return (
-    <div className="relative h-6 min-w-0 flex-1 rounded-control bg-control/40">
-      {row.slots.map((slot) => {
-        const left = timelinePct(slot.at, s.start, s.end);
-        const cls = SLOT_CLASS[slot.status];
-        const title = slotTitle(slot);
-        const run = slot.run;
-        return (
-          <button
-            key={slot.at}
-            type="button"
-            data-status={slot.status}
-            data-testid="slot"
-            aria-label={title}
-            title={title}
-            disabled={!run}
-            onClick={() => run && navigate(`/ops/runs/${run.run_id}`)}
-            className={`absolute top-1 h-4 w-[5px] -translate-x-1/2 rounded-[2px] ${cls} ${run ? "cursor-pointer hover:scale-y-125" : "cursor-default"}`}
-            style={{ left: `${left}%` }}
-          />
-        );
-      })}
-    </div>
-  );
-}
-
-const LABEL_W = 196;
-
-/** Desktop / tablet: the Gantt with band header rows. */
-function TimelineGantt({ s, bands }: { s: Session; bands: BandView[] }) {
-  const ticks = hourTicks(s.start, s.end);
-  const nowPct = timelinePct(s.as_of, s.start, s.end);
-  const showNow = s.as_of >= s.start && s.as_of <= s.end;
-  return (
-    <div data-testid="session-timeline" data-layout="gantt" data-scroll-x className="arc-scroll-x">
-      <div className="min-w-[720px]">
-        <div className="relative mb-1 h-4 text-micro text-muted" style={{ marginLeft: LABEL_W + 8 }}>
-          {ticks.map((t) => (
-            <span key={t.label} className="absolute -translate-x-1/2 tabular-nums" style={{ left: `${t.pct}%` }}>
-              {t.label}
-            </span>
-          ))}
-        </div>
-        <div className="relative">
-          {showNow && (
-            <span
-              aria-hidden="true"
-              className="pointer-events-none absolute bottom-0 top-0 z-10 w-px bg-accent"
-              style={{ left: `calc(${LABEL_W + 8}px + (100% - ${LABEL_W + 8}px) * ${nowPct / 100})` }}
-            />
-          )}
-          {bands.map(({ band, rows, sub, firstOfGroup }) => (
-            <div key={band.key} data-testid="band" data-band={band.key}>
-              {sub && firstOfGroup && (
-                <div className="pt-2 text-micro font-semibold uppercase tracking-wide text-muted">{titleCase(band.group_label)}</div>
-              )}
-              <div className="flex items-baseline gap-2 border-b border-line pb-0.5 pt-2" data-testid="band-header">
-                <span className={`text-caption font-semibold text-title ${sub ? "pl-2" : ""}`}>{titleCase(band.label)}</span>
-                <span className="text-micro text-muted tabular-nums">{bandRollup(rows)}</span>
-              </div>
-              {rows.map((row) => (
-                <div
-                  key={row.job}
-                  className="flex items-center gap-2 py-0.5"
-                  data-testid={row.job === s.loop_job ? "loop-row" : "timeline-row"}
-                  data-job={row.job}
-                >
-                  <span className={`shrink-0 ${sub ? "pl-2" : ""}`} style={{ width: LABEL_W }}>
-                    <JobLabel row={row} strong={row.job === s.loop_job} />
-                  </span>
-                  <SlotTicks row={row} s={s} />
-                </div>
-              ))}
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function SlotDots({ row }: { row: TimelineRow }) {
-  const navigate = useNavigate();
-  return (
-    <div data-scroll-x className="arc-scroll-x -mx-1 px-1" data-testid="slot-strip">
-      <div className="flex w-max items-center gap-1 py-1">
-        {row.slots.map((slot) => {
-          const title = slotTitle(slot);
-          const run = slot.run;
-          return (
-            <button
-              key={slot.at}
-              type="button"
-              data-status={slot.status}
-              data-testid="slot"
-              aria-label={title}
-              title={title}
-              disabled={!run}
-              onClick={(e) => {
-                e.stopPropagation();
-                if (run) navigate(`/ops/runs/${run.run_id}`);
-              }}
-              className="arc-hit relative inline-flex h-3 w-3 shrink-0 items-center justify-center"
-            >
-              <span className={`h-2.5 w-2.5 rounded-full ${SLOT_CLASS[slot.status]}`} />
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function MobileJobRow({ row, s }: { row: TimelineRow; s: Session }) {
-  const [open, setOpen] = useState(false);
-  const id = useId();
-  return (
-    <li className="py-2" data-testid={row.job === s.loop_job ? "loop-row" : "timeline-row"} data-job={row.job}>
-      <div className="flex items-center gap-1">
-        <button
-          type="button"
-          aria-expanded={open}
-          aria-controls={id}
-          onClick={() => setOpen(!open)}
-          className="flex min-h-[44px] min-w-0 flex-1 flex-col items-start justify-center text-left"
-        >
-          <span className="flex w-full min-w-0 items-center gap-1.5">
-            <span className={`min-w-0 truncate text-caption ${row.job === s.loop_job ? "font-semibold text-primary" : "text-primary"}`} data-testid="job-label">{titleCase(row.label)}</span>
-            <PersonaChip persona={row.persona} />
-          </span>
-          <span className="text-micro text-muted tabular-nums" data-testid="row-summary">
-            {rowSummary(row)}
-          </span>
-        </button>
-        <JobInfo row={row} />
-      </div>
-      <SlotDots row={row} />
-      <ul id={id} hidden={!open} className="mt-1 divide-y divide-line rounded-control bg-control/40 px-2 text-micro" data-testid="slot-details">
-        {row.slots.map((slot) => (
-          <li key={slot.at} className="flex min-h-[32px] items-center gap-2 tabular-nums">
-            <span className={`h-2 w-2 shrink-0 rounded-full ${SLOT_CLASS[slot.status].replace("animate-pulse", "")}`} />
-            <span className="w-11 shrink-0">{slot.at.slice(11, 16)}</span>
-            <span className="w-16 shrink-0 text-secondary">{SLOT_LABEL[slot.status]}</span>
-            {slot.run ? (
-              <Link to={`/ops/runs/${slot.run.run_id}`} className="arc-action min-w-0 truncate">
-                {shortId(slot.run.run_id, 22)}
-              </Link>
-            ) : (
-              <span className="text-muted">—</span>
-            )}
-          </li>
-        ))}
-      </ul>
-    </li>
-  );
-}
-
-function MobileBand({ view, s }: { view: BandView; s: Session }) {
-  const { band, rows, sub, firstOfGroup } = view;
-  const [open, setOpen] = useState(() => bandHasProblem(rows));
-  const id = useId();
-  return (
-    <div data-testid="band" data-band={band.key} data-open={open}>
-      {sub && firstOfGroup && <div className="pt-2 text-micro font-semibold uppercase tracking-wide text-muted">{titleCase(band.group_label)}</div>}
-      <button
-        type="button"
-        aria-expanded={open}
-        aria-controls={id}
-        onClick={() => setOpen(!open)}
-        data-testid="band-header"
-        className="flex min-h-[44px] w-full items-center gap-2 border-b border-line text-left"
-      >
-        <span className="w-3 text-caption text-muted" aria-hidden="true">
-          {open ? "▼" : "▶"}
-        </span>
-        <span className="text-caption font-semibold text-title">{titleCase(band.label)}</span>
-        <span className="min-w-0 truncate text-micro text-muted tabular-nums">· {bandRollup(rows)}</span>
-      </button>
-      <ul id={id} hidden={!open} className="divide-y divide-line pl-5">
-        {rows.map((row) => (
-          <MobileJobRow key={row.job} row={row} s={s} />
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-/** Mobile (≤ 768): the grouped list; no min-width Gantt. */
-function TimelineList({ s, bands }: { s: Session; bands: BandView[] }) {
-  return (
-    <div data-testid="session-timeline" data-layout="list">
-      {bands.map((v) => (
-        <MobileBand key={v.band.key} view={v} s={s} />
-      ))}
-    </div>
-  );
-}
-
-function SessionCard({ s, day, setDay }: { s?: Session; day: string; setDay: (d: string) => void }) {
-  const layout = useLayout();
+function SessionCard({
+  s,
+  day,
+  setDay,
+  win,
+  setWin,
+  now,
+}: {
+  s?: Session;
+  day: string;
+  setDay: (d: string) => void;
+  win: TimelineWindow;
+  setWin: (w: TimelineWindow) => void;
+  now: number;
+}) {
   const split = loopSplit(s?.loop);
   const bands = useMemo(() => (s ? bandRows(s) : []), [s]);
   return (
     <Card title="Session Timeline" freshness={{ at: s?.as_of, label: "loaded" }}>
       <div className="mb-3 flex flex-wrap items-center gap-2" data-testid="day-control">
-        {DAY_PRESETS.map((p) => (
-          <button
-            key={p.value}
-            type="button"
-            aria-pressed={day === p.value}
-            onClick={() => setDay(p.value)}
-            className={`arc-press rounded-pill px-2.5 py-1 text-caption font-semibold max-tablet:min-h-[44px] ${day === p.value ? "bg-range-active text-[color:var(--range-active-text)]" : "text-secondary hover:bg-hover"}`}
-          >
-            {p.label}
-          </button>
-        ))}
-        <input
-          type="date"
-          aria-label="Pick a day"
-          className={CONTROL}
-          value={/^\d{4}-/.test(day) ? day : ""}
-          onChange={(e) => setDay(e.target.value || "today")}
-        />
+        <SegmentedControl options={TIMELINE_WINDOWS} value={win} onChange={setWin} size="sm" label="Timeline window" testid="timeline-window" />
+        {win === "day" &&
+          DAY_PRESETS.map((p) => (
+            <button
+              key={p.value}
+              type="button"
+              aria-pressed={day === p.value}
+              onClick={() => setDay(p.value)}
+              className={`arc-press rounded-pill px-2.5 py-1 text-caption font-semibold max-tablet:min-h-[44px] ${day === p.value ? "bg-range-active text-[color:var(--range-active-text)]" : "text-secondary hover:bg-hover"}`}
+            >
+              {p.label}
+            </button>
+          ))}
+        {win === "day" && (
+          <input
+            type="date"
+            aria-label="Pick a day"
+            className={CONTROL}
+            value={/^\d{4}-/.test(day) ? day : ""}
+            onChange={(e) => setDay(e.target.value || "today")}
+          />
+        )}
         {s && (
-          <span className="text-caption text-muted tabular-nums">
-            {s.day} · {s.start.slice(11, 16)}–{s.end.slice(11, 16)} ET
+          <span className="text-caption text-muted tabular-nums" data-testid="window-caption">
+            {windowCaption(s)}
           </span>
         )}
       </div>
-      {!s ? <Loading what="the session" /> : layout === "mobile" ? <TimelineList s={s} bands={bands} /> : <TimelineGantt s={s} bands={bands} />}
+      {!s ? <Loading what="the session" /> : <SessionTimeline s={s} bands={bands} now={now} />}
       {s && (
         <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-caption text-secondary tabular-nums" data-testid="slot-legend">
           {slotCounts(s.counts).map(({ status, n }) => (
@@ -340,7 +139,7 @@ function SessionCard({ s, day, setDay }: { s?: Session; day: string; setDay: (d:
 }
 
 // ---------------------------------------------------------------------------
-// 2. Health (E8.8d: one chip row; the long text is in each chip's ⓘ)
+// 2. Health (E8.8d; D89: equal-size tiles under Config; the long text is in each ⓘ)
 // ---------------------------------------------------------------------------
 
 const HEALTH_TONE: Record<HealthItem["status"], PillTone> = {
@@ -358,37 +157,45 @@ const HEALTH_TEXT: Record<HealthItem["status"], string> = {
 };
 
 function HealthStripCard({ h }: { h?: HealthStrip }) {
+  // D89: equal-size tiles (like the Overview Movers tiles), one per check; the long text is in
+  // each tile's ⓘ and a degraded / failed check adds its message under the grid.
+  const bad = (h?.items ?? []).filter((it) => it.status === "degraded" || it.status === "failed");
   return (
     <Card title="Health">
       {!h ? (
         <Loading what="health" />
       ) : (
-        <ul className="flex flex-wrap gap-2" data-testid="health-strip">
-          {h.items.map((it) => {
-            const bad = it.status === "degraded" || it.status === "failed";
-            return (
+        <>
+          <ul className="grid grid-cols-3 gap-2 tablet:grid-cols-5" data-testid="health-strip">
+            {h.items.map((it) => (
               <li
                 key={it.key}
                 data-status={it.status}
+                data-key={it.key}
                 data-testid="health-chip"
-                className={`min-w-0 rounded-control border border-line px-2.5 py-1 ${bad ? "basis-full" : ""}`}
+                className="flex min-h-[64px] min-w-0 flex-col justify-between rounded-control border border-line px-3 py-2"
               >
-                <div className="flex min-h-[32px] items-center gap-1.5 max-tablet:min-h-[44px]">
+                <div className="flex min-w-0 items-center gap-1.5">
                   <span aria-hidden="true" className={`h-2 w-2 shrink-0 rounded-full ${DOT[HEALTH_TONE[it.status]]}`} />
-                  <span className={`text-caption font-semibold tabular-nums ${HEALTH_TEXT[it.status]}`}>{it.chip || `${it.label} ${it.status}`}</span>
+                  <span className="min-w-0 flex-1 truncate text-caption font-semibold text-primary" data-testid="health-name">
+                    {it.name || it.label}
+                  </span>
                   <InfoTip label={`About ${it.label}`} formula={it.threshold}>
                     {it.label}: {it.value}
                   </InfoTip>
                 </div>
-                {bad && (
-                  <p className={`pb-1 text-caption [overflow-wrap:anywhere] ${HEALTH_TEXT[it.status]}`} data-testid="health-message">
-                    {it.value} <span className="text-muted">({it.threshold})</span>
-                  </p>
-                )}
+                <span className={`truncate text-caption tabular-nums ${HEALTH_TEXT[it.status]}`} data-testid="health-detail" title={it.chip}>
+                  {it.detail || it.chip}
+                </span>
               </li>
-            );
-          })}
-        </ul>
+            ))}
+          </ul>
+          {bad.map((it) => (
+            <p key={it.key} className={`mt-2 text-caption [overflow-wrap:anywhere] ${HEALTH_TEXT[it.status]}`} data-testid="health-message" data-key={it.key}>
+              <span className="font-semibold">{it.name || it.label}:</span> {it.value} <span className="text-muted">({it.threshold})</span>
+            </p>
+          ))}
+        </>
       )}
     </Card>
   );
@@ -686,39 +493,103 @@ function RunsSection() {
 // 7. Context, 8. Sources, 9. LLM, 10. Auto-Approve, 11. Config
 // ---------------------------------------------------------------------------
 
+function ContextKindItem({ k, now }: { k: ContextKind; now: number }) {
+  const expiry = k.next_expiry ? timeLeft(k.next_expiry, now) : k.active ? "no expiry" : null;
+  return (
+    <li className="py-2" data-testid="context-kind" data-kind={k.kind} data-active={k.active}>
+      <div className="flex flex-wrap items-center gap-x-2">
+        <span className="font-semibold text-primary">{titleCase(kindLabel(k.kind))}</span>
+        {k.ttl && <span className="text-micro text-muted">ttl {k.ttl}</span>}
+        <span className="ml-auto text-caption tabular-nums">
+          <span className={k.active ? "font-semibold text-primary" : "text-muted"}>{k.active} active</span>
+          {expiry && <span className="text-muted"> · next {expiry}</span>}
+        </span>
+      </div>
+      <div className="mt-0.5 grid grid-cols-[auto_1fr] gap-x-2 text-caption text-secondary">
+        <span className="text-muted">From</span>
+        <span className="min-w-0 truncate" title={(k.writers ?? []).join(", ")} data-testid="context-writers">
+          {shortList(k.writers, 3)}
+        </span>
+        <span className="text-muted">Read by</span>
+        <span className="min-w-0 truncate" title={(k.readers ?? []).join(", ")} data-testid="context-readers">
+          {k.readers?.length ? shortList(k.readers, 3) : "Tower only"}
+        </span>
+      </div>
+      {k.latest_id ? (
+        <div className="text-micro text-muted">
+          latest{" "}
+          <Link to={`/ops/context/${k.latest_id}`} className="arc-action">
+            {k.latest_subject}
+          </Link>{" "}
+          · {k.latest_at ? formatAge(k.latest_at, now) : "—"}
+          {k.expired_24h ? ` · ${k.expired_24h} expired 24 h` : ""}
+        </div>
+      ) : (
+        <div className="text-micro text-muted">never written</div>
+      )}
+    </li>
+  );
+}
+
+function ContextGroupBlock({ g, now }: { g: ContextGroupView; now: number }) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  const live = g.kinds.filter((k) => k.active > 0).length;
+  return (
+    <li data-testid="context-group" data-group={g.key} data-open={open} className="py-1">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => setOpen(!open)}
+        className="flex min-h-[40px] w-full flex-wrap items-center gap-x-2 text-left max-tablet:min-h-[44px]"
+      >
+        <span className="w-3 text-caption text-muted" aria-hidden="true">
+          {open ? "▼" : "▶"}
+        </span>
+        <span className="font-semibold text-primary">{titleCase(g.label)}</span>
+        <span className="text-caption text-secondary tabular-nums">
+          {formatNumber(g.active)} active · {live}/{g.kinds.length} kinds live · newest {g.latestAt ? formatAge(g.latestAt, now) : "—"}
+        </span>
+      </button>
+      <ul id={id} hidden={!open} className="divide-y divide-line pl-5">
+        {g.kinds.map((k) => (
+          <ContextKindItem key={k.kind} k={k} now={now} />
+        ))}
+      </ul>
+    </li>
+  );
+}
+
 function ContextCard({ c, now }: { c?: ContextStore; now: number }) {
+  // D89: kinds grouped by the Session Timeline band of the job that writes them, each kind with
+  // its writers and readers (from routines.yaml) and its latest entry.
+  const groups = useMemo(() => (c ? contextGroups(c) : []), [c]);
   return (
     <Card
       title="Context Store"
-      subtitle={c ? <>{c.total_active} active · {c.expired_24h} expired in 24 h</> : undefined}
+      freshness={{ at: c?.as_of, label: "loaded" }}
+      headerExtra={
+        <InfoTip label="About the context store">
+          Typed entries the jobs hand to each other (D16). Each kind sits under the Timeline band of the job that writes it; From / Read by come from
+          the writes: and reads: lists in routines.yaml. Active = not yet expired.
+        </InfoTip>
+      }
     >
       {!c ? (
         <Loading what="context" />
       ) : (
-        <div data-testid="context-kinds" className="max-h-[520px] overflow-auto pr-1">
-          {c.kinds.map((k) => (
-            <div key={k.kind} className="border-b border-line last:border-b-0">
-              <ProgressRow
-                label={k.kind}
-                value={k.active}
-                right={k.next_expiry ? timeLeft(k.next_expiry, now) : k.active ? "no expiry" : "none active"}
-                fraction={k.remaining_fraction ?? (k.active ? 1 : 0)}
-                color="var(--series-2)"
-              />
-              {k.latest_id && (
-                <div className="-mt-1 pb-2 text-micro text-muted">
-                  latest{" "}
-                  <Link to={`/ops/context/${k.latest_id}`} className="arc-action">
-                    {k.latest_subject}
-                  </Link>{" "}
-                  by {k.latest_by} · {et(k.latest_at)}
-                  {k.ttl ? ` · ttl ${k.ttl}` : ""}
-                  {k.expired_24h ? ` · ${k.expired_24h} expired 24 h` : ""}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
+        <>
+          <p className="mb-2 text-caption text-secondary tabular-nums" data-testid="context-summary">
+            {formatNumber(c.total_active)} active · {c.kinds.filter((k) => k.active > 0).length}/{c.kinds.length} kinds live ·{" "}
+            {formatNumber(c.expired_24h)} expired in 24 h
+          </p>
+          <ul className="divide-y divide-line" data-testid="context-kinds">
+            {groups.map((g) => (
+              <ContextGroupBlock key={g.key} g={g} now={now} />
+            ))}
+          </ul>
+        </>
       )}
     </Card>
   );
@@ -957,8 +828,11 @@ function ConfigLink({ c }: { c?: OpsConfig }) {
 export function OpsPage() {
   const [params, setParams] = useSearchParams();
   const day = dayParam(params.get("day"));
+  const win = windowParam(params.get("tl"), params.get("day"));
   const now = useNow();
-  const session = useOps("/api/ops/session", { day });
+  // D93: the now-line moves every minute without a reload (the payload polls on its own).
+  const tlNow = useNow(60_000);
+  const session = useOps("/api/ops/session", sessionQuery(win, day));
   const health = useOps("/api/ops/health");
   const alerts = useOps("/api/ops/alerts");
   const halts = useOps("/api/ops/halts");
@@ -976,19 +850,28 @@ export function OpsPage() {
     const next = new URLSearchParams(params);
     if (d === "today") next.delete("day");
     else next.set("day", d);
+    next.set("tl", "day");
+    setParams(next, { replace: true });
+  };
+  const setWin = (w: TimelineWindow) => {
+    const next = new URLSearchParams(params);
+    if (w === "rolling") {
+      next.delete("tl");
+      next.delete("day");
+    } else next.set("tl", "day");
     setParams(next, { replace: true });
   };
   const cfg = config.data as OpsConfig | undefined;
-  // Owner order (D48, OPS_WIDGETS): the same on phone and desktop, one column.
+  // Owner order (D48, D89: Health under Config; OPS_WIDGETS): the same on phone and desktop, one column.
   return (
     <div className="grid gap-6 desktop:gap-10" data-testid="ops">
-      <SessionCard s={session.data as Session | undefined} day={day} setDay={setDay} />
+      <SessionCard s={session.data as Session | undefined} day={day} setDay={setDay} win={win} setWin={setWin} now={tlNow} />
       <SourcesCard s={sources.data as Sources | undefined} now={now} />
-      <HealthStripCard h={health.data as HealthStrip | undefined} />
       <LlmCard l={llm.data as Llm | undefined} />
       <ContextCard c={context.data as ContextStore | undefined} now={now} />
       <AutoApproveCard a={cfg?.auto_approve} line={cfg?.scorecard_gate} />
       <ConfigLink c={cfg} />
+      <HealthStripCard h={health.data as HealthStrip | undefined} />
       <div id="alerts" className="min-w-0 scroll-mt-20">
         <AlertsSection a={alerts.data as Alerts | undefined} />
       </div>

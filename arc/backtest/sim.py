@@ -77,6 +77,7 @@ from arc.backtest.ranking import (
 from arc.backtest.sim_config import SimSettings
 from arc.backtest.strategies import StrategyKind, StrategySpec
 from arc.exits.policy import check_rules, resolve_rules
+from arc.gate.caps import alloc_pct_for, deployed_max_loss
 from arc.gate.inputs import AccountSnapshot, MarketSnapshot, Portfolio, Position
 from arc.gate.rules import (
     Derived,
@@ -1054,7 +1055,8 @@ def _decide(
             suggestion=10**6,
             max_loss_per_contract=mlu,
             equity=account_eq,
-            cap_pct=settings.max_alloc_pct,
+            # D116: the tiered cap from the held book, as check_per_underlying computes it
+            cap_pct=alloc_pct_for(deployed_max_loss(portfolio), account_eq, settings),
             existing_max_loss=Decimal(0) if legacy else existing,
         )
         if not size.trade:

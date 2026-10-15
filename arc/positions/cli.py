@@ -95,6 +95,7 @@ def _review(
         exits=exits,
         theta_per_day=_theta(priced, structure, as_of, r),
         peak_pnl=peak_pnl,
+        exit_block=settings.exit_block_of(structure),
     )
 
 
@@ -129,7 +130,9 @@ def fixture_book(
     cands: list[CapacityCandidate] = []
     for c in data.get("candidates", []):
         priced = _price(market, c["legs"], as_of, r)
-        model = _proposal_exit_model(priced, exits, r, None, None)
+        model = _proposal_exit_model(
+            priced, exits, r, None, None, settings.exit_block_for_dte(priced.structure.dte)
+        )
         st = priced.structure
         bp = st.buying_power if st.buying_power is not None else st.max_loss
         if model is None or not bp:

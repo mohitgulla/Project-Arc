@@ -5,8 +5,9 @@
 
 End to end through the real CLI and the real arm runner, on fixtures:
 
-1. ``arc experiment create`` + ``register`` the committed A/A spec
-   (``config/experiments/live/xp1_aa_baseline.yaml``) on a fresh control store;
+1. ``arc experiment create`` + ``register`` the v1 A/A spec, a test fixture since the
+   D111 registry reset (``tests/fixtures/experiments/xp1_aa_baseline.yaml``; the live
+   XP-1 is the K=3 A/A ``config/experiments/live/xp1_aa_k3.yaml``) on a fresh control store;
 2. ``arc experiment start XP-1 --fixtures --arm-dir`` (t0 at the fixture clock
    minus one hour; virtual account at the fixture account's equity);
 3. one fixture loop chain on control (``arc propose --fixtures``) and its paired
@@ -22,7 +23,7 @@ End to end through the real CLI and the real arm runner, on fixtures:
    ``arc experiment report XP-1 --stored --format md``.
 
 ``--write-doc`` writes the committed example ``docs/RESEARCH/experiments/XP-1-aa.md``
-(header: pending live run, E10.8). The scratch dir must not exist or be empty;
+(header: pending live run, E15.9). The scratch dir must not exist or be empty;
 this script never opens ``data/arc.db``.
 """
 
@@ -46,7 +47,7 @@ from arc.store.db import DEFAULT_DB_PATH, connect
 from arc.utils.calendar import next_session, previous_session, session_close
 
 REPO = Path(__file__).resolve().parent.parent
-SPEC = REPO / "config" / "experiments" / "live" / "xp1_aa_baseline.yaml"
+SPEC = REPO / "tests" / "fixtures" / "experiments" / "xp1_aa_baseline.yaml"
 DOC = REPO / "docs" / "RESEARCH" / "experiments" / "XP-1-aa.md"
 EID = "XP-1"
 APPROVAL = "owner:XP-1 A/A dry run on scratch stores"  # D86 registry write guard
@@ -168,6 +169,24 @@ def simulate(
     return days
 
 
+def _dedicated_config(path: Path) -> Path:
+    """A copy of ``config/experiments.yaml`` in dedicated mode with XP-1's one arm."""
+    import yaml
+
+    doc = yaml.safe_load((REPO / "config" / "experiments.yaml").read_text())
+    runner = doc["experiments"]["runner"]
+    runner["account_mode"] = "dedicated"
+    runner["arms"] = {
+        "treatment": {
+            "spec_arm": "treatment",
+            "keys_env": "ALPACA_EXP",
+            "db": "data/arc-exp-{experiment_id}.db",
+        }
+    }
+    path.write_text(yaml.safe_dump(doc, sort_keys=False))
+    return path
+
+
 def run(
     scratch: Path, *, sessions: int = 10, inject_usd: float = 0.0, seed: int = 7
 ) -> dict[str, Any]:
@@ -193,7 +212,11 @@ def run(
     conn = connect(control)
     defaults_before = experiments_config(effective_settings(conn)).defaults
     conn.close()
+    # XP-1 models two dedicated accounts at the same fixture equity; the shipped runner
+    # is shared since D108, whose capacity check (t0 <= equity x 0.9) refuses that.
+    dedicated = _dedicated_config(scratch / "experiments.yaml")
     _check(*_arc("experiment", "start", EID, "--fixtures", "--arm-dir", str(scratch / "arms"),
+                 "--experiments-config", str(dedicated),
                  "--now", T0.isoformat(), *db), "start")  # fmt: skip
     # one fixture loop chain on control, then its paired copy on the arm
     _check(*_arc("propose", "--fixtures", "--fixture-set", "bullish", "--profile", "cash_debit",

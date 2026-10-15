@@ -9,6 +9,8 @@ Units follow :mod:`arc.structures`:
   - Greeks are share-equivalents (per-share Greek x 100 x signed ratio);
     vega is per 1.00 of sigma, so vega / 100 is dollars per vol point;
   - dollar delta (D57) is share-equivalent delta x the underlying's spot, dollars;
+    for debit verticals and long options the delta caps count sign(delta) x max loss
+    instead (D116, E3.8; arc.gate.delta);
   - beta-weighted dollar delta (D62) is dollar delta x max(beta vs SPY, 1.0), dollars.
 """
 
@@ -90,6 +92,12 @@ class Position(_Frozen):
 
     underlying: str
     max_loss: Decimal = Field(..., ge=0, description="Total max loss of the position, dollars")
+    entry_dte: int | None = Field(
+        None,
+        ge=0,
+        description="E22.1 (D97): calendar DTE at the open (its sleeve); None = unknown, "
+        "counted toward every sleeve by rule sleeve_max_positions (fail closed)",
+    )
 
 
 class ClosedLot(_Frozen):
@@ -123,18 +131,41 @@ class Portfolio(_Frozen):
     dollar_delta: Decimal = Field(
         Decimal(0),
         description=(
-            "D57: signed Σ over underlyings of (net Δ share-eq × that underlying's spot), "
-            "dollars. Built by arc.pipeline.market.build_portfolio (fails closed on a "
-            "missing spot); the gate's delta cap reads this, not greeks.delta."
+            "D57/D116: signed Σ over open structures of the delta-cap term, dollars: "
+            "sign(Δ) × max loss for vertical_debit/long_call/long_put (D116, E3.8), "
+            "else net Δ share-eq × the underlying's spot (arc.gate.delta). Built by "
+            "arc.pipeline.market.build_portfolio (fails closed on a missing spot); the "
+            "gate's delta cap reads this, not greeks.delta."
         ),
     )
     beta_dollar_delta: Decimal = Field(
         Decimal(0),
         description=(
-            "D62: signed Σ over underlyings of (net Δ share-eq × spot × β used), dollars, "
+            "D62/D116: the same per-structure terms as dollar_delta × β used, dollars, "
             "where β used = max(stored 1y β vs SPY, 1.0) and 1.0 when missing/stale. Built "
             "by arc.pipeline.market.build_portfolio; the gate's beta-weighted delta cap "
             "reads it."
+        ),
+    )
+    dollar_delta_raw: Decimal = Field(
+        Decimal(0),
+        description=(
+            "D116: Σ net Δ share-eq × spot over every structure (the pre-E3.8 unit), "
+            "dollars. Display only: the gate never reads it."
+        ),
+    )
+    beta_dollar_delta_raw: Decimal = Field(
+        Decimal(0),
+        description="D116: dollar_delta_raw × β used per underlying. Display only.",
+    )
+    reserved_max_loss: Decimal = Field(
+        Decimal(0),
+        ge=0,
+        description=(
+            "D116 (E3.7): max loss reserved by in-flight opens (approval requests still "
+            "pending, open executions still working / unconfirmed, unfilled part only), "
+            "dollars. Built outside the gate by arc.pipeline.market.reserved_open_max_loss; "
+            "counted toward 'deployed' for the tiered per-underlying cap (arc.gate.caps)."
         ),
     )
     closed_lots: list[ClosedLot] = Field(default_factory=list)

@@ -8,20 +8,21 @@
 #
 # A trading day at a glance (D31; full day: `arc routines tick --dry-run`):
 #   02:00          youtube.briefs -> one channel_brief per channel (D45, D60)
-#   05:30 / 05:35  active universe (D56 tiers; Mon symbol master) / betas vs SPY (D62)
+#   05:30          active universe (D56 tiers; Mon symbol master)
+#   07:10 / 07:15  betas vs SPY (D62, D90) / iv.backfill top-up (D81), after the final active list
+#   07:20          levels: volume profile + OI walls (E23.0, D98), merged into regime by Research
 #   06:00          earnings calendar; rss / edgar every 15 min until 20:00
-#   08:15 / 08:20  options_slow / market_health catch-ups (only if the evening slot missed)
-#   09:00-16:00    Scalp every 30 min
+#   08:00 / 08:30  options_slow / market_health catch-ups (only if the evening slot missed; D96)
+#   06:30-20:00    Scalp every 30 min (D91; no overnight run)
 #   09:30-16:00    monitor every 10 min; broker.reattach 09:30-16:10 (D72)
 #   09:40-15:50    trading loop every 10 min (D52, D56): research -> exits.mandatory ->
 #                  quant.exit -> risk.exit -> quant.open -> risk.open -> quant.revise ->
 #                  quant.propose -> broker.execute; ttl 5m (a missed slot is skipped)
 #   09:50-15:50    position marks every 30 min (:20/:50): evaluate -> mandatory exits
 #   16:30          broker.reconcile; (event) reconcile.intraday after an unconfirmed ladder
-#   16:40          experiments.evaluate; 16:45 Fri weekly scorecard ([Ops])
+#   16:40          experiments.evaluate (+ verdict file PRs, E21.4); 16:45 Fri weekly scorecard ([Ops])
 #   18:00 / 18:30  earnings calendar / vol_term
-#   22:00          overnight Scalp (YouTube never reaches the Scalp, D45)
-#   23:00 / 23:15  options_daily + vix_futures (read by the 06:00 Scout) / market_health
+#   23:00 / 23:30  options_daily + vix_futures (read by the 06:00 Scout) / market_health (D96)
 #
 # lane (D39): `background` = run detached so a slow job (p90 > 30 s) never delays the
 # tick; a background after_sources Scalp waits up to tick.after_sources_wait.
@@ -80,6 +81,7 @@ monitoring:
 loop:
   job: research
   max_idle: 15m            # force one full LLM evaluation at least this often (D85)
+  max_idle_with_free_slots: 20m   # E22.3 (D97): full run this often while a sleeve has free slots + no opens today
   max_runtime: 7m          # chain deadline: no new step starts after it (run -> `timeout`); D61
   pnl_bucket_pct: 0.5      # P&L rounding (as % of equity) inside the no-change digest
   post_hold_roots: true    # false = HOLD / no_change loops post no root line
@@ -126,6 +128,7 @@ context_ttl:
   index_history: {ttl: 7d, supersede: latest}              # Cboe VIX / VVIX closes; subject = index
   pc_history:    {ttl: 7d, supersede: latest}              # Cboe put/call by session; subject = market
   market_health: {ttl: 1 session, supersede: latest}       # the daily read; subject = market
+  levels:        {ttl: 1 session, supersede: latest}       # E23.0 (D98): volume profile + OI walls; subject = ticker
   vx_curve:      {ttl: 1 session, supersede: latest}
   # E13.6 (D56) options_fast: Cboe delayed tape, rewritten every 30 min in RTH.
   index_vols:    {ttl: 1h, supersede: latest}               # subject = market
@@ -149,6 +152,7 @@ context_ttl:
   exit_watchlist: {ttl: 30m, supersede: latest}          # E13.17 (D56) Research exit watch; subject = session
   exit_case:     {ttl: 30m, supersede: latest}             # E13.17 (D56) Quant exit case; subject = open structure id
   risk_exit_review: {ttl: 30m, supersede: latest}          # E13.18 (D56) Risk exit verdicts; subject = session
+  pullback_watch: {ttl: 8 sessions, supersede: latest}     # E23.2 (D98) anti-chase drops on watch; subject = TICKER:stance; outlives drop session + ttl_sessions (max 5) + 1 so expiry is journaled
 
 # Source categories (D47/D49/D56), weighted EQUALLY. A source's `weight:` is its share
 # inside its category. `max_age` is the freshness window: older docs are never stored or
@@ -345,9 +349,9 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
   vol_term:                     # Cboe VIX9D/VIX/VIX3M/VVIX closes -> contango/backwardation
     label: VIX term structure
     about: "Cboe VIX9D / VIX / VIX3M / VVIX closes -> contango or backwardation"
-    # 18:30 reads today's close (Cboe history CSVs update after 16:45); the 08:15
-    # catch-up runs only when 18:30 did not write that session.
-    schedule: ["18:30", "08:15"]
+    # 18:30 reads today's close (Cboe history CSVs update after 16:45); the 08:00
+    # catch-up (D96; was 08:15) runs only when 18:30 did not write that session.
+    schedule: ["18:30", "08:00"]
     days: trading
     ttl: 2h
     catch_up: {days: trading, until_written: "vol_term:{day}"}
@@ -356,12 +360,12 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     feed: scout                 # D56: daily Cboe closes (Scout's slow feed)
     writes: [vol_term]
   # E13.5 (D56): options_slow. 23:00 runs after the Cboe publish (~21:00-22:50 ET, OPS
-  # 5.28) and feeds the 06:00 Scout; the 08:15 catch-up runs only when 23:00 did not write
-  # that session (unpublished: skipped at 23:00, failed at 08:15).
+  # 5.28) and feeds the 06:00 Scout; the 08:00 catch-up (D96; was 08:15) runs only when
+  # 23:00 did not write that session (unpublished: skipped at 23:00, failed at 08:00).
   options_daily:                # Cboe daily options statistics: P/C x6 + volume/OI per product
     label: Cboe daily options
     about: "Cboe put/call ratios (total, index, ETP, equity, VIX, SPX) and volume + open interest per product"
-    schedule: ["23:00", "08:15"]
+    schedule: ["23:00", "08:00"]
     days: trading
     ttl: 2h
     catch_up: {days: trading, until_written: "options_daily:{day}"}
@@ -369,12 +373,13 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     feed: scout
     writes: [options_daily]
   # E16.4 (D76): daily market-health read (VIX vs 50d + 1y pct, VVIX, put/call 5d pct,
-  # active-list breadth). The 08:20 catch-up runs only when 23:15 did not write. Research
+  # active-list breadth). D96: 23:30 + 08:30 (was 23:15 / 08:20), each 30 min after the
+  # options_slow slot it reads; the 08:30 catch-up runs only when 23:30 did not write. Research
   # sees it with market_health_context on; switch + thresholds in config/strategy.yaml.
   market_health:
     label: Market health
     about: "Daily market-health read: VIX vs its 50-day mean and 1-year percentile, VVIX, Cboe put/call 5-day percentile, active-list breadth"
-    schedule: ["23:15", "08:20"]
+    schedule: ["23:30", "08:30"]
     days: trading
     ttl: 2h
     catch_up: {days: trading, until_written: "market_health:{day}"}
@@ -384,7 +389,7 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
   vix_futures:                  # CFE VX futures settlement curve (monthlies + weeklies)
     label: VX futures curve
     about: "CFE VX futures settlements: front / second / back month, slope and contango or backwardation"
-    schedule: ["23:00", "08:15"]
+    schedule: ["23:00", "08:00"]
     days: trading
     ttl: 2h
     catch_up: {days: trading, until_written: "vx_curve:{day}"}
@@ -456,13 +461,24 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
   betas:                        # E3.6 (D62): 1y daily beta vs SPY -> betas table (beta-weighted delta cap)
     label: Betas
     about: "Daily 1-year beta vs SPY per ticker (Alpaca daily closes) for the beta-weighted delta cap"
-    schedule: ["05:35"]         # pre-market, before the 06:00 Scout and RTH
+    schedule: ["07:10"]         # D90: after the final active list (symbols 05:30, trending 05:50 + ttl, Scout 06:00 + ttl 07:00); was 05:35
     days: trading
-    ttl: 3h                     # a missed slot catches up that morning
+    ttl: 2h                     # D90: a missed slot catches up until 09:10, before the 09:40 research loop
     reference: true             # reference data (betas table; the gate inputs read it)
     feed: scout                 # slow feed (once a day)
     writes: []                  # stores betas rows; no context kind
     lane: background            # one daily-bars request per ticker
+  levels:                       # E23.0 (D98): 20-session SIP volume profile + options OI walls per ticker
+    label: Levels
+    about: "Pre-market support/resistance per active name: 20-session volume profile (POC, value area, HVNs) from SIP 15-min bars + options OI walls (swing expiries)"
+    schedule: ["07:20"]         # after the final active list (symbols 05:30, trending 05:50, momentum + Scout 06:00, Scout ttl 07:00); knobs in strategy.yaml volume_profile:/oi_walls:
+    days: trading
+    ttl: 2h                     # a missed 07:20 catches up until 09:20, before the 09:40 research loop merges it into regime
+    reference: true             # derived reference data (no category; context only, never a gate input)
+    feed: scout                 # once a day
+    writes: [levels]
+    lane: background            # one bars + one chain request per ticker on the shared Alpaca data budget
+    max_runtime_s: 900          # no new ticker starts after this
   ex_dividend:                  # Alpaca corporate actions: early-assignment risk on short calls
     label: Ex-dividend
     about: "Upcoming ex-dividend dates: early-assignment risk on short calls"
@@ -515,9 +531,9 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     full_every_days: 7
     recent_report_days: [1, 3]  # other days: only tickers that reported 1-3 days ago (earnings calendar docs)
   symbols:                      # E5.7 / D28 symbol master + daily active-list resolve
-    label: Universe
+    label: Active list           # D89: was "Universe" (now the band's name)
     about: "Daily active list (core, momentum, discovery, trending; max 50); Monday symbol master refresh"
-    group: other
+    group: universe
     schedule: ["05:30"]         # before the 06:00 earnings calendar; `arc universe refresh` = by hand
     days: trading               # the active list resolves every session (no network)
     ttl: 24h                    # a missed slot still runs that day
@@ -526,7 +542,7 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
   universe.momentum:            # E12.2: S&P 500 Momentum top 25 (SPMO holdings proxy); the tier takes the top 20
     label: Momentum tier
     about: "Monthly S&P 500 Momentum top 25 (SPMO holdings); retries each session until one run succeeds"
-    group: other
+    group: universe
     schedule: ["06:00"]         # after `symbols` 05:30; `arc universe momentum` = by hand
     days: month_start           # first trading session of each month (weekly instead: days: [mon], ttl 8d)
     ttl: 3h                     # a missed slot still runs that morning
@@ -569,7 +585,7 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
   universe.trending:            # E13.19 (D58): code-ranked trending tier from retail_buzz
     label: Trending tier
     about: "Daily trending tier (<= 25): Reddit + Stocktwits names in both inputs first, then single-input fill; loose screen"
-    group: other
+    group: universe
     schedule: ["05:50"]         # after retail_buzz 05:40, before the 06:00 Scout; `arc universe trending` = by hand
     days: trading
     ttl: 1h
@@ -620,36 +636,23 @@ personas:
     writes: [scout_read, candidate, note, universe_tier, active_universe]   # universe_tier: discovery only; active_universe: re-resolve after
     context_kinds:              # D64 (E14.7): discovery lives 48 h and merges the previous run (universe.yaml carryover)
       universe_tier: {ttl: 48h, supersede: latest}
-  scalp:                        # D31: every 30 min in session (15 runs), after the fast sources
+  scalp:                        # D31/D91: every 30 min 06:30-20:00 (28 runs), after the fast sources; one job (scalp.overnight dropped, D91)
     label: Scalp
-    about: "Reads fresh news and filings; writes candidate ideas and story digests"
+    about: "Reads fresh news and filings while the news sources run (06:30-20:00); writes candidate ideas and story digests"
     group: scalp
     persona: scalp
     every: 30m
-    window: "09:00-16:00"
+    window: "06:30-20:00"       # D91: inside the rss/edgar/ticker_news window (06:00-20:00); was 09:00-16:00 + a 22:00 overnight run
     days: trading
     after_sources: true
     ttl: 20m                    # a slot missed by 20 min is skipped (the next one is closer)
     notify: card
-    reads: [index_vols, chain_snapshot, exchange_volume, market_movers]   # E13.10: the options tape (always read since E13.15); E14.3: market_movers only with personas.scalp_movers_context on
+    reads: [index_vols, chain_snapshot, exchange_volume, market_movers]   # E13.10: the options tape (always read since E13.15; outside 09:00-16:00 it is stale -> "no fresh info" line); E14.3: market_movers only with personas.scalp_movers_context on
     writes: [candidate, note, story, active_universe]   # note: scan summary (D27); story: D30 stage-1 digests; active_universe: D51 resolve at start
     lane: background            # D39: p90 441 s; the tick never waits on the Scalp
-  scalp.overnight:              # D15/D31: 22:00 after-close fast sources (no YouTube, D45)
-    label: Overnight Scalp
-    about: "After-close Scalp run over the evening news; feeds the next session"
-    group: scalp
-    persona: scalp
-    schedule: ["22:00"]
-    days: daily
-    after_sources: true
-    ttl: 3h
-    notify: card
-    reads: [index_vols, chain_snapshot, exchange_volume, market_movers]   # E13.10: at 22:00 the tape is stale -> "no fresh info" line (E14.3: movers too, flag on)
-    writes: [candidate, note, story, active_universe]
-    lane: background            # D39: same Scalp handler as above
   research:                     # D31/D52: the 10-min trading loop (see `loop:` above)
-    label: "Research → Quant → Risk → Propose → Execute"
-    about: "10-min trading loop: pick ideas, price structures, risk review, propose, auto-approve, execute"
+    label: "Trade Loop"         # D94 (owner); the chain is spelled out in `about`
+    about: "Every 10 min: Research → exits (mandatory floor, then Quant + Risk review) → opens (Quant prices, Risk reviews) → Propose → auto-approve → Execute"
     group: trading_loop
     persona: research
     every: 10m                  # D52
@@ -658,8 +661,8 @@ personas:
     chain: auto                 # E13.15 AUTO_CHAINS: exits.mandatory, quant.exit, risk.exit, quant.open, risk.open, quant.revise, quant.propose, broker.execute (D34/D56)
     reads: [candidate, regime, channel_brief, note, vol_term, macro_calendar, position_review, story,
             earnings_history, insider_activity, analyst_recs, fundamentals, scout_read, ex_dividend,
-            retail_sentiment, market_health]   # == RESEARCH_READS (arc/pipeline/steps.py); E4.8a facts render only with finnhub_context on; E13.8 scout_read in the compact prompt; E13.17 ex_dividend feeds the exit-watch facts; E14.6 retail_sentiment renders only with retail_sentiment_context on; E16.4 market_health only with market_health_context on
-    writes: [shortlist, regime, note, portfolio_context, exit_watchlist, position_review]   # E5.9: portfolio_context + portfolio_view/thesis_check notes; E13.17: exit_watchlist + the reviews Research saw
+            retail_sentiment, market_health, levels, pullback_watch]   # == RESEARCH_READS (arc/pipeline/steps.py); E4.8a facts render only with finnhub_context on; E13.8 scout_read in the compact prompt; E13.17 ex_dividend feeds the exit-watch facts; E14.6 retail_sentiment renders only with retail_sentiment_context on; E16.4 market_health only with market_health_context on; E23.0 levels merged into regime technicals; E23.2 pullback_watch
+    writes: [shortlist, regime, note, portfolio_context, exit_watchlist, position_review, pullback_watch, candidate]   # E5.9: portfolio_context + portfolio_view/thesis_check notes; E13.17: exit_watchlist + the reviews Research saw; E23.2: pullback_watch + the candidate a re-surfaced watch name needs
     ttl: 5m                     # never a backlog: a slot missed by 5 min is skipped
     notify: card
   monitor:                      # intraday: positions, net Greeks, expiries, daily-loss halt (read-only)
@@ -680,10 +683,9 @@ personas:
     eod_marks_from: "15:50"     # D35: marks from here count as end of day (stops EOD-only, D23)
     benchmarks: [SPY, QQQ]      # D87: marked each run for the Tower's equity benchmark lines ([] = off)
   positions.evaluate:           # E6.4 (D19): review open positions -> mandatory exits (D56)
-    label: Position marks         # D56 (E13.2), persona quant
-    about: "Marks open positions (deterministic); mandatory exits (stop, DTE exit, expiry)"
+    label: Position marks         # D56 (E13.2); no persona: deterministic, Quant's LLM work runs in the Trade Loop
+    about: "Marks open positions and closes any at a mandatory exit (stop, DTE exit, expiry). No LLM; discretionary exits run in the Trade Loop"
     group: position_management
-    persona: quant
     every: 30m
     window: "09:50-15:50"       # D52: :20/:50 on the 10-min tick grid; never at the open's first quotes
     days: trading

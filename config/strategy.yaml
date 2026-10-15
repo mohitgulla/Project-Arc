@@ -57,6 +57,74 @@ anti_chase:
   vwap: "off"                   # off | on: also drop when (spot - session VWAP) / ATR14 >= max_vwap_stretch_atr (5-min bars, shared Alpaca data budget)
   max_vwap_stretch_atr: 0.75
 
+# E23.0 (D98): support/resistance levels on `regime` technicals, built pre-market by the
+# `levels` job (config/routines.yaml) and appended to Research's `tech` segment. Shipped
+# on (D86); `enabled: off` is each part's rollback (nothing computed, prompt unchanged).
+# Context only, never a gate input.
+volume_profile:                 # 20-session composite profile from SIP intraday bars
+  enabled: on                   # key volume_profile.enabled
+  sessions: 20                  # completed sessions before today
+  bar: 15Min                    # 5Min | 15Min | 1Hour (regular hours only)
+  value_area: 0.70              # share of volume around the POC
+  bin_atr: 0.1                  # bin width = max($0.01, ATR14 x this)
+  hvn_min_share: 0.03           # a high-volume node holds >= this share (3-bin smoothed)
+oi_walls:                       # max call OI above / put OI below spot, swing-sleeve expiries
+  enabled: on                   # key oi_walls.enabled
+  min_oi: 500                   # a strike below this summed OI is never a wall
+
+# E23.1 (D98): range-edge entry filter. In a sideways regime a bullish/bearish
+# long-premium idea is kept only from the right edge of its range (bullish near the
+# bottom, bearish near the top); a mid-range (or wrong-edge) idea is dropped
+# (`mid_range_entry`). Neutral ideas, credit-capable profiles, trending regimes and
+# missing technicals are kept. Shipped on (D86); `enabled: off` = rollback (byte-identical).
+range_edges:
+  enabled: on                   # key personas.range_edges
+  regimes: [sideways]           # regime.current labels the rule applies to
+  levels: value_area            # value_area: vp_pos (VAL..VAH, outside = that edge) | high_low: range_pos_20d
+  bull_max_pos: 0.35            # bullish idea kept only when pos <= this
+  bear_min_pos: 0.65            # bearish idea kept only when pos >= this
+  min_range_atr: 1.5            # range width / ATR14 below this = no usable range: rule skipped (idea kept)
+
+# E23.2 (D98): pullback watch. A `stretched_entry` drop is kept on watch for
+# `ttl_sessions` sessions after the drop and re-surfaced to Research (one code-built
+# `Pullback watch (ready)` line; anti-chase + range edges still apply) once the stretch
+# resets: target `value` = spot within `rearm_level_atr` ATR of the nearest volume-profile
+# support (bullish: POC/VAH/HVN below; bears mirror; no levels -> sma20, `vp_missing`),
+# `sma20` = stance-signed (spot - SMA20)/ATR14 <= `rearm_stretch_atr`. With anti_chase.vwap
+# on, the VWAP stretch must also be <= `rearm_vwap_atr`. A regime flip or a drop through
+# SMA20 by `invalidate_below_sma20_atr` ends the watch. Shipped on (D86); `enabled: off` =
+# rollback (no writes, prompt byte-identical).
+pullback_watch:
+  enabled: on                   # key personas.pullback_watch
+  target: value                 # value: nearest volume-profile level | sma20: SMA20 stretch
+  ttl_sessions: 3               # trading sessions after the drop session a dropped idea is watched
+  rearm_stretch_atr: 1.0        # target sma20: ready when stance-signed (spot - SMA20)/ATR14 <= this
+  rearm_level_atr: 0.5          # target value: ready when within this many ATR of the level (or past it)
+  rearm_vwap_atr: 0.25          # with anti_chase.vwap on: also need stance-signed VWAP stretch <= this
+  invalidate_below_sma20_atr: -1.0   # bullish: (spot - SMA20)/ATR14 below this = thesis broken (bears mirror)
+  max_ready_in_prompt: 5        # ready lines shown to Research (highest confidence first)
+
+# E23.3 (D98): strike vs level context. Each Quant menu item (`levels`) and the trade card
+# (`Levels` fact, Tower trade detail) say whether the breakeven and the short strike sit
+# before, at or beyond the first volume-profile / OI-wall level (E23.0) between spot and
+# them in the trade's direction (credit verticals / condors: both sides). Context only:
+# no filter, no ranking change, never a gate input. Shipped on (D86); `enabled: off` =
+# rollback (menu, card and stored analytics byte-identical).
+strike_levels:
+  enabled: on                   # key strike_levels.enabled
+
+# E5.16 (D116, owner 2026-10-14): stale-pick cooldown. A ticker|stance Research ranked in
+# `after_loops` consecutive full loops (no_change skips ignored) without a tradeable
+# structure (a proposal sized >= 1 contract that passed the gate) leaves the idea pool for
+# the next `suppress_loops` research runs (any status, ~100 min at the 10-min cadence), then
+# comes back with its streak reset. Computed from the journal; listed to Research and on the
+# shortlist card's "Suppressed" section. Shipped on (D86); `after_loops: 0` = rollback
+# (prompt byte-identical).
+research:
+  stale_pick:
+    after_loops: 4              # key stale_pick_after_loops (0 = off)
+    suppress_loops: 10          # key stale_pick_suppress_loops
+
 # E16.4 (D76/D83): one code-rendered `Market health (…)` line in Research's market block.
 # The market_health job writes its daily read whatever this says. The thresholds only
 # label that line (never a gate or pipeline input). Percentiles are 1-year (252 prior

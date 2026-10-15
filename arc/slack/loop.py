@@ -7,6 +7,9 @@ Pure rendering. One of three states, then the same facts every time:
     :hourglass_flowing_sand: … • PENDING: SPY
     :heavy_multiplication_x: … • HOLD
 
+D109: no ``Sleeves:`` fact (D100's ``• Sleeves: Short 3/5 · Swing 0/5`` is no longer
+rendered; ``sleeves`` / ``allocated`` stay on the model so stored roots still load).
+
 D65: the line is followed by a bold-italic *headline* (``_*…*_``): ONE sentence
 of at most two lines on a laptop (``HEADLINE_MAX`` chars), ``<main point>; <why>.``
 It is built from what the chain journaled (:func:`arc.routines.headline.loop_headline`),
@@ -38,6 +41,20 @@ _EMOJI = {
 }
 
 
+class SleeveAllocation(BaseModel):
+    """D100: one sleeve's open positions against its slot cap (``Short 2/5``)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    name: str
+    held: int = Field(..., ge=0)
+    cap: int | None = None  # None = uncapped sleeve
+
+    def text(self) -> str:
+        cap = "" if self.cap is None else f"/{self.cap}"
+        return f"{self.name.capitalize()} {self.held}{cap}"
+
+
 class LoopRoot(BaseModel):
     """Everything the root line shows (stored per chain, re-rendered on updates)."""
 
@@ -56,6 +73,11 @@ class LoopRoot(BaseModel):
     timeout: bool = False
     skipped: str | None = None  # the slot never ran (why)
     headline: list[str] = Field(default_factory=list)  # D65: one plain-text sentence
+    # E22.2 (D97): opens shown (BUY / PENDING / WIP) per DTE sleeve, sleeved profiles only.
+    # Kept for stored roots; D100 renders ``allocated`` instead.
+    sleeves: dict[str, int] = Field(default_factory=dict)
+    # D100: every open position per DTE sleeve (held/cap), shown whenever ``sleeves`` is set
+    allocated: list[SleeveAllocation] = Field(default_factory=list)
 
     @property
     def outcome(self) -> LoopOutcome:
@@ -121,6 +143,7 @@ def loop_status_line(root: LoopRoot) -> str:
 
 
 HEADLINE_MAX = 150  # the whole headline: two lines of a Slack message on a laptop
+RECAP_MAX = 2 * HEADLINE_MAX  # D109: Day Recap and experiment readout headlines
 
 
 def _flag_headline(root: LoopRoot) -> list[str]:
@@ -134,21 +157,26 @@ def _flag_headline(root: LoopRoot) -> list[str]:
     return []
 
 
-def bold_italic(text: str) -> str:
-    """``_*text*_``: Slack bold + italic, with the marker characters made safe."""
+def bold_italic(text: str, limit: int = HEADLINE_MAX) -> str:
+    """``_*text*_``: Slack bold + italic, with the marker characters made safe.
+
+    Clipped with ``…`` at *limit* characters (D109: :data:`RECAP_MAX` for the Day Recap).
+    """
     clean = " ".join(text.split())
     clean = clean.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     clean = clean.replace("*", "∗").replace("_", " ").replace("~", "-").replace("`", "'")
-    if len(clean) > HEADLINE_MAX:
-        clean = clean[: HEADLINE_MAX - 1].rstrip(" ,;·") + "…"
+    if len(clean) > limit:
+        clean = clean[: limit - 1].rstrip(" ,;·") + "…"
     return f"_*{clean}*_"
 
 
 __all__ = [
     "HEADLINE_MAX",
+    "RECAP_MAX",
     "LoopOutcome",
     "bold_italic",
     "LoopRoot",
+    "SleeveAllocation",
     "loop_status_line",
     "slot_stamp",
 ]

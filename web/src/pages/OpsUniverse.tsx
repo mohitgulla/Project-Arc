@@ -36,6 +36,7 @@ import {
   pillFacts,
   pillScore,
   resolveLabel,
+  resolveTone,
   refreshLine,
   rowDetail,
   sortTiers,
@@ -168,15 +169,16 @@ function TierSection({
   );
 }
 
-function Summary({ u, now }: { u: Universe; now: number }) {
-  const tone = u.state === "today" ? "pos" : "warn";
+/** Pinned summary (exported for the E14.11 tone test). */
+export function UniverseSummary({ u, now }: { u: Universe; now: number }) {
+  const tone = resolveTone(u.state);
   return (
     <div className="arc-card grid min-w-0 gap-1" data-testid="uni-summary" data-state={u.state}>
       <p className="font-semibold tabular-nums text-primary [overflow-wrap:anywhere]" data-testid="uni-summary-line">
         {summaryLine(u)}
       </p>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-caption text-secondary">
-        <Pill tone={tone} testId="uni-state">
+        <Pill tone={tone.pill} testId="uni-state">
           {resolveLabel(u)}
         </Pill>
         {u.resolved_at && (
@@ -187,7 +189,7 @@ function Summary({ u, now }: { u: Universe; now: number }) {
         {u.config_version != null && <span className="tabular-nums">config v{u.config_version}</span>}
       </div>
       {u.note && (
-        <p className="text-caption text-warn [text-wrap:pretty]" data-testid="uni-note">
+        <p className={`text-caption ${tone.note} [text-wrap:pretty]`} data-testid="uni-note" data-tone={tone.pill}>
           {u.note}
         </p>
       )}
@@ -306,7 +308,7 @@ export function OpsUniversePage() {
         <Loading error={q.error} what="universe" />
       ) : (
         <>
-          <Summary u={u} now={now} />
+          <UniverseSummary u={u} now={now} />
           {u.core_override_ignored && (
             <p className="arc-card text-caption text-warn [text-wrap:pretty]" data-testid="uni-override-ignored">
               {u.core_override_ignored.note}

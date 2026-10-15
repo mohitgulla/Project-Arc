@@ -27,9 +27,11 @@ from arc.betas.store import betas_used
 from arc.context.ttl import from_db
 from arc.data.base import DEFAULT_SPOT_MAX_SPREAD_PCT, market_spot
 from arc.gate.band import as_grid
+from arc.gate.delta import delta_exposure, kind_of
 from arc.gate.inputs import AccountSnapshot, ClosedLot, MarketSnapshot, Portfolio, Position, Quote
 from arc.models import Greeks, Leg, LegIntent
 from arc.scanner.iv import atm_iv
+from arc.store.execution import reserved_open_max_loss
 from arc.structures import MarketInputs, analyze, max_gain_loss, net_greeks, parse_occ
 from arc.utils.calendar import ET, dte_calendar
 
@@ -260,6 +262,70 @@ def _group_legs(
     return groups
 
 
+def _entry_dtes(conn: sqlite3.Connection | None) -> dict[str, int]:
+    """E22.1 (D97): ``open_structures.id -> entry DTE`` of every open structure.
+
+    Derived (no column): the stored structure's ``dte`` as priced at the open, else
+    expiry minus the ``opened_at`` ET date (:func:`arc.account_profiles.entry_dte_of`).
+    A row whose structure cannot be read is left out (its legs count as unknown).
+    """
+    from arc.account_profiles import entry_dte_of
+    from arc.models import Structure as _Structure
+
+    if conn is None:
+        return {}
+    out: dict[str, int] = {}
+    rows = conn.execute(
+        "SELECT id, structure_json, opened_at FROM open_structures WHERE status = 'open'"
+    ).fetchall()
+    for sid, sj, opened_at in rows:
+        try:
+            out[str(sid)] = entry_dte_of(_Structure.model_validate_json(sj), opened_at)
+        except ValueError:
+            log.warning("portfolio.entry_dte_unreadable", structure_id=str(sid))
+    return out
+
+
+def open_entry_dtes(
+    conn: sqlite3.Connection, positions: Sequence[BrokerPosition]
+) -> list[int | None]:
+    """E22.2 (D97): the entry DTE of every open position group, as the gate sees them.
+
+    The same grouping and entry-DTE derivation :func:`build_portfolio` uses for
+    ``Position.entry_dte`` (one row per attributed structure, leftover legs per
+    root/expiry with ``None``), without the spot valuation, so ``quant.open`` can count
+    each sleeve's free slots before it scans. Raises :class:`PortfolioError` on
+    unreadable broker legs.
+    """
+    entry_dtes = _entry_dtes(conn)
+    return [entry_dtes.get(label) for _, label, _ in _group_legs(conn, positions)]
+
+
+def deployed_book_max_loss(
+    conn: sqlite3.Connection, positions: Sequence[BrokerPosition], *, now: _dt.datetime
+) -> Decimal:
+    """D116: the book's deployed max loss without valuing it (no spot, no quotes).
+
+    Σ max loss of the same position groups :func:`build_portfolio` builds, plus
+    :func:`reserved_open_max_loss`; equal to
+    ``arc.gate.caps.deployed_max_loss(build_portfolio(...))``. For prompt lines and the
+    free-slots line, which run before (or without) a valued book. Raises
+    :class:`PortfolioError` on a group that cannot be valued or has unbounded risk.
+    """
+    total = Decimal(0)
+    for root, label, legs in _group_legs(conn, positions):
+        try:
+            _, max_loss = max_gain_loss(legs)
+        except Exception as exc:
+            msg = f"cannot value open {root} position ({label}): {exc}"
+            raise PortfolioError(msg) from exc
+        if max_loss is None:
+            msg = f"open {root} position ({label}) has unbounded risk"
+            raise PortfolioError(msg)
+        total += max_loss
+    return total + reserved_open_max_loss(conn, now=now)
+
+
 def build_portfolio(
     conn: sqlite3.Connection,
     positions: Sequence[BrokerPosition],
@@ -270,15 +336,24 @@ def build_portfolio(
     r: float,
     spot_max_spread_pct: float = DEFAULT_SPOT_MAX_SPREAD_PCT,
     delta_breakdown: dict[str, dict[str, float | str]] | None = None,
+    exclude_reserved: str | None = None,
 ) -> Portfolio:
     """Open option positions (max loss per underlying + net Greeks) plus recent closed lots.
 
-    D57: ``dollar_delta`` sums each root's net Δ (share-eq) × that root's spot (the same
-    spot its Greeks were priced at). D62: ``beta_dollar_delta`` sums the same terms ×
-    the root's β used (:func:`arc.betas.store.betas_used`: stored 1y β vs SPY floored at
-    1.0; missing or stale -> 1.0). *delta_breakdown* (when given) is filled per root with
-    ``{dollar_delta, beta, beta_dollar_delta, beta_source, gamma, spot}`` for the monitor
-    heartbeat (D87: Γ share-eq and the spot it was priced at, for the Tower's $Γ).
+    D116: ``reserved_max_loss`` is :func:`reserved_open_max_loss` (in-flight opens,
+    minus *exclude_reserved*, the proposal being re-gated).
+
+    D57: ``dollar_delta`` sums each structure's net Δ (share-eq) × its root's spot (the
+    same spot its Greeks were priced at), except that a ``vertical_debit`` /
+    ``long_call`` / ``long_put`` counts sign(Δ) × its max loss (D116, E3.8;
+    :func:`arc.gate.delta.delta_exposure`). D62: ``beta_dollar_delta`` sums the same
+    terms × the root's β used (:func:`arc.betas.store.betas_used`: stored 1y β vs SPY
+    floored at 1.0; missing or stale -> 1.0). ``dollar_delta_raw`` /
+    ``beta_dollar_delta_raw`` keep the plain Δ × spot sums, for display only.
+    *delta_breakdown* (when given) is filled per root with ``{dollar_delta, beta,
+    beta_dollar_delta, beta_source, gamma, spot, dollar_delta_raw,
+    beta_dollar_delta_raw}`` for the monitor heartbeat (D87: Γ share-eq and the spot it
+    was priced at, for the Tower's $Γ).
 
     Raises :class:`PortfolioError` when any open position cannot be valued
     (e.g. undefined risk, missing quotes): no new trade is proposed then.
@@ -288,7 +363,10 @@ def build_portfolio(
     greeks = Greeks()
     dollar_delta = Decimal(0)
     beta_dollar_delta = Decimal(0)
+    dollar_delta_raw = Decimal(0)
+    beta_dollar_delta_raw = Decimal(0)
     groups = _group_legs(conn, positions)
+    entry_dtes = _entry_dtes(conn)
     betas = betas_used(conn, sorted({root for root, _, _ in groups}), today)
     for root, label, legs in groups:
         try:
@@ -299,7 +377,11 @@ def build_portfolio(
         if max_loss is None:
             msg = f"open {root} position ({label}) has unbounded risk"
             raise PortfolioError(msg)
-        open_positions.append(Position(underlying=root, max_loss=max_loss))
+        open_positions.append(
+            # E22.1: legs no open structure accounts for have no entry DTE (None: the
+            # gate's sleeve_max_positions counts them toward every sleeve).
+            Position(underlying=root, max_loss=max_loss, entry_dte=entry_dtes.get(label))
+        )
         exps = sorted({parse_occ(leg.occ_symbol).expiration for leg in legs})
         try:
             found = market_spot(market, root, today, max_spread_pct=spot_max_spread_pct)
@@ -314,6 +396,7 @@ def build_portfolio(
             by_exp: dict[_dt.date, list[Leg]] = defaultdict(list)
             for leg in legs:
                 by_exp[parse_occ(leg.occ_symbol).expiration].append(leg)
+            group_delta = group_gamma = 0.0
             for exp, exp_legs in by_exp.items():
                 ivs = {leg.occ_symbol: chain[leg.occ_symbol].implied_volatility for leg in exp_legs}
                 if any(not v for v in ivs.values()):
@@ -330,31 +413,42 @@ def build_portfolio(
                     vega=greeks.vega + g.vega,
                     theta=greeks.theta + g.theta,
                 )
-                leg_dollar_delta = Decimal(str(g.delta)) * Decimal(str(spot))
-                b = betas[root.upper()]
-                leg_beta_delta = leg_dollar_delta * Decimal(str(b.beta))
-                dollar_delta += leg_dollar_delta
-                beta_dollar_delta += leg_beta_delta
-                if delta_breakdown is not None:
-                    row = delta_breakdown.setdefault(
-                        root,
-                        {
-                            "dollar_delta": 0.0,
-                            "beta": b.beta,
-                            "beta_dollar_delta": 0.0,
-                            "beta_source": b.source,
-                            "gamma": 0.0,
-                            "spot": round(float(spot), 4),
-                        },
-                    )
-                    # D87: the Tower's gamma advisory needs Γ per root at its own spot
-                    row["gamma"] = float(row["gamma"]) + float(g.gamma)
-                    row["dollar_delta"] = round(
-                        float(row["dollar_delta"]) + float(leg_dollar_delta), 2
-                    )
-                    row["beta_dollar_delta"] = round(
-                        float(row["beta_dollar_delta"]) + float(leg_beta_delta), 2
-                    )
+                group_delta += g.delta
+                group_gamma += g.gamma
+            # D116 (E3.8): a debit vertical / long option counts sign(Δ) × max loss
+            b = betas[root.upper()]
+            beta_used = Decimal(str(b.beta))
+            spot_d = Decimal(str(spot))
+            raw = Decimal(str(group_delta)) * spot_d
+            term = delta_exposure(kind_of(legs), group_delta, spot_d, max_loss)
+            assert term is not None  # spot is known
+            dollar_delta += term
+            beta_dollar_delta += term * beta_used
+            dollar_delta_raw += raw
+            beta_dollar_delta_raw += raw * beta_used
+            if delta_breakdown is not None:
+                row = delta_breakdown.setdefault(
+                    root,
+                    {
+                        "dollar_delta": 0.0,
+                        "beta": b.beta,
+                        "beta_dollar_delta": 0.0,
+                        "beta_source": b.source,
+                        "gamma": 0.0,
+                        "spot": round(float(spot), 4),
+                        "dollar_delta_raw": 0.0,
+                        "beta_dollar_delta_raw": 0.0,
+                    },
+                )
+                # D87: the Tower's gamma advisory needs Γ per root at its own spot
+                row["gamma"] = float(row["gamma"]) + float(group_gamma)
+                for key, add in (
+                    ("dollar_delta", term),
+                    ("beta_dollar_delta", term * beta_used),
+                    ("dollar_delta_raw", raw),
+                    ("beta_dollar_delta_raw", raw * beta_used),
+                ):
+                    row[key] = round(float(row[key]) + float(add), 2)
         except PortfolioError:
             raise
         except Exception as exc:
@@ -377,6 +471,9 @@ def build_portfolio(
         greeks=greeks,
         dollar_delta=dollar_delta,
         beta_dollar_delta=beta_dollar_delta,
+        dollar_delta_raw=dollar_delta_raw,
+        beta_dollar_delta_raw=beta_dollar_delta_raw,
+        reserved_max_loss=reserved_open_max_loss(conn, now=now, exclude=exclude_reserved),
         closed_lots=lots,
         legs=dict(held),
         opened_today=frozenset(opened_today_symbols(conn, today)),

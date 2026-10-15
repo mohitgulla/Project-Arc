@@ -52,7 +52,7 @@ export const SLOT_LABEL: Record<SlotStatus, string> = {
   skipped: "Skipped",
   no_change: "No change",
   missed: "Missed",
-  future: "Scheduled",
+  future: "Upcoming",
 };
 
 /** Position of *at* on the [start, end] axis as a 0..100 percentage (clamped). */
@@ -64,14 +64,132 @@ export function timelinePct(at: string, start: string, end: string): number {
   return Math.max(0, Math.min(100, ((a - s) / (e - s)) * 100));
 }
 
-/** Hour ticks (ET wall clock) on the timeline: every *step* hours from start to end. */
-export function hourTicks(start: string, end: string, step = 2): Array<{ label: string; pct: number }> {
+// -- D93: the interactive Session Timeline (fixed scale, Rolling / Day) ------------------
+
+/** Timeline window: `rolling` (default, the last 8 h and the next 4 h) or `day` (00:00–24:00 ET). */
+export type TimelineWindow = "rolling" | "day";
+
+export const TIMELINE_WINDOWS: ReadonlyArray<{ value: TimelineWindow; label: string }> = [
+  { value: "rolling", label: "Rolling" },
+  { value: "day", label: "Day" },
+];
+
+/** The routines tick runs every 10 min: one faint tick mark per tick. */
+export const TICK_MINUTES = 10;
+
+/** Fixed scale: px per hour on the track (phone a little wider, so 10-min marks stay tappable). */
+export function pxPerHour(layout: "mobile" | "tablet" | "desktop"): number {
+  return layout === "mobile" ? 120 : 96;
+}
+
+/**
+ * `?tl=` / `?day=` -> the window. An explicit `tl` wins; otherwise a picked day (anything but
+ * today) means the Day view, and the default is Rolling.
+ */
+export function windowParam(tl: string | null, day: string | null): TimelineWindow {
+  if (tl === "day" || tl === "rolling") return tl;
+  return dayParam(day) === "today" ? "rolling" : "day";
+}
+
+/** The `/api/ops/session` query for a window (Rolling ignores the day). */
+export function sessionQuery(w: TimelineWindow, day: string): Record<string, string> {
+  return w === "rolling" ? { window: "rolling" } : { window: "day", day };
+}
+
+/** Width in px of the [start, end) track at *pph* px per hour. */
+export function trackWidth(start: string, end: string, pph: number): number {
+  const ms = Date.parse(end) - Date.parse(start);
+  return ms > 0 ? (ms / 3_600_000) * pph : 0;
+}
+
+/**
+ * X position (px) of *at* on the track, or null when it falls outside [start, end] (the now-line
+ * is only drawn inside the window). *at* is an ISO string or epoch ms.
+ */
+export function timelineX(at: string | number, start: string, end: string, pph: number): number | null {
+  const a = typeof at === "number" ? at : Date.parse(at);
   const s = Date.parse(start);
   const e = Date.parse(end);
-  const out: Array<{ label: string; pct: number }> = [];
-  const startHour = Number(start.slice(11, 13));
-  for (let t = s, h = startHour; t <= e; t += step * 3_600_000, h += step) {
-    out.push({ label: `${String(h % 24).padStart(2, "0")}:00`, pct: ((t - s) / (e - s)) * 100 });
+  if (Number.isNaN(a) || !(e > s) || a < s || a > e) return null;
+  return ((a - s) / 3_600_000) * pph;
+}
+
+const ET_HM = new Intl.DateTimeFormat("en-GB", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: false });
+
+/** `HH:MM` on the ET wall clock (`24:00` never appears: midnight is `00:00`). */
+export function etHM(at: string | number): string {
+  return ET_HM.format(new Date(typeof at === "number" ? at : Date.parse(at))).replace(/^24:/, "00:");
+}
+
+export interface AxisTick {
+  x: number;
+  /** A full hour (`label` set) vs a 10-min routines tick. */
+  hour: boolean;
+  label?: string;
+}
+
+/**
+ * Tick marks every TICK_MINUTES on [start, end] (both ends included), aligned to the clock;
+ * hour ticks carry their ET `HH:00` label. Positions in px at *pph*.
+ */
+export function axisTicks(start: string, end: string, pph: number, every = TICK_MINUTES): AxisTick[] {
+  const s = Date.parse(start);
+  const e = Date.parse(end);
+  if (!(e > s)) return [];
+  const step = every * 60_000;
+  const out: AxisTick[] = [];
+  for (let t = Math.ceil(s / step) * step; t <= e; t += step) {
+    const hour = t % 3_600_000 === 0;
+    out.push({ x: ((t - s) / 3_600_000) * pph, hour, ...(hour ? { label: etHM(t) } : {}) });
+  }
+  return out;
+}
+
+/**
+ * Where the track opens: *now* about two thirds across the visible width (more past than
+ * future, like the Rolling window), clamped to the track. Outside the window: the first
+ * mark (a past day), else the start.
+ */
+export function initialScroll(nowX: number | null, firstMarkX: number | null, visible: number, total: number): number {
+  const max = Math.max(0, total - visible);
+  const target = nowX != null ? nowX - (visible * 2) / 3 : firstMarkX != null ? firstMarkX - 24 : 0;
+  return Math.round(Math.max(0, Math.min(max, target)));
+}
+
+/** Header text: `05:00 → 18:00 ET` (rolling) or `2026-10-09 · 00:00–24:00 ET` (day). */
+export function windowCaption(s: Pick<Session, "window" | "day" | "start" | "end">): string {
+  if (s.window === "day") return `${s.day} · 00:00–24:00 ET`;
+  return `${etHM(s.start)} → ${etHM(s.end)} ET`;
+}
+
+export type TimelineItem =
+  | { kind: "group"; key: string; label: string; rollup: string; open: boolean; problem: boolean }
+  | { kind: "band"; key: string; label: string }
+  | { kind: "job"; key: string; row: TimelineRow; loop: boolean };
+
+/**
+ * Flatten the bands into the timeline's row list: one collapsible label row per Timeline
+ * group (TIMELINE_GROUPS), the category sub-labels inside Sources, then the job rows. A
+ * collapsed group keeps only its label row. Both columns (pinned names, scrolling track)
+ * render this same list, so the rows line up.
+ */
+export function timelineItems(bands: BandView[], loopJob: string, closed: ReadonlySet<string>): TimelineItem[] {
+  const out: TimelineItem[] = [];
+  const groups: Array<{ key: string; label: string; views: BandView[] }> = [];
+  for (const v of bands) {
+    const last = groups.at(-1);
+    if (last && last.key === v.band.group) last.views.push(v);
+    else groups.push({ key: v.band.group, label: v.band.group_label, views: [v] });
+  }
+  for (const g of groups) {
+    const rows = g.views.flatMap((v) => v.rows);
+    const open = !closed.has(g.key);
+    out.push({ kind: "group", key: g.key, label: g.label, rollup: bandRollup(rows), open, problem: bandHasProblem(rows) });
+    if (!open) continue;
+    for (const v of g.views) {
+      if (v.sub) out.push({ kind: "band", key: v.band.key, label: v.band.label });
+      for (const row of v.rows) out.push({ kind: "job", key: `${v.band.key}:${row.job}`, row, loop: row.job === loopJob });
+    }
   }
   return out;
 }
@@ -347,6 +465,53 @@ export function timeLeft(iso: string | null | undefined, now: number): string {
   return `${formatSeconds(s)} left`;
 }
 
+// -- D89: Context Store by Timeline group ---------------------------------------------
+
+export type ContextKind = ContextStore["kinds"][number];
+
+export interface ContextGroupView {
+  key: string;
+  label: string;
+  active: number;
+  kinds: ContextKind[];
+  /** Newest entry written in the group (ISO), any kind. */
+  latestAt: string | null;
+}
+
+/** `raw_doc_ref` -> `Raw doc ref` (titleCase at render time). */
+export function kindLabel(kind: string): string {
+  const s = kind.replace(/_/g, " ");
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+/**
+ * Kinds joined to the API's groups (Timeline order), active kinds first inside a group, then
+ * by newest entry. A kind whose group the API did not list falls under a trailing "Other".
+ */
+export function contextGroups(c: Pick<ContextStore, "kinds" | "groups">): ContextGroupView[] {
+  const order = [...(c.groups ?? [])];
+  if (!order.some((g) => g.key === "other") && c.kinds.some((k) => !order.some((g) => g.key === (k.group ?? "other"))))
+    order.push({ key: "other", label: "Other", active: 0, kinds: 0 });
+  const known = new Set(order.map((g) => g.key));
+  return order
+    .map((g) => {
+      const kinds = c.kinds
+        .filter((k) => (known.has(k.group ?? "other") ? (k.group ?? "other") : "other") === g.key)
+        .sort((a, b) => Number(b.active > 0) - Number(a.active > 0) || Date.parse(b.latest_at ?? "") - Date.parse(a.latest_at ?? "") || 0);
+      const latest = kinds.map((k) => k.latest_at).filter((x): x is string => Boolean(x));
+      latest.sort((a, b) => Date.parse(b) - Date.parse(a));
+      return { key: g.key, label: g.label, active: kinds.reduce((n, k) => n + k.active, 0), kinds, latestAt: latest[0] ?? null };
+    })
+    .filter((g) => g.kinds.length > 0);
+}
+
+/** `RSS news, EDGAR +3`: the first *n* names, then a count. */
+export function shortList(names: readonly string[] | undefined, n = 2): string {
+  const xs = names ?? [];
+  if (!xs.length) return "—";
+  return xs.length > n ? `${xs.slice(0, n).join(", ")} +${xs.length - n}` : xs.join(", ");
+}
+
 // -- LLM -----------------------------------------------------------------------------
 
 /** StackedBars rows (cost by persona per day) and the series list. */
@@ -383,15 +548,15 @@ export function configGroups(keys: OpsConfig["keys"]): Array<{ group: string; ke
 
 // -- E8.8d: widget order -------------------------------------------------------------
 
-/** Owner's widget order on /ops (D48), the same on mobile and desktop. */
+/** Owner's widget order on /ops (D48, D89), the same on mobile and desktop. */
 export const OPS_WIDGETS = [
   "Session Timeline",
   "Sources",
-  "Health",
   "LLM Usage",
   "Context Store",
   "Auto-Approve",
   "Config",
+  "Health", // D89: moved from under Sources to under Config
   "Alerts",
   "Halts",
   "Runs",

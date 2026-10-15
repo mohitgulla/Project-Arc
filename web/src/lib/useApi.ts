@@ -5,6 +5,8 @@ import type { ExperimentDetail, ExperimentsList } from "./experiments";
 import type { ContextEntry, RunDetail } from "./ops";
 import type { Overview, OverviewRange } from "./overview";
 import type { Funnel, Performance } from "./performance";
+import { useArm } from "./armContext";
+import { withArm } from "./arm";
 import { useSettings } from "./settings";
 import {
   apiQuery,
@@ -30,58 +32,79 @@ function usePoll() {
 }
 
 export function useMeta() {
+  const arm = useArm();
   const poll = usePoll();
   return useQuery<Meta>({
-    queryKey: ["meta"],
+    queryKey: [arm, "meta"],
+    queryFn: ({ signal }) => apiGet("/api/meta", { query: withArm(undefined, arm), signal }),
+    ...poll,
+  });
+}
+
+/**
+ * E15.7: Production's `/api/meta` (no `?arm`), for the arm switcher's list. `arms` always
+ * come from control, and this still loads when the URL names an arm the API refuses (404).
+ * Shares the cache entry with `useMeta()` on Production.
+ */
+export function useControlMeta() {
+  const poll = usePoll();
+  return useQuery<Meta>({
+    queryKey: [null, "meta"],
     queryFn: ({ signal }) => apiGet("/api/meta", { signal }),
     ...poll,
   });
 }
 
 export function useSnapshot() {
+  const arm = useArm();
   const poll = usePoll();
   return useQuery<Snapshot>({
-    queryKey: ["snapshot"],
-    queryFn: ({ signal }) => apiGet("/api/snapshot", { signal }),
+    queryKey: [arm, "snapshot"],
+    queryFn: ({ signal }) => apiGet("/api/snapshot", { query: withArm(undefined, arm), signal }),
     ...poll,
   });
 }
 
 export function useOverview(range: OverviewRange) {
+  const arm = useArm();
   const poll = usePoll();
   return useQuery<Overview>({
-    queryKey: ["overview", range],
-    queryFn: ({ signal }) => apiGet("/api/overview", { query: { range }, signal }),
+    queryKey: [arm, "overview", range],
+    queryFn: ({ signal }) => apiGet("/api/overview", { query: withArm({ range }, arm), signal }),
     placeholderData: keepPreviousData,
     ...poll,
   });
 }
 
 export function useTrades(q: TradeQuery) {
+  const arm = useArm();
   const poll = usePoll();
   return useQuery<TradeList>({
-    queryKey: ["trades", apiQuery(q)],
-    queryFn: ({ signal }) => apiGet("/api/trades", { query: apiQuery(q), signal }),
+    queryKey: [arm, "trades", apiQuery(q)],
+    queryFn: ({ signal }) => apiGet("/api/trades", { query: withArm(apiQuery(q), arm), signal }),
     placeholderData: keepPreviousData,
     ...poll,
   });
 }
 
 export function useTradeFilters() {
+  const arm = useArm();
   return useQuery<TradeFilterOptions>({
-    queryKey: ["trade-filters"],
-    queryFn: ({ signal }) => apiGet("/api/trades/filters", { signal }),
+    queryKey: [arm, "trade-filters"],
+    queryFn: ({ signal }) => apiGet("/api/trades/filters", { query: withArm(undefined, arm), signal }),
     staleTime: 60_000,
   });
 }
 
 export function useTrade(hash: string | undefined) {
+  const arm = useArm();
   const poll = usePoll();
   return useQuery<TradeDetail>({
-    queryKey: ["trade", hash],
+    queryKey: [arm, "trade", hash],
     // The path template is typed; the hash is URL-safe hex.
     queryFn: ({ signal }) =>
       apiGet(`/api/trades/${hash}` as "/api/trades/{proposal_hash}", {
+        query: withArm(undefined, arm),
         signal,
       }),
     enabled: Boolean(hash),
@@ -90,9 +113,10 @@ export function useTrade(hash: string | undefined) {
 }
 
 export function useSearch(q: string) {
+  const arm = useArm();
   return useQuery<SearchResponse>({
-    queryKey: ["search", q],
-    queryFn: ({ signal }) => apiGet("/api/search", { query: { q }, signal }),
+    queryKey: [arm, "search", q],
+    queryFn: ({ signal }) => apiGet("/api/search", { query: withArm({ q }, arm), signal }),
     enabled: q.trim().length > 0,
     staleTime: 30_000,
     placeholderData: keepPreviousData,
@@ -100,10 +124,11 @@ export function useSearch(q: string) {
 }
 
 export function usePositions(status: "open" | "closed" | "all") {
+  const arm = useArm();
   const poll = usePoll();
   return useQuery<Positions>({
-    queryKey: ["positions", status],
-    queryFn: ({ signal }) => apiGet("/api/positions", { query: { status }, signal }),
+    queryKey: [arm, "positions", status],
+    queryFn: ({ signal }) => apiGet("/api/positions", { query: withArm({ status }, arm), signal }),
     placeholderData: keepPreviousData,
     ...poll,
   });
@@ -112,11 +137,12 @@ export function usePositions(status: "open" | "closed" | "all") {
 /** Performance (E8.7c): the server caches each response for 60 s per DB state. */
 /** E13.14 (D56): the idea funnel for ET days [from, to] (the Performance page's period). */
 export function useFunnel(period: { first: string; last: string } | undefined) {
+  const arm = useArm();
   const poll = usePoll();
   return useQuery<Funnel>({
-    queryKey: ["funnel", period?.first, period?.last],
+    queryKey: [arm, "funnel", period?.first, period?.last],
     queryFn: ({ signal }) =>
-      apiGet("/api/performance/funnel", { query: { from: period?.first, to: period?.last }, signal }),
+      apiGet("/api/performance/funnel", { query: withArm({ from: period?.first, to: period?.last }, arm), signal }),
     enabled: !!period,
     placeholderData: keepPreviousData,
     ...poll,
@@ -124,10 +150,11 @@ export function useFunnel(period: { first: string; last: string } | undefined) {
 }
 
 export function usePerformance(q: Record<string, string>) {
+  const arm = useArm();
   const poll = usePoll();
   return useQuery<Performance>({
-    queryKey: ["performance", q],
-    queryFn: ({ signal }) => apiGet("/api/performance", { query: q, signal }),
+    queryKey: [arm, "performance", q],
+    queryFn: ({ signal }) => apiGet("/api/performance", { query: withArm(q, arm), signal }),
     placeholderData: keepPreviousData,
     ...poll,
   });
@@ -150,20 +177,23 @@ type OpsPath = Extract<
 
 /** Ops & pipeline (E8.7d): one polled query per card. */
 export function useOps<P extends OpsPath>(path: P, query?: Record<string, string | number>) {
+  const arm = useArm();
   const poll = usePoll();
   return useQuery({
-    queryKey: ["ops", path, query ?? {}],
-    queryFn: ({ signal }) => apiGet(path, { query, signal }),
+    queryKey: [arm, "ops", path, query ?? {}],
+    queryFn: ({ signal }) => apiGet(path, { query: withArm(query, arm), signal }),
     placeholderData: keepPreviousData,
     ...poll,
   });
 }
 
 export function useRun(runId: string | undefined) {
+  const arm = useArm();
   const poll = usePoll();
   return useQuery<RunDetail>({
-    queryKey: ["ops-run", runId],
-    queryFn: ({ signal }) => apiGet(`/api/ops/runs/${runId}` as "/api/ops/runs/{run_id}", { signal }),
+    queryKey: [arm, "ops-run", runId],
+    queryFn: ({ signal }) =>
+      apiGet(`/api/ops/runs/${runId}` as "/api/ops/runs/{run_id}", { query: withArm(undefined, arm), signal }),
     enabled: Boolean(runId),
     ...poll,
   });
@@ -171,31 +201,34 @@ export function useRun(runId: string | undefined) {
 
 /** Experiments (E10.5): the latest stored evaluation per experiment. */
 export function useExperiments() {
+  const arm = useArm();
   const poll = usePoll();
   return useQuery<ExperimentsList>({
-    queryKey: ["experiments"],
-    queryFn: ({ signal }) => apiGet("/api/experiments", { signal }),
+    queryKey: [arm, "experiments"],
+    queryFn: ({ signal }) => apiGet("/api/experiments", { query: withArm(undefined, arm), signal }),
     placeholderData: keepPreviousData,
     ...poll,
   });
 }
 
 export function useExperiment(id: string | undefined) {
+  const arm = useArm();
   const poll = usePoll();
   return useQuery<ExperimentDetail>({
-    queryKey: ["experiment", id],
+    queryKey: [arm, "experiment", id],
     queryFn: ({ signal }) =>
-      apiGet(`/api/experiments/${id}` as "/api/experiments/{experiment_id}", { signal }),
+      apiGet(`/api/experiments/${id}` as "/api/experiments/{experiment_id}", { query: withArm(undefined, arm), signal }),
     enabled: Boolean(id),
     ...poll,
   });
 }
 
 export function useContextEntry(id: string | undefined) {
+  const arm = useArm();
   return useQuery<ContextEntry>({
-    queryKey: ["ops-context", id],
+    queryKey: [arm, "ops-context", id],
     queryFn: ({ signal }) =>
-      apiGet(`/api/ops/context/${id}` as "/api/ops/context/{entry_id}", { signal }),
+      apiGet(`/api/ops/context/${id}` as "/api/ops/context/{entry_id}", { query: withArm(undefined, arm), signal }),
     enabled: Boolean(id),
     staleTime: 60_000,
   });

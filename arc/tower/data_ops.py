@@ -49,13 +49,13 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from arc.config import ArcSettings
-    from arc.routines.config import JobSpec, RoutinesConfig
+    from arc.routines.config import JobSpec, RoutinesConfig, StepSpec
 
 __all__ = [
     "ALERT_LOOKBACK",
     "RUN_STATUSES",
-    "TIMELINE_END",
-    "TIMELINE_START",
+    "ROLLING_AHEAD",
+    "ROLLING_BACK",
     "AlertsResponse",
     "BudgetResponse",
     "ConfigResponse",
@@ -84,9 +84,12 @@ __all__ = [
 
 _STRICT = ConfigDict(extra="forbid", frozen=True)
 
-#: The session timeline's visible span (ET), per the card.
-TIMELINE_START = _dt.time(2, 0)  # E8.8d: the pre-market jobs (YouTube briefs 02:00) show
-TIMELINE_END = _dt.time(22, 0)
+#: D93: the Session Timeline's two windows. ``day`` is the full ET day (00:00-24:00, so the
+#: 23:00 jobs show); ``rolling`` (the Tower's default) is the last 8 h and the next 4 h around
+#: the current ET hour, so it can span midnight.
+ROLLING_BACK = _dt.timedelta(hours=8)
+ROLLING_AHEAD = _dt.timedelta(hours=4)
+TimelineWindow = Literal["day", "rolling"]
 ALERT_LOOKBACK = _dt.timedelta(days=7)
 EXPIRED_LOOKBACK = _dt.timedelta(hours=24)
 #: A source is late once it has not fetched within this many cadences.
@@ -229,9 +232,12 @@ class SessionResponse(BaseModel):
     model_config = _STRICT
 
     as_of: _dt.datetime
-    day: _dt.date
-    start: _dt.datetime
-    end: _dt.datetime
+    day: _dt.date = Field(description="The ET day (rolling: the day of `as_of`)")
+    window: TimelineWindow = Field(
+        default="day", description="D93: `day` (00:00-24:00 ET) or `rolling` (-8 h .. +4 h)"
+    )
+    start: _dt.datetime = Field(description="Window start (inclusive, ET)")
+    end: _dt.datetime = Field(description="Window end (exclusive, ET)")
     loop_job: str = Field(description="The D31 trading loop's job (second row)")
     loop: TimelineRow | None
     rows: list[TimelineRow]
@@ -256,14 +262,35 @@ def _slot_status(run: RunRow | None, at: _dt.datetime, now: _dt.datetime) -> Slo
     return "skipped"
 
 
+def session_window(
+    window: TimelineWindow, *, now: _dt.datetime, day: _dt.date
+) -> tuple[_dt.date, _dt.datetime, _dt.datetime]:
+    """D93: ``(day, start, end)`` of a Session Timeline window; ``end`` is exclusive.
+
+    ``rolling`` ignores *day*: it runs from 8 h before the top of the current ET hour to
+    4 h after the end of that hour (so ``now`` is 8-9 h in and at least 4 h stay ahead);
+    it may span midnight, so its runs come from two ET days.
+    """
+    if window == "rolling":
+        local = now.astimezone(ET)
+        hour = local.replace(minute=0, second=0, microsecond=0)
+        return local.date(), hour - ROLLING_BACK, hour + _dt.timedelta(hours=1) + ROLLING_AHEAD
+    start, end = _day_bounds(day)
+    return day, start, end
+
+
 def load_session(
-    conn: sqlite3.Connection, routines: RoutinesConfig, *, now: _dt.datetime, day: _dt.date
+    conn: sqlite3.Connection,
+    routines: RoutinesConfig,
+    *,
+    now: _dt.datetime,
+    day: _dt.date,
+    window: TimelineWindow = "day",
 ) -> SessionResponse:
     from arc.routines.schedule import slots_between
 
-    start = _dt.datetime.combine(day, TIMELINE_START, tzinfo=ET)
-    end = _dt.datetime.combine(day, TIMELINE_END, tzinfo=ET)
-    lo, hi = _day_bounds(day)
+    day, start, end = session_window(window, now=now, day=day)
+    lo, hi = start, end
     rows = conn.execute(
         "SELECT * FROM routine_runs WHERE scheduled_for >= ? AND scheduled_for < ?"
         " ORDER BY scheduled_for, step_index, rowid",
@@ -288,7 +315,8 @@ def load_session(
     used: set[tuple[str, str]] = set()
     for name, (kind, spec) in routines.jobs().items():
         slots: list[Slot] = []
-        for at in slots_between(spec, start - _dt.timedelta(microseconds=1), end):
+        tiny = _dt.timedelta(microseconds=1)
+        for at in slots_between(spec, start - tiny, end - tiny):  # [start, end)
             key = (name, to_db(at))
             run = roots.get(key)
             if run is not None:
@@ -324,6 +352,7 @@ def load_session(
     return SessionResponse(
         as_of=now,
         day=day,
+        window=window,
         start=start,
         end=end,
         loop_job=loop_job,
@@ -453,6 +482,8 @@ class HealthItem(BaseModel):
     value: str
     threshold: str = Field(description="What the status is judged against")
     chip: str = Field(default="", description="E8.8d: compact chip text, e.g. `Tick ok 3m`")
+    name: str = Field(default="", description="D89: short tile name, e.g. `Tick`")
+    detail: str = Field(default="", description="D89: tile value line, e.g. `OK · 3m`")
 
 
 class HealthStripResponse(BaseModel):
@@ -623,19 +654,27 @@ _CHIP_LABEL = {
 }
 
 
+#: D89: tile status words (Title Case, like the Overview status row).
+_TILE_STATE = {"ok": "OK", "degraded": "Degraded", "failed": "Failed", "unknown": "Not Checked"}
+
+
 def _with_chip(it: HealthItem) -> HealthItem:
-    """``Tick ok 3m`` / ``Gateway ok`` / ``Log 1.2 / 5 MB``: one short line per check."""
-    if it.chip:
-        return it
+    """``Tick ok 3m`` / ``Gateway ok`` / ``Log 1.2 / 5 MB``: one short line per check, plus
+    the D89 tile split (``name`` = ``Tick``, ``detail`` = ``OK · 3m``)."""
     name = _CHIP_LABEL.get(it.key, it.label)
-    state = "not checked" if it.status == "unknown" else it.status
+    age = None
     if it.age_s is not None and it.key in ("tick", "health"):
         from arc.context.categories import age_text
 
-        chip = f"{name} {state} {age_text(_dt.timedelta(seconds=it.age_s))}"
-    else:
-        chip = f"{name} {state}"
-    return it.model_copy(update={"chip": chip})
+        age = age_text(_dt.timedelta(seconds=it.age_s))
+    if it.chip:  # the log chip carries its own text (size / cap)
+        rest = it.chip.removeprefix(name).strip()
+        detail = "No log" if rest == "none" else rest or _TILE_STATE[it.status]
+        return it.model_copy(update={"name": name, "detail": detail})
+    state = "not checked" if it.status == "unknown" else it.status
+    chip = f"{name} {state} {age}" if age else f"{name} {state}"
+    detail = f"{_TILE_STATE[it.status]} · {age}" if age else _TILE_STATE[it.status]
+    return it.model_copy(update={"chip": chip, "name": name, "detail": detail})
 
 
 # ---------------------------------------------------------------------------
@@ -1247,6 +1286,24 @@ class ContextKindRow(BaseModel):
     latest_at: _dt.datetime | None
     latest_by: str | None
     expired_24h: int
+    group: str = Field(
+        default="other", description="D89: Session Timeline group of the kind's main writer"
+    )
+    writers: list[str] = Field(
+        default_factory=list, description="D89: jobs / chain steps declaring it in `writes:`"
+    )
+    readers: list[str] = Field(
+        default_factory=list, description="D89: jobs / chain steps declaring it in `reads:`"
+    )
+
+
+class ContextGroup(BaseModel):
+    model_config = _STRICT
+
+    key: str
+    label: str
+    active: int
+    kinds: int
 
 
 class ContextResponse(BaseModel):
@@ -1256,6 +1313,9 @@ class ContextResponse(BaseModel):
     total_active: int
     expired_24h: int
     kinds: list[ContextKindRow]
+    groups: list[ContextGroup] = Field(
+        default_factory=list, description="D89: Timeline-group order; only groups with kinds"
+    )
 
 
 def load_context(
@@ -1283,6 +1343,7 @@ def load_context(
         )
     }
     kinds = list(KINDS) + sorted(k for k in set(active) | set(expired) if k not in KINDS)
+    io_w, io_r, group_of = _context_io(routines)
     out: list[ContextKindRow] = []
     for kind in kinds:
         latest = conn.execute(
@@ -1315,14 +1376,81 @@ def load_context(
                     else None
                 ),
                 expired_24h=expired.get(kind, 0),
+                group=group_of.get(kind, "other"),
+                writers=io_w.get(kind, []),
+                readers=io_r.get(kind, []),
             )
         )
+    from arc.routines.config import TIMELINE_GROUPS
+
+    groups = [
+        ContextGroup(
+            key=g,
+            label=label,
+            active=sum(k.active for k in out if k.group == g),
+            kinds=sum(1 for k in out if k.group == g),
+        )
+        for g, label in TIMELINE_GROUPS
+        if any(k.group == g for k in out)
+    ]
     return ContextResponse(
         as_of=now,
         total_active=sum(k.active for k in out),
         expired_24h=sum(k.expired_24h for k in out),
         kinds=out,
+        groups=groups,
     )
+
+
+def _context_io(
+    routines: RoutinesConfig,
+) -> tuple[dict[str, list[str]], dict[str, list[str]], dict[str, str]]:
+    """D89: per kind, the writer and reader labels (``writes:`` / ``reads:`` of jobs and
+    chain steps, config order) and the kind's Timeline group: the group where most of
+    its writes happen, each writer weighted by its runs on a reference trading day
+    (D91: Scalp 28 x vs Scout 1 x for ``candidate``; chain steps count as the loop's), ties
+    going to the earlier group."""
+    from arc.routines.config import TIMELINE_GROUPS, JobSpec
+    from arc.routines.schedule import slots_between
+
+    rank = {g: i for i, (g, _) in enumerate(TIMELINE_GROUPS)}
+    day = _dt.datetime(2026, 10, 14, tzinfo=ET)  # a Wednesday trading day; weights only
+
+    def runs(spec: StepSpec) -> int:
+        if not isinstance(spec, JobSpec):  # a chain step has no schedule of its own
+            return 1
+        return max(1, len(slots_between(spec, day, day + _dt.timedelta(days=1))))
+
+    loop = routines.personas.get(routines.loop.job)
+    loop_group = str(loop.options.get("group") or "other") if loop else "other"
+    loop_runs = runs(loop) if loop else 1
+    units: list[tuple[str, str, StepSpec, int]] = []
+    for name, (kind, spec) in routines.jobs().items():
+        # D94: the loop reads as "Trade Loop" everywhere (its routines.yaml label)
+        label = "Trade Loop" if name == routines.loop.job else _label(name, spec)
+        units.append((label, _display(name, kind.value, spec, routines)["group"], spec, runs(spec)))
+    for name, spec in routines.steps.items():
+        head, _, tail = name.partition(".")  # quant.open -> "Quant open"
+        units.append((f"{head.capitalize()} {tail}".strip(), loop_group, spec, loop_runs))
+    writers: dict[str, list[str]] = {}
+    readers: dict[str, list[str]] = {}
+    votes: dict[str, Counter[str]] = {}
+    passthrough: dict[str, Counter[str]] = {}
+    for label, group, spec, weight in units:
+        for k in spec.writes or []:
+            if label not in writers.setdefault(k, []):
+                writers[k].append(label)
+            # E23.2: a writer that also reads the kind re-writes it (Research's
+            # re-surfaced candidate); it votes only when the kind has no pure writer
+            box = passthrough if k in (spec.reads or []) else votes
+            box.setdefault(k, Counter())[group] += weight
+        for k in spec.reads or []:
+            if label not in readers.setdefault(k, []):
+                readers[k].append(label)
+    for k, c in passthrough.items():
+        votes.setdefault(k, c)
+    group_of = {k: min(c, key=lambda g: (-c[g], rank.get(g, len(rank)))) for k, c in votes.items()}
+    return writers, readers, group_of
 
 
 class ContextEntryResponse(BaseModel):

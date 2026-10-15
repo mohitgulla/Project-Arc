@@ -130,7 +130,7 @@ def test_iv_crosscheck_ignores_unchecked_rows(conn: Any) -> None:
 
 
 class _Bars(_Market):
-    def history_bars(self, symbol, start, end, timeframe="1Day"):  # noqa: ANN001, ANN201
+    def history_bars(self, symbol, start, end, timeframe="1Day", feed=None):  # noqa: ANN001, ANN201
         from arc.data.base import HistoryBar
 
         out = []

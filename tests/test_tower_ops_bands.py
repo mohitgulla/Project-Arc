@@ -57,10 +57,16 @@ def test_live_config_bands_in_owner_order(empty_db) -> None:
     # bands follow TIMELINE_GROUPS, the sources sub-bands follow D47 CATEGORY_ORDER
     assert [b.group for b in s.bands] == sorted((b.group for b in s.bands), key=groups.index)
     # D56: reference data gets its own band after the six categories
-    first_persona = keys.index("scout") if "scout" in keys else keys.index("scalp")  # E13.7
+    # D89: the Universe band (active list + tiers) sits right after the sources
+    first_persona = keys.index("universe")
     assert keys[:first_persona] == [
         f"sources.{c.value}" for c in CATEGORY_ORDER if f"sources.{c.value}" in keys
     ] + ["sources.reference"]
+    assert keys[first_persona + 1] == "scout"
+    universe = next(b for b in s.bands if b.key == "universe")
+    assert universe.label == "Universe"
+    assert {"symbols", "universe.trending"} <= set(universe.jobs)  # momentum: month start only
+    assert "other" not in keys
     labels = {b.key: b.label for b in s.bands}
     routines = load_routines()
     for c in CATEGORY_ORDER:  # labels come from categories.<c>.label (D47/D49 rename-safe)
@@ -70,7 +76,7 @@ def test_live_config_bands_in_owner_order(empty_db) -> None:
     assert labels["trading_loop"] == "Trading loop"
     # the loop row is in its band, labelled with its chain
     assert s.loop is not None and s.loop.band == "trading_loop"
-    assert s.loop.label == "Research → Quant → Risk → Propose → Execute"
+    assert s.loop.label == "Trade Loop"
     assert s.loop.persona == "research"
     rows = {r.job: r for r in [*s.rows, s.loop]}
     assert rows["positions.evaluate"].label == "Position marks"
@@ -112,8 +118,10 @@ def test_every_scheduled_live_job_has_label_and_about(empty_db) -> None:
         assert r is not None
         assert r.label != r.job or r.job in {"scalp", "research"}, r.job
         assert r.about, r.job
-        # universe maintenance (symbols, E12.2 momentum, E12.3 trending) sits in "other"
-        assert r.band != "other" or r.job == "symbols" or r.job.startswith("universe."), r.job
+        # D89: nothing live sits in "other"; universe maintenance has its own band
+        assert r.band != "other", r.job
+        if r.job == "symbols" or r.job.startswith("universe."):
+            assert r.band == "universe", r.job
 
 
 def test_new_job_in_temp_yaml_lands_in_its_band(tmp_path, empty_db) -> None:

@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Any
 
 from arc.approvals.trail import DecisionTrail
 from arc.gate.token import BandToken, TokenError, parse_any
+from arc.journal.analytics import levels_text
 from arc.models import StructureKind
 from arc.slack import blocks as B
 from arc.slack.blocks import CardView
@@ -273,6 +274,15 @@ def _liquidity(p: Proposal) -> str | None:
         f"Widest spread {liq.spread_pct:.1%}\nMin open interest {liq.open_interest:,}\n"
         f"Min volume {liq.volume:,}"
     )
+
+
+def _sleeve(p: Proposal, a: ProposalAnalytics | None) -> str | None:
+    """E22.2 (D97): ``short (10–29 DTE)``; ``None`` for a proposal without a sleeve."""
+    name = p.structure.sleeve
+    if not name:
+        return None
+    window = a.sleeve_window if a is not None else None
+    return f"{name} ({window})" if window else name
 
 
 def _gate_short(decision: GateDecision | None) -> str:
@@ -572,6 +582,12 @@ def _body(
     liq = _liquidity(p)
     if liq:
         pairs.append(("Liquidity", liq))
+    sleeve = _sleeve(p, a)
+    if sleeve:  # E22.2 (D97): sleeved profiles only; single-window cards unchanged
+        pairs.append(("Sleeve", sleeve))
+    levels = levels_text(a.levels) if a is not None and a.levels else ""
+    if levels:  # E23.3 (D98): strike_levels on and a level known; else card unchanged
+        pairs.append(("Levels", levels))
     blocks.extend(B.facts(pairs))
     blocks.append(B.divider())
     blocks.extend(_net_ev_section(p, em))

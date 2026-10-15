@@ -25,6 +25,8 @@ import structlog
 import yaml
 from pydantic import ConfigDict
 
+from arc.gate.caps import AllocTier, alloc_tier, deployed_max_loss
+from arc.gate.delta import delta_exposure, kind_of
 from arc.models import Greeks, Stance, Structure
 from arc.positions.evaluate import PositionReview
 from arc.positions.portfolio import (
@@ -61,6 +63,7 @@ __all__ = [
     "PortfolioFlag",
     "PortfolioPosition",
     "build_portfolio_context",
+    "cap_phrase",
     "empty_portfolio_line",
     "exit_block_entries",
     "load_industries",
@@ -287,6 +290,7 @@ def _computed_review(
             cost=cost_model(settings),
             exit_pending=bool(row.get("exit_proposal_hash")),
             peak_pnl=None if peak is None else float(peak),
+            exit_block=settings.exit_block_of(st, row.get("opened_at")),
         )
     except (LookupError, ValueError) as exc:
         log.warning("portfolio_context.review_failed", structure_id=row["id"], error=str(exc))
@@ -326,6 +330,55 @@ def _shares(totals: Mapping[str, float], total: float) -> dict[str, float]:
     if total <= 0:
         return {k: 0.0 for k in totals}
     return {k: round(v / total, 4) for k, v in sorted(totals.items(), key=lambda kv: -kv[1])}
+
+
+def _alloc_tier(
+    conn: sqlite3.Connection,
+    settings: ArcSettings,
+    equity: Decimal,
+    portfolio: Portfolio | None,
+    as_opened_total: Decimal,
+    now: _dt.datetime,
+) -> AllocTier:
+    """D116: the per-underlying tier for this book (valued book first, else as opened)."""
+    from arc.store.execution import reserved_open_max_loss
+
+    deployed = (
+        deployed_max_loss(portfolio)
+        if portfolio is not None
+        else as_opened_total + reserved_open_max_loss(conn, now=now)
+    )
+    return alloc_tier(deployed, equity, settings)
+
+
+def _alloc_thresholds(tier: AllocTier) -> dict[str, float]:
+    """``thresholds`` keys for the active tier (``max_alloc_pct`` is the active cap)."""
+    return {
+        "max_alloc_pct": float(tier.pct),
+        "alloc_tier_threshold_pct": float(tier.threshold_pct),
+        "alloc_deployed_pct": float(tier.deployed_pct) if tier.deployed_pct is not None else 0.0,
+        "alloc_tier_reduced": 1.0 if tier.tier == "reduced" else 0.0,
+    }
+
+
+def cap_phrase(tier: AllocTier) -> str:
+    """``15% of equity max loss per underlying (15% tier, deployed 7% < 60%)``."""
+    return f"{tier.pct:.0%} of equity max loss per underlying ({tier.describe()})"
+
+
+def _ctx_cap_phrase(pc: PortfolioContext, settings: ArcSettings) -> str:
+    """The cap phrase from a stored context's thresholds (older entries: base setting)."""
+    th = pc.thresholds
+    if "alloc_tier_threshold_pct" not in th:
+        return f"{settings.max_alloc_pct:.0%} of equity max loss per underlying"
+    tier = AllocTier(
+        pct=Decimal(str(th["max_alloc_pct"])),
+        tier="reduced" if th.get("alloc_tier_reduced") else "base",
+        deployed=Decimal(0),
+        deployed_pct=Decimal(str(th.get("alloc_deployed_pct", 0.0))),
+        threshold_pct=Decimal(str(th["alloc_tier_threshold_pct"])),
+    )
+    return cap_phrase(tier)
 
 
 def build_portfolio_context(
@@ -397,18 +450,24 @@ def build_portfolio_context(
         "stance_max_pct": stance_max,
         "expiry_max_pct": expiry_max,
         "greek_near_cap_pct": settings.portfolio_greek_near_cap_pct,
-        "max_alloc_pct": settings.max_alloc_pct,
     }
     if not rows:
+        thresholds |= _alloc_thresholds(
+            _alloc_tier(conn, settings, info.equity, portfolio, Decimal(0), now)
+        )
         return PortfolioContext(as_of=now, empty=True, account=account, thresholds=thresholds)
 
     positions: list[PortfolioPosition] = []
     warnings: list[str] = []
     opened_greeks = Greeks()
-    # D57: as-opened dollar delta (Δ × n × spot at open); None once any spot is unknown
+    # D57: as-opened dollar delta (Δ × n × spot at open; D116: sign(Δ) × max loss for a
+    # debit vertical / long option); None once a needed spot is unknown
     opened_dollar_delta: float | None = 0.0
-    # D62: as-opened beta-weighted $Δ (Δ × n × spot at open × current β used)
+    # D62: as-opened beta-weighted $Δ (the same terms × current β used)
     opened_beta_delta: float | None = 0.0
+    # D116: the plain Δ × spot sums (display only); None once any spot is unknown
+    opened_raw_delta: float | None = 0.0
+    opened_raw_beta_delta: float | None = 0.0
     from arc.betas.store import betas_used
 
     betas = betas_used(conn, sorted({str(r["ticker"]) for r in rows}), today)
@@ -442,14 +501,28 @@ def build_portfolio_context(
             vega=opened_greeks.vega + g.vega,
             theta=opened_greeks.theta + g.theta,
         )
+        spot_open = _open_spot(conn, row)
+        beta = betas[str(row["ticker"]).upper()].beta
         if opened_dollar_delta is not None:
-            spot_open = _open_spot(conn, row)
-            if spot_open is None:
+            term = delta_exposure(
+                kind_of(st.legs),
+                g.delta,
+                None if spot_open is None else Decimal(str(spot_open)),
+                Decimal(str(max_loss_total)) if st.max_loss is not None else None,
+            )
+            if term is None:
                 opened_dollar_delta = opened_beta_delta = None
             else:
-                opened_dollar_delta += g.delta * spot_open
-                beta = betas[str(row["ticker"]).upper()].beta
-                opened_beta_delta = (opened_beta_delta or 0.0) + g.delta * spot_open * beta
+                opened_dollar_delta += float(term)
+                opened_beta_delta = (opened_beta_delta or 0.0) + float(term) * beta
+        if opened_raw_delta is not None:
+            if spot_open is None:
+                opened_raw_delta = opened_raw_beta_delta = None
+            else:
+                opened_raw_delta += g.delta * spot_open
+                opened_raw_beta_delta = (opened_raw_beta_delta or 0.0) + (
+                    g.delta * spot_open * beta
+                )
         if review is not None:
             open_pnl += review.pnl_total
         positions.append(
@@ -505,6 +578,10 @@ def build_portfolio_context(
     beta_dollar_delta = (
         float(portfolio.beta_dollar_delta) if portfolio is not None else opened_beta_delta
     )
+    raw_delta = float(portfolio.dollar_delta_raw) if portfolio is not None else opened_raw_delta
+    raw_beta_delta = (
+        float(portfolio.beta_dollar_delta_raw) if portfolio is not None else opened_raw_beta_delta
+    )
     delta_cap = settings.portfolio_dollar_delta_cap_pct * equity
     beta_cap = settings.portfolio_beta_delta_cap_pct * equity
     vega_cap = settings.portfolio_vega_cap_pct * equity
@@ -516,6 +593,7 @@ def build_portfolio_context(
             net=round(dollar_delta, 2),
             cap=round(delta_cap, 2),
             pct_used=round(abs(dollar_delta) / delta_cap, 4) if delta_cap > 0 else None,
+            net_raw=None if raw_delta is None else round(raw_delta, 2),
         )
     )
     beta_delta = (
@@ -525,6 +603,7 @@ def build_portfolio_context(
             net=round(beta_dollar_delta, 2),
             cap=round(beta_cap, 2),
             pct_used=round(abs(beta_dollar_delta) / beta_cap, 4) if beta_cap > 0 else None,
+            net_raw=None if raw_beta_delta is None else round(raw_beta_delta, 2),
         )
     )
     vega = GreekUsage(
@@ -550,7 +629,10 @@ def build_portfolio_context(
         flags.append("beta_delta_near_cap")
     if vega.pct_used is not None and vega.pct_used >= near:
         flags.append("vega_near_cap")
-    cap_usd = settings.max_alloc_pct * equity
+    # D116: the active per-underlying tier (the gate's own helper, same deployed sum)
+    tier = _alloc_tier(conn, settings, info.equity, portfolio, Decimal(str(total)), now)
+    thresholds |= _alloc_thresholds(tier)
+    cap_usd = float(tier.pct) * equity
     at_cap = sorted(t for t, v in by_under.items() if cap_usd > 0 and v >= cap_usd * 0.999)
 
     aggregates = PortfolioAggregates(
@@ -593,12 +675,18 @@ def build_portfolio_context(
 # ---------------------------------------------------------------------------
 
 
-def empty_portfolio_line(info: AccountInfo, settings: ArcSettings) -> str:
-    """The one portfolio line an empty book puts in Research prompt."""
+def empty_portfolio_line(
+    info: AccountInfo, settings: ArcSettings, tier: AllocTier | None = None
+) -> str:
+    """The one portfolio line an empty book puts in Research prompt.
+
+    D116: *tier* is the active per-underlying tier (default: an empty book's, i.e.
+    nothing deployed).
+    """
+    tier = tier or alloc_tier(Decimal(0), Decimal(str(info.equity)), settings)
     return (
         f"Portfolio: no open positions. Equity ${_f(info.equity):,.2f}. Max "
-        f"{settings.max_open_positions} positions, {settings.max_alloc_pct:.0%} of equity max "
-        "loss per underlying."
+        f"{settings.max_open_positions} positions, {cap_phrase(tier)}."
     )
 
 
@@ -702,8 +790,7 @@ def render_portfolio_context(
     if pc.empty or pc.aggregates is None:
         return (
             f"Portfolio: no open positions. Equity ${a.equity:,.2f}. Max "
-            f"{settings.max_open_positions} positions, {settings.max_alloc_pct:.0%} of equity "
-            "max loss per underlying."
+            f"{settings.max_open_positions} positions, {_ctx_cap_phrase(pc, settings)}."
         )
     ag = pc.aggregates
     limit = max_positions if max_positions is not None else settings.portfolio_context_max_positions
@@ -712,7 +799,7 @@ def render_portfolio_context(
         f"Equity ${a.equity:,.2f} (day P&L {day}, open P&L {a.open_pnl_total:+,.0f}). "
         f"Cash ${a.cash:,.0f}, buying power ${a.buying_power:,.0f}. "
         f"{ag.positions} of {ag.max_positions} positions open; "
-        f"{settings.max_alloc_pct:.0%} of equity max loss per underlying."
+        f"{_ctx_cap_phrase(pc, settings)}."
         + (" HALTED." if a.halted else "")
         + (
             f" Order budget tier: {a.order_budget_tier}." if a.order_budget_tier != "normal" else ""
@@ -759,7 +846,8 @@ def render_portfolio_context(
         f"HHI {ag.hhi_underlying:.2f}.",
         f"Net Greeks ({ag.greeks_source}): "
         + (
-            f"$Δ ${d.net:+,.0f} of cap ${d.cap:,.0f} ({_pct(d.pct_used)} used)"
+            f"$Δ ${d.net:+,.0f} of cap ${d.cap:,.0f} ({_pct(d.pct_used)} used; debit "
+            f"verticals and long options count at signed max loss)"
             if d is not None
             else "$Δ n/a (spot unknown)"
         )

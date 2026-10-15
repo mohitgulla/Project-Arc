@@ -27,6 +27,8 @@ from arc.exits.model import model_exits
 from arc.scanner.rank import Ranker, RankInputs, rank, stance_sign, tilted_drift
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from arc.exits import ExitConfig, ExitModelResult
     from arc.scanner.scan import ScanCandidate
 
@@ -65,17 +67,20 @@ def candidate_model(
     r: float,
     realized_vol: float | None,
     drift: float | None = None,
+    exit_block: str | None = None,
 ) -> ExitModelResult | None:
     """E2.4 static vs managed numbers for a scanner candidate (None without IV or DTE < 1).
 
     *drift* is only passed for the tilted ranking key; every number the card, the D41
-    floor and the gate read comes from the ``drift=None`` call.
+    floor and the gate read comes from the ``drift=None`` call. *exit_block* (E22.1):
+    the candidate's sleeve exit block (``ArcSettings.exit_block_for_dte(c.dte)``);
+    ``None`` = the kind policy.
     """
     if c.atm_iv is None or c.dte < 1:
         return None
     return model_exits(
         c.structure,
-        exits.policy_for(c.structure.kind),
+        exits.policy_for(c.structure.kind, exit_block),
         spot=spot,
         iv=c.atm_iv,
         r=r,
@@ -96,6 +101,7 @@ def _tilted(
     exits: ExitConfig,
     r: float,
     realized_vol: float | None,
+    exit_block: str | None = None,
 ) -> tuple[ExitModelResult, float]:
     """(managed model under the stance-tilted drift, that drift); *base* when untilted.
 
@@ -113,7 +119,7 @@ def _tilted(
     )
     if mu == r:
         return base, r
-    tm = candidate_model(c, spot, exits, r, realized_vol, drift=mu)
+    tm = candidate_model(c, spot, exits, r, realized_vol, drift=mu, exit_block=exit_block)
     return (base, r) if tm is None else (tm, mu)
 
 
@@ -129,6 +135,7 @@ def rank_menu(
     exits: ExitConfig,
     r: float,
     realized_vol: float | None,
+    exit_block_for: Callable[[int], str | None] | None = None,
 ) -> tuple[list[ScanCandidate], dict[int, MenuRankKey]]:
     """Order a scanner pool on ONE key for every kind, then cut to *top*.
 
@@ -137,6 +144,8 @@ def rank_menu(
     ordering (no group split). Ties break on scanner position. Candidates without a
     model (no IV, DTE < 1) or an undefined key (e.g. no max loss) follow, in scanner
     order. Returns the cut menu and each pool candidate's :class:`MenuRankKey`.
+    *exit_block_for* (E22.1) maps a candidate's DTE to its sleeve exit block for the
+    tilted model (``None`` = the kind policy for every candidate).
     """
     ranker = MENU_MEASURE_RANKER[measure]
     tilted = ranker is Ranker.RORC_DAY_TILTED
@@ -161,6 +170,7 @@ def rank_menu(
                 exits=exits,
                 r=r,
                 realized_vol=realized_vol,
+                exit_block=exit_block_for(c.dte) if exit_block_for is not None else None,
             )
             t_ev, t_rorc = tm.managed.net_ev, tm.rorc_day
         k = f"{i:05d}"  # scanner position: a deterministic, total tie-break

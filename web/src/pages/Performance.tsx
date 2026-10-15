@@ -12,6 +12,7 @@ import { EquityDrawdownChart, ModelScatter } from "../components/PerformanceChar
 import { ProgressRow } from "../components/ProgressRow";
 import { ProportionBar } from "../components/ProportionBar";
 import { SegmentedControl } from "../components/SegmentedControl";
+import { SleeveFilter } from "../components/SleeveFilter";
 import { StackedBars } from "../components/StackedBars";
 import { formatEt, formatMoney, formatNumber, formatPercent } from "../lib/format";
 import { useLayout } from "../lib/layout";
@@ -36,7 +37,9 @@ import {
   type PerfQuery,
   type Performance,
   FUNNEL_STAGE_LABEL,
+  VERDICT_LABEL,
   feedSplit,
+  sleeveTitle,
   stageConversion,
 } from "../lib/performance";
 import { usePersonaLabel } from "../lib/personas";
@@ -60,7 +63,13 @@ function TitleTip({ about, children }: { about: string; children: React.ReactNod
 // Page range selector (URL-synced `?range=`, sticky under the header on mobile)
 // ---------------------------------------------------------------------------
 
-function RangeBar({ p }: { p?: Performance }) {
+function RangeBar({
+  params,
+  update,
+}: {
+  params: URLSearchParams;
+  update: (c: Record<string, string | null>) => void;
+}) {
   return (
     <div
       className="flex flex-wrap items-center gap-x-4 gap-y-1 max-tablet:sticky max-tablet:top-header-h max-tablet:z-[5] max-tablet:-mx-4 max-tablet:border-b max-tablet:border-line max-tablet:bg-page max-tablet:px-4 max-tablet:py-2"
@@ -73,11 +82,7 @@ function RangeBar({ p }: { p?: Performance }) {
         options={PERF_RANGES.map((r) => ({ value: r }))}
         testid="perf-range-control"
       />
-      {p && (
-        <span className="text-caption text-muted tabular-nums" data-testid="perf-range">
-          {formatRange(p.period.first, p.period.last)}
-        </span>
-      )}
+      <SleeveFilter params={params} update={update} testid="perf-sleeve-control" />
     </div>
   );
 }
@@ -359,7 +364,61 @@ function ModelCard({ p }: { p: Performance }) {
   );
 }
 
-function BreakdownCard({ p, by, setBy }: { p: Performance; by: PerfQuery["by"]; setBy: (b: string) => void }) {
+/** E22.5 (D97): per-sleeve stats over the period and the keep/shrink verdict (report only). */
+function SleevesCard({ p }: { p: Performance }) {
+  const rows = p.sleeve_stats ?? [];
+  if (rows.length === 0) return null;
+  const tip = (
+    <TitleTip about="sleeves">
+      {EXPLAIN.sleeves.tip}
+    </TitleTip>
+  );
+  return (
+    <Card title="Sleeves" headerExtra={tip} subtitle={EXPLAIN.sleeves.sub}>
+      <ul className="grid gap-3" data-testid="sleeve-stats">
+        {rows.map((s) => (
+          <li key={s.sleeve} data-sleeve={s.sleeve} className="grid gap-1">
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+              <span className="font-semibold text-title">{sleeveTitle(s)}</span>
+              <span className="text-caption text-secondary tabular-nums">
+                {s.closed} closed · {s.opens} opened · {pct(s.win_rate)} win
+              </span>
+              {s.verdict && (
+                <span className="ml-auto text-caption text-secondary" data-testid="sleeve-verdict">
+                  {VERDICT_LABEL[s.verdict]}
+                  {s.ready ? "" : " · Not Ready"}
+                </span>
+              )}
+            </div>
+            <KeyValueList
+              columns={2}
+              items={[
+                { label: "Mean / median", value: `${money(s.mean_pnl)} / ${money(s.median_pnl)}` },
+                {
+                  label: "Mean net (90% CI)",
+                  value: `${money(s.mean_net_pnl)} (${money(s.ci_low)} … ${money(s.ci_high)})`,
+                },
+                { label: "P&L / max loss", value: pct(s.mean_pct_of_max_loss) },
+                { label: "Days held", value: ratio(s.mean_days_held, 1) },
+                { label: "Entry slippage", value: money(s.entry_slippage) },
+                { label: "MAE / MFE", value: `${money(s.mean_mae)} / ${money(s.mean_mfe)}` },
+                {
+                  label: "Exits",
+                  value:
+                    Object.entries(s.exit_reasons ?? {})
+                      .map(([k, n]) => `${k.replace(/_/g, " ")} ${n}`)
+                      .join(" · ") || "—",
+                },
+              ]}
+            />
+          </li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
+function BreakdownCard({ p, by, setBy, sleeve }: { p: Performance; by: PerfQuery["by"]; setBy: (b: string) => void; sleeve: string | null }) {
   const rows = p.breakdowns[by] ?? [];
   const maxAbs = Math.max(1e-9, ...rows.map((r) => Math.abs(r.pnl)));
   const layout = useLayout();
@@ -379,7 +438,7 @@ function BreakdownCard({ p, by, setBy }: { p: Performance; by: PerfQuery["by"]; 
       ) : layout === "mobile" ? (
         <CappedList as="div" testid="breakdown-rows" noun="rows">
           {rows.map((r) => {
-            const to = tradesLink(r, p.period);
+            const to = tradesLink(r, p.period, sleeve);
             return (
               <CardRow
                 key={r.key || "none"}
@@ -406,7 +465,7 @@ function BreakdownCard({ p, by, setBy }: { p: Performance; by: PerfQuery["by"]; 
       ) : (
         <CappedList className="grid gap-1" testid="breakdown-rows" noun="rows">
           {rows.map((r) => {
-            const to = tradesLink(r, p.period);
+            const to = tradesLink(r, p.period, sleeve);
             const row = (
               <ProgressRow
                 label={r.label}
@@ -610,7 +669,7 @@ export function PerformancePage() {
   };
   return (
     <div className="grid gap-6 desktop:gap-10" data-testid="performance">
-      <RangeBar p={p} />
+      <RangeBar params={params} update={update} />
       {!p ? (
         <Card title="Performance">
           <EmptyState caption={res.isError ? `Could not load performance: ${String(res.error)}` : "Loading…"} />
@@ -628,7 +687,13 @@ export function PerformancePage() {
               <ModelCard p={p} />
             </div>
           </div>
-          <BreakdownCard p={p} by={q.by} setBy={(b) => update({ by: b === "ticker" ? null : b })} />
+          <SleevesCard p={p} />
+          <BreakdownCard
+            p={p}
+            by={q.by}
+            setBy={(b) => update({ by: b === "ticker" ? null : b })}
+            sleeve={q.sleeve}
+          />
           <div className="grid gap-6 desktop:grid-cols-2 desktop:gap-10">
             <div className="min-w-0">
               <CalibrationCard p={p} />

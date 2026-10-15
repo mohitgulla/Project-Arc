@@ -1,0 +1,28 @@
+# D108 calibration A/A (card E15.9): the flat control arm XP-1:control and three
+# identical treatments t1..t3 run production's config on the shared experiment
+# account, every arm flat at production's t0 equity. Any Ti - C difference is noise:
+# it measures sigma of the paired daily difference and the MDE later A/Bs are sized
+# for. Production is the descriptive baseline (P - C = start book + residual), never a
+# verdict input. First id after the owner's registry reset (2026-10-13, PLAN D111).
+spec_version: 3
+id: XP-1
+title: K=3 A/A calibration, control arm plus three identical treatments
+hypothesis: >
+  Four arms running production's config on the shared experiment account, all started
+  flat at production's t0 equity, produce Ti - C paired daily net P&L differences with
+  mean 0; their standard deviation sets the MDE that later A/B experiments are sized for.
+area: other
+kind: aa
+arms:
+  control:
+    overlay: {}
+  treatments:
+    t1:
+      overlay: {}
+    t2:
+      overlay: {}
+    t3:
+      overlay: {}
+min_sessions: 10
+max_sessions: 10
+proposed_by: owner

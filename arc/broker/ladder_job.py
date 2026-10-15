@@ -212,6 +212,7 @@ def broker_card(
     The planned ladder is drawn on the order's exchange grid (D66, *ticks*).
     """
     from arc.config import TickRules as _TickRules
+    from arc.execution.ladder import reprice_note
     from arc.gate.ticks import legs_grid
     from arc.personas.schemas import BrokerPlan, ImprovementStep
     from arc.slack.digests import ExecutionResult
@@ -237,6 +238,7 @@ def broker_card(
             f"One approval authorises the band {out.band.lo:+} .. {out.band.hi:+} "
             f"({out.band.max_steps} improvement steps, {step_seconds}s each); every attempt "
             "went through the gate token, the approval and a halt check."
+            + (f" D101 {reprice_note(out)} (each new band re-gated)." if out.regated else "")
         ),
     )
     result = ExecutionResult(
@@ -331,15 +333,33 @@ def broker_execute(
     # D34 freshness: the ladder re-prices when the proposal is older than the max
     # quote age; without a market data provider the band is walked as approved.
     fresh_mid = None
+    quotes = regate = None
+    approval = approval_record(ctx.conn, phash)
     if market is not None:
         fresh_mid = fresh_mid_of(
             market, proposal, as_of=clock().date(), r=ctx.settings.scanner_risk_free_rate
         )
+        if ctx.settings.execution_regate_max > 0:  # D101: between-step check + re-gate
+            from arc.broker.regate import quote_reader, regater
+
+            quotes = quote_reader(
+                market, proposal, clock=clock, r=ctx.settings.scanner_risk_free_rate
+            )
+            regate = regater(
+                conn=ctx.conn,
+                broker=broker,
+                market=market,
+                settings=ctx.settings,
+                proposal=proposal,
+                approval=approval,
+                kind=kind,
+                clock=clock,
+            )
     try:
         out: ExecutionOutcome = execute(
             proposal,
             decision,
-            approval_record(ctx.conn, phash),
+            approval,
             conn=ctx.conn,
             broker=broker,
             config=ctx.settings,
@@ -353,6 +373,8 @@ def broker_execute(
             priced_at=priced_at_of(ctx.conn, phash) if market is not None else None,
             fresh_mid=fresh_mid,
             heartbeat=ctx.heartbeat,  # E11.2 (D72): liveness for broker.reattach
+            quotes=quotes,
+            regate=regate,
         )
     except ExecutionAdoptedError as exc:  # D72 rule 7: the re-attach owns it now
         msg = f"adopted by {exc.adopted_by}"

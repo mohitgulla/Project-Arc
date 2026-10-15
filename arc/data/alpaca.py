@@ -16,6 +16,7 @@ import os
 from typing import Any
 
 import structlog
+from alpaca.common.exceptions import APIError
 from alpaca.data.enums import DataFeed, OptionsFeed
 from alpaca.data.historical.option import OptionHistoricalDataClient
 from alpaca.data.historical.stock import StockHistoricalDataClient
@@ -36,7 +37,10 @@ from arc.data.base import (
     OptionGreeks,
     UnderlyingQuote,
 )
+from arc.data.volume import VolumeBasis, pick_volume, volume_basis
 from arc.utils.calendar import ET, now_et
+from arc.utils.http_retry import ReadRetryPolicy, install_read_retry
+from arc.utils.ratelimit import AccountRateBucket, bucket_path
 
 log = structlog.get_logger()
 
@@ -152,6 +156,18 @@ def _get_keys(api_key: str | None = None, secret_key: str | None = None) -> tupl
     return api_key, secret_key
 
 
+def _as_date(v: object) -> dt.date | None:
+    """A contracts-API date (``"2026-10-13"`` or a ``date``), else None."""
+    if isinstance(v, dt.date):
+        return v
+    if isinstance(v, str) and v:
+        try:
+            return dt.date.fromisoformat(v[:10])
+        except ValueError:
+            return None
+    return None
+
+
 def _parse_occ_symbol(symbol: str) -> dict[str, Any]:
     """Parse an OCC option symbol into components.
 
@@ -186,6 +202,25 @@ def _parse_occ_symbol(symbol: str) -> dict[str, Any]:
     }
 
 
+#: E23.0a (D98): the free tier serves SIP only for windows ending >= 15 min ago;
+#: one extra minute of margin for clock skew.
+SIP_DELAY = dt.timedelta(minutes=16)
+
+
+def sip_window_end(now: dt.datetime) -> dt.datetime:
+    """The latest request end the free tier accepts on the SIP feed (``now - 16 min``)."""
+    return now - SIP_DELAY
+
+
+def _is_sip_refusal(exc: APIError) -> bool:
+    """A free-tier refusal of recent SIP data (HTTP 403 / "subscription does not permit")."""
+    try:
+        status = exc.status_code
+    except Exception:  # noqa: BLE001 - a malformed error still reads by its text
+        status = None
+    return status == 403 or "subscription does not permit" in str(exc).lower()
+
+
 # ---------------------------------------------------------------------------
 # Adapter
 # ---------------------------------------------------------------------------
@@ -209,6 +244,8 @@ class AlpacaMarketData:
         *,
         api_key: str | None = None,
         secret_key: str | None = None,
+        read_retry: ReadRetryPolicy | None = None,
+        rate_bucket: Any = None,
     ) -> None:
         api_key, secret_key = _get_keys(api_key, secret_key)
         if data_feed is None or options_feed is None:
@@ -239,6 +276,39 @@ class AlpacaMarketData:
             )
         self._contracts_client = contracts_client
         self._raw_option_client = raw_option_client
+        self._install_read_retry(api_key, read_retry, rate_bucket)
+
+    def _install_read_retry(
+        self, api_key: str, policy: ReadRetryPolicy | None, bucket: Any
+    ) -> None:
+        """D114: every data client's GETs retry transient failures (arc.utils.http_retry).
+
+        Defaults from settings (``alpaca_read_retries`` / ``_base_s`` / ``_budget_s``);
+        each retry takes a ``read`` token from this key's account bucket
+        (``alpaca_rate_per_min``). Injected test doubles without a ``requests.Session``
+        are left untouched.
+        """
+        if policy is None or bucket is None:
+            s = get_settings()
+            if policy is None:
+                policy = ReadRetryPolicy(
+                    retries=s.alpaca_read_retries,
+                    base_s=s.alpaca_read_retry_base_s,
+                    budget_s=s.alpaca_read_retry_budget_s,
+                )
+            if bucket is None:
+                bucket = AccountRateBucket(
+                    bucket_path(api_key, s.alpaca_rate_lock_dir), s.alpaca_rate_per_min
+                )
+        self.read_retry = policy
+        for client in (
+            self._option_client,
+            self._stock_client,
+            self._contracts_client,
+            self._raw_option_client,
+        ):
+            if client is not None:
+                install_read_retry(client, policy, bucket=bucket)
 
     # -- option_chain --------------------------------------------------------
 
@@ -256,9 +326,9 @@ class AlpacaMarketData:
         )
         snapshots = self._option_client.get_option_chain(req)
         open_interest, penny = self._contract_facts(underlying, exp_start, exp_end)
-        volume = self._daily_volume(req)
-
         now = now_et()
+        basis = volume_basis(now)
+        volume = self._daily_volume(req, basis)
         contracts: list[OptionContract] = []
 
         for symbol, snap in snapshots.items():
@@ -313,8 +383,10 @@ class AlpacaMarketData:
                     bid_size=bid_size,
                     ask_size=ask_size,
                     last_trade_price=last_trade_price,
-                    open_interest=open_interest.get(symbol),
+                    open_interest=open_interest.get(symbol, (None, None))[0],
+                    open_interest_date=open_interest.get(symbol, (None, None))[1],
                     volume=volume.get(symbol),
+                    volume_source=basis.source if symbol in volume else None,
                     penny_program=penny.get(symbol),
                     implied_volatility=snap.implied_volatility,
                     greeks=greeks,
@@ -333,8 +405,11 @@ class AlpacaMarketData:
 
     def _contract_facts(
         self, underlying: str, exp_start: dt.date, exp_end: dt.date
-    ) -> tuple[dict[str, int], dict[str, bool]]:
-        """OCC symbol → open interest, and → Penny Program flag (``ppind``, D66).
+    ) -> tuple[dict[str, tuple[int, dt.date | None]], dict[str, bool]]:
+        """OCC symbol → ``(open interest, open_interest_date)``, and → Penny Program flag.
+
+        E2.5 (D116): the OI date travels with the value so the scanner can tell a
+        stale Alpaca figure from a fresh one (:mod:`arc.data.oi`); ``ppind`` is D66.
 
         One paged walk of the paper Trading API contracts list (the same requests
         as before D66). The pinned alpaca-py ``OptionContract`` model has no
@@ -344,7 +419,7 @@ class AlpacaMarketData:
         """
         if self._contracts_client is None:
             return {}, {}
-        oi: dict[str, int] = {}
+        oi: dict[str, tuple[int, dt.date | None]] = {}
         penny: dict[str, bool] = {}
         page: str | None = None
         while True:
@@ -361,7 +436,7 @@ class AlpacaMarketData:
                 if not symbol:
                     continue
                 if c.get("open_interest") is not None:
-                    oi[symbol] = int(c["open_interest"])
+                    oi[symbol] = (int(c["open_interest"]), _as_date(c.get("open_interest_date")))
                 if isinstance(c.get("ppind"), bool):
                     penny[symbol] = c["ppind"]
             if not page:
@@ -384,23 +459,23 @@ class AlpacaMarketData:
             {
                 "symbol": c.symbol,
                 "open_interest": c.open_interest,
+                "open_interest_date": getattr(c, "open_interest_date", None),
                 "ppind": getattr(c, "ppind", None),
             }
             for c in getattr(resp, "option_contracts", None) or []
         ]
         return parsed, getattr(resp, "next_page_token", None)
 
-    def _daily_volume(self, req: OptionChainRequest) -> dict[str, int]:
-        """OCC symbol → latest daily-bar volume from the raw snapshots payload."""
+    def _daily_volume(self, req: OptionChainRequest, basis: VolumeBasis) -> dict[str, int]:
+        """OCC symbol → the *basis* session's daily-bar volume (0 when none is dated so).
+
+        E2.5 (D116): never ``prevDailyBar`` as a stand-in for today: from 10:00 ET a
+        contract with no print today has volume 0 (:mod:`arc.data.volume`).
+        """
         if self._raw_option_client is None:
             return {}
         raw = self._raw_option_client.get_option_chain(req)
-        out: dict[str, int] = {}
-        for symbol, snap in raw.items():  # type: ignore[union-attr]
-            bar = snap.get("dailyBar") or snap.get("prevDailyBar")
-            if bar and bar.get("v") is not None:
-                out[symbol] = int(bar["v"])
-        return out
+        return {symbol: pick_volume(snap, basis) for symbol, snap in raw.items()}  # type: ignore[union-attr]
 
     # -- underlying_quote ----------------------------------------------------
 
@@ -433,33 +508,72 @@ class AlpacaMarketData:
         start: dt.date,
         end: dt.date,
         timeframe: str = "1Day",
+        *,
+        feed: AlpacaDataFeed | str | None = None,
     ) -> list[HistoryBar]:
+        """OHLCV bars for [*start*, *end*] on *feed* (``None``: the configured data feed).
+
+        E23.0a (D98): on ``sip`` the request end is clamped to :func:`sip_window_end`
+        (the free tier refuses SIP data from the last 15 minutes). A refusal anyway
+        (403 / "subscription does not permit") falls back to IEX once, logged
+        ``feed_fallback``; it never raises for that reason.
+        """
         tf = _parse_timeframe(timeframe)
+        data_feed = self._data_feed if feed is None else DataFeed(AlpacaDataFeed(feed).value)
+        end_at = dt.datetime.combine(end, dt.time.max, tzinfo=ET)
+        if data_feed is DataFeed.SIP:
+            end_at = min(end_at, sip_window_end(now_et()))
+        start_at = dt.datetime.combine(start, dt.time.min, tzinfo=ET)
+        try:
+            bars_map = self._get_bars(symbol, start_at, end_at, tf, data_feed)
+        except APIError as exc:
+            if data_feed is not DataFeed.SIP or not _is_sip_refusal(exc):
+                raise
+            log.warning(
+                "feed_fallback",
+                symbol=symbol,
+                timeframe=timeframe,
+                requested="sip",
+                used="iex",
+                error=str(exc)[:200],
+            )
+            end_at = dt.datetime.combine(end, dt.time.max, tzinfo=ET)
+            bars_map = self._get_bars(symbol, start_at, end_at, tf, DataFeed.IEX)
+        return _to_history_bars(bars_map, symbol)
+
+    def _get_bars(
+        self,
+        symbol: str,
+        start_at: dt.datetime,
+        end_at: dt.datetime,
+        tf: TimeFrame,
+        feed: DataFeed,
+    ) -> Any:
         req = StockBarsRequest(
             symbol_or_symbols=symbol,
-            start=dt.datetime.combine(start, dt.time.min, tzinfo=ET),
-            end=dt.datetime.combine(end, dt.time.max, tzinfo=ET),
+            start=start_at,
+            end=max(end_at, start_at),
             timeframe=tf,
-            feed=self._data_feed,
+            feed=feed,
         )
-        bars_map = self._stock_client.get_stock_bars(req)
-        # BarSet is a pydantic model: ``symbol in BarSet`` iterates model
-        # fields, not symbols, so always go through ``.data``.
-        bars_by_symbol = getattr(bars_map, "data", bars_map)
+        return self._stock_client.get_stock_bars(req)
 
-        result: list[HistoryBar] = []
-        for bar in bars_by_symbol.get(symbol, []):
-            result.append(
-                HistoryBar(
-                    timestamp=bar.timestamp,
-                    open=bar.open,
-                    high=bar.high,
-                    low=bar.low,
-                    close=bar.close,
-                    volume=bar.volume,
-                    trade_count=bar.trade_count,
-                    vwap=bar.vwap,
-                )
-            )
 
-        return result
+def _to_history_bars(bars_map: Any, symbol: str) -> list[HistoryBar]:
+    """``get_stock_bars`` output -> :class:`HistoryBar` list for *symbol*."""
+    # BarSet is a pydantic model: ``symbol in BarSet`` iterates model
+    # fields, not symbols, so always go through ``.data``.
+    bars_by_symbol = getattr(bars_map, "data", bars_map)
+    return [
+        HistoryBar(
+            timestamp=bar.timestamp,
+            open=bar.open,
+            high=bar.high,
+            low=bar.low,
+            close=bar.close,
+            volume=bar.volume,
+            trade_count=bar.trade_count,
+            vwap=bar.vwap,
+        )
+        for bar in bars_by_symbol.get(symbol, [])
+    ]

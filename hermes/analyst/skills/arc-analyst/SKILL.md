@@ -1,7 +1,7 @@
 ---
 name: arc-analyst
 description: "Weekly independent strategy review of Project Arc."
-version: 0.2.0
+version: 0.3.0
 author: Mohit Gulla (mohitgulla), Hermes Agent
 license: MIT
 platforms: [macos, linux]
@@ -40,7 +40,7 @@ line under "Obvious flaws" as `→ Sentinel` and do not draft a card for it.
   config, code or git, never open PRs, never place orders or run anything that needs
   `ARC_GATE_SECRET` or broker keys. Extra read-only queries are fine against the copy only:
   `arc scorecard attribution … --min-sample 20 --db RUN_DIR/arc-copy.db`,
-  `arc experiment plan --k 4 --effect <x> --db …`, `arc journal explain <hash> --db …`,
+  `arc experiment plan --k 3 --effect <x> --db …`, `arc journal explain <hash> --db …`,
   or `sqlite3 "file:RUN_DIR/arc-copy.db?mode=ro"`.
 - **Independent.** Do not read kanban comments, worker run output, PR threads or Slack history.
   Card scope (title/body) is fine when you map a finding to a card. Merged-PR advisory lines in
@@ -97,16 +97,17 @@ line under "Obvious flaws" as `→ Sentinel` and do not draft a card for it.
    After the owner's `ship A-<n>`, **the next run reviews it**: one `quick_change_reviews` entry
    per shipped change (`keep | roll-back | too-early`, `n` since it shipped, `before`/`after` on
    the watch metric, a note). `record` rejects a run that skips one.
-6. **XP PROPOSALS (D86, `category: xp-proposal`, ≤ 2 new per run).** You **propose, rank and
+6. **XP PROPOSALS (D86, D108, `category: xp-proposal`, ≤ 2 new per run).** You **propose, rank and
    read; you never register, start, stop or promote** (no `arc experiment
    create|register|stop|evaluate|adopt`, ever: the owner approves, the deterministic tick runs).
    `proposal` holds:
-   - `spec`: the `config/experiments/live/` v2 format **without `id`** (approval assigns it) and
+   - `spec`: the `config/experiments/live/` format **without `id`** (approval assigns it) and
      without `proposed_by`, alpha, power, `mde` or sessions (filled at adoption from
      `config/experiments.yaml`): `title`, `hypothesis` (what changes, the expected effect on daily
      net P&L and *why*), `area` (entries | exits | ranking | sizing | universe | funnel | other),
-     `arms.control: {}` and **exactly 4** treatments `arms.treatments.t1..t4`, each an `overlay`
-     on the **same leaf set** (one variable at 4 levels, or 4 alternatives of one mechanism;
+     `arms.control: {}` and **exactly 3** treatments `arms.treatments.t1..t3` (D108; never 4:
+     the validator refuses any other count, it never trims), each an `overlay`
+     on the **same leaf set** (one variable at 3 levels, or 3 alternatives of one mechanism;
      targets ranking, exits, costs, account_profiles, routines, universe),
      `non_inferiority_margin` (Sortino) and `backtest_ref` (a `BT-<n>` study, or `none`; a
      legacy `docs/RESEARCH` path is kept only on a backlog entry that already held it).
@@ -114,19 +115,30 @@ line under "Obvious flaws" as `→ Sentinel` and do not draft a card for it.
      `spec.backtest_ref`), and `evidence` (numbers).
    - `expected_effect` `{pct_per_day, source}`, `affected_share` (share of trades the change
      touches, 0–1), `p_success` (0–1, your prior), `sessions_needed` (read off the context's
-     **Sessions needed at K=4** grid at the expected effect), and
+     **Sessions needed at K=3** grid at the expected effect), and
      `value_score = pct_per_day × affected_share × p_success ÷ sessions_needed` (the validator
      recomputes it). To rank by judgement instead, add `score_override {value, reason}`.
    - `seed_ref: S-<n>` when it comes from the idea seed.
    `record` appends it to **your backlog** `xp_backlog.json` in the analyst home
    as `P-<n>` (status `proposed | approved | registered | running | concluded | dropped`, with a
    history). Re-proposing the same `key` edits a `proposed` entry; an approved spec is frozen.
+   **D108 rewrite:** an open entry whose spec is not exactly `t1..t3` (an old 4-treatment
+   draft) is flagged `needs_rewrite`: it is listed as NEEDS REWRITE, is not ranked, cannot be
+   `next_experiment` and cannot be approved. Re-propose the **same key** with 3 treatments
+   (pick the 3 most informative levels; say which one you dropped and why in `evidence`);
+   that clears the flag and returns it to `proposed` for a fresh owner approval.
+   On approval the spec is written as **spec v3** (`spec_version: 3`, `arms.control:
+   {overlay: {}}`): control runs as its own flat-start arm `XP-<n>:control` on the experiment
+   account, and every verdict is Ti vs that control arm (D108). Production is a separate,
+   descriptive panel in the report: Ti vs P and P − C = start book + residual. Never call a
+   treatment a winner or loser from the production panel.
    At most 12 open entries: drop the weakest in `backlog_drops` (`{id, reason}`).
 7. **PRIORITISATION (every run).** The context ranks the backlog (owner pins first, then value)
    with each entry's formula and slot readiness; statuses are synced from the registry by
    `proposal_ref`. Name `next_experiment: P-<n>` for the next free slot (the top-ranked one, or
    say why not in `next_reason`) and `next_slot`: `free now`, or the experiment(s) whose end
-   frees it and when (one experiment per area; 4 arms each under `max_parallel_arms`; the
+   frees it and when (one experiment per area; control + 3 treatments = 4 arms each under
+   `max_parallel_arms` (D108); the
    validator checks you named every blocker). Give every **running** experiment `stop_advice`
    (`continue | futility | baseline-changed | better-use-of-slot` + why). The owner stops
    experiments; you only advise.
@@ -142,7 +154,9 @@ line under "Obvious flaws" as `→ Sentinel` and do not draft a card for it.
      difference + Sortino non-inferiority). Your job is the *why*: which regime and structure
      rows of the per-arm breakdowns carry the difference, with N per row. Breakdowns are
      reported only, never decision inputs; below 20 trades in a row say "too few to attribute".
-     A `win` becomes a quick change (`evidence_kind: xp-winner`): the promotion PR.
+     A `win` becomes a quick change (`evidence_kind: xp-winner`): the promotion PR. The
+     context's "Promotion leads" section lists each such winner as "promote XP-<n> winner
+     t<k>" until it is promoted (E21.4; the verdict file is already committed).
    - An A/A (`kind: aa`) never wins: read it for sigma (the plan grid uses it). An A/A `invalid`
      is a harness flaw (→ Sentinel), not a strategy finding.
 8. **BACKTEST STUDIES (D84, E7.12 study framework; you never run one).** A study runs for hours
@@ -170,6 +184,11 @@ line under "Obvious flaws" as `→ Sentinel` and do not draft a card for it.
    match, P&L tracking error, with n). Where does realised diverge, and with what N? A
    persistent drift (e.g. fills worse than the sim's `slippage_frac`) is a `cost-model` theme
    line or a `→ Sentinel` flaw, never a strategy recommendation.
+   The tables also split by **DTE sleeve** (D97: `short` 10–29, `swing` 30–60, derived from
+   the open's entry DTE; `other` = no sleeve). `## DTE sleeves` carries the D97 keep/shrink
+   verdict per sleeve with n and the bootstrap 90% CI. Quote it as computed (`keep` /
+   `shrink` / `collect`, and `not ready` before ≥ 30 closed or 6 weeks); never re-derive or
+   override it, and never propose a sleeve change on a `collect` sleeve.
 4a. **Backtest studies** (`## Backtest studies (D84)`; full list in
    `RUN_DIR/backtest-studies.log`): each `BT-<n>` with its arms, ladder reached, dev result,
    holdout verdict + CI or `holdout pending`, variants vs `max_variants` and its evidence class,
@@ -225,8 +244,7 @@ line under "Obvious flaws" as `→ Sentinel` and do not draft a card for it.
                           "arms": {"control": {}, "treatments": {
                             "t1": {"overlay": {"exits": {"default": {"take_profit_pct": 0.3}}}},
                             "t2": {"overlay": {"exits": {"default": {"take_profit_pct": 0.4}}}},
-                            "t3": {"overlay": {"exits": {"default": {"take_profit_pct": 0.6}}}},
-                            "t4": {"overlay": {"exits": {"default": {"take_profit_pct": 0.75}}}}}},
+                            "t3": {"overlay": {"exits": {"default": {"take_profit_pct": 0.75}}}}}},
                           "non_inferiority_margin": 0.5, "backtest_ref": "BT-3"},
                  "evidence_kind": "backtest", "evidence_ref": "BT-3", "evidence": "BT-3 holdout: ...",
                  "expected_effect": {"pct_per_day": 0.05, "source": "BT-3 holdout mean diff"},
@@ -264,6 +282,7 @@ status (and `stop_advice` when running); `next_experiment` and `next_slot` are r
 
 *Performance vs model*
 • <kind> · <regime>: n=<n> realised $<x> vs EV $<y> (<±z>/trade) · slippage <a> bps vs modelled <b> bps
+• Sleeve <short|swing>: n=<n> mean net $<x> CI [<lo>, <hi>] · <keep|shrink|collect> (D97)
 *Standing themes*
 • cost-model: <status> — <note with N> (one line per theme, all six)
 *Quick changes* (≤3; "none: <why>" is a valid answer)
@@ -311,10 +330,15 @@ from `python3 ~/.hermes/profiles/arc-analyst/scripts/arc_analyst.py backlog`.
   `references/lessons.md`.
 - `accept A-<n>`: `triage A-<n> accepted`. `fixed A-<n>`: `triage A-<n> fixed` (next run
   re-verifies).
-- `approve P-<n> [note]`: `arc_analyst.py approve P-<n> "<note>"`. It freezes the spec, writes
-  it to `~/.hermes/profiles/arc-analyst/analyst/proposals/P-<n>.yaml` and prints the owner's
-  steps. Once E21.4 lands, hand off to `arc experiment adopt P-<n>`; until then reply with the
-  spec path and the printed manual steps (`--owner-approval P-<n>` on create and register).
+- `approve P-<n> [note]`: `arc_analyst.py approve P-<n> "<note>" --approval slack:<ts>`, where
+  `<ts>` is the owner's approving message ts in this thread (the D86 owner-confirmed rule;
+  only the owner `U0C5KUMH28G` may approve, so refuse anyone else). It freezes the spec, writes
+  it to `~/.hermes/profiles/arc-analyst/analyst/proposals/P-<n>.yaml` (spec v3, D108) and runs
+  `arc experiment adopt` on the live store (E21.4). That command takes the next free XP id,
+  registers it (or queues it behind a busy area or arm cap) and opens the auto-merging spec PR.
+  The backlog entry then moves to `registered`. Reply with the printed XP id, PR URL and start
+  estimate. If adopt fails, reply with its error. Re-sending `approve P-<n>` retries it, and is
+  idempotent per P-<n>.
 - `drop P-<n> <why>`: `arc_analyst.py drop P-<n> "<why>"`.
 - `reprioritise P-<n> <why>`: `arc_analyst.py reprioritise P-<n> "<why>"` pins it to the top
   (`reprioritise P-<n> "<why>" --score <x>` overrides its value instead). Reply with the rank.
@@ -333,12 +357,14 @@ from `python3 ~/.hermes/profiles/arc-analyst/scripts/arc_analyst.py backlog`.
 - `hold pending` in the counterfactual means the legs have not expired yet, not missing data.
 - `n/a (no E7.1 history cached)` in gaps means shadow prices are unavailable; do not infer
   "no difference".
-- Experiment P&L is per arm and excludes the legacy book (control's structures open at t0);
-  the treatment arm's equity is its virtual account, not the experiment account's broker
+- Experiment P&L is per arm. From spec v3 (D108) control is its own flat-start arm, so the
+  verdicts compare like with like; production's start book only shows up in the production
+  panel's P − C decomposition. Up to v2, C was production and excluded the legacy book.
+  An arm's equity is its virtual account, not the experiment account's broker
   equity. Do not compare an arm's numbers with the journal-wide realised-vs-model table.
 - No guardrails (owner 2026-10-03): a large loss in one arm is reported, never an automatic
   stop. If one worries you, it is `stop_advice` plus an `owner-decision` finding, not a verdict.
-- `sessions_needed` comes from the plan grid at K=4: an effect whose row says "> max_sessions"
+- `sessions_needed` comes from the plan grid at K=3 (D108): an effect whose row says "> max_sessions"
   cannot be detected in the window; shrink the scope or raise the effect, or do not propose it.
 
 ## Verification

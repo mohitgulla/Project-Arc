@@ -134,6 +134,7 @@ class ReasonCode(StrEnum):
     QUANT_SKIPPED = "quant_skipped"  # E5.7: Quant skipped a budgeted ticker, with a reason
     NOT_STRUCTURED = "not_structured"  # E5.7: no structure and no reason from Quant
     OVER_BUDGET = "over_budget"  # E5.7: ranked beyond pipeline_max_shortlist
+    SLEEVE_FULL = "sleeve_full"  # E22.2 (D97): a DTE sleeve with no free slot, no menu
     # account profile (D25): the profile maps the stance to no structure
     PROFILE_NO_NEUTRAL = "profile:no_neutral_structure"
     PROFILE_NO_STRUCTURE = "profile:no_structure"
@@ -165,12 +166,25 @@ class ReasonCode(StrEnum):
     STRETCHED_ENTRY = "stretched_entry"  # directional long premium on a stretched move
     TECHNICALS_MISSING = "technicals_missing"  # a technical filter on, no technicals: kept (noted)
     VWAP_MISSING = "vwap_missing"  # anti_chase.vwap on, intraday fetch failed: daily rule only
+    # E23.1 (D98): the deterministic range-edge entry filter (personas.range_edges)
+    MID_RANGE_ENTRY = "mid_range_entry"  # sideways regime, long premium from mid-range
+    RANGE_TOO_NARROW = "range_too_narrow"  # range < min_range_atr x ATR14: rule skipped, kept
+    VP_MISSING = "vp_missing"  # levels value_area, no value area: 20d high/low used
+    # E23.2 (D98): the pullback watch for anti-chase drops (personas.pullback_watch)
+    PULLBACK_WATCH_ADDED = "pullback_watch_added"  # a stretched drop is put on watch
+    PULLBACK_REARMED = "pullback_rearmed"  # the stretch reset: re-surfaced to Research
+    PULLBACK_EXPIRED = "pullback_expired"  # watched ttl_sessions with no reset
+    PULLBACK_INVALIDATED = "pullback_invalidated"  # reversal / regime flip: not bought
+    PULLBACK_RETIRED = "pullback_retired"  # an open position / pending proposal on it
     # E16.5 (D76): scanner.max_be_atr dropped debit structures needing an unrealistic move
     BE_UNREALISTIC = "be_unrealistic"
     DEDUPE_EXECUTED = "dedupe_executed"  # same idea is open / closed within the cooldown
     DEDUPE_PROPOSED = "dedupe_proposed"  # same idea proposed within the cooldown
     DEDUPE_REJECTED = "dedupe_rejected"  # same idea rejected by the owner within the cooldown
     DEDUPE_OVERRIDE = "dedupe_override"  # re-admitted: spot moved or the regime changed
+    # E24.2 (D101): the missed-open retry (an approved open that never filled)
+    DEDUPE_MISSED_RETRY = "dedupe:missed_retry"  # re-admitted for its same-day retry
+    DEDUPE_MISSED_WAIT = "dedupe:missed_wait"  # held until dedupe.missed_retry_after
     RESEARCH_NO_TRADE = "research_no_trade"  # Research chose an empty shortlist
     MARKET_UNCLEAR = "market_unclear"  # VIX / term structure / regime guard: no new opens
     MARKET_DATA_MISSING = "market_data_missing"  # no VIX reading: fail closed for new opens
@@ -178,6 +192,13 @@ class ReasonCode(StrEnum):
     THESIS_CHECK = "thesis_check"  # Research's check of an open position's thesis
     # E5.8 (D31): the 5-min loop found the same inputs as the last full run
     LOOP_NO_CHANGE = "loop_no_change"
+    # E22.3 (D97): same inputs, but a sleeve has free slots and no opens today: full run
+    LOOP_FORCED_FREE_SLOTS = "loop_forced_free_slots"
+    # E22.3 (D97): Research ranked fewer than research.min_ranked with free slots (noted)
+    RESEARCH_UNDER_RANKED = "research_under_ranked"
+    # E5.16 (D116): a ticker|stance ranked N full loops without a tradeable structure
+    # leaves the idea pool for the next M research runs (one row per suppression start)
+    STALE_PICK_SUPPRESSED = "stale_pick_suppressed"
     # sizing (D18)
     SIZING_OK = "sizing:ok"
     SIZING_CAPPED = "sizing:capped"
@@ -186,6 +207,8 @@ class ReasonCode(StrEnum):
     SIZING_RISK_ZERO = "sizing:risk_zero"
     SIZING_UNBOUNDED = "sizing:unbounded"
     SIZING_INVALID_INPUT = "sizing:invalid_input"
+    SIZING_CASH_CAPPED = "sizing:cash_capped"  # E22.3: fewer contracts to fit settled cash
+    SIZING_CASH_ZERO = "sizing:cash_zero"  # E22.3: not one contract fits settled cash
     # gate: one code per arc.gate.rules.RuleCode
     GATE_PASS = "gate:pass"
     GATE_STRUCTURE_INVALID = "gate:structure_invalid"
@@ -218,6 +241,7 @@ class ReasonCode(StrEnum):
     GATE_ORDER_BUDGET = "gate:order_budget"
     GATE_DAY_TRADES = "gate:account_profile_day_trades"
     GATE_LIVE_SIZE_CAP = "gate:live_size_cap"  # D70 (E11.3)
+    GATE_SLEEVE_POSITIONS = "gate:sleeve_max_positions"  # E22.1 (D97)
     # approval (E6.1)
     OWNER_APPROVE = "owner_approve"
     OWNER_REJECT = "owner_reject"
@@ -238,7 +262,10 @@ class ReasonCode(StrEnum):
     ORDER_UNCONFIRMED = "order:cancel_unconfirmed"
     ORDER_BUDGET_STOP = "order:budget_exhausted"
     ORDER_STALE_BAND = "order:stale_band"  # D34: re-priced mid left the gate-approved band
+    ORDER_BAND_MOVED = "order:band_moved"  # D101: market ran past the band; re-gate or stop
     ORDER_SUBMIT_FAILED = "order:submit_failed"  # D71: submit errored; broker has no such order
+    # D69 (E15.3): opposite side of another arm on the shared account (pre-check or 403)
+    CROSS_ARM_CONFLICT = "order:cross_arm_conflict"
     # exit (E6.2: E2.4 policy on open structures)
     EXIT_TAKE_PROFIT = "exit:take_profit"
     EXIT_STOP = "exit:stop"
@@ -287,6 +314,8 @@ class ReasonCode(StrEnum):
     RECONCILE_WASH_SALE = "reconcile:wash_sale"
     RECONCILE_LOT_PRICE = "reconcile:lot_price"
     RECONCILE_TEST_FILL = "reconcile:test_fill"
+    # E15.2 (D69): the shared experiment account's book invariant failed (arms vs broker)
+    RECONCILE_BOOK_INVARIANT = "reconcile:book_invariant"
     # E6.2g: a stored fill whose sign disagreed with its signed band, repaired by
     # `arc journal repair-fill-signs`; the payload carries the realised P&L delta
     RECONCILE_FILL_SIGN = "reconcile:fill_sign_corrected"
@@ -412,17 +441,30 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.STRETCHED_ENTRY: "Skipped: move already stretched",
     ReasonCode.TECHNICALS_MISSING: "Technical filter skipped: no technicals",
     ReasonCode.VWAP_MISSING: "VWAP check skipped: no intraday bars",
+    ReasonCode.MID_RANGE_ENTRY: "Skipped: mid-range entry in a sideways market",
+    ReasonCode.RANGE_TOO_NARROW: "Range check skipped: range too narrow",
+    ReasonCode.VP_MISSING: "Range check used the 20-day high/low: no value area",
+    ReasonCode.PULLBACK_WATCH_ADDED: "Stretched idea put on pullback watch",
+    ReasonCode.PULLBACK_REARMED: "Pullback reached: idea re-surfaced",
+    ReasonCode.PULLBACK_EXPIRED: "Pullback watch expired",
+    ReasonCode.PULLBACK_INVALIDATED: "Pullback watch dropped: move reversed",
+    ReasonCode.PULLBACK_RETIRED: "Pullback watch closed: already held or proposed",
     ReasonCode.BE_UNREALISTIC: "Dropped: breakeven needs an unrealistic move",
     ReasonCode.DEDUPE_EXECUTED: "Same idea already traded recently",
     ReasonCode.DEDUPE_PROPOSED: "Same idea already proposed recently",
     ReasonCode.DEDUPE_REJECTED: "Same idea rejected by the owner recently",
     ReasonCode.DEDUPE_OVERRIDE: "Re-admitted: spot or regime moved",
+    ReasonCode.DEDUPE_MISSED_RETRY: "Re-admitted: retry of a missed open",
+    ReasonCode.DEDUPE_MISSED_WAIT: "Missed open: waiting before its retry",
     ReasonCode.RESEARCH_NO_TRADE: "Research chose no trade",
     ReasonCode.MARKET_UNCLEAR: "Market unclear: no new opens",
     ReasonCode.MARKET_DATA_MISSING: "Market data missing: no new opens",
     ReasonCode.PORTFOLIO_VIEW: "Research's read of the open book",
     ReasonCode.THESIS_CHECK: "Research checked an open position's thesis",
     ReasonCode.LOOP_NO_CHANGE: "Loop skipped: inputs unchanged",
+    ReasonCode.LOOP_FORCED_FREE_SLOTS: "Loop ran in full: free slots, no opens today",
+    ReasonCode.RESEARCH_UNDER_RANKED: "Research ranked fewer names than asked",
+    ReasonCode.STALE_PICK_SUPPRESSED: "Suppressed: ranked repeatedly, never tradeable",
     ReasonCode.SIZING_OK: "Sized at Risk's suggestion",
     ReasonCode.SIZING_CAPPED: "Size capped at 5% of equity",
     ReasonCode.SIZING_CAP_ZERO: "Cap allows zero contracts",
@@ -430,6 +472,8 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.SIZING_RISK_ZERO: "Risk suggested zero contracts",
     ReasonCode.SIZING_UNBOUNDED: "Unbounded loss: cannot size",
     ReasonCode.SIZING_INVALID_INPUT: "Invalid sizing input",
+    ReasonCode.SIZING_CASH_CAPPED: "Size cut to fit settled cash",
+    ReasonCode.SIZING_CASH_ZERO: "Not enough settled cash for one contract",
     ReasonCode.GATE_PASS: "Gate passed",
     ReasonCode.GATE_STRUCTURE_INVALID: "Gate: invalid structure",
     ReasonCode.GATE_PER_UNDERLYING: "Gate: over the per-underlying limit",
@@ -461,6 +505,8 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.GATE_ORDER_BUDGET: "Gate: daily order budget",
     ReasonCode.GATE_DAY_TRADES: "Gate: day-trade limit of the account profile",
     ReasonCode.GATE_LIVE_SIZE_CAP: "Gate: live size cap (live gate not met)",
+    ReasonCode.GATE_SLEEVE_POSITIONS: "Gate: DTE sleeve full",
+    ReasonCode.SLEEVE_FULL: "No menu: DTE sleeve full",
     ReasonCode.OWNER_APPROVE: "Owner approved",
     ReasonCode.OWNER_REJECT: "Owner rejected",
     ReasonCode.AUTO_APPROVE: "Auto-approved",
@@ -479,7 +525,9 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.ORDER_UNCONFIRMED: "Cancel not confirmed by the broker",
     ReasonCode.ORDER_BUDGET_STOP: "Order stopped: daily budget used up",
     ReasonCode.ORDER_STALE_BAND: "Order stopped: price left the approved band",
+    ReasonCode.ORDER_BAND_MOVED: "Market moved past the approved price band",
     ReasonCode.ORDER_SUBMIT_FAILED: "Order not taken by the broker (submit failed)",
+    ReasonCode.CROSS_ARM_CONFLICT: "Order refused: opposite side of another experiment arm",
     ReasonCode.EXIT_TAKE_PROFIT: "Exit: profit target hit",
     ReasonCode.EXIT_STOP: "Exit: stop hit",
     ReasonCode.EXIT_PROFIT_LOCK: "Closed: profit lock",
@@ -525,6 +573,7 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.RECONCILE_ASSIGNMENT: "Short leg assigned at the broker (booked)",
     ReasonCode.RECONCILE_EXERCISE: "Long leg exercised at the broker (booked)",
     ReasonCode.RECONCILE_TEST_FILL: "Integration-test fill seen at reconcile",
+    ReasonCode.RECONCILE_BOOK_INVARIANT: "Shared-account book invariant failed (arm halted)",
     ReasonCode.EXPERIMENT_DRAFTED: "Experiment drafted",
     ReasonCode.EXPERIMENT_REGISTERED: "Experiment pre-registered (spec locked)",
     ReasonCode.EXPERIMENT_QUEUED: "Experiment queued behind another in its area",

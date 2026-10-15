@@ -62,6 +62,29 @@ def call_key(method: str, *args: Any) -> str:
     return f"{method}({json.dumps([str(a) for a in args])})"
 
 
+def _bars_key(symbol: str, start: _dt.date, end: _dt.date, timeframe: str, feed: str | None) -> str:
+    """``history_bars`` tape key; E23.0a: a named *feed* is part of it (SIP and IEX bars
+    differ), while the default feed keeps the pre-E23.0a key."""
+    args: list[Any] = [symbol, start, end, timeframe]
+    if feed is not None:
+        args.append(str(getattr(feed, "value", feed)))
+    return call_key("history_bars", *args)
+
+
+def _inner_bars(
+    inner: MarketDataProvider,
+    symbol: str,
+    start: _dt.date,
+    end: _dt.date,
+    timeframe: str,
+    feed: str | None,
+) -> list[HistoryBar]:
+    """Forward a bars read, naming *feed* only when one was asked for."""
+    if feed is None:
+        return inner.history_bars(symbol, start, end, timeframe)
+    return inner.history_bars(symbol, start, end, timeframe, feed=feed)
+
+
 def _pack(rows: list[Any]) -> bytes:
     return zlib.compress(
         json.dumps([r.model_dump(mode="json") for r in rows], default=str).encode()
@@ -116,10 +139,16 @@ class TapeRecorder:
         return out
 
     def history_bars(
-        self, symbol: str, start: _dt.date, end: _dt.date, timeframe: str = "1Day"
+        self,
+        symbol: str,
+        start: _dt.date,
+        end: _dt.date,
+        timeframe: str = "1Day",
+        *,
+        feed: str | None = None,
     ) -> list[HistoryBar]:
-        out = self.inner.history_bars(symbol, start, end, timeframe)
-        self._put(call_key("history_bars", symbol, start, end, timeframe), list(out))
+        out = _inner_bars(self.inner, symbol, start, end, timeframe, feed)
+        self._put(_bars_key(symbol, start, end, timeframe, feed), list(out))
         return out
 
     def __getattr__(self, name: str) -> Any:
@@ -229,12 +258,18 @@ class TapeReplay:
         return UnderlyingQuote.model_validate(got[0])
 
     def history_bars(
-        self, symbol: str, start: _dt.date, end: _dt.date, timeframe: str = "1Day"
+        self,
+        symbol: str,
+        start: _dt.date,
+        end: _dt.date,
+        timeframe: str = "1Day",
+        *,
+        feed: str | None = None,
     ) -> list[HistoryBar]:
-        key = call_key("history_bars", symbol, start, end, timeframe)
+        key = _bars_key(symbol, start, end, timeframe, feed)
         got = self._get(key)
         if got is None:
-            return self._inner(key).history_bars(symbol, start, end, timeframe)
+            return _inner_bars(self._inner(key), symbol, start, end, timeframe, feed)
         return [HistoryBar.model_validate(r) for r in got]
 
     def __getattr__(self, name: str) -> Any:

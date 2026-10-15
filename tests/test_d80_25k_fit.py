@@ -93,7 +93,9 @@ def test_band_worst_price_adds_to_max_loss() -> None:
 
 
 def test_menu_shrinks_to_a_passing_lot_count() -> None:
-    # $Δ cap = 1.0 × 25,000. 4 lots × ~40 Δ × $170 ≈ $27k fails; fewer lots pass.
+    # D116 (E3.8): a debit vertical counts sign(Δ) × max loss ($400/lot) toward the $Δ
+    # cap, not Δ × spot. With the cap at 0.05 × 25,000 = 1,250: 4 lots ($1,600) fail,
+    # 3 lots ($1,200) pass. (At the 1.0 × equity default 4 lots now pass: ~$27k Δ × spot.)
     st = _cheap().model_copy(update={"greeks": _cheap().greeks.model_copy(update={"delta": 40.0})})
     row = fit.replay(
         st,
@@ -103,14 +105,19 @@ def test_menu_shrinks_to_a_passing_lot_count() -> None:
         suggestion=10**6,
         lots_orig=None,
         band=None,
-        settings=_settings(),
+        settings=_settings().model_copy(update={"portfolio_dollar_delta_cap_pct": 0.05}),
         equity=EQ,
         spot=170.0,
         beta=Decimal(1),
         shrink=True,
     )
     assert row.fits
-    assert row.lots_25k == 3  # 3 × 40 × 170 = 20,400 ≤ 25,000
+    assert row.lots_25k == 3  # 3 × $400 = 1,200 ≤ 1,250
+    full = fit.replay(
+        st, source="menu", ticker="XOM", day=DAY, suggestion=10**6, lots_orig=None,
+        band=None, settings=_settings(), equity=EQ, spot=170.0, beta=Decimal(1), shrink=True,
+    )  # fmt: skip
+    assert full.fits and full.lots_25k == 4  # alloc cap binds, not the delta cap
 
 
 def test_menu_structure_skips_credit_items() -> None:
