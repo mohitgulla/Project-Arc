@@ -392,7 +392,7 @@ class TestResearchPortfolioAware:
         assert tickers == set()  # the only pick (SPY bullish) is held
         assert sl["portfolio_view"]["verdict"] == "concentrated"
         assert [c["structure_id"] for c in sl["thesis_checks"]] == [sid]
-        assert sl["suppressed"] and sl["suppressed"][0].startswith("SPY bullish long_call")
+        assert sl["suppressed"] and sl["suppressed"][0].startswith("dedupe: SPY bullish long_call")
         d = _outcome(report, "research")
         assert d.metrics["dedupe_executed"] == 1 and d.metrics["thesis_checks"] == 1
         codes = _codes(conn, "shortlist")
@@ -604,6 +604,11 @@ class TestMarketGuard:
 
 class TestProposeDedupe:
     def test_loop_proposes_each_idea_once_per_day(self, settings, routines) -> None:  # noqa: ANN001
+        # E5.16: the stale-pick cooldown would retire the re-ranked picks by slot 5; off
+        # here so the propose-stage dedupe is what is measured (tests/test_stale_pick.py).
+        from arc.routines.config import ResearchStrategySettings
+
+        routines = routines.model_copy(update={"research": ResearchStrategySettings()})
         env = PipelineEnv.fixtures()
         conn, first = _run(settings, routines, env)
         assert [p["ticker"] for p in first.proposals] == ["SPY"]

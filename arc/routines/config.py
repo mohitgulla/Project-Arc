@@ -1217,6 +1217,35 @@ class StrikeLevelsSettings(BaseModel):
         return parse_on_off(v, where="strike_levels.enabled")
 
 
+class StalePickSettings(BaseModel):
+    """E5.16 (D116): the stale-pick cooldown of Research's ranked shortlist.
+
+    A ``ticker|stance`` Research ranked in ``after_loops`` consecutive full loops of
+    the session without a tradeable structure (a proposal sized >= 1 contract that
+    passed the gate) is removed from the idea pool for the next ``suppress_loops``
+    ``research`` runs (any status), then eligible again with its streak reset.
+    Computed from the journal (:mod:`arc.pipeline.stale_pick`). ``after_loops: 0`` is
+    off: no query, no journal row, the prompt byte-identical to before E5.16.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    after_loops: Annotated[int, Field(ge=0, le=20)] = 0
+    suppress_loops: Annotated[int, Field(ge=1, le=40)] = 10
+
+    @property
+    def enabled(self) -> bool:
+        return self.after_loops > 0
+
+
+class ResearchStrategySettings(BaseModel):
+    """E5.16 (D116): Research knobs in strategy.yaml ``research:``."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    stale_pick: StalePickSettings = Field(default_factory=StalePickSettings)
+
+
 class RoutinesConfig(BaseModel):
     """Top-level ``config/routines.yaml``."""
 
@@ -1281,6 +1310,8 @@ class RoutinesConfig(BaseModel):
     pullback_watch: PullbackWatchSettings = Field(default_factory=PullbackWatchSettings)
     # E23.3 (D98): strike vs level context (strategy.yaml `strike_levels:`)
     strike_levels: StrikeLevelsSettings = Field(default_factory=StrikeLevelsSettings)
+    # E5.16 (D116): the stale-pick cooldown (strategy.yaml `research.stale_pick:`)
+    research: ResearchStrategySettings = Field(default_factory=ResearchStrategySettings)
 
     @model_validator(mode="before")
     @classmethod

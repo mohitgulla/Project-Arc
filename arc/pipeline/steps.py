@@ -174,6 +174,7 @@ from arc.pipeline.research_pool import (
     build_idea_pool,
     cut_pool,
 )
+from arc.pipeline.stale_pick import StaleSuppression, already_journaled, load_loops, stale_state
 from arc.pipeline.store import PersonaCallRepo
 from arc.routines.handlers import JobResult
 from arc.routines.loop import LoopInputs, LoopState, pnl_bucket
@@ -2322,6 +2323,16 @@ def _loop_no_change(
     )
 
 
+def _with_stale_facts(
+    facts: list[str] | None, stale: Sequence[StaleSuppression]
+) -> list[str] | None:
+    """E5.16: a stale pick's start / end changes the loop digest (``None`` / *facts*
+    unchanged when nothing is suppressed, so the digest is as before E5.16)."""
+    if not stale:
+        return facts
+    return [*(facts or []), *(f"stale:{s.key}@{s.trigger_run_id}" for s in stale)]
+
+
 def _loop_record_full_run(ctx: JobContext) -> None:
     """D31: a completed Research evaluation is the loop's new ``last_full_run``.
 
@@ -2481,6 +2492,46 @@ def _no_candidates(ctx: JobContext) -> JobResult:
     return JobResult(summary="no active candidates; empty shortlist", metrics={"shortlist": 0})
 
 
+def _stale_picks(ctx: JobContext, cands: Mapping[str, Stance]) -> list[StaleSuppression]:
+    """E5.16 (D116): the stale picks suppressed for this run, among *cands*.
+
+    Replays the session's ``research`` runs from this store's journal; journals one
+    ``stale_pick_suppressed`` row per suppression start (idempotent per trigger run).
+    ``[]`` with ``research.stale_pick.after_loops: 0`` (no query, no row).
+    """
+    cfg = ctx.routines.research.stale_pick
+    if not cfg.enabled:
+        return []
+    spec = ctx.routines.personas.get(ctx.job)
+    state = stale_state(
+        load_loops(ctx.conn, job=ctx.job, now=ctx.now, exclude_run_id=ctx.run_id),
+        after_loops=cfg.after_loops,
+        suppress_loops=cfg.suppress_loops,
+        every=spec.every if spec is not None else None,
+    )
+    out = [
+        s
+        for k, s in sorted(state.active.items())
+        if s.ticker in cands and cands[s.ticker].value == s.stance
+    ]
+    j = _journal(ctx, ctx.snapshot.id)
+    for sup in sorted(state.active.values(), key=lambda s: s.key):
+        if already_journaled(ctx.conn, sup):
+            continue
+        j.add(
+            JournalPersona.RESEARCH,
+            Stage.SHORTLIST,
+            sup.ticker,
+            Choice.REJECTED,
+            ReasonCode.STALE_PICK_SUPPRESSED,
+            reason_text=sup.line(),
+            payload=sup.payload(),
+        )
+    if out:
+        log.info("pipeline.stale_picks", suppressed=[s.key for s in out])
+    return out
+
+
 def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
     settings = ctx.settings
     all_entries = ctx.snapshot.of_kind("candidate")
@@ -2568,6 +2619,15 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
             cands = {e.subject: Stance(e.payload["stance"]) for e in cand_entries}
         if not cands:  # only watches, none ready: nothing to rank
             return _no_candidates(ctx)
+    # E5.16 (D116): stale picks leave the pool Research sees for this run
+    stale = _stale_picks(ctx, cands)
+    if stale:
+        gone = {s.ticker for s in stale}
+        cands = {t: st for t, st in cands.items() if t not in gone}
+        cand_entries = [e for e in cand_entries if e.subject not in gone]
+        pool = IdeaPool([i for i in pool.items if i.ticker not in gone], pool.capped)
+        if not cands:
+            return _no_candidates(ctx)
     # E5.9 (D33): market-conditions guard, before any LLM spend. Missing VIX fails
     # closed for new opens; exits (the positions chain) never come through here.
     guard = market_guard(snap, settings, now=ctx.now, vix_quote=env.vix_quote)
@@ -2583,6 +2643,7 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
     priors = recent_ideas(ctx.conn, now=ctx.now, cfg=dedupe_cfg)
     ctx.record_input("recent_ideas", "db", [r.dump() for r in priors], count=len(priors))
     held, recent_lines = _held_and_recent(cands, priors, pctx, ctx.now, dedupe_cfg)
+    stale_lines = [f"- {s.line()}" for s in stale]  # E5.16: listed like dedupe lines
     retry_lines = _retry_lines(cands, priors)  # E24.2 (D101)
     # D31: change-aware skip. Same inputs as the previous loop and a full run not
     # yet due (loop.max_idle) -> no LLM call; the chain runs its deterministic tail.
@@ -2596,10 +2657,11 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
         priors,
         budget,
         facts_tickers=_research_facts_tickers(ctx, cand_entries),
-        extra_facts=(
+        extra_facts=_with_stale_facts(
             [*(sentiment_keys or []), *pullback.facts()]
             if pullback is not None and pullback.facts()
-            else sentiment_keys
+            else sentiment_keys,
+            stale,
         ),
         slots=slots,
     )
@@ -2613,7 +2675,7 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
         "scan_date": _today(ctx).isoformat(),
         "max_notes": settings.pipeline_max_context_notes,
         "portfolio_block": "" if pctx.empty else render_portfolio_context(pctx, settings),
-        "recent_ideas": "\n".join(recent_lines),
+        "recent_ideas": "\n".join([*recent_lines, *stale_lines]),
         "entry_terms": entry_terms(settings).model_dump(mode="json"),
         "rules": _research_rules(cands, settings, budget, pctx, diversification),
         # E4.6 (D45): [{slug, label, category}] of the youtube.briefs job, for the n/N lines.
@@ -2827,7 +2889,11 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
         thesis_checks=_watch_thesis_checks(watch_items),
         no_trade_reason=no_trade,
         market_guard=guard,
-        suppressed=[ln.removeprefix("- ") for ln in recent_lines],
+        # E5.16 (D116): each line says which rule held it back (`dedupe: …` / `stale: …`)
+        suppressed=[
+            *(f"dedupe: {ln.removeprefix('- ')}" for ln in recent_lines),
+            *(s.card_line() for s in stale),
+        ],
         pool_counts=IdeaPool([i for i in pool.items if i.ticker in cands], pool.capped).counts(),
         exit_watchlist_counts=(
             {
@@ -2894,7 +2960,8 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
             "not_ranked": len(not_ranked),
             "regime_written": len(regimes),
             "open_positions": len(pctx.positions),
-            "suppressed": len(recent_lines),
+            "suppressed": len(recent_lines) + len(stale),
+            **({"stale_suppressed": len(stale)} if stale else {}),
             "thesis_checks": len(payload.thesis_checks),
             **(
                 {"exit_watch_review": (payload.exit_watchlist_counts or {}).get("review", 0)}
