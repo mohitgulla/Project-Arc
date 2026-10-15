@@ -980,6 +980,14 @@ class ArcSettings(BaseSettings):
             "scanner). A 20-observation rank is noise (D55)."
         ),
     )
+    iv_series_sources: list[Literal["alpaca_cm30", "theta_backfill", "alpaca_backfill"]] = Field(
+        default=["alpaca_cm30", "theta_backfill", "alpaca_backfill"],
+        min_length=1,
+        description=(
+            "E7.13 (D84): iv_daily sources forming our IV series, in same-day precedence "
+            "order (first present wins). optionstrategist is never part of it."
+        ),
+    )
     iv_crosscheck_max_pts: Annotated[float, Field(gt=0, le=50)] = Field(
         default=3.0,
         description="iv.record: |our iv30 - Cboe iv30| above this (vol pts) opens an [Ops] alert.",
@@ -1354,6 +1362,15 @@ class ArcSettings(BaseSettings):
         """Accept a comma-separated string from env vars."""
         if isinstance(v, str):
             return [s.strip() for s in v.split(",") if s.strip()]
+        return v
+
+    @field_validator("iv_series_sources")
+    @classmethod
+    def _iv_sources_unique(cls, v: list[str]) -> list[str]:
+        """E7.13: a precedence list names each source once."""
+        if len(set(v)) != len(v):
+            msg = f"iv_series_sources lists a source twice: {v}"
+            raise ValueError(msg)
         return v
 
     @field_validator("dte_max")

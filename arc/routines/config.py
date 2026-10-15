@@ -1051,6 +1051,32 @@ class IvBackfillSettings(BaseModel):
     since: _dt.date = _dt.date(2024, 3, 1)
 
 
+class HistoryTopupSettings(BaseModel):
+    """E7.13 (D84): the ``history_topup:`` block (nightly ThetaData free-tier top-up).
+
+    Keeps the C500 option-history cache current after the paid month, then appends each
+    new session's ``theta_backfill`` IV point for names already seeded. Backtest/IV
+    context data only; never a gate input.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    # Which checkpoint of the E7.7 pull list to keep current (``c125`` / ``c250`` / ``c500``).
+    universe: Annotated[str, Field(pattern=r"^c\d+$")] = "c500"
+    # E7.7 universe version (None = the latest build under data/backtest_universe/).
+    universe_version: str | None = None
+    # Parquet cache root (options_eod/, underlying_daily/, option_stats/).
+    data_dir: str = "data"
+    theta_url: str = "http://127.0.0.1:25503"
+    theta_tier: Literal["free", "value", "standard", "pro"] = "free"
+    # Seconds between ThetaData requests (free tier: 20 req/min -> 3 s).
+    request_interval_s: Annotated[float, Field(ge=0.0, le=60.0)] = 3.0
+    # No new ticker starts after this many seconds (the next run resumes, behind-first).
+    max_runtime_s: Annotated[int, Field(ge=60, le=3000)] = 2400
+    # Append the new sessions' theta_backfill IV for names that already have that series.
+    iv_append: bool = True
+
+
 class VolumeProfileSettings(BaseModel):
     """E23.0 (D98): the 20-session composite volume profile on regime technicals.
 
@@ -1351,6 +1377,7 @@ class RoutinesConfig(BaseModel):
     options_slow: OptionsSlowSettings = Field(default_factory=OptionsSlowSettings)  # E13.5
     options_fast: OptionsFastSettings = Field(default_factory=OptionsFastSettings)  # E13.6
     iv_backfill: IvBackfillSettings = Field(default_factory=IvBackfillSettings)  # E16.1 (D76)
+    history_topup: HistoryTopupSettings = Field(default_factory=HistoryTopupSettings)  # E7.13
     # E23.0 (D98): levels on regime technicals (strategy.yaml blocks)
     volume_profile: VolumeProfileSettings = Field(default_factory=VolumeProfileSettings)
     oi_walls: OiWallsSettings = Field(default_factory=OiWallsSettings)

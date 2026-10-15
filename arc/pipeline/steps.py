@@ -669,7 +669,8 @@ _REGIME_V1_DAYS = 400
 def _regime_entries(ctx: JobContext, env: PipelineEnv, tickers: list[str]) -> list[str]:
     """Write today's regime/vol features for *tickers* lacking one; return tickers written.
 
-    E4.12 (D55): IV comes from ``iv_daily`` (our series: ``alpaca_cm30`` then
+    E4.12 (D55): IV comes from ``iv_daily`` (our series, per day the first source of
+    ``iv_series_sources`` present; E7.13 default ``alpaca_cm30`` > ``theta_backfill`` >
     ``alpaca_backfill``) plus today's 30-DTE IV from the live chain (a stored row for
     today wins). Rank/percentile need ``iv_min_obs_rank`` observations; under that, a
     fresh Option Strategist percentile is shown as ``iv_percentile_ext`` (labelled,
@@ -682,7 +683,7 @@ def _regime_entries(ctx: JobContext, env: PipelineEnv, tickers: list[str]) -> li
 
     settings = ctx.settings
     today = _today(ctx)
-    store = safe_store(ctx.conn)
+    store = safe_store(ctx.conn, series_sources=settings.iv_series_sources)  # E7.13
     written: list[str] = []
     rkw = regime_kwargs(settings)
     days = regime_history_days(settings)
@@ -3377,7 +3378,8 @@ def _quant_menus(ctx: JobContext, env: PipelineEnv, items: list[ResearchRankedIt
     summaries, menus, chains, spots = m.summaries, m.menus, m.chains, m.spots
     no_chain, no_chain_why, no_profile = m.no_chain, m.no_chain_why, m.no_profile
     today = _today(ctx)
-    iv_store = safe_iv_store(ctx.conn)  # E4.12: scanner IV rank from iv_daily
+    # E4.12: scanner IV rank from iv_daily (E7.13: configured source precedence)
+    iv_store = safe_iv_store(ctx.conn, series_sources=settings.iv_series_sources)
     exits = exit_config(settings)  # D26: exits.yaml + control-panel overrides
     measure = exits.pipeline.menu_measure  # E7.5b (D79): "control" = scanner menu
     full = measure != MENU_CONTROL

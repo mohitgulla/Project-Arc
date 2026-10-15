@@ -1096,13 +1096,13 @@ def _underlying_changes(
     syms = [str(s) for s in rows]
     qmarks = ",".join("?" * len(syms))
     closes: dict[str, dict[_dt.date, Decimal]] = {s: {} for s in syms}
-    # the backfill writes the official close; a same-day cm30 row labelled last_close is
-    # a 15:50 stand-in, so the backfill wins where both exist
+    # the backfills write the official close; a same-day cm30 row labelled last_close is
+    # a 15:50 stand-in, so a backfill (Alpaca or E7.13 Theta) wins where both exist
     for r in conn.execute(
         f"""SELECT ticker, day, spot FROM iv_daily
             WHERE ticker IN ({qmarks}) AND spot_basis = 'last_close' AND spot > 0
               AND day >= ? AND day <= ?
-            ORDER BY (source = 'alpaca_backfill'), created_at""",  # noqa: S608
+            ORDER BY (source IN ('alpaca_backfill', 'theta_backfill')), created_at""",  # noqa: S608
         (*syms, (day - _dt.timedelta(days=10)).isoformat(), day.isoformat()),
     ).fetchall():
         v = _dec(r["spot"])

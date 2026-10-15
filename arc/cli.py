@@ -737,7 +737,11 @@ def _chains(args: argparse.Namespace) -> int:
             as_of = now_et().date()
         from arc.iv.store import IvStore
 
-        store = IvStore(iv_conn) if iv_conn is not None else None
+        store = (
+            IvStore(iv_conn, series_sources=settings.iv_series_sources)
+            if iv_conn is not None
+            else None
+        )
         history = store.series(ticker, until=as_of) if store is not None else {}
         # E2.5: a live scan pro-rates today's volume minimum on the wall clock.
         res = scan(
@@ -1118,9 +1122,13 @@ def main(argv: list[str] | None = None) -> int:
         _log_to_stderr()
         return run_funnel(args)
     if args.command == "iv":
+        _log_to_stderr()
+        if args.iv_command == "backfill" and args.source == "theta":  # E7.13 (D84)
+            from arc.backtest.theta_iv_cli import run_theta_backfill
+
+            return run_theta_backfill(args)
         from arc.iv.cli import run_iv
 
-        _log_to_stderr()
         return run_iv(args)
     if args.command == "betas":
         from arc.betas.cli import run_betas
