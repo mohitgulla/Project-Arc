@@ -24,6 +24,8 @@ from arc.backtest.study import (
     load_ledger,
     load_study,
     run_study,
+    segment_rows,
+    segment_verdicts,
     study_hash,
     variants,
 )
@@ -367,6 +369,10 @@ def test_dev_runs_append_to_the_ledger_and_write_the_report(
         "etf",
         "liquidity",
     }
+    segs = payload["segments"]["cash_debit"]["control"]
+    assert [r["segment"] for r in segs] == ["All", "Stocks", "ETFs"]
+    assert "## All / Stocks / ETFs" in md
+    assert set(payload["segment_verdicts"]["cash_debit"]) == {"t1"}
     run_dir = Path(e1.run_dir)
     assert (run_dir / "cash_debit" / "t1" / "trades.csv").is_file()
     assert (run_dir / "report.md").is_file()
@@ -590,3 +596,88 @@ def test_cli_run_dev_writes_ledger_and_report(
     led = load_ledger(tmp_path / "ledger.jsonl")
     assert len(led) == 1 and led[0].at == NOW and led[0].phase == "dev"
     assert (tmp_path / "reports" / "BT-9.md").is_file()
+
+
+def _seg_run(pnls: list[tuple[str, bool, float, str]]) -> Any:
+    import pandas as pd
+
+    from arc.backtest.sim import SimRun
+
+    rows = [
+        {
+            "underlying": u,
+            "etf": etf,
+            "pnl": pnl,
+            "pnl_mid": pnl + 10.0,
+            "max_loss_unit": 200.0,
+            "contracts": 2,
+            "exit_reason": why,
+            "entry_date": dt.date(2022, 1, 3 + i),
+            "exit_date": dt.date(2022, 1, 10 + i),
+        }
+        for i, (u, etf, pnl, why) in enumerate(pnls)
+    ]
+    days = [dt.date(2022, 1, d) for d in range(3, 20)]
+    eq = pd.Series([100_000.0, 101_000.0, 99_000.0, 98_000.0, *[99_500.0] * 13], index=days)
+    return SimRun(
+        ranker="x",
+        profile="margin",
+        trades=pd.DataFrame(rows),
+        equity=eq,
+        decisions=pd.DataFrame(),
+        skips=pd.DataFrame(),
+        skip_counts={},
+    )
+
+
+def test_segment_all_equals_stocks_plus_etfs() -> None:
+    """Owner 2026-10-11: All = Stocks + ETFs (trade counts, P&L sums, costs, exit mix)."""
+    run = _seg_run(
+        [
+            ("AAPL", False, 120.0, "take_profit"),
+            ("SPY", True, -80.0, "stop"),
+            ("NVDA", False, -40.0, "stop"),
+            ("QQQ", True, 55.0, "dte_exit"),
+            ("XOM", False, 10.0, "dte_exit"),
+        ]
+    )
+    rows = {r["segment"]: r for r in segment_rows(run)}
+    a, s, e = rows["All"], rows["Stocks"], rows["ETFs"]
+    assert a["trades"] == s["trades"] + e["trades"] == 5
+    for k in ("net_pnl", "spread_cost", "dd_contribution"):
+        assert a[k] == pytest.approx(s[k] + e[k])
+    assert a["net_pnl"] == pytest.approx(65.0)
+    assert a["spread_cost"] == pytest.approx(50.0)
+    assert a["pnl_per_risk"] == pytest.approx(65.0 / (5 * 400.0))
+    for why, n in a["exit_reasons"].items():
+        assert n == s["exit_reasons"].get(why, 0) + e["exit_reasons"].get(why, 0)
+    assert s["median_pnl"] == pytest.approx(10.0)
+
+
+def test_segment_rows_empty_run() -> None:
+    import pandas as pd
+
+    from arc.backtest.sim import SimRun
+
+    run = SimRun(
+        ranker="x",
+        profile="margin",
+        trades=pd.DataFrame(),
+        equity=pd.Series(dtype=float),
+        decisions=pd.DataFrame(),
+        skips=pd.DataFrame(),
+        skip_counts={},
+    )
+    rows = segment_rows(run)
+    assert [r["trades"] for r in rows] == [0, 0, 0]
+    assert all(r["pnl_per_risk"] is None for r in rows)
+
+
+def test_segment_verdict_flags_sign_split() -> None:
+    ctrl = _seg_run([("AAPL", False, 100.0, "stop"), ("SPY", True, 100.0, "stop")])
+    t1 = _seg_run([("AAPL", False, 150.0, "stop"), ("SPY", True, 50.0, "stop")])
+    t2 = _seg_run([("AAPL", False, 150.0, "stop"), ("SPY", True, 120.0, "stop")])
+    segs = {"control": segment_rows(ctrl), "t1": segment_rows(t1), "t2": segment_rows(t2)}
+    v = segment_verdicts(segs, ["t1", "t2"])
+    assert v["t1"] == {"All": 0.0, "Stocks": 50.0, "ETFs": -50.0, "sign_differs": True}
+    assert v["t2"]["sign_differs"] is False and v["t2"]["All"] == pytest.approx(70.0)

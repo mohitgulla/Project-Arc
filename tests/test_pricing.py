@@ -384,3 +384,26 @@ class TestVectorised:
             assert abs(vec_prices[i] - scalar_p) < 1e-4, (
                 f"[{i}] vec={vec_prices[i]:.10f}  scalar={scalar_p:.10f}"
             )
+
+
+@settings(max_examples=200, deadline=None)
+@given(
+    x=st.lists(
+        st.one_of(
+            st.floats(min_value=-40.0, max_value=40.0, allow_nan=False),
+            st.just(math.inf),
+            st.just(-math.inf),
+            st.just(math.nan),
+        ),
+        min_size=1,
+        max_size=64,
+    )
+)
+def test_ndtr_is_bit_identical_to_norm_cdf(x: list[float]) -> None:
+    """E7.14: price_vectorized uses scipy.special.ndtr for speed; it must equal
+    scipy.stats.norm.cdf bit for bit (incl. inf/nan), so no backtest number moves."""
+    from scipy.special import ndtr
+    from scipy.stats import norm
+
+    a = np.asarray(x, dtype=float)
+    assert np.array_equal(ndtr(a), norm.cdf(a), equal_nan=True)

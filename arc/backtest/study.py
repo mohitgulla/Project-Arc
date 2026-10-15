@@ -631,6 +631,84 @@ def subperiod_rows(run: SimRun, end: dt.date) -> list[dict[str, Any]]:
     return out
 
 
+#: The All / Stocks / ETFs split every report carries (owner 2026-10-11, E7.14).
+SEGMENTS: tuple[str, ...] = ("All", "Stocks", "ETFs")
+
+
+def _segment_frame(t: pd.DataFrame, segment: str) -> pd.DataFrame:
+    if segment == "All" or not len(t):
+        return t
+    etf = (t["etf"] if "etf" in t else pd.Series(data=False, index=t.index)).astype(bool)
+    return t[etf] if segment == "ETFs" else t[~etf]
+
+
+def _dd_window(equity: pd.Series) -> tuple[dt.date, dt.date] | None:
+    """(peak day, trough day) of the run's maximum drawdown, or None if it never drew down."""
+    if len(equity) < 2:  # noqa: PLR2004
+        return None
+    peak = equity.cummax()
+    dd = (peak - equity) / peak
+    if not float(dd.max()) > 0:
+        return None
+    trough = dd.idxmax()
+    start = equity[:trough].idxmax()
+    return start, trough
+
+
+def segment_rows(run: SimRun) -> list[dict[str, Any]]:
+    """All / Stocks / ETFs (keyed on the trade's ``etf`` flag, i.e. ``HistoryView.is_etf``).
+
+    Per segment: trades, win rate, mean / median / net P&L, P&L per $ risked (net P&L /
+    sum of max loss × contracts), its contribution to the run's max drawdown (net P&L of
+    the trades closed between the drawdown's peak and trough), the exit-reason mix and the
+    spread + fee cost (``pnl_mid − pnl``). All = Stocks + ETFs (trade counts and sums).
+    """
+    t = run.trades
+    win = _dd_window(run.equity)
+    out: list[dict[str, Any]] = []
+    for seg in SEGMENTS:
+        s = _segment_frame(t, seg)
+        n = len(s)
+        risked = float((s["max_loss_unit"] * s["contracts"]).sum()) if n else 0.0
+        pnl = float(s["pnl"].sum()) if n else 0.0
+        dd = 0.0
+        if n and win is not None:
+            closed = pd.to_datetime(s["exit_date"]).dt.date
+            dd = float(s.loc[(closed > win[0]) & (closed <= win[1]), "pnl"].sum())
+        mix = s["exit_reason"].value_counts().sort_index() if n else pd.Series(dtype=int)
+        out.append(
+            {
+                "segment": seg,
+                "trades": n,
+                "win_rate": round(float((s["pnl"] > 0).mean()), 3) if n else None,
+                "net_pnl": round(pnl, 2),
+                "mean_pnl": round(float(s["pnl"].mean()), 2) if n else None,
+                "median_pnl": round(float(s["pnl"].median()), 2) if n else None,
+                "pnl_per_risk": round(pnl / risked, 4) if risked > 0 else None,
+                "dd_contribution": round(dd, 2),
+                "spread_cost": round(float((s["pnl_mid"] - s["pnl"]).sum()), 2) if n else 0.0,
+                "exit_reasons": {str(k): int(v) for k, v in mix.items()},
+            }
+        )
+    return out
+
+
+def segment_verdicts(
+    segments: Mapping[str, Sequence[Mapping[str, Any]]], treatments: Sequence[str]
+) -> dict[str, dict[str, Any]]:
+    """Per treatment: net P&L difference vs control for each segment, and a flag when the
+    sign differs between Stocks and ETFs (the verdict itself is stated on All)."""
+    by = {arm: {r["segment"]: r for r in rows} for arm, rows in segments.items()}
+    out: dict[str, dict[str, Any]] = {}
+    for t in treatments:
+        diff = {
+            seg: round(by[t][seg]["net_pnl"] - by["control"][seg]["net_pnl"], 2) for seg in SEGMENTS
+        }
+        s, e = diff["Stocks"], diff["ETFs"]
+        out[t] = {**diff, "sign_differs": bool(s * e < 0)}
+    return out
+
+
 def breakdowns(run: SimRun, sectors: Mapping[str, str]) -> dict[str, list[dict[str, Any]]]:
     t = run.trades
     if not len(t):
@@ -850,9 +928,13 @@ def build_report(
     per_period_wins: dict[str, dict[str, list[str]]] = {}
     sub: dict[str, dict[str, list[dict[str, Any]]]] = {}
     brk: dict[str, dict[str, dict[str, list[dict[str, Any]]]]] = {}
+    segs: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    seg_verdicts: dict[str, dict[str, dict[str, Any]]] = {}
     for p, by in runs.items():
         sub[p] = {arm: subperiod_rows(r, latest) for arm, r in by.items()}
         brk[p] = {arm: breakdowns(r, sectors) for arm, r in by.items()}
+        segs[p] = {arm: segment_rows(r) for arm, r in by.items()}
+        seg_verdicts[p] = segment_verdicts(segs[p], list(spec.arms.treatments))
         per_period_wins[p] = {}
         for t in spec.arms.treatments:
             ctrl = {row["period"]: row["net_pnl"] for row in sub[p]["control"]}
@@ -900,6 +982,8 @@ def build_report(
         "subperiods": sub,
         "per_period_wins": per_period_wins,
         "breakdowns": brk,
+        "segments": segs,
+        "segment_verdicts": seg_verdicts,
         "ladder": ladder_flags(entries, spec, entry),
     }
 
@@ -1007,6 +1091,56 @@ def render_report(payload: Mapping[str, Any]) -> str:
         for arm, m in by.items()
     ]
     lines += [_md_table(rows, metric_cols)]
+    if "segments" in payload:
+        lines += [
+            "## All / Stocks / ETFs",
+            "",
+            "One pool per run; the verdict is stated on All, Stocks and ETFs are diagnostic. "
+            "`dd_contribution` = net P&L of the trades closed inside the run's max-drawdown "
+            "window; `spread_cost` = P&L at mid − net P&L (spread + fees).",
+            "",
+        ]
+        seg_cols = [
+            "profile",
+            "arm",
+            "segment",
+            "trades",
+            "win_rate",
+            "net_pnl",
+            "mean_pnl",
+            "median_pnl",
+            "pnl_per_risk",
+            "dd_contribution",
+            "spread_cost",
+            "exit_reasons",
+        ]
+        lines += [
+            _md_table(
+                [
+                    {"profile": p, "arm": arm, **row}
+                    for p, by in payload["segments"].items()
+                    for arm, rs in by.items()
+                    for row in rs
+                ],
+                seg_cols,
+            )
+        ]
+        sv = [
+            {"profile": p, "treatment": t, **v}
+            for p, tr in payload.get("segment_verdicts", {}).items()
+            for t, v in tr.items()
+        ]
+        flagged = [r for r in sv if r["sign_differs"]]
+        lines += [
+            "Treatment − control net P&L by segment"
+            + (
+                f" (**sign differs between Stocks and ETFs for {len(flagged)} treatment(s)**):"
+                if flagged
+                else ":"
+            ),
+            "",
+            _md_table(sv),
+        ]
     lines += ["## Exit-reason mix", ""]
     lines += [
         _md_table(
