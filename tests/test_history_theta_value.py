@@ -33,6 +33,7 @@ from arc.data.history.thetadata import (
     join_open_interest,
     parse_eod_csv,
     parse_oi_csv,
+    theta_root,
     tier_earliest_date,
 )
 from arc.utils.calendar import ET, sessions_between
@@ -255,6 +256,18 @@ class TestParseAndJoin:
         assert len(rows) == 4 and all(r.open_interest is not None for r in rows)
         assert [c["url"].rsplit("/", 1)[-1] for c in sess.calls] == ["eod", "open_interest"]
         assert sess.calls[1]["expiration"] == "*" and sess.calls[1]["max_dte"] == 60
+
+    def test_share_class_ticker_requests_the_undotted_root(self) -> None:
+        # Theta lists BRK.B / RDS.A as BRKB / RDSA; the dotted form is "Unknown symbol".
+        assert theta_root("BRK.B") == "BRKB"
+        assert theta_root("rds.a") == "RDSA"
+        assert theta_root("SPY") == "SPY"
+        sess = RoutedSession()
+        p = provider(sess, tier="value")
+        rows = p.fetch_option_eod("BRK.B", dt.date(2020, 1, 2), dt.date(2020, 1, 2), max_dte=60)
+        assert {c["symbol"] for c in sess.calls} == {"BRKB"}
+        assert len(rows) == 1 and rows[0].underlying == "BRK.B"
+        assert rows[0].symbol.startswith("BRKB")
 
 
 # ---------------------------------------------------------------------------

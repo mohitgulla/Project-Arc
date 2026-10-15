@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from arc.backtest.pull import CheckpointIncompleteError
 from arc.backtest.study import (
     DEFAULT_LEDGER,
     DEFAULT_REPORT_DIR,
@@ -231,7 +232,7 @@ def _run(args: argparse.Namespace, spec: object) -> int:
             cache=not args.no_cache,
             cache_dir=args.cache_dir,
         )
-    except StudyRefusedError as exc:
+    except (StudyRefusedError, CheckpointIncompleteError) as exc:
         sys.stderr.write(f"arc backtest study: refused: {exc}\n")
         return 3
     payload = json.loads((Path(entry.run_dir) / "report.json").read_text())

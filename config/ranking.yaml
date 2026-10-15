@@ -91,9 +91,11 @@ backtest:
       volume_weight: 1.0
     always: [SPY, QQQ, IWM, DIA, XLF, XLE, XLK, AAPL, MSFT, NVDA, AMZN, GOOGL, META, TSLA,
              AMD, JPM, BAC, XOM, UNH, HD]   # SPY/QQQ/IWM + the D9 seed
-    include_ever_traded: true
+    include_ever_traded: false # bucket 2 dropped (owner 2026-10-11, D84)
     include_index_roots: false # SPX/NDX/RUT/VIX... need a separate index subscription
     add_inactive_listed: true  # + Alpaca inactive listed assets (delisted names; partial fix)
+    etf_caps: {c125: 25, c250: 50, c500: 100}  # max ETFs in the first 125/250/500; an ETF
+                               # over the cap is deferred, the next stock takes its place
     fetch_batch: 100           # symbols per Alpaca bars request
   # E7.10 (D84): the point-in-time data layer (arc/backtest/data.py HistoryView), read by
   # `arc backtest data check` (and E7.11+). Data/backtest infra only: nothing live reads it.

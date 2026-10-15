@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import random
 from pathlib import Path
 
@@ -499,6 +500,42 @@ def test_cli_sim_writes_outputs_and_workers_match_serial(
     for f in ("trades.csv", "skips.csv", "equity.csv", "decisions.csv"):
         a = (run_dir / f).read_text()
         assert (tmp_path / "b" / "cash_debit" / "debit_width" / f).read_text() == a
+
+
+def test_cli_sim_refuses_an_incomplete_checkpoint(
+    view: HistoryView, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """E7.9: once checkpoints.json exists, a run on a checkpoint it lacks is refused."""
+    from arc.backtest.pull import checkpoints_path
+    from arc.cli import main
+
+    cp = checkpoints_path(view.data_dir)
+    cp.write_text(json.dumps({"c500": {"complete_at": None, "sessions": 1, "gb": 0.0}}))
+    try:
+        rc = main(
+            [
+                "backtest",
+                "sim",
+                "--universe",
+                "c125",
+                "--from",
+                DECIDE[0].isoformat(),
+                "--to",
+                DECIDE[1].isoformat(),
+                "--profile",
+                "cash_debit",
+                "--data-dir",
+                str(view.data_dir),
+                "--out",
+                str(view.data_dir / "refused"),
+                "--no-cache",
+            ]
+        )
+    finally:
+        cp.unlink()
+    assert rc == 3
+    assert "checkpoint c125 is not complete" in capsys.readouterr().err
+    assert not (view.data_dir / "refused" / "report.md").exists()
 
 
 def test_report_constants_name_the_limits() -> None:

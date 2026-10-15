@@ -90,6 +90,16 @@ TIER_CONCURRENCY: dict[ThetaTier, int] = {
 TIERS_WITH_OI = frozenset({ThetaTier.VALUE, ThetaTier.STANDARD, ThetaTier.PRO})
 
 
+def theta_root(underlying: str) -> str:
+    """ThetaData's option root for a share-class ticker: ``BRK.B`` -> ``BRKB``.
+
+    Theta lists class shares without the dot (``BRKB``, ``RDSA``) and answers
+    ``Unknown symbol`` for the dotted form, which the pull cached as empty sessions.
+    The store partition keeps the universe's dotted name.
+    """
+    return underlying.upper().replace(".", "")
+
+
 def tier_earliest_date(
     tier: ThetaTier, today: dt.date, lookback_days: int = THETA_FREE_LOOKBACK_DAYS
 ) -> dt.date:
@@ -434,7 +444,7 @@ class ThetaDataEodProvider:
             chunk = self.chunk_for(u)
             chunk_end = min(end, cur + dt.timedelta(days=chunk - 1))
             params = {
-                "symbol": u,
+                "symbol": theta_root(u),
                 "expiration": "*",
                 "start_date": cur.strftime("%Y%m%d"),
                 "end_date": chunk_end.strftime("%Y%m%d"),

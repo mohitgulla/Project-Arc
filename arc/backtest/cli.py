@@ -434,24 +434,30 @@ def run_sim_cli(args: argparse.Namespace) -> int:
         [t.strip().upper() for t in args.tickers.split(",") if t.strip()] if args.tickers else None
     )
     rankers = [Ranker(r.strip()) for r in args.rankers.split(",") if r.strip()]
-    m = run_sim_report(
-        data_dir=args.data_dir,
-        universe=args.universe,
-        start=args.start,
-        end=args.end,
-        data_end=args.data_end,
-        profiles=args.profile or ["margin", "cash_debit"],
-        rankers=rankers,
-        out_dir=args.out,
-        cfg=cfg,
-        cost=load_cost_model(),
-        exits=load_exit_config(),
-        settings=ArcSettings(),
-        tickers=tickers,
-        workers=args.workers,
-        cache=not args.no_cache,
-        cache_dir=args.cache_dir,
-    )
+    from arc.backtest.pull import CheckpointIncompleteError
+
+    try:
+        m = run_sim_report(
+            data_dir=args.data_dir,
+            universe=args.universe,
+            start=args.start,
+            end=args.end,
+            data_end=args.data_end,
+            profiles=args.profile or ["margin", "cash_debit"],
+            rankers=rankers,
+            out_dir=args.out,
+            cfg=cfg,
+            cost=load_cost_model(),
+            exits=load_exit_config(),
+            settings=ArcSettings(),
+            tickers=tickers,
+            workers=args.workers,
+            cache=not args.no_cache,
+            cache_dir=args.cache_dir,
+        )
+    except CheckpointIncompleteError as exc:
+        sys.stderr.write(f"arc backtest sim: refused: {exc}\n")
+        return 3
     sys.stdout.write((args.out / "report.md").read_text())
     sys.stdout.write(f"\nreport: {args.out / 'report.md'} (runtime {m.runtime_s} s)\n")
     return 0

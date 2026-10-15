@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
+import json
 import sqlite3
 from typing import TYPE_CHECKING
 
 import pandas as pd
 import pytest
+import yaml
 
 from arc.backtest import universe_cli as ucli
 from arc.backtest.ranking import load_ranking_file
@@ -239,6 +242,73 @@ def test_buckets_1_2_overflowing_first_checkpoint_fails() -> None:
         build(universe(), ever=["A1", "A2"])
 
 
+# -- ETF caps per checkpoint (owner 2026-10-11) ------------------------------------
+
+ETF_NAMES = {"SPY": "SPDR S&P 500 ETF TRUST", "A0": "Big ETF", "A1": "Other ETF"}
+
+
+def test_etf_caps_bind_and_defer_in_queue_order() -> None:
+    uncapped = build(universe(), names=ETF_NAMES)
+    assert [r.symbol for r in uncapped.rows] == ["SPY", "A0", "A1", "A2", "A3", "A4"]
+    cfg = small_cfg(etf_caps={"c2": 1, "c4": 2, "c6": 3})
+    b = build(universe(), cfg, names=ETF_NAMES)
+    # c2 is full after SPY: A0/A1 wait, A2 takes #2; A0 (first deferred) opens c4, A1 c6
+    assert [r.symbol for r in b.rows] == ["SPY", "A2", "A0", "A3", "A1", "A4"]
+    assert [(c.checkpoint, c.etf) for c in b.manifest.checkpoints] == [
+        ("c2", 1),
+        ("c4", 2),
+        ("c6", 3),
+    ]
+    assert next(r for r in b.rows if r.symbol == "A0").bucket == Bucket.PERSISTENT
+    assert b.manifest.config["etf_caps"] == {"c2": 1, "c4": 2, "c6": 3}
+    assert b.manifest.version != uncapped.manifest.version
+
+
+def test_etf_caps_count_bucket1_and_leave_uncapped_checkpoints_alone() -> None:
+    # SPY (bucket 1) already fills c2's cap of 1; c4/c6 have no key = uncapped
+    b = build(universe(), small_cfg(etf_caps={"c2": 1}), names=ETF_NAMES)
+    assert [r.symbol for r in b.rows] == ["SPY", "A2", "A0", "A1", "A3", "A4"]
+
+
+def test_etf_caps_bucket1_over_first_cap_fails() -> None:
+    cfg = small_cfg(always=["SPY", "A0"], checkpoints=[3, 6], etf_caps={"c3": 1})
+    with pytest.raises(UniverseError, match="2 ETFs, over the c3 etf_caps limit of 1"):
+        build(universe(), cfg, names=ETF_NAMES)
+
+
+def test_etf_caps_only_etfs_left_short_list() -> None:
+    bars = {s: universe()[s] for s in ("SPY", "A0", "A1", "A2")}
+    b = build(bars, small_cfg(etf_caps={"c2": 1, "c4": 1, "c6": 1}), names=ETF_NAMES)
+    assert [r.symbol for r in b.rows] == ["SPY", "A2"]
+    assert any("short of target_size" in n for n in b.manifest.notes)
+
+
+def test_etf_caps_validation_and_hash() -> None:
+    with pytest.raises(ValueError, match="not checkpoints"):
+        small_cfg(etf_caps={"c3": 1})
+    with pytest.raises(ValueError, match="must not shrink"):
+        small_cfg(etf_caps={"c2": 2, "c4": 1})
+    with pytest.raises(ValueError, match="exceeds the checkpoint size"):
+        small_cfg(etf_caps={"c2": 3})
+    with pytest.raises(ValueError, match=">= 0"):
+        small_cfg(etf_caps={"c2": -1})
+    c = small_cfg(etf_caps={"c2": 1, "c6": 2})
+    assert (c.etf_cap_at(1), c.etf_cap_at(3), c.etf_cap_at(6)) == (1, None, 2)
+    # unset caps leave the pre-knob hash (and so old versions) unchanged
+    plain = small_cfg()
+    dump = plain.model_dump(mode="json")
+    dump.pop("etf_caps")
+    blob = json.dumps(dump, sort_keys=True).encode()
+    assert plain.config_hash() == hashlib.sha256(blob).hexdigest()
+
+
+def test_include_ever_traded_false_drops_bucket_2() -> None:
+    b = build(universe(), small_cfg(include_ever_traded=False), ever=["A4", "NOBARS"])
+    assert all(r.bucket != Bucket.EVER_TRADED for r in b.rows)
+    assert "NOBARS" not in {r.symbol for r in b.rows}
+    assert b.manifest.ever_traded == []
+
+
 def test_coverage_gap_counts_top_names_outside_the_list() -> None:
     # every quarter ranks 10 names but the list keeps 6 (SPY + 5): the rest are the gap
     b = build(universe())
@@ -310,6 +380,8 @@ def test_ranking_yaml_universe_defaults() -> None:
     assert u.always[:3] == ["SPY", "QQQ", "IWM"]
     assert {"DIA", "XLF", "XLE", "XLK", "BAC", "HD"} <= set(u.always) and len(u.always) == 20
     assert not u.include_index_roots
+    assert not u.include_ever_traded
+    assert u.etf_caps == {"c125": 25, "c250": 50, "c500": 100}
 
 
 # -- read-only audit DB -----------------------------------------------------------
@@ -475,6 +547,9 @@ def test_write_and_load_round_trip(tmp_path: Path) -> None:
     assert "c2" in text and "top_outside_list" in text and "SPY" in text
     with pytest.raises(FileNotFoundError):
         load_universe(tmp_path / "nothing")
+    # E7.9 writes checkpoints.json beside the builds: it is not a manifest
+    (paths["manifest"].parent / "checkpoints.json").write_text('{"c125": {"sessions": 1}}')
+    assert load_universe(tmp_path)[0] == b.manifest
 
 
 def test_gather_candidates_sources_and_index_roots() -> None:
@@ -536,10 +611,12 @@ def test_cli_build_and_show(tmp_path: Path, monkeypatch, capsys) -> None:  # noq
             "OTC1": {"symbol": "OTC1", "name": "No options", "options": False},
         },
     }
-    import json
-
     (tmp_path / "data" / "symbol_master.json").write_text(json.dumps(master))
-    rc = ucli._build(_cli_args(tmp_path, db=db), bars_source_factory=lambda: src)
+    cfg = tmp_path / "ranking.yaml"  # bucket 2 on (the repo default turned it off)
+    raw = load_ranking_file().model_dump(mode="json")
+    raw["backtest"]["universe"]["include_ever_traded"] = True
+    cfg.write_text(yaml.safe_dump(raw))
+    rc = ucli._build(_cli_args(tmp_path, db=db, config=cfg), bars_source_factory=lambda: src)
     assert rc == 0
     out = capsys.readouterr().out
     assert "pull_list:" in out and "first 5 rows" in out
@@ -572,9 +649,7 @@ def test_cli_build_and_show(tmp_path: Path, monkeypatch, capsys) -> None:  # noq
 def test_cli_overflow_exits_2(tmp_path: Path, monkeypatch, capsys) -> None:  # noqa: ANN001
     cfg = tmp_path / "ranking.yaml"
     raw = load_ranking_file().model_dump(mode="json")
-    raw["backtest"]["universe"].update({"target_size": 10, "checkpoints": [5, 10]})
-    import yaml
-
+    raw["backtest"]["universe"].update({"target_size": 10, "checkpoints": [5, 10], "etf_caps": {}})
     cfg.write_text(yaml.safe_dump(raw))
     monkeypatch.setattr(ucli, "_theta", lambda args: None)
     monkeypatch.setattr(ucli, "_inactive_listed", dict)

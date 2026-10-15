@@ -255,6 +255,10 @@ def build_sim(
         min_iv_obs=settings.iv_min_obs_rank,
     )
     view = build_view(spec, cfg, cost)
+    if tickers is None:  # E7.9: refuse a checkpoint the pull has not completed
+        from arc.backtest.pull import require_checkpoint
+
+        require_checkpoint(data_dir, universe, provider=bt.data.provider, version=view.version)
     names = sorted({t.upper() for t in (tickers or view.symbols)})
     names = [t for t in names if view.provider_for(t) is not None]
     partitions: dict[str, int] = {}
