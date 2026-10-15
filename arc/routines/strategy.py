@@ -37,6 +37,7 @@ from arc.routines.config import (
     PullbackWatchSettings,
     RangeEdgesSettings,
     ResearchDiversificationSettings,
+    ResearchStrategySettings,
     ResearchTechnicalsSettings,
     RetailSentimentContextSettings,
     ScalpMoversContextSettings,
@@ -135,6 +136,9 @@ class StrategyConfig(BaseModel):
     pullback_watch: PullbackWatchSettings = Field(default_factory=PullbackWatchSettings)
     # E23.3 (D98): strike vs level context on the Quant menu and trade card
     strike_levels: StrikeLevelsSettings = Field(default_factory=StrikeLevelsSettings)
+    # E5.16 (D116): Research knobs (the stale-pick cooldown). Born here; not in
+    # MOVED_BLOCKS, because routines paths starting `research` are the job's own keys.
+    research: ResearchStrategySettings = Field(default_factory=ResearchStrategySettings)
 
     def routines_fields(self) -> dict[str, Any]:
         """The :class:`~arc.routines.config.RoutinesConfig` fields this file sets."""
@@ -155,6 +159,7 @@ class StrategyConfig(BaseModel):
             "range_edges": self.range_edges,
             "pullback_watch": self.pullback_watch,
             "strike_levels": self.strike_levels,
+            "research": self.research,
         }
 
 

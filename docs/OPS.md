@@ -3067,3 +3067,35 @@ The reduced tier is never above the base tier: an older override that set
 `max_alloc_pct` below 10% caps both tiers at it. All three keys are registry knobs
 (`!arc config set max_alloc_pct_reduced 8%`, ceiling 20%; raising one is riskier and
 needs a confirm code).
+
+## E5.16 stale-pick cooldown (D116)
+
+A `ticker|stance` Research ranked in `research.stale_pick.after_loops` **4** consecutive
+full loops of the session without a tradeable structure is removed from the idea pool for
+the next `suppress_loops` **10** `research` runs (any status: ok, failed, `no_change`;
+~100 min at the 10-min cadence), then comes back with its streak reset.
+
+- **Full loop:** a `research` run that completed its evaluation (journaled
+  `market_read`). `no_change` skips, failed runs and guard/budget no-trade runs neither
+  extend nor break a streak.
+- **Tradeable:** in the run's chain, a proposal for the ticker that sized ≥ 1 contract
+  (`sizing:*` payload `contracts`) and passed the gate (`gate:pass`). A gate fail or a
+  0-contract sizing is not tradeable. A full loop that did not rank the key breaks its
+  streak. Streaks never cross sessions (ET day).
+- Computed from the store's own journal (`arc/pipeline/stale_pick.py`; no table, so it
+  survives restarts and each experiment arm reads its own store). One
+  `stale_pick_suppressed` row per suppression start (payload: stance, streak, trigger
+  run, `back_at`).
+- Research sees each suppressed pick under the dedupe heading, e.g. `- MU bullish —
+  stale: ranked 4 loops, no tradeable structure (back 12:20 ET)`. The shortlist's
+  `suppressed` list and the Slack Research card section **"Suppressed (n)"** (was
+  "Suppressed by dedupe") carry both kinds, each line prefixed `dedupe: …` or `stale: …`.
+  A suppression start/end is a loop-digest fact, so the loop runs in full when it changes.
+
+Replay of 2026-10-14 (live store copy): CAKE / MU / XOM bullish suppressed after the 10:30
+loop (back 12:20), CAKE / XOM again after 13:10 (back 15:00), MU after 14:00 (back 15:50).
+
+**Switches** (`config/strategy.yaml research.stale_pick:`, registry): `stale_pick_after_loops`
+(0–20; 0 = off, prompt byte-identical) and `stale_pick_suppress_loops` (1–40). Shipped on
+(D86/D116). Rollback: `!arc config set stale_pick_after_loops 0`. Never a gate input.
+Check: `select subject, reason_text, at from decisions where reason_code='stale_pick_suppressed'`.
