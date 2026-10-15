@@ -850,6 +850,28 @@ class TestProcessor:
         assert extract_json_object('{"a": 1}\n\n{"b": 2}') == {"a": 1}
         assert extract_json_object('Here:\n{"a": {"c": 1}}\nThanks}') == {"a": {"c": 1}}
 
+    def test_extract_json_object_tolerates_trailing_commas(self) -> None:
+        # StockedUp 2026-10-15: `"quote": "...",\n  },` raised "Expecting property
+        # name enclosed in double quotes" and the channel's brief was lost for the day.
+        reply = (
+            '{\n  "market_bias": {\n    "stance": "bearish",\n'
+            '    "quote": "good downside momentum, right now.",\n  },\n'
+            '  "levels": [1, 2,],\n}\nnote'
+        )
+        assert extract_json_object(reply) == {
+            "market_bias": {"stance": "bearish", "quote": "good downside momentum, right now."},
+            "levels": [1, 2],
+        }
+        # Commas inside strings are never touched, even when followed by "}" / "]".
+        assert extract_json_object('{"q": "a ,} b ,]", "e": "\\",}",}') == {
+            "q": "a ,} b ,]",
+            "e": '",}',
+        }
+
+    def test_extract_json_object_still_rejects_other_malformed_json(self) -> None:
+        with pytest.raises(BriefParseError, match="Expecting property name"):
+            extract_json_object("{'a': 1}")
+
     def test_llm_error_propagates(self, stockedup: ChannelProcessor) -> None:
         with pytest.raises(ScalpLLMError):
             stockedup.process(_video(), _FailingLLM(), universe=[])
