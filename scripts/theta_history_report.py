@@ -178,8 +178,12 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915 - a linear repo
     # -- per ticker coverage ------------------------------------------------------------
     w("## Sessions covered per ticker\n")
     late: list[str] = []
+    vendor_late: list[str] = []
     gaps: list[str] = []
+    empty_inner: list[str] = []
     empty_names: list[str] = []
+    empty_days: dict[dt.date, int] = {}
+    lead_sessions = sessions[min(5, len(sessions) - 1)]
     for s in names:
         p = store.path_for(args.provider, s, sessions[0]).parent
         have = (
@@ -196,29 +200,59 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915 - a linear repo
             empty_names.append(s)
             continue
         first, last = nonempty[0], nonempty[-1]
-        if first > sessions[min(5, len(sessions) - 1)]:
-            late.append(f"{s} {first}")
+        if first > lead_sessions:
+            # Listed before the options start? Then the late start is Theta's, not a listing:
+            # a ticker change (history under the old root) or a vendor hole.
+            bars = [d for d in under.read(s).index if args.start <= d < first]
+            if len(bars) > 20:  # noqa: PLR2004 - options list days to weeks after an IPO
+                vendor_late.append(f"{s} {first} ({len(bars)} sessions)")
+            else:
+                late.append(f"{s} {first}")
         span = [d for d in sessions if first <= d <= last]
         miss = sorted(set(span) - set(have))
         if miss:
             gaps.append(f"{s}: {len(miss)} ({miss[0]}…{miss[-1]})")
+        ne = set(nonempty)
+        inner = [d for d in have if first <= d <= last and d not in ne]
+        if inner:
+            empty_inner.append(f"{s} {len(inner)}")
+            for d in inner:
+                empty_days[d] = empty_days.get(d, 0) + 1
     total_done = sum(1 for s in names if st.done_by_name.get(s, 0) >= len(sessions))
     w(
         f"- names with every session cached: **{total_done} / {len(names)}**; names started: "
         f"{len(started)}"
     )
     w(
-        f"- names whose option history starts after {args.start} (listing/IPO, not a gap): "
-        f"{len(late)}" + (f" — {', '.join(late)}" if late else "")
+        f"- names whose option history starts after {args.start} because the underlying "
+        f"listed later (IPO/spin-off, not a gap): {len(late)}"
+        + (f" — {', '.join(late)}" if late else "")
+    )
+    w(
+        f"- **known gap:** names listed (Alpaca bars) before their first Theta option session, "
+        f"i.e. history filed under a former root (ticker change) or a vendor hole: "
+        f"{len(vendor_late)} (first Theta session, listed sessions before it)"
+        + (f" — {', '.join(vendor_late)}" if vendor_late else "")
     )
     w(
         f"- names with every cached session empty (no listed options in the window): "
         f"{len(empty_names)}" + (f" — {', '.join(empty_names)}" if empty_names else "")
     )
     w(
-        f"- names with missing sessions inside their own span (real gaps): {len(gaps)}"
+        f"- names with missing sessions inside their own span (not cached): {len(gaps)}"
         + ("".join(f"\n  - {g}" for g in gaps) if gaps else "")
     )
+    w(
+        f"- **known gap:** names with empty sessions (Theta returned no rows) inside their own "
+        f"span: {len(empty_inner)}, {sum(empty_days.values()):,} ticker-sessions"
+        + (f" — {', '.join(empty_inner)}" if empty_inner else "")
+    )
+    if empty_days:
+        top = sorted(empty_days.items(), key=lambda kv: (-kv[1], kv[0]))[:10]
+        w(
+            "  - sessions with the most empty names: "
+            + ", ".join(f"{d} ({n})" for d, n in sorted(top))
+        )
     w("")
 
     # -- quality sample -------------------------------------------------------------------
