@@ -14095,6 +14095,18 @@
             "title": "Opens",
             "type": "integer"
           },
+          "profit_factor": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "\u03a3 winning \u00f7 |\u03a3 losing| realised P&L; None with no losing dollars",
+            "title": "Profit Factor"
+          },
           "ready": {
             "default": false,
             "title": "Ready",

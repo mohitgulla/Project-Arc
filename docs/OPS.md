@@ -1538,7 +1538,7 @@ the modelled `entry_slippage`. `arc journal scorecard` is still the weekly repor
 
 ```
 arc scorecard sleeves [--since 2026-10-11] [--json]
-#  short 10–29 DTE: opens 7 · closed n=4 · win 50% · mean +$12.00 · median … ·
+#  short 10–35 DTE: opens 7 · closed n=4 · win 50% · mean +$12.00 · median … ·
 #    mean net … · 90% CI [… , …] · verdict collect (not ready)
 #    P&L/max loss … · days held … · costs … · entry slippage … · MAE … · MFE … · exits …
 ```
@@ -2848,11 +2848,11 @@ sleeves instead of one 30-60 window (`margin` is unchanged: global 30-45):
 
 | Profile | Sleeve | Entry DTE | Slots | Exit policy |
 |---|---|---|---|---|
-| `cash_debit`, `cash_long_only` | `short` | 10-29 | 5 | `config/exits.yaml` `sleeves.short` |
-| `cash_debit`, `cash_long_only` | `swing` | 30-60 | 5 | the kind policy (D23/D78) |
+| `cash_debit`, `cash_long_only` | `short` | 10-35 (D118; was 10-29) | 5 | `config/exits.yaml` `sleeves.short` |
+| `cash_debit`, `cash_long_only` | `swing` | 36-60 (D118; was 30-60) | 5 | the kind policy (D23/D78) |
 | `margin` | `default` | 30-45 (global) | `max_open_positions` | the kind policy |
 
-DTE 30 belongs to `swing`; a position's sleeve is fixed by its **entry** DTE. Short-sleeve
+DTE 36 belongs to `swing` (D118); a position's sleeve is fixed by its **entry** DTE. Short-sleeve
 debit exits (`vertical_debit`, `long_call`, `long_put`): take profit 40% of the debit,
 stop at 50% of the debit checked intraday on the 10-min marks, profit lock 0.30 → 0.10,
 close at 3 DTE; `expiry_guard` (flat by DTE 1) and the fill-day guard still apply. Swing
@@ -3040,6 +3040,31 @@ The scanner's `low_open_interest` / `low_volume` filters (`scanner_min_open_inte
   the previous session, one informational `data:alpaca_oi_stale:<date>` row is written
   to `ops_alerts` per day (recorded resolved; Cboe is primary, nothing to do).
 - No switch: shipped on (D116, D86). Rollback is a revert PR.
+
+### Liquidity-aware strike and expiry choice (E2.6, D116)
+
+The delta bands (`scanner_*_delta_min/max`) and `scanner_debit_width` never move; inside
+them the scanner now prefers tradeable strikes. Each contract that passed the filters gets
+a score in [0, 1] relative to its expiry:
+`w_oi × norm(log1p OI) + w_vol × norm(log1p volume) + w_spread × (1 − min(spread% /
+scanner_spread_max_pct, 1))` (weights normalised by their sum; a flat chain scores the
+OI / volume terms 1). Strikes sort by `|Δ − target| / band half-width − λ × score` (debit
+verticals with a width: `|dist − width| / width − λ × score`), and a vertical scores by its
+thinner leg (`min` of the two). Example: band 0.20–0.35, target 0.30, λ 0.5 — a 0.27Δ strike
+with score 0.95 (key 0.40 − 0.475 = −0.075) beats the 0.30Δ strike with score 0.05
+(0 − 0.025). When two or more expiries of one DTE sleeve produce candidates, each candidate's
+scanner rank key gets `+ expiry_mu × that expiry's share of the sleeve's volume within 15%
+of spot` (reorders only, never drops an expiry; an expiry alone in its sleeve gets 0).
+
+Where to see it: the Quant menu's `liquidity` field (`score`, `min_leg_oi`,
+`min_leg_volume`, `spread_pct`), `arc chains <T>` (`liq 0.83 (OI … vol … spr …% exp+…)`;
+`--liquidity-rank on|off` forces it), the stored structure's `liquidity.score`.
+
+**Switch** (`config/strategy.yaml scanner.liquidity_rank:`, registry, risk none):
+`scanner.liquidity_rank.enabled` (on, D116/D86), `…weights.oi|volume|spread` (0.35 / 0.35 /
+0.30), `…lambda` (0.5, 0–2), `…expiry_mu` (0.25, 0–1). Rollback:
+`!arc config set scanner.liquidity_rank.enabled off` (selection, menus and proposal hashes
+byte-identical to before E2.6).
 
 ## E3.7 tiered per-underlying cap (D116)
 

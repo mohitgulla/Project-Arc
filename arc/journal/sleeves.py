@@ -184,6 +184,9 @@ class SleeveStats(BaseModel):
     mean_net_pnl: float | None = Field(None, description="Mean of realised − costs (the rule's)")
     ci_low: float | None = Field(None, description=f"Bootstrap {CI_LEVEL:.0%} CI of mean net")
     ci_high: float | None = None
+    profit_factor: float | None = Field(
+        None, description="Σ winning ÷ |Σ losing| realised P&L; None with no losing dollars"
+    )
     mean_pct_of_max_loss: float | None = Field(
         None, description="Mean realised ÷ (max loss × contracts), over trades with a max loss"
     )
@@ -296,6 +299,8 @@ def _stats(  # noqa: PLR0913 - one sleeve's joins
     ci = bootstrap_mean_ci(net)
     ready, v = verdict(len(trades), mean_net, ci, weeks=weeks)
     wins = sum(1 for x in pnl if x > 0)
+    gross_w = sum(x for x in pnl if x > 0)
+    gross_l = sum(x for x in pnl if x <= 0)
     return SleeveStats(
         sleeve=name,
         dte_min=sleeve.dte_min if sleeve else None,
@@ -312,6 +317,7 @@ def _stats(  # noqa: PLR0913 - one sleeve's joins
         mean_net_pnl=mean_net,
         ci_low=ci[0] if ci else None,
         ci_high=ci[1] if ci else None,
+        profit_factor=gross_w / -gross_l if gross_l < 0 else None,
         mean_pct_of_max_loss=_mean(pct),
         mean_days_held=_mean(held),
         exit_reasons=dict(sorted(Counter(c.exit_reason for c in trades).items())),

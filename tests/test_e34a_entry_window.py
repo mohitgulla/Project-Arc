@@ -51,8 +51,8 @@ from arc.routines.config import load_routines
 REPO = Path(__file__).resolve().parent.parent
 DTE_RANGE = re.compile(r"\b(\d{1,3})\s*[-\u2013]\s*(\d{1,3})\s*DTE\b")
 # E22.4 (D97): the shipped cash profiles carry two entry-DTE sleeves
-SLEEVES_WINDOW = "10-29 DTE (short) / 30-60 DTE (swing)"
-SLEEVE_RANGES = [("10", "29"), ("30", "60")]
+SLEEVES_WINDOW = "10-35 DTE (short) / 36-60 DTE (swing)"  # D118 (was 10-29 / 30-60)
+SLEEVE_RANGES = [("10", "35"), ("36", "60")]
 
 
 def _settings(profile: str) -> ArcSettings:
@@ -163,7 +163,7 @@ class TestPrompts:
 
     def test_quant_says_menu_is_in_window(self) -> None:
         p = _prompts(entry_terms(_settings("cash_debit")))["quant"]
-        assert "Entry windows: short 10-29 DTE, swing 30-60 DTE" in p
+        assert "Entry windows: short 10-35 DTE, swing 36-60 DTE" in p
         assert "Every menu structure is inside one of them" in p
         assert "do not reject or skip a menu item on DTE" in p
 
@@ -402,7 +402,7 @@ class TestPipeline:
             "rules": ["prefer 22-45 DTE expiries to ease the 46+ cluster"],
         }
         p = build_prompt("research", snap, inputs, settings=_settings("cash_debit"))
-        assert "30-60 DTE" in p
+        assert "36-60 DTE" in p  # D118 swing window
         body = p.split("## Hard constraints")[0]
         assert "22-45" not in body and "16-30" not in body and "46+" not in body
         assert DTE_RANGE.findall(body) == SLEEVE_RANGES

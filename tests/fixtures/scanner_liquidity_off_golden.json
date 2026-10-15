@@ -1,0 +1,5130 @@
+{
+ "credit": [
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 5.18,
+   "credit": 1.67,
+   "credit_width": 0.334,
+   "dte": 33,
+   "ev_proxy": -16.39,
+   "ev_ratio": -0.0492,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00797000": 0.13,
+    "SPY261030C00802000": 0.02,
+    "SPY261030P00740000": 0.02,
+    "SPY261030P00745000": 0.03
+   },
+   "long_deltas": [
+    0.1764,
+    0.1565
+   ],
+   "natural_credit": 1.57,
+   "pop": 0.6287,
+   "rank": 1,
+   "short_deltas": [
+    0.2071,
+    0.2073
+   ],
+   "strategy": "iron_condor",
+   "structure": {
+    "breakevens": [
+     "743.3300",
+     "798.6700"
+    ],
+    "buying_power": "333.000",
+    "dte": 33,
+    "greeks": {
+     "delta": -2.007191098024519,
+     "gamma": -0.25050556052087947,
+     "rho": -124.83085232590156,
+     "theta": 3.2554461691838394,
+     "vanna": 8.111250558319739,
+     "vega": -1692.7294753895094,
+     "volga": 15251.848281763108
+    },
+    "kind": "iron_condor",
+    "legs": [
+     {
+      "intent": "long put wing",
+      "occ_symbol": "SPY261030P00740000",
+      "premium": "3.74",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short put",
+      "occ_symbol": "SPY261030P00745000",
+      "premium": "4.455",
+      "ratio": 1,
+      "side": "short"
+     },
+     {
+      "intent": "short call",
+      "occ_symbol": "SPY261030C00797000",
+      "premium": "3.105",
+      "ratio": 1,
+      "side": "short"
+     },
+     {
+      "intent": "long call wing",
+      "occ_symbol": "SPY261030C00802000",
+      "premium": "2.15",
+      "ratio": 1,
+      "side": "long"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 733,
+     "spread_pct": 0.041867954911433136,
+     "volume": 57
+    },
+    "max_gain": "167.000",
+    "max_loss": "333.000",
+    "net_debit_credit": "-1.670"
+   },
+   "ticker": "SPY",
+   "width": 5.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 3.41,
+   "credit": 1.6555,
+   "credit_width": 0.3311,
+   "dte": 33,
+   "ev_proxy": -11.71,
+   "ev_ratio": -0.035,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00798000": 0.07,
+    "SPY261030C00803000": 0.009,
+    "SPY261030P00740000": 0.02,
+    "SPY261030P00745000": 0.03
+   },
+   "long_deltas": [
+    0.1764,
+    0.148
+   ],
+   "natural_credit": 1.591,
+   "pop": 0.6374,
+   "rank": 2,
+   "short_deltas": [
+    0.2071,
+    0.1982
+   ],
+   "strategy": "iron_condor",
+   "structure": {
+    "breakevens": [
+     "743.3445",
+     "799.6555"
+    ],
+    "buying_power": "334.4500",
+    "dte": 33,
+    "greeks": {
+     "delta": -1.953233205082899,
+     "gamma": -0.2510239771105903,
+     "rho": -121.21104582250348,
+     "theta": 3.3447533762846504,
+     "vanna": 6.15126737649291,
+     "vega": -1720.8153218463021,
+     "volga": 15110.90702885962
+    },
+    "kind": "iron_condor",
+    "legs": [
+     {
+      "intent": "long put wing",
+      "occ_symbol": "SPY261030P00740000",
+      "premium": "3.74",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short put",
+      "occ_symbol": "SPY261030P00745000",
+      "premium": "4.455",
+      "ratio": 1,
+      "side": "short"
+     },
+     {
+      "intent": "short call",
+      "occ_symbol": "SPY261030C00798000",
+      "premium": "2.945",
+      "ratio": 1,
+      "side": "short"
+     },
+     {
+      "intent": "long call wing",
+      "occ_symbol": "SPY261030C00803000",
+      "premium": "2.0045",
+      "ratio": 1,
+      "side": "long"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 464,
+     "spread_pct": 0.02376910016977923,
+     "volume": 38
+    },
+    "max_gain": "165.5500",
+    "max_loss": "334.4500",
+    "net_debit_credit": "-1.6555"
+   },
+   "ticker": "SPY",
+   "width": 5.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 7.18,
+   "credit": 1.55,
+   "credit_width": 0.31,
+   "dte": 33,
+   "ev_proxy": -22.73,
+   "ev_ratio": -0.0659,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00797000": 0.13,
+    "SPY261030C00802000": 0.02,
+    "SPY261030P00738000": 0.1,
+    "SPY261030P00743000": 0.03
+   },
+   "long_deltas": [
+    0.1668,
+    0.1565
+   ],
+   "natural_credit": 1.41,
+   "pop": 0.6425,
+   "rank": 3,
+   "short_deltas": [
+    0.1941,
+    0.2073
+   ],
+   "strategy": "iron_condor",
+   "structure": {
+    "breakevens": [
+     "741.4500",
+     "798.5500"
+    ],
+    "buying_power": "345.000",
+    "dte": 33,
+    "greeks": {
+     "delta": -2.364037868669202,
+     "gamma": -0.24830416854967385,
+     "rho": -150.84789887013676,
+     "theta": 3.0921974130255343,
+     "vanna": 11.027876661660343,
+     "vega": -1646.8914273390737,
+     "volga": 14335.915099476355
+    },
+    "kind": "iron_condor",
+    "legs": [
+     {
+      "intent": "long put wing",
+      "occ_symbol": "SPY261030P00738000",
+      "premium": "3.55",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short put",
+      "occ_symbol": "SPY261030P00743000",
+      "premium": "4.145",
+      "ratio": 1,
+      "side": "short"
+     },
+     {
+      "intent": "short call",
+      "occ_symbol": "SPY261030C00797000",
+      "premium": "3.105",
+      "ratio": 1,
+      "side": "short"
+     },
+     {
+      "intent": "long call wing",
+      "occ_symbol": "SPY261030C00802000",
+      "premium": "2.15",
+      "ratio": 1,
+      "side": "long"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 539,
+     "spread_pct": 0.041867954911433136,
+     "volume": 29
+    },
+    "max_gain": "155.000",
+    "max_loss": "345.000",
+    "net_debit_credit": "-1.550"
+   },
+   "ticker": "SPY",
+   "width": 5.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 5.41,
+   "credit": 1.5355,
+   "credit_width": 0.3071,
+   "dte": 33,
+   "ev_proxy": -18.04,
+   "ev_ratio": -0.0521,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00798000": 0.07,
+    "SPY261030C00803000": 0.009,
+    "SPY261030P00738000": 0.1,
+    "SPY261030P00743000": 0.03
+   },
+   "long_deltas": [
+    0.1668,
+    0.148
+   ],
+   "natural_credit": 1.431,
+   "pop": 0.6512,
+   "rank": 4,
+   "short_deltas": [
+    0.1941,
+    0.1982
+   ],
+   "strategy": "iron_condor",
+   "structure": {
+    "breakevens": [
+     "741.4645",
+     "799.5355"
+    ],
+    "buying_power": "346.4500",
+    "dte": 33,
+    "greeks": {
+     "delta": -2.3100799757275823,
+     "gamma": -0.24882258513938493,
+     "rho": -147.22809236673868,
+     "theta": 3.1815046201263453,
+     "vanna": 9.067893479833515,
+     "vega": -1674.9772737958665,
+     "volga": 14194.973846572866
+    },
+    "kind": "iron_condor",
+    "legs": [
+     {
+      "intent": "long put wing",
+      "occ_symbol": "SPY261030P00738000",
+      "premium": "3.55",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short put",
+      "occ_symbol": "SPY261030P00743000",
+      "premium": "4.145",
+      "ratio": 1,
+      "side": "short"
+     },
+     {
+      "intent": "short call",
+      "occ_symbol": "SPY261030C00798000",
+      "premium": "2.945",
+      "ratio": 1,
+      "side": "short"
+     },
+     {
+      "intent": "long call wing",
+      "occ_symbol": "SPY261030C00803000",
+      "premium": "2.0045",
+      "ratio": 1,
+      "side": "long"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 464,
+     "spread_pct": 0.028169014084507067,
+     "volume": 29
+    },
+    "max_gain": "153.5500",
+    "max_loss": "346.4500",
+    "net_debit_credit": "-1.5355"
+   },
+   "ticker": "SPY",
+   "width": 5.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 2.93,
+   "credit": 1.465,
+   "credit_width": 0.293,
+   "dte": 33,
+   "ev_proxy": -26.05,
+   "ev_ratio": -0.0737,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00799000": 0.04,
+    "SPY261030C00804000": 0.02,
+    "SPY261030P00740000": 0.02,
+    "SPY261030P00745000": 0.03
+   },
+   "long_deltas": [
+    0.1764,
+    0.1415
+   ],
+   "natural_credit": 1.41,
+   "pop": 0.6429,
+   "rank": 5,
+   "short_deltas": [
+    0.2071,
+    0.1849
+   ],
+   "strategy": "iron_condor",
+   "structure": {
+    "breakevens": [
+     "743.5350",
+     "800.4650"
+    ],
+    "buying_power": "353.500",
+    "dte": 33,
+    "greeks": {
+     "delta": -1.2582837334782262,
+     "gamma": -0.25400811938461976,
+     "rho": -74.51123244500809,
+     "theta": 2.861202024579777,
+     "vanna": -1.6067547265734277,
+     "vega": -1608.5651879541583,
+     "volga": 12441.021507973426
+    },
+    "kind": "iron_condor",
+    "legs": [
+     {
+      "intent": "long put wing",
+      "occ_symbol": "SPY261030P00740000",
+      "premium": "3.74",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short put",
+      "occ_symbol": "SPY261030P00745000",
+      "premium": "4.455",
+      "ratio": 1,
+      "side": "short"
+     },
+     {
+      "intent": "short call",
+      "occ_symbol": "SPY261030C00799000",
+      "premium": "2.66",
+      "ratio": 1,
+      "side": "short"
+     },
+     {
+      "intent": "long call wing",
+      "occ_symbol": "SPY261030C00804000",
+      "premium": "1.91",
+      "ratio": 1,
+      "side": "long"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 846,
+     "spread_pct": 0.015037593984962419,
+     "volume": 65
+    },
+    "max_gain": "146.500",
+    "max_loss": "353.500",
+    "net_debit_credit": "-1.465"
+   },
+   "ticker": "SPY",
+   "width": 5.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 5.18,
+   "credit": 1.45,
+   "credit_width": 0.29,
+   "dte": 33,
+   "ev_proxy": -34.49,
+   "ev_ratio": -0.0972,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00797000": 0.13,
+    "SPY261030C00802000": 0.02,
+    "SPY261030P00739000": 0.02,
+    "SPY261030P00744000": 0.03
+   },
+   "long_deltas": [
+    0.1731,
+    0.1565
+   ],
+   "natural_credit": 1.35,
+   "pop": 0.633,
+   "rank": 6,
+   "short_deltas": [
+    0.1986,
+    0.2073
+   ],
+   "strategy": "iron_condor",
+   "structure": {
+    "breakevens": [
+     "742.5500",
+     "798.4500"
+    ],
+    "buying_power": "355.000",
+    "dte": 33,
+    "greeks": {
+     "delta": -2.5372175159524044,
+     "gamma": -0.25235032409888936,
+     "rho": -163.80402241563684,
+     "theta": 2.7861032837285045,
+     "vanna": 12.420092898155076,
+     "vega": -1598.160433516966,
+     "volga": 13801.664818297744
+    },
+    "kind": "iron_condor",
+    "legs": [
+     {
+      "intent": "long put wing",
+      "occ_symbol": "SPY261030P00739000",
+      "premium": "3.71",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short put",
+      "occ_symbol": "SPY261030P00744000",
+      "premium": "4.205",
+      "ratio": 1,
+      "side": "short"
+     },
+     {
+      "intent": "short call",
+      "occ_symbol": "SPY261030C00797000",
+      "premium": "3.105",
+      "ratio": 1,
+      "side": "short"
+     },
+     {
+      "intent": "long call wing",
+      "occ_symbol": "SPY261030C00802000",
+      "premium": "2.15",
+      "ratio": 1,
+      "side": "long"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 733,
+     "spread_pct": 0.041867954911433136,
+     "volume": 54
+    },
+    "max_gain": "145.000",
+    "max_loss": "355.000",
+    "net_debit_credit": "-1.450"
+   },
+   "ticker": "SPY",
+   "width": 5.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 3.41,
+   "credit": 1.4355,
+   "credit_width": 0.2871,
+   "dte": 33,
+   "ev_proxy": -29.81,
+   "ev_ratio": -0.0836,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00798000": 0.07,
+    "SPY261030C00803000": 0.009,
+    "SPY261030P00739000": 0.02,
+    "SPY261030P00744000": 0.03
+   },
+   "long_deltas": [
+    0.1731,
+    0.148
+   ],
+   "natural_credit": 1.371,
+   "pop": 0.6417,
+   "rank": 7,
+   "short_deltas": [
+    0.1986,
+    0.1982
+   ],
+   "strategy": "iron_condor",
+   "structure": {
+    "breakevens": [
+     "742.5645",
+     "799.4355"
+    ],
+    "buying_power": "356.4500",
+    "dte": 33,
+    "greeks": {
+     "delta": -2.4832596230107846,
+     "gamma": -0.2528687406886002,
+     "rho": -160.18421591223876,
+     "theta": 2.8754104908293154,
+     "vanna": 10.460109716328247,
+     "vega": -1626.2462799737586,
+     "volga": 13660.723565394255
+    },
+    "kind": "iron_condor",
+    "legs": [
+     {
+      "intent": "long put wing",
+      "occ_symbol": "SPY261030P00739000",
+      "premium": "3.71",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short put",
+      "occ_symbol": "SPY261030P00744000",
+      "premium": "4.205",
+      "ratio": 1,
+      "side": "short"
+     },
+     {
+      "intent": "short call",
+      "occ_symbol": "SPY261030C00798000",
+      "premium": "2.945",
+      "ratio": 1,
+      "side": "short"
+     },
+     {
+      "intent": "long call wing",
+      "occ_symbol": "SPY261030C00803000",
+      "premium": "2.0045",
+      "ratio": 1,
+      "side": "long"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 464,
+     "spread_pct": 0.02376910016977923,
+     "volume": 38
+    },
+    "max_gain": "143.5500",
+    "max_loss": "356.4500",
+    "net_debit_credit": "-1.4355"
+   },
+   "ticker": "SPY",
+   "width": 5.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 4.93,
+   "credit": 1.345,
+   "credit_width": 0.269,
+   "dte": 33,
+   "ev_proxy": -32.38,
+   "ev_ratio": -0.0886,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00799000": 0.04,
+    "SPY261030C00804000": 0.02,
+    "SPY261030P00738000": 0.1,
+    "SPY261030P00743000": 0.03
+   },
+   "long_deltas": [
+    0.1668,
+    0.1415
+   ],
+   "natural_credit": 1.25,
+   "pop": 0.6569,
+   "rank": 8,
+   "short_deltas": [
+    0.1941,
+    0.1849
+   ],
+   "strategy": "iron_condor",
+   "structure": {
+    "breakevens": [
+     "741.6550",
+     "800.3450"
+    ],
+    "buying_power": "365.500",
+    "dte": 33,
+    "greeks": {
+     "delta": -1.6151305041229094,
+     "gamma": -0.25180672741341437,
+     "rho": -100.52827898924329,
+     "theta": 2.6979532684214718,
+     "vanna": 1.3098713767671768,
+     "vega": -1562.7271399037227,
+     "volga": 11525.088325686673
+    },
+    "kind": "iron_condor",
+    "legs": [
+     {
+      "intent": "long put wing",
+      "occ_symbol": "SPY261030P00738000",
+      "premium": "3.55",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short put",
+      "occ_symbol": "SPY261030P00743000",
+      "premium": "4.145",
+      "ratio": 1,
+      "side": "short"
+     },
+     {
+      "intent": "short call",
+      "occ_symbol": "SPY261030C00799000",
+      "premium": "2.66",
+      "ratio": 1,
+      "side": "short"
+     },
+     {
+      "intent": "long call wing",
+      "occ_symbol": "SPY261030C00804000",
+      "premium": "1.91",
+      "ratio": 1,
+      "side": "long"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 539,
+     "spread_pct": 0.028169014084507067,
+     "volume": 29
+    },
+    "max_gain": "134.500",
+    "max_loss": "365.500",
+    "net_debit_credit": "-1.345"
+   },
+   "ticker": "SPY",
+   "width": 5.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 2.93,
+   "credit": 1.245,
+   "credit_width": 0.249,
+   "dte": 33,
+   "ev_proxy": -44.15,
+   "ev_ratio": -0.1176,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00799000": 0.04,
+    "SPY261030C00804000": 0.02,
+    "SPY261030P00739000": 0.02,
+    "SPY261030P00744000": 0.03
+   },
+   "long_deltas": [
+    0.1731,
+    0.1415
+   ],
+   "natural_credit": 1.19,
+   "pop": 0.6473,
+   "rank": 9,
+   "short_deltas": [
+    0.1986,
+    0.1849
+   ],
+   "strategy": "iron_condor",
+   "structure": {
+    "breakevens": [
+     "742.7550",
+     "800.2450"
+    ],
+    "buying_power": "375.500",
+    "dte": 33,
+    "greeks": {
+     "delta": -1.7883101514061117,
+     "gamma": -0.25585288296262965,
+     "rho": -113.48440253474337,
+     "theta": 2.391859139124442,
+     "vanna": 2.7020876132619094,
+     "vega": -1513.9961460816148,
+     "volga": 10990.83804450807
+    },
+    "kind": "iron_condor",
+    "legs": [
+     {
+      "intent": "long put wing",
+      "occ_symbol": "SPY261030P00739000",
+      "premium": "3.71",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short put",
+      "occ_symbol": "SPY261030P00744000",
+      "premium": "4.205",
+      "ratio": 1,
+      "side": "short"
+     },
+     {
+      "intent": "short call",
+      "occ_symbol": "SPY261030C00799000",
+      "premium": "2.66",
+      "ratio": 1,
+      "side": "short"
+     },
+     {
+      "intent": "long call wing",
+      "occ_symbol": "SPY261030C00804000",
+      "premium": "1.91",
+      "ratio": 1,
+      "side": "long"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 795,
+     "spread_pct": 0.015037593984962419,
+     "volume": 54
+    },
+    "max_gain": "124.500",
+    "max_loss": "375.500",
+    "net_debit_credit": "-1.245"
+   },
+   "ticker": "SPY",
+   "width": 5.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 3.84,
+   "credit": 0.955,
+   "credit_width": 0.191,
+   "dte": 33,
+   "ev_proxy": -10.19,
+   "ev_ratio": -0.0252,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00797000": 0.13,
+    "SPY261030C00802000": 0.02
+   },
+   "long_deltas": [
+    0.1565
+   ],
+   "natural_credit": 0.88,
+   "pop": 0.7818,
+   "rank": 10,
+   "short_deltas": [
+    0.2073
+   ],
+   "strategy": "bear_call",
+   "structure": {
+    "breakevens": [
+     "797.9550"
+    ],
+    "buying_power": "404.500",
+    "dte": 33,
+    "greeks": {
+     "delta": -5.083107444391834,
+     "gamma": -0.15828832144041316,
+     "rho": -345.81215769211803,
+     "theta": 2.4422911486865253,
+     "vanna": 9.088901482242875,
+     "vega": -1069.5732201710189,
+     "volga": 11456.448871041088
+    },
+    "kind": "vertical_credit",
+    "legs": [
+     {
+      "intent": "long call",
+      "occ_symbol": "SPY261030C00802000",
+      "premium": "2.15",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short call",
+      "occ_symbol": "SPY261030C00797000",
+      "premium": "3.105",
+      "ratio": 1,
+      "side": "short"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 733,
+     "spread_pct": 0.041867954911433136,
+     "volume": 57
+    },
+    "max_gain": "95.500",
+    "max_loss": "404.500",
+    "net_debit_credit": "-0.955"
+   },
+   "ticker": "SPY",
+   "width": 5.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 2.06,
+   "credit": 0.9405,
+   "credit_width": 0.1881,
+   "dte": 33,
+   "ev_proxy": -5.51,
+   "ev_ratio": -0.0136,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00798000": 0.07,
+    "SPY261030C00803000": 0.009
+   },
+   "long_deltas": [
+    0.148
+   ],
+   "natural_credit": 0.901,
+   "pop": 0.7908,
+   "rank": 11,
+   "short_deltas": [
+    0.1982
+   ],
+   "strategy": "bear_call",
+   "structure": {
+    "breakevens": [
+     "798.9405"
+    ],
+    "buying_power": "405.9500",
+    "dte": 33,
+    "greeks": {
+     "delta": -5.029149551450214,
+     "gamma": -0.15880673803012402,
+     "rho": -342.19235118871995,
+     "theta": 2.5315983557873363,
+     "vanna": 7.128918300416046,
+     "vega": -1097.6590666278116,
+     "volga": 11315.507618137599
+    },
+    "kind": "vertical_credit",
+    "legs": [
+     {
+      "intent": "long call",
+      "occ_symbol": "SPY261030C00803000",
+      "premium": "2.0045",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short call",
+      "occ_symbol": "SPY261030C00798000",
+      "premium": "2.945",
+      "ratio": 1,
+      "side": "short"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 464,
+     "spread_pct": 0.02376910016977923,
+     "volume": 38
+    },
+    "max_gain": "94.0500",
+    "max_loss": "405.9500",
+    "net_debit_credit": "-0.9405"
+   },
+   "ticker": "SPY",
+   "width": 5.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 1.59,
+   "credit": 0.75,
+   "credit_width": 0.15,
+   "dte": 33,
+   "ev_proxy": -19.85,
+   "ev_ratio": -0.0467,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00799000": 0.04,
+    "SPY261030C00804000": 0.02
+   },
+   "long_deltas": [
+    0.1415
+   ],
+   "natural_credit": 0.72,
+   "pop": 0.798,
+   "rank": 12,
+   "short_deltas": [
+    0.1849
+   ],
+   "strategy": "bear_call",
+   "structure": {
+    "breakevens": [
+     "799.7500"
+    ],
+    "buying_power": "425.00",
+    "dte": 33,
+    "greeks": {
+     "delta": -4.334200079845541,
+     "gamma": -0.16179088030415356,
+     "rho": -295.49253781122457,
+     "theta": 2.0480470040824628,
+     "vanna": -0.6291038026502918,
+     "vega": -985.4089327356678,
+     "volga": 8645.622097251413
+    },
+    "kind": "vertical_credit",
+    "legs": [
+     {
+      "intent": "long call",
+      "occ_symbol": "SPY261030C00804000",
+      "premium": "1.91",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short call",
+      "occ_symbol": "SPY261030C00799000",
+      "premium": "2.66",
+      "ratio": 1,
+      "side": "short"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 846,
+     "spread_pct": 0.015037593984962419,
+     "volume": 65
+    },
+    "max_gain": "75.00",
+    "max_loss": "425.00",
+    "net_debit_credit": "-0.75"
+   },
+   "ticker": "SPY",
+   "width": 5.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 1.34,
+   "credit": 0.715,
+   "credit_width": 0.143,
+   "dte": 33,
+   "ev_proxy": -6.2,
+   "ev_ratio": -0.0145,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030P00740000": 0.02,
+    "SPY261030P00745000": 0.03
+   },
+   "long_deltas": [
+    0.1764
+   ],
+   "natural_credit": 0.69,
+   "pop": 0.8324,
+   "rank": 13,
+   "short_deltas": [
+    0.2071
+   ],
+   "strategy": "bull_put",
+   "structure": {
+    "breakevens": [
+     "744.2850"
+    ],
+    "buying_power": "428.500",
+    "dte": 33,
+    "greeks": {
+     "delta": 3.0759163463673147,
+     "gamma": -0.0922172390804663,
+     "rho": 220.98130536621647,
+     "theta": 0.8131550204973141,
+     "vanna": -0.9776509239231359,
+     "vega": -623.1562552184905,
+     "volga": 3795.399410722017
+    },
+    "kind": "vertical_credit",
+    "legs": [
+     {
+      "intent": "long put",
+      "occ_symbol": "SPY261030P00740000",
+      "premium": "3.74",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short put",
+      "occ_symbol": "SPY261030P00745000",
+      "premium": "4.455",
+      "ratio": 1,
+      "side": "short"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 2854,
+     "spread_pct": 0.006734006734006591,
+     "volume": 562
+    },
+    "max_gain": "71.500",
+    "max_loss": "428.500",
+    "net_debit_credit": "-0.715"
+   },
+   "ticker": "SPY",
+   "width": 5.0
+  },
+  {
+   "atm_iv": 0.13634674999999993,
+   "cost": 3.59,
+   "credit": 0.65,
+   "credit_width": 0.13,
+   "dte": 40,
+   "ev_proxy": 5.84,
+   "ev_ratio": 0.0134,
+   "expiration": "2026-11-06",
+   "leg_spreads": {
+    "SPY261106P00730000": 0.06,
+    "SPY261106P00735000": 0.08
+   },
+   "long_deltas": [
+    0.1489
+   ],
+   "natural_credit": 0.58,
+   "pop": 0.8776,
+   "rank": 14,
+   "short_deltas": [
+    0.173
+   ],
+   "strategy": "bull_put",
+   "structure": {
+    "breakevens": [
+     "734.3500"
+    ],
+    "buying_power": "435.00",
+    "dte": 40,
+    "greeks": {
+     "delta": 2.3947300758743175,
+     "gamma": -0.06419344345854927,
+     "rho": 209.51310549853406,
+     "theta": 0.8419333698055347,
+     "vanna": 1.8411714873942913,
+     "vega": -606.8819756126313,
+     "volga": 2783.350765692223
+    },
+    "kind": "vertical_credit",
+    "legs": [
+     {
+      "intent": "long put",
+      "occ_symbol": "SPY261106P00730000",
+      "premium": "3.58",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short put",
+      "occ_symbol": "SPY261106P00735000",
+      "premium": "4.23",
+      "ratio": 1,
+      "side": "short"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 271,
+     "spread_pct": 0.01891252955082723,
+     "volume": 173
+    },
+    "max_gain": "65.00",
+    "max_loss": "435.00",
+    "net_debit_credit": "-0.65"
+   },
+   "ticker": "SPY",
+   "width": 5.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 3.34,
+   "credit": 0.595,
+   "credit_width": 0.119,
+   "dte": 33,
+   "ev_proxy": -12.53,
+   "ev_ratio": -0.0285,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030P00738000": 0.1,
+    "SPY261030P00743000": 0.03
+   },
+   "long_deltas": [
+    0.1668
+   ],
+   "natural_credit": 0.53,
+   "pop": 0.8478,
+   "rank": 15,
+   "short_deltas": [
+    0.1941
+   ],
+   "strategy": "bull_put",
+   "structure": {
+    "breakevens": [
+     "742.4050"
+    ],
+    "buying_power": "440.500",
+    "dte": 33,
+    "greeks": {
+     "delta": 2.7190695757226315,
+     "gamma": -0.0900158471092608,
+     "rho": 194.96425882198128,
+     "theta": 0.649906264339009,
+     "vanna": 1.9389751794174686,
+     "vega": -577.3182071680549,
+     "volga": 2879.4662284352635
+    },
+    "kind": "vertical_credit",
+    "legs": [
+     {
+      "intent": "long put",
+      "occ_symbol": "SPY261030P00738000",
+      "premium": "3.55",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short put",
+      "occ_symbol": "SPY261030P00743000",
+      "premium": "4.145",
+      "ratio": 1,
+      "side": "short"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 539,
+     "spread_pct": 0.028169014084507067,
+     "volume": 29
+    },
+    "max_gain": "59.500",
+    "max_loss": "440.500",
+    "net_debit_credit": "-0.595"
+   },
+   "ticker": "SPY",
+   "width": 5.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 1.34,
+   "credit": 0.495,
+   "credit_width": 0.099,
+   "dte": 33,
+   "ev_proxy": -24.3,
+   "ev_ratio": -0.0539,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030P00739000": 0.02,
+    "SPY261030P00744000": 0.03
+   },
+   "long_deltas": [
+    0.1731
+   ],
+   "natural_credit": 0.47,
+   "pop": 0.8389,
+   "rank": 16,
+   "short_deltas": [
+    0.1986
+   ],
+   "strategy": "bull_put",
+   "structure": {
+    "breakevens": [
+     "743.5050"
+    ],
+    "buying_power": "450.500",
+    "dte": 33,
+    "greeks": {
+     "delta": 2.545889928439429,
+     "gamma": -0.0940620026584762,
+     "rho": 182.0081352764812,
+     "theta": 0.34381213504197916,
+     "vanna": 3.331191415912201,
+     "vega": -528.587213345947,
+     "volga": 2345.2159472566564
+    },
+    "kind": "vertical_credit",
+    "legs": [
+     {
+      "intent": "long put",
+      "occ_symbol": "SPY261030P00739000",
+      "premium": "3.71",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short put",
+      "occ_symbol": "SPY261030P00744000",
+      "premium": "4.205",
+      "ratio": 1,
+      "side": "short"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 795,
+     "spread_pct": 0.007134363852556328,
+     "volume": 54
+    },
+    "max_gain": "49.500",
+    "max_loss": "450.500",
+    "net_debit_credit": "-0.495"
+   },
+   "ticker": "SPY",
+   "width": 5.0
+  }
+ ],
+ "debit": [
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 3.1,
+   "credit": -6.67,
+   "credit_width": null,
+   "dte": 33,
+   "ev_proxy": 161.74,
+   "ev_ratio": 0.2425,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030P00757000": 0.06,
+    "SPY261030P00777000": 0.06
+   },
+   "long_deltas": [
+    0.5324
+   ],
+   "natural_credit": -6.73,
+   "pop": 0.4589,
+   "rank": 1,
+   "short_deltas": [
+    0.2974
+   ],
+   "strategy": "bear_put_debit",
+   "structure": {
+    "breakevens": [
+     "770.3300"
+    ],
+    "buying_power": "667.00",
+    "dte": 33,
+    "greeks": {
+     "delta": -23.474516490253386,
+     "gamma": 0.33923311158547986,
+     "rho": -1697.2007840224064,
+     "theta": 2.182560711079363,
+     "vanna": 153.59749371224547,
+     "vega": 1199.146962368587,
+     "volga": -13751.196571520415
+    },
+    "kind": "vertical_debit",
+    "legs": [
+     {
+      "intent": "long put",
+      "occ_symbol": "SPY261030P00777000",
+      "premium": "13.16",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short put",
+      "occ_symbol": "SPY261030P00757000",
+      "premium": "6.49",
+      "ratio": 1,
+      "side": "short"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 910,
+     "spread_pct": 0.009244992295839694,
+     "volume": 36
+    },
+    "max_gain": "1333.00",
+    "max_loss": "667.00",
+    "net_debit_credit": "6.67"
+   },
+   "ticker": "SPY",
+   "width": 20.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 5.6,
+   "credit": -6.42,
+   "credit_width": null,
+   "dte": 33,
+   "ev_proxy": 154.31,
+   "ev_ratio": 0.2404,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030P00758000": 0.16,
+    "SPY261030P00777000": 0.06
+   },
+   "long_deltas": [
+    0.5324
+   ],
+   "natural_credit": -6.53,
+   "pop": 0.4622,
+   "rank": 2,
+   "short_deltas": [
+    0.307
+   ],
+   "strategy": "bear_put_debit",
+   "structure": {
+    "breakevens": [
+     "770.5800"
+    ],
+    "buying_power": "642.00",
+    "dte": 33,
+    "greeks": {
+     "delta": -22.522068408116194,
+     "gamma": 0.3180653949764687,
+     "rho": -1628.5827883755296,
+     "theta": 2.241437970614113,
+     "vanna": 149.4306908558228,
+     "vega": 1084.2859193154563,
+     "volga": -12522.841013369969
+    },
+    "kind": "vertical_debit",
+    "legs": [
+     {
+      "intent": "long put",
+      "occ_symbol": "SPY261030P00777000",
+      "premium": "13.16",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short put",
+      "occ_symbol": "SPY261030P00758000",
+      "premium": "6.74",
+      "ratio": 1,
+      "side": "short"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 1218,
+     "spread_pct": 0.023738872403560853,
+     "volume": 36
+    },
+    "max_gain": "1258.00",
+    "max_loss": "642.00",
+    "net_debit_credit": "6.42"
+   },
+   "ticker": "SPY",
+   "width": 19.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 12.1,
+   "credit": -7.31,
+   "credit_width": null,
+   "dte": 33,
+   "ev_proxy": 143.66,
+   "ev_ratio": 0.1965,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030P00757000": 0.06,
+    "SPY261030P00778000": 0.42
+   },
+   "long_deltas": [
+    0.5454
+   ],
+   "natural_credit": -7.55,
+   "pop": 0.4636,
+   "rank": 3,
+   "short_deltas": [
+    0.2974
+   ],
+   "strategy": "bear_put_debit",
+   "structure": {
+    "breakevens": [
+     "770.6900"
+    ],
+    "buying_power": "731.00",
+    "dte": 33,
+    "greeks": {
+     "delta": -24.784233175578407,
+     "gamma": 0.3252522539287972,
+     "rho": -1794.2688463852037,
+     "theta": 2.230101096366896,
+     "vanna": 163.63953648656283,
+     "vega": 1170.1071627937336,
+     "volga": -13207.00760220544
+    },
+    "kind": "vertical_debit",
+    "legs": [
+     {
+      "intent": "long put",
+      "occ_symbol": "SPY261030P00778000",
+      "premium": "13.8",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short put",
+      "occ_symbol": "SPY261030P00757000",
+      "premium": "6.49",
+      "ratio": 1,
+      "side": "short"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 159,
+     "spread_pct": 0.030434782608695646,
+     "volume": 79
+    },
+    "max_gain": "1369.00",
+    "max_loss": "731.00",
+    "net_debit_credit": "7.31"
+   },
+   "ticker": "SPY",
+   "width": 21.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 14.6,
+   "credit": -7.06,
+   "credit_width": null,
+   "dte": 33,
+   "ev_proxy": 136.23,
+   "ev_ratio": 0.193,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030P00758000": 0.16,
+    "SPY261030P00778000": 0.42
+   },
+   "long_deltas": [
+    0.5454
+   ],
+   "natural_credit": -7.35,
+   "pop": 0.4668,
+   "rank": 4,
+   "short_deltas": [
+    0.307
+   ],
+   "strategy": "bear_put_debit",
+   "structure": {
+    "breakevens": [
+     "770.9400"
+    ],
+    "buying_power": "706.00",
+    "dte": 33,
+    "greeks": {
+     "delta": -23.831785093441216,
+     "gamma": 0.304084537319786,
+     "rho": -1725.6508507383269,
+     "theta": 2.288978355901646,
+     "vanna": 159.47273363014017,
+     "vega": 1055.2461197406028,
+     "volga": -11978.652044054994
+    },
+    "kind": "vertical_debit",
+    "legs": [
+     {
+      "intent": "long put",
+      "occ_symbol": "SPY261030P00778000",
+      "premium": "13.8",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short put",
+      "occ_symbol": "SPY261030P00758000",
+      "premium": "6.74",
+      "ratio": 1,
+      "side": "short"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 159,
+     "spread_pct": 0.030434782608695646,
+     "volume": 79
+    },
+    "max_gain": "1294.00",
+    "max_loss": "706.00",
+    "net_debit_credit": "7.06"
+   },
+   "ticker": "SPY",
+   "width": 20.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 9.35,
+   "credit": -8.115,
+   "credit_width": null,
+   "dte": 33,
+   "ev_proxy": 122.09,
+   "ev_ratio": 0.1505,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030P00757000": 0.06,
+    "SPY261030P00779000": 0.31
+   },
+   "long_deltas": [
+    0.5573
+   ],
+   "natural_credit": -8.3,
+   "pop": 0.4661,
+   "rank": 5,
+   "short_deltas": [
+    0.2974
+   ],
+   "strategy": "bear_put_debit",
+   "structure": {
+    "breakevens": [
+     "770.8850"
+    ],
+    "buying_power": "811.500",
+    "dte": 33,
+    "greeks": {
+     "delta": -25.968187782429467,
+     "gamma": 0.2919940574046118,
+     "rho": -1884.1715111290873,
+     "theta": 2.0312237292317192,
+     "vanna": 171.87526414796025,
+     "vega": 1135.2200439894632,
+     "volga": -12609.239770327484
+    },
+    "kind": "vertical_debit",
+    "legs": [
+     {
+      "intent": "long put",
+      "occ_symbol": "SPY261030P00779000",
+      "premium": "14.605",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short put",
+      "occ_symbol": "SPY261030P00757000",
+      "premium": "6.49",
+      "ratio": 1,
+      "side": "short"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 347,
+     "spread_pct": 0.021225607668606674,
+     "volume": 12
+    },
+    "max_gain": "1388.500",
+    "max_loss": "811.500",
+    "net_debit_credit": "8.115"
+   },
+   "ticker": "SPY",
+   "width": 22.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 11.85,
+   "credit": -7.865,
+   "credit_width": null,
+   "dte": 33,
+   "ev_proxy": 114.66,
+   "ev_ratio": 0.1458,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030P00758000": 0.16,
+    "SPY261030P00779000": 0.31
+   },
+   "long_deltas": [
+    0.5573
+   ],
+   "natural_credit": -8.1,
+   "pop": 0.4693,
+   "rank": 6,
+   "short_deltas": [
+    0.307
+   ],
+   "strategy": "bear_put_debit",
+   "structure": {
+    "breakevens": [
+     "771.1350"
+    ],
+    "buying_power": "786.500",
+    "dte": 33,
+    "greeks": {
+     "delta": -25.015739700292276,
+     "gamma": 0.27082634079560064,
+     "rho": -1815.5535154822105,
+     "theta": 2.090100988766469,
+     "vanna": 167.7084612915376,
+     "vega": 1020.3590009363324,
+     "volga": -11380.884212177036
+    },
+    "kind": "vertical_debit",
+    "legs": [
+     {
+      "intent": "long put",
+      "occ_symbol": "SPY261030P00779000",
+      "premium": "14.605",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short put",
+      "occ_symbol": "SPY261030P00758000",
+      "premium": "6.74",
+      "ratio": 1,
+      "side": "short"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 347,
+     "spread_pct": 0.023738872403560853,
+     "volume": 12
+    },
+    "max_gain": "1313.500",
+    "max_loss": "786.500",
+    "net_debit_credit": "7.865"
+   },
+   "ticker": "SPY",
+   "width": 21.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 1.54,
+   "credit": -13.16,
+   "credit_width": null,
+   "dte": 33,
+   "ev_proxy": 62.94,
+   "ev_ratio": 0.0478,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030P00777000": 0.06
+   },
+   "long_deltas": [
+    0.5324
+   ],
+   "natural_credit": -13.19,
+   "pop": 0.3765,
+   "rank": 7,
+   "short_deltas": [],
+   "strategy": "long_put",
+   "structure": {
+    "breakevens": [
+     "763.8400"
+    ],
+    "buying_power": "1316.00",
+    "dte": 33,
+    "greeks": {
+     "delta": -53.15309816713678,
+     "gamma": 1.3652354333230479,
+     "rho": -3825.4366021847836,
+     "theta": -12.916054359421258,
+     "vanna": 37.01002172144879,
+     "vega": 9223.682451405939,
+     "volga": 679.1305275891967
+    },
+    "kind": "long_put",
+    "legs": [
+     {
+      "intent": "long put",
+      "occ_symbol": "SPY261030P00777000",
+      "premium": "13.16",
+      "ratio": 1,
+      "side": "long"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 1286,
+     "spread_pct": 0.004559270516717228,
+     "volume": 36
+    },
+    "max_gain": "76384.00",
+    "max_loss": "1316.00",
+    "net_debit_credit": "13.16"
+   },
+   "ticker": "SPY",
+   "width": null
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 10.54,
+   "credit": -13.8,
+   "credit_width": null,
+   "dte": 33,
+   "ev_proxy": 44.86,
+   "ev_ratio": 0.0325,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030P00778000": 0.42
+   },
+   "long_deltas": [
+    0.5454
+   ],
+   "natural_credit": -14.01,
+   "pop": 0.381,
+   "rank": 8,
+   "short_deltas": [],
+   "strategy": "long_put",
+   "structure": {
+    "breakevens": [
+     "764.2000"
+    ],
+    "buying_power": "1380.0",
+    "dte": 33,
+    "greeks": {
+     "delta": -54.462814852461804,
+     "gamma": 1.3512545756663652,
+     "rho": -3922.504664547581,
+     "theta": -12.868513974133725,
+     "vanna": 47.05206449576615,
+     "vega": 9194.642651831085,
+     "volga": 1223.319496904173
+    },
+    "kind": "long_put",
+    "legs": [
+     {
+      "intent": "long put",
+      "occ_symbol": "SPY261030P00778000",
+      "premium": "13.8",
+      "ratio": 1,
+      "side": "long"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 159,
+     "spread_pct": 0.030434782608695646,
+     "volume": 79
+    },
+    "max_gain": "76420.0",
+    "max_loss": "1380.0",
+    "net_debit_credit": "13.8"
+   },
+   "ticker": "SPY",
+   "width": null
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 7.79,
+   "credit": -14.605,
+   "credit_width": null,
+   "dte": 33,
+   "ev_proxy": 23.29,
+   "ev_ratio": 0.0159,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030P00779000": 0.31
+   },
+   "long_deltas": [
+    0.5573
+   ],
+   "natural_credit": -14.76,
+   "pop": 0.3834,
+   "rank": 9,
+   "short_deltas": [],
+   "strategy": "long_put",
+   "structure": {
+    "breakevens": [
+     "764.3950"
+    ],
+    "buying_power": "1460.500",
+    "dte": 33,
+    "greeks": {
+     "delta": -55.646769459312864,
+     "gamma": 1.3179963791421798,
+     "rho": -4012.4073292914645,
+     "theta": -13.067391341268902,
+     "vanna": 55.28779215716359,
+     "vega": 9159.755533026815,
+     "volga": 1821.0873287821296
+    },
+    "kind": "long_put",
+    "legs": [
+     {
+      "intent": "long put",
+      "occ_symbol": "SPY261030P00779000",
+      "premium": "14.605",
+      "ratio": 1,
+      "side": "long"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 347,
+     "spread_pct": 0.021225607668606674,
+     "volume": 12
+    },
+    "max_gain": "76439.500",
+    "max_loss": "1460.500",
+    "net_debit_credit": "14.605"
+   },
+   "ticker": "SPY",
+   "width": null
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 1.54,
+   "credit": -13.48,
+   "credit_width": null,
+   "dte": 33,
+   "ev_proxy": -12.31,
+   "ev_ratio": -0.0091,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00772000": 0.06
+   },
+   "long_deltas": [
+    0.5344
+   ],
+   "natural_credit": -13.51,
+   "pop": 0.3504,
+   "rank": 10,
+   "short_deltas": [],
+   "strategy": "long_call",
+   "structure": {
+    "breakevens": [
+     "785.4800"
+    ],
+    "buying_power": "1348.00",
+    "dte": 33,
+    "greeks": {
+     "delta": 53.52089633155743,
+     "gamma": 1.274856894090964,
+     "rho": 3610.273297795148,
+     "theta": -23.144313391827204,
+     "vanna": -14.180207351726379,
+     "vega": 9216.53883956089,
+     "volga": 290.6325797076167
+    },
+    "kind": "long_call",
+    "legs": [
+     {
+      "intent": "long call",
+      "occ_symbol": "SPY261030C00772000",
+      "premium": "13.48",
+      "ratio": 1,
+      "side": "long"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 364,
+     "spread_pct": 0.004451038575667692,
+     "volume": 781
+    },
+    "max_gain": null,
+    "max_loss": "1348.00",
+    "net_debit_credit": "13.48"
+   },
+   "ticker": "SPY",
+   "width": null
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 13.04,
+   "credit": -14.48,
+   "credit_width": null,
+   "dte": 33,
+   "ev_proxy": -17.71,
+   "ev_ratio": -0.0122,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00770000": 0.52
+   },
+   "long_deltas": [
+    0.5601
+   ],
+   "natural_credit": -14.74,
+   "pop": 0.3623,
+   "rank": 11,
+   "short_deltas": [],
+   "strategy": "long_call",
+   "structure": {
+    "breakevens": [
+     "784.4800"
+    ],
+    "buying_power": "1448.00",
+    "dte": 33,
+    "greeks": {
+     "delta": 56.08260129568758,
+     "gamma": 1.2706119553627875,
+     "rho": 3779.8323145566465,
+     "theta": -23.12070355728688,
+     "vanna": -33.25061999514042,
+     "vega": 9144.841925384173,
+     "volga": 1180.390686619192
+    },
+    "kind": "long_call",
+    "legs": [
+     {
+      "intent": "long call",
+      "occ_symbol": "SPY261030C00770000",
+      "premium": "14.48",
+      "ratio": 1,
+      "side": "long"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 5716,
+     "spread_pct": 0.03591160220994472,
+     "volume": 2513
+    },
+    "max_gain": null,
+    "max_loss": "1448.00",
+    "net_debit_credit": "14.48"
+   },
+   "ticker": "SPY",
+   "width": null
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 11.54,
+   "credit": -13.96,
+   "credit_width": null,
+   "dte": 33,
+   "ev_proxy": -17.9,
+   "ev_ratio": -0.0128,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00771000": 0.46
+   },
+   "long_deltas": [
+    0.5473
+   ],
+   "natural_credit": -14.19,
+   "pop": 0.3566,
+   "rank": 12,
+   "short_deltas": [],
+   "strategy": "long_call",
+   "structure": {
+    "breakevens": [
+     "784.9600"
+    ],
+    "buying_power": "1396.00",
+    "dte": 33,
+    "greeks": {
+     "delta": 54.80292704885035,
+     "gamma": 1.2743509031094475,
+     "rho": 3695.2765993744238,
+     "theta": -23.128393479484483,
+     "vanna": -23.760541076228968,
+     "vega": 9185.461505194193,
+     "volga": 665.0572368358335
+    },
+    "kind": "long_call",
+    "legs": [
+     {
+      "intent": "long call",
+      "occ_symbol": "SPY261030C00771000",
+      "premium": "13.96",
+      "ratio": 1,
+      "side": "long"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 793,
+     "spread_pct": 0.032951289398280736,
+     "volume": 519
+    },
+    "max_gain": null,
+    "max_loss": "1396.00",
+    "net_debit_credit": "13.96"
+   },
+   "ticker": "SPY",
+   "width": null
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 14.34,
+   "credit": -9.185,
+   "credit_width": null,
+   "dte": 33,
+   "ev_proxy": -128.46,
+   "ev_ratio": -0.1399,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00770000": 0.52,
+    "SPY261030C00789000": 0.05
+   },
+   "long_deltas": [
+    0.5601
+   ],
+   "natural_credit": -9.47,
+   "pop": 0.4275,
+   "rank": 13,
+   "short_deltas": [
+    0.3043
+   ],
+   "strategy": "bull_call_debit",
+   "structure": {
+    "breakevens": [
+     "779.1850"
+    ],
+    "buying_power": "918.500",
+    "dte": 33,
+    "greeks": {
+     "delta": 25.570984708029272,
+     "gamma": 0.01077462361628867,
+     "rho": 1700.0998753825256,
+     "theta": -5.838806379971889,
+     "vanna": -192.72712452327875,
+     "vega": 1019.515665427044,
+     "volga": -17673.48208108447
+    },
+    "kind": "vertical_debit",
+    "legs": [
+     {
+      "intent": "long call",
+      "occ_symbol": "SPY261030C00770000",
+      "premium": "14.48",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short call",
+      "occ_symbol": "SPY261030C00789000",
+      "premium": "5.295",
+      "ratio": 1,
+      "side": "short"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 1125,
+     "spread_pct": 0.03591160220994472,
+     "volume": 208
+    },
+    "max_gain": "981.500",
+    "max_loss": "918.500",
+    "net_debit_credit": "9.185"
+   },
+   "ticker": "SPY",
+   "width": 19.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 14.09,
+   "credit": -9.57,
+   "credit_width": null,
+   "dte": 33,
+   "ev_proxy": -136.39,
+   "ev_ratio": -0.1425,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00770000": 0.52,
+    "SPY261030C00790000": 0.04
+   },
+   "long_deltas": [
+    0.5601
+   ],
+   "natural_credit": -9.85,
+   "pop": 0.4226,
+   "rank": 14,
+   "short_deltas": [
+    0.29
+   ],
+   "strategy": "bull_call_debit",
+   "structure": {
+    "breakevens": [
+     "779.5700"
+    ],
+    "buying_power": "957.00",
+    "dte": 33,
+    "greeks": {
+     "delta": 27.009164082401472,
+     "gamma": 0.024697882169501195,
+     "rho": 1796.8766833260345,
+     "theta": -6.434079871861993,
+     "vanna": -202.8432881385374,
+     "vega": 1196.4379393842264,
+     "volga": -20501.734829875786
+    },
+    "kind": "vertical_debit",
+    "legs": [
+     {
+      "intent": "long call",
+      "occ_symbol": "SPY261030C00770000",
+      "premium": "14.48",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short call",
+      "occ_symbol": "SPY261030C00790000",
+      "premium": "4.91",
+      "ratio": 1,
+      "side": "short"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 5716,
+     "spread_pct": 0.03591160220994472,
+     "volume": 708
+    },
+    "max_gain": "1043.00",
+    "max_loss": "957.00",
+    "net_debit_credit": "9.57"
+   },
+   "ticker": "SPY",
+   "width": 20.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 12.84,
+   "credit": -8.665,
+   "credit_width": null,
+   "dte": 33,
+   "ev_proxy": -128.66,
+   "ev_ratio": -0.1485,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00771000": 0.46,
+    "SPY261030C00789000": 0.05
+   },
+   "long_deltas": [
+    0.5473
+   ],
+   "natural_credit": -8.92,
+   "pop": 0.4214,
+   "rank": 15,
+   "short_deltas": [
+    0.3043
+   ],
+   "strategy": "bull_call_debit",
+   "structure": {
+    "breakevens": [
+     "779.6650"
+    ],
+    "buying_power": "866.500",
+    "dte": 33,
+    "greeks": {
+     "delta": 24.29131046119204,
+     "gamma": 0.01451357136294873,
+     "rho": 1615.544160200303,
+     "theta": -5.846496302169491,
+     "vanna": -183.2370456043673,
+     "vega": 1060.1352452370638,
+     "volga": -18188.815530867825
+    },
+    "kind": "vertical_debit",
+    "legs": [
+     {
+      "intent": "long call",
+      "occ_symbol": "SPY261030C00771000",
+      "premium": "13.96",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short call",
+      "occ_symbol": "SPY261030C00789000",
+      "premium": "5.295",
+      "ratio": 1,
+      "side": "short"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 793,
+     "spread_pct": 0.032951289398280736,
+     "volume": 208
+    },
+    "max_gain": "933.500",
+    "max_loss": "866.500",
+    "net_debit_credit": "8.665"
+   },
+   "ticker": "SPY",
+   "width": 18.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 2.84,
+   "credit": -8.185,
+   "credit_width": null,
+   "dte": 33,
+   "ev_proxy": -123.06,
+   "ev_ratio": -0.1504,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00772000": 0.06,
+    "SPY261030C00789000": 0.05
+   },
+   "long_deltas": [
+    0.5344
+   ],
+   "natural_credit": -8.24,
+   "pop": 0.4149,
+   "rank": 16,
+   "short_deltas": [
+    0.3043
+   ],
+   "strategy": "bull_call_debit",
+   "structure": {
+    "breakevens": [
+     "780.1850"
+    ],
+    "buying_power": "818.500",
+    "dte": 33,
+    "greeks": {
+     "delta": 23.00927974389912,
+     "gamma": 0.01501956234446511,
+     "rho": 1530.5408586210274,
+     "theta": -5.862416214512212,
+     "vanna": -173.6567118798647,
+     "vega": 1091.2125796037608,
+     "volga": -18563.24018799604
+    },
+    "kind": "vertical_debit",
+    "legs": [
+     {
+      "intent": "long call",
+      "occ_symbol": "SPY261030C00772000",
+      "premium": "13.48",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short call",
+      "occ_symbol": "SPY261030C00789000",
+      "premium": "5.295",
+      "ratio": 1,
+      "side": "short"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 364,
+     "spread_pct": 0.009442870632672467,
+     "volume": 208
+    },
+    "max_gain": "881.500",
+    "max_loss": "818.500",
+    "net_debit_credit": "8.185"
+   },
+   "ticker": "SPY",
+   "width": 17.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 12.59,
+   "credit": -9.05,
+   "credit_width": null,
+   "dte": 33,
+   "ev_proxy": -136.58,
+   "ev_ratio": -0.1509,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00771000": 0.46,
+    "SPY261030C00790000": 0.04
+   },
+   "long_deltas": [
+    0.5473
+   ],
+   "natural_credit": -9.3,
+   "pop": 0.4166,
+   "rank": 17,
+   "short_deltas": [
+    0.29
+   ],
+   "strategy": "bull_call_debit",
+   "structure": {
+    "breakevens": [
+     "780.0500"
+    ],
+    "buying_power": "905.00",
+    "dte": 33,
+    "greeks": {
+     "delta": 25.72948983556424,
+     "gamma": 0.028436829916161255,
+     "rho": 1712.3209681438118,
+     "theta": -6.441769794059596,
+     "vanna": -193.35320921962594,
+     "vega": 1237.0575191942462,
+     "volga": -21017.068279659146
+    },
+    "kind": "vertical_debit",
+    "legs": [
+     {
+      "intent": "long call",
+      "occ_symbol": "SPY261030C00771000",
+      "premium": "13.96",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short call",
+      "occ_symbol": "SPY261030C00790000",
+      "premium": "4.91",
+      "ratio": 1,
+      "side": "short"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 793,
+     "spread_pct": 0.032951289398280736,
+     "volume": 519
+    },
+    "max_gain": "995.00",
+    "max_loss": "905.00",
+    "net_debit_credit": "9.05"
+   },
+   "ticker": "SPY",
+   "width": 19.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 2.59,
+   "credit": -8.57,
+   "credit_width": null,
+   "dte": 33,
+   "ev_proxy": -130.98,
+   "ev_ratio": -0.1528,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00772000": 0.06,
+    "SPY261030C00790000": 0.04
+   },
+   "long_deltas": [
+    0.5344
+   ],
+   "natural_credit": -8.62,
+   "pop": 0.4101,
+   "rank": 18,
+   "short_deltas": [
+    0.29
+   ],
+   "strategy": "bull_call_debit",
+   "structure": {
+    "breakevens": [
+     "780.5700"
+    ],
+    "buying_power": "857.00",
+    "dte": 33,
+    "greeks": {
+     "delta": 24.447459118271322,
+     "gamma": 0.028942820897677635,
+     "rho": 1627.3176665645362,
+     "theta": -6.457689706402316,
+     "vanna": -183.77287549512334,
+     "vega": 1268.1348535609432,
+     "volga": -21391.492936787363
+    },
+    "kind": "vertical_debit",
+    "legs": [
+     {
+      "intent": "long call",
+      "occ_symbol": "SPY261030C00772000",
+      "premium": "13.48",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short call",
+      "occ_symbol": "SPY261030C00790000",
+      "premium": "4.91",
+      "ratio": 1,
+      "side": "short"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 364,
+     "spread_pct": 0.008146639511201636,
+     "volume": 708
+    },
+    "max_gain": "943.00",
+    "max_loss": "857.00",
+    "net_debit_credit": "8.57"
+   },
+   "ticker": "SPY",
+   "width": 18.0
+  }
+ ],
+ "debit_w5": [
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 1.54,
+   "credit": -13.16,
+   "credit_width": null,
+   "dte": 33,
+   "ev_proxy": 62.94,
+   "ev_ratio": 0.0478,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030P00777000": 0.06
+   },
+   "long_deltas": [
+    0.5324
+   ],
+   "natural_credit": -13.19,
+   "pop": 0.3765,
+   "rank": 1,
+   "short_deltas": [],
+   "strategy": "long_put",
+   "structure": {
+    "breakevens": [
+     "763.8400"
+    ],
+    "buying_power": "1316.00",
+    "dte": 33,
+    "greeks": {
+     "delta": -53.15309816713678,
+     "gamma": 1.3652354333230479,
+     "rho": -3825.4366021847836,
+     "theta": -12.916054359421258,
+     "vanna": 37.01002172144879,
+     "vega": 9223.682451405939,
+     "volga": 679.1305275891967
+    },
+    "kind": "long_put",
+    "legs": [
+     {
+      "intent": "long put",
+      "occ_symbol": "SPY261030P00777000",
+      "premium": "13.16",
+      "ratio": 1,
+      "side": "long"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 1286,
+     "spread_pct": 0.004559270516717228,
+     "volume": 36
+    },
+    "max_gain": "76384.00",
+    "max_loss": "1316.00",
+    "net_debit_credit": "13.16"
+   },
+   "ticker": "SPY",
+   "width": null
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 10.54,
+   "credit": -13.8,
+   "credit_width": null,
+   "dte": 33,
+   "ev_proxy": 44.86,
+   "ev_ratio": 0.0325,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030P00778000": 0.42
+   },
+   "long_deltas": [
+    0.5454
+   ],
+   "natural_credit": -14.01,
+   "pop": 0.381,
+   "rank": 2,
+   "short_deltas": [],
+   "strategy": "long_put",
+   "structure": {
+    "breakevens": [
+     "764.2000"
+    ],
+    "buying_power": "1380.0",
+    "dte": 33,
+    "greeks": {
+     "delta": -54.462814852461804,
+     "gamma": 1.3512545756663652,
+     "rho": -3922.504664547581,
+     "theta": -12.868513974133725,
+     "vanna": 47.05206449576615,
+     "vega": 9194.642651831085,
+     "volga": 1223.319496904173
+    },
+    "kind": "long_put",
+    "legs": [
+     {
+      "intent": "long put",
+      "occ_symbol": "SPY261030P00778000",
+      "premium": "13.8",
+      "ratio": 1,
+      "side": "long"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 159,
+     "spread_pct": 0.030434782608695646,
+     "volume": 79
+    },
+    "max_gain": "76420.0",
+    "max_loss": "1380.0",
+    "net_debit_credit": "13.8"
+   },
+   "ticker": "SPY",
+   "width": null
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 7.79,
+   "credit": -14.605,
+   "credit_width": null,
+   "dte": 33,
+   "ev_proxy": 23.29,
+   "ev_ratio": 0.0159,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030P00779000": 0.31
+   },
+   "long_deltas": [
+    0.5573
+   ],
+   "natural_credit": -14.76,
+   "pop": 0.3834,
+   "rank": 3,
+   "short_deltas": [],
+   "strategy": "long_put",
+   "structure": {
+    "breakevens": [
+     "764.3950"
+    ],
+    "buying_power": "1460.500",
+    "dte": 33,
+    "greeks": {
+     "delta": -55.646769459312864,
+     "gamma": 1.3179963791421798,
+     "rho": -4012.4073292914645,
+     "theta": -13.067391341268902,
+     "vanna": 55.28779215716359,
+     "vega": 9159.755533026815,
+     "volga": 1821.0873287821296
+    },
+    "kind": "long_put",
+    "legs": [
+     {
+      "intent": "long put",
+      "occ_symbol": "SPY261030P00779000",
+      "premium": "14.605",
+      "ratio": 1,
+      "side": "long"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 347,
+     "spread_pct": 0.021225607668606674,
+     "volume": 12
+    },
+    "max_gain": "76439.500",
+    "max_loss": "1460.500",
+    "net_debit_credit": "14.605"
+   },
+   "ticker": "SPY",
+   "width": null
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 1.54,
+   "credit": -13.48,
+   "credit_width": null,
+   "dte": 33,
+   "ev_proxy": -12.31,
+   "ev_ratio": -0.0091,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00772000": 0.06
+   },
+   "long_deltas": [
+    0.5344
+   ],
+   "natural_credit": -13.51,
+   "pop": 0.3504,
+   "rank": 4,
+   "short_deltas": [],
+   "strategy": "long_call",
+   "structure": {
+    "breakevens": [
+     "785.4800"
+    ],
+    "buying_power": "1348.00",
+    "dte": 33,
+    "greeks": {
+     "delta": 53.52089633155743,
+     "gamma": 1.274856894090964,
+     "rho": 3610.273297795148,
+     "theta": -23.144313391827204,
+     "vanna": -14.180207351726379,
+     "vega": 9216.53883956089,
+     "volga": 290.6325797076167
+    },
+    "kind": "long_call",
+    "legs": [
+     {
+      "intent": "long call",
+      "occ_symbol": "SPY261030C00772000",
+      "premium": "13.48",
+      "ratio": 1,
+      "side": "long"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 364,
+     "spread_pct": 0.004451038575667692,
+     "volume": 781
+    },
+    "max_gain": null,
+    "max_loss": "1348.00",
+    "net_debit_credit": "13.48"
+   },
+   "ticker": "SPY",
+   "width": null
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 13.04,
+   "credit": -14.48,
+   "credit_width": null,
+   "dte": 33,
+   "ev_proxy": -17.71,
+   "ev_ratio": -0.0122,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00770000": 0.52
+   },
+   "long_deltas": [
+    0.5601
+   ],
+   "natural_credit": -14.74,
+   "pop": 0.3623,
+   "rank": 5,
+   "short_deltas": [],
+   "strategy": "long_call",
+   "structure": {
+    "breakevens": [
+     "784.4800"
+    ],
+    "buying_power": "1448.00",
+    "dte": 33,
+    "greeks": {
+     "delta": 56.08260129568758,
+     "gamma": 1.2706119553627875,
+     "rho": 3779.8323145566465,
+     "theta": -23.12070355728688,
+     "vanna": -33.25061999514042,
+     "vega": 9144.841925384173,
+     "volga": 1180.390686619192
+    },
+    "kind": "long_call",
+    "legs": [
+     {
+      "intent": "long call",
+      "occ_symbol": "SPY261030C00770000",
+      "premium": "14.48",
+      "ratio": 1,
+      "side": "long"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 5716,
+     "spread_pct": 0.03591160220994472,
+     "volume": 2513
+    },
+    "max_gain": null,
+    "max_loss": "1448.00",
+    "net_debit_credit": "14.48"
+   },
+   "ticker": "SPY",
+   "width": null
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 11.54,
+   "credit": -13.96,
+   "credit_width": null,
+   "dte": 33,
+   "ev_proxy": -17.9,
+   "ev_ratio": -0.0128,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00771000": 0.46
+   },
+   "long_deltas": [
+    0.5473
+   ],
+   "natural_credit": -14.19,
+   "pop": 0.3566,
+   "rank": 6,
+   "short_deltas": [],
+   "strategy": "long_call",
+   "structure": {
+    "breakevens": [
+     "784.9600"
+    ],
+    "buying_power": "1396.00",
+    "dte": 33,
+    "greeks": {
+     "delta": 54.80292704885035,
+     "gamma": 1.2743509031094475,
+     "rho": 3695.2765993744238,
+     "theta": -23.128393479484483,
+     "vanna": -23.760541076228968,
+     "vega": 9185.461505194193,
+     "volga": 665.0572368358335
+    },
+    "kind": "long_call",
+    "legs": [
+     {
+      "intent": "long call",
+      "occ_symbol": "SPY261030C00771000",
+      "premium": "13.96",
+      "ratio": 1,
+      "side": "long"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 793,
+     "spread_pct": 0.032951289398280736,
+     "volume": 519
+    },
+    "max_gain": null,
+    "max_loss": "1396.00",
+    "net_debit_credit": "13.96"
+   },
+   "ticker": "SPY",
+   "width": null
+  }
+ ],
+ "wide_dte": [
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 5.18,
+   "credit": 1.67,
+   "credit_width": 0.334,
+   "dte": 33,
+   "ev_proxy": -16.39,
+   "ev_ratio": -0.0492,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00797000": 0.13,
+    "SPY261030C00802000": 0.02,
+    "SPY261030P00740000": 0.02,
+    "SPY261030P00745000": 0.03
+   },
+   "long_deltas": [
+    0.1764,
+    0.1565
+   ],
+   "natural_credit": 1.57,
+   "pop": 0.6287,
+   "rank": 1,
+   "short_deltas": [
+    0.2071,
+    0.2073
+   ],
+   "strategy": "iron_condor",
+   "structure": {
+    "breakevens": [
+     "743.3300",
+     "798.6700"
+    ],
+    "buying_power": "333.000",
+    "dte": 33,
+    "greeks": {
+     "delta": -2.007191098024519,
+     "gamma": -0.25050556052087947,
+     "rho": -124.83085232590156,
+     "theta": 3.2554461691838394,
+     "vanna": 8.111250558319739,
+     "vega": -1692.7294753895094,
+     "volga": 15251.848281763108
+    },
+    "kind": "iron_condor",
+    "legs": [
+     {
+      "intent": "long put wing",
+      "occ_symbol": "SPY261030P00740000",
+      "premium": "3.74",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short put",
+      "occ_symbol": "SPY261030P00745000",
+      "premium": "4.455",
+      "ratio": 1,
+      "side": "short"
+     },
+     {
+      "intent": "short call",
+      "occ_symbol": "SPY261030C00797000",
+      "premium": "3.105",
+      "ratio": 1,
+      "side": "short"
+     },
+     {
+      "intent": "long call wing",
+      "occ_symbol": "SPY261030C00802000",
+      "premium": "2.15",
+      "ratio": 1,
+      "side": "long"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 733,
+     "spread_pct": 0.041867954911433136,
+     "volume": 57
+    },
+    "max_gain": "167.000",
+    "max_loss": "333.000",
+    "net_debit_credit": "-1.670"
+   },
+   "ticker": "SPY",
+   "width": 5.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 3.41,
+   "credit": 1.6555,
+   "credit_width": 0.3311,
+   "dte": 33,
+   "ev_proxy": -11.71,
+   "ev_ratio": -0.035,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00798000": 0.07,
+    "SPY261030C00803000": 0.009,
+    "SPY261030P00740000": 0.02,
+    "SPY261030P00745000": 0.03
+   },
+   "long_deltas": [
+    0.1764,
+    0.148
+   ],
+   "natural_credit": 1.591,
+   "pop": 0.6374,
+   "rank": 2,
+   "short_deltas": [
+    0.2071,
+    0.1982
+   ],
+   "strategy": "iron_condor",
+   "structure": {
+    "breakevens": [
+     "743.3445",
+     "799.6555"
+    ],
+    "buying_power": "334.4500",
+    "dte": 33,
+    "greeks": {
+     "delta": -1.953233205082899,
+     "gamma": -0.2510239771105903,
+     "rho": -121.21104582250348,
+     "theta": 3.3447533762846504,
+     "vanna": 6.15126737649291,
+     "vega": -1720.8153218463021,
+     "volga": 15110.90702885962
+    },
+    "kind": "iron_condor",
+    "legs": [
+     {
+      "intent": "long put wing",
+      "occ_symbol": "SPY261030P00740000",
+      "premium": "3.74",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short put",
+      "occ_symbol": "SPY261030P00745000",
+      "premium": "4.455",
+      "ratio": 1,
+      "side": "short"
+     },
+     {
+      "intent": "short call",
+      "occ_symbol": "SPY261030C00798000",
+      "premium": "2.945",
+      "ratio": 1,
+      "side": "short"
+     },
+     {
+      "intent": "long call wing",
+      "occ_symbol": "SPY261030C00803000",
+      "premium": "2.0045",
+      "ratio": 1,
+      "side": "long"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 464,
+     "spread_pct": 0.02376910016977923,
+     "volume": 38
+    },
+    "max_gain": "165.5500",
+    "max_loss": "334.4500",
+    "net_debit_credit": "-1.6555"
+   },
+   "ticker": "SPY",
+   "width": 5.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 7.18,
+   "credit": 1.55,
+   "credit_width": 0.31,
+   "dte": 33,
+   "ev_proxy": -22.73,
+   "ev_ratio": -0.0659,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00797000": 0.13,
+    "SPY261030C00802000": 0.02,
+    "SPY261030P00738000": 0.1,
+    "SPY261030P00743000": 0.03
+   },
+   "long_deltas": [
+    0.1668,
+    0.1565
+   ],
+   "natural_credit": 1.41,
+   "pop": 0.6425,
+   "rank": 3,
+   "short_deltas": [
+    0.1941,
+    0.2073
+   ],
+   "strategy": "iron_condor",
+   "structure": {
+    "breakevens": [
+     "741.4500",
+     "798.5500"
+    ],
+    "buying_power": "345.000",
+    "dte": 33,
+    "greeks": {
+     "delta": -2.364037868669202,
+     "gamma": -0.24830416854967385,
+     "rho": -150.84789887013676,
+     "theta": 3.0921974130255343,
+     "vanna": 11.027876661660343,
+     "vega": -1646.8914273390737,
+     "volga": 14335.915099476355
+    },
+    "kind": "iron_condor",
+    "legs": [
+     {
+      "intent": "long put wing",
+      "occ_symbol": "SPY261030P00738000",
+      "premium": "3.55",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short put",
+      "occ_symbol": "SPY261030P00743000",
+      "premium": "4.145",
+      "ratio": 1,
+      "side": "short"
+     },
+     {
+      "intent": "short call",
+      "occ_symbol": "SPY261030C00797000",
+      "premium": "3.105",
+      "ratio": 1,
+      "side": "short"
+     },
+     {
+      "intent": "long call wing",
+      "occ_symbol": "SPY261030C00802000",
+      "premium": "2.15",
+      "ratio": 1,
+      "side": "long"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 539,
+     "spread_pct": 0.041867954911433136,
+     "volume": 29
+    },
+    "max_gain": "155.000",
+    "max_loss": "345.000",
+    "net_debit_credit": "-1.550"
+   },
+   "ticker": "SPY",
+   "width": 5.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 5.41,
+   "credit": 1.5355,
+   "credit_width": 0.3071,
+   "dte": 33,
+   "ev_proxy": -18.04,
+   "ev_ratio": -0.0521,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00798000": 0.07,
+    "SPY261030C00803000": 0.009,
+    "SPY261030P00738000": 0.1,
+    "SPY261030P00743000": 0.03
+   },
+   "long_deltas": [
+    0.1668,
+    0.148
+   ],
+   "natural_credit": 1.431,
+   "pop": 0.6512,
+   "rank": 4,
+   "short_deltas": [
+    0.1941,
+    0.1982
+   ],
+   "strategy": "iron_condor",
+   "structure": {
+    "breakevens": [
+     "741.4645",
+     "799.5355"
+    ],
+    "buying_power": "346.4500",
+    "dte": 33,
+    "greeks": {
+     "delta": -2.3100799757275823,
+     "gamma": -0.24882258513938493,
+     "rho": -147.22809236673868,
+     "theta": 3.1815046201263453,
+     "vanna": 9.067893479833515,
+     "vega": -1674.9772737958665,
+     "volga": 14194.973846572866
+    },
+    "kind": "iron_condor",
+    "legs": [
+     {
+      "intent": "long put wing",
+      "occ_symbol": "SPY261030P00738000",
+      "premium": "3.55",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short put",
+      "occ_symbol": "SPY261030P00743000",
+      "premium": "4.145",
+      "ratio": 1,
+      "side": "short"
+     },
+     {
+      "intent": "short call",
+      "occ_symbol": "SPY261030C00798000",
+      "premium": "2.945",
+      "ratio": 1,
+      "side": "short"
+     },
+     {
+      "intent": "long call wing",
+      "occ_symbol": "SPY261030C00803000",
+      "premium": "2.0045",
+      "ratio": 1,
+      "side": "long"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 464,
+     "spread_pct": 0.028169014084507067,
+     "volume": 29
+    },
+    "max_gain": "153.5500",
+    "max_loss": "346.4500",
+    "net_debit_credit": "-1.5355"
+   },
+   "ticker": "SPY",
+   "width": 5.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 2.93,
+   "credit": 1.465,
+   "credit_width": 0.293,
+   "dte": 33,
+   "ev_proxy": -26.05,
+   "ev_ratio": -0.0737,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00799000": 0.04,
+    "SPY261030C00804000": 0.02,
+    "SPY261030P00740000": 0.02,
+    "SPY261030P00745000": 0.03
+   },
+   "long_deltas": [
+    0.1764,
+    0.1415
+   ],
+   "natural_credit": 1.41,
+   "pop": 0.6429,
+   "rank": 5,
+   "short_deltas": [
+    0.2071,
+    0.1849
+   ],
+   "strategy": "iron_condor",
+   "structure": {
+    "breakevens": [
+     "743.5350",
+     "800.4650"
+    ],
+    "buying_power": "353.500",
+    "dte": 33,
+    "greeks": {
+     "delta": -1.2582837334782262,
+     "gamma": -0.25400811938461976,
+     "rho": -74.51123244500809,
+     "theta": 2.861202024579777,
+     "vanna": -1.6067547265734277,
+     "vega": -1608.5651879541583,
+     "volga": 12441.021507973426
+    },
+    "kind": "iron_condor",
+    "legs": [
+     {
+      "intent": "long put wing",
+      "occ_symbol": "SPY261030P00740000",
+      "premium": "3.74",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short put",
+      "occ_symbol": "SPY261030P00745000",
+      "premium": "4.455",
+      "ratio": 1,
+      "side": "short"
+     },
+     {
+      "intent": "short call",
+      "occ_symbol": "SPY261030C00799000",
+      "premium": "2.66",
+      "ratio": 1,
+      "side": "short"
+     },
+     {
+      "intent": "long call wing",
+      "occ_symbol": "SPY261030C00804000",
+      "premium": "1.91",
+      "ratio": 1,
+      "side": "long"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 846,
+     "spread_pct": 0.015037593984962419,
+     "volume": 65
+    },
+    "max_gain": "146.500",
+    "max_loss": "353.500",
+    "net_debit_credit": "-1.465"
+   },
+   "ticker": "SPY",
+   "width": 5.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 5.18,
+   "credit": 1.45,
+   "credit_width": 0.29,
+   "dte": 33,
+   "ev_proxy": -34.49,
+   "ev_ratio": -0.0972,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00797000": 0.13,
+    "SPY261030C00802000": 0.02,
+    "SPY261030P00739000": 0.02,
+    "SPY261030P00744000": 0.03
+   },
+   "long_deltas": [
+    0.1731,
+    0.1565
+   ],
+   "natural_credit": 1.35,
+   "pop": 0.633,
+   "rank": 6,
+   "short_deltas": [
+    0.1986,
+    0.2073
+   ],
+   "strategy": "iron_condor",
+   "structure": {
+    "breakevens": [
+     "742.5500",
+     "798.4500"
+    ],
+    "buying_power": "355.000",
+    "dte": 33,
+    "greeks": {
+     "delta": -2.5372175159524044,
+     "gamma": -0.25235032409888936,
+     "rho": -163.80402241563684,
+     "theta": 2.7861032837285045,
+     "vanna": 12.420092898155076,
+     "vega": -1598.160433516966,
+     "volga": 13801.664818297744
+    },
+    "kind": "iron_condor",
+    "legs": [
+     {
+      "intent": "long put wing",
+      "occ_symbol": "SPY261030P00739000",
+      "premium": "3.71",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short put",
+      "occ_symbol": "SPY261030P00744000",
+      "premium": "4.205",
+      "ratio": 1,
+      "side": "short"
+     },
+     {
+      "intent": "short call",
+      "occ_symbol": "SPY261030C00797000",
+      "premium": "3.105",
+      "ratio": 1,
+      "side": "short"
+     },
+     {
+      "intent": "long call wing",
+      "occ_symbol": "SPY261030C00802000",
+      "premium": "2.15",
+      "ratio": 1,
+      "side": "long"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 733,
+     "spread_pct": 0.041867954911433136,
+     "volume": 54
+    },
+    "max_gain": "145.000",
+    "max_loss": "355.000",
+    "net_debit_credit": "-1.450"
+   },
+   "ticker": "SPY",
+   "width": 5.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 3.41,
+   "credit": 1.4355,
+   "credit_width": 0.2871,
+   "dte": 33,
+   "ev_proxy": -29.81,
+   "ev_ratio": -0.0836,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00798000": 0.07,
+    "SPY261030C00803000": 0.009,
+    "SPY261030P00739000": 0.02,
+    "SPY261030P00744000": 0.03
+   },
+   "long_deltas": [
+    0.1731,
+    0.148
+   ],
+   "natural_credit": 1.371,
+   "pop": 0.6417,
+   "rank": 7,
+   "short_deltas": [
+    0.1986,
+    0.1982
+   ],
+   "strategy": "iron_condor",
+   "structure": {
+    "breakevens": [
+     "742.5645",
+     "799.4355"
+    ],
+    "buying_power": "356.4500",
+    "dte": 33,
+    "greeks": {
+     "delta": -2.4832596230107846,
+     "gamma": -0.2528687406886002,
+     "rho": -160.18421591223876,
+     "theta": 2.8754104908293154,
+     "vanna": 10.460109716328247,
+     "vega": -1626.2462799737586,
+     "volga": 13660.723565394255
+    },
+    "kind": "iron_condor",
+    "legs": [
+     {
+      "intent": "long put wing",
+      "occ_symbol": "SPY261030P00739000",
+      "premium": "3.71",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short put",
+      "occ_symbol": "SPY261030P00744000",
+      "premium": "4.205",
+      "ratio": 1,
+      "side": "short"
+     },
+     {
+      "intent": "short call",
+      "occ_symbol": "SPY261030C00798000",
+      "premium": "2.945",
+      "ratio": 1,
+      "side": "short"
+     },
+     {
+      "intent": "long call wing",
+      "occ_symbol": "SPY261030C00803000",
+      "premium": "2.0045",
+      "ratio": 1,
+      "side": "long"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 464,
+     "spread_pct": 0.02376910016977923,
+     "volume": 38
+    },
+    "max_gain": "143.5500",
+    "max_loss": "356.4500",
+    "net_debit_credit": "-1.4355"
+   },
+   "ticker": "SPY",
+   "width": 5.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 4.93,
+   "credit": 1.345,
+   "credit_width": 0.269,
+   "dte": 33,
+   "ev_proxy": -32.38,
+   "ev_ratio": -0.0886,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00799000": 0.04,
+    "SPY261030C00804000": 0.02,
+    "SPY261030P00738000": 0.1,
+    "SPY261030P00743000": 0.03
+   },
+   "long_deltas": [
+    0.1668,
+    0.1415
+   ],
+   "natural_credit": 1.25,
+   "pop": 0.6569,
+   "rank": 8,
+   "short_deltas": [
+    0.1941,
+    0.1849
+   ],
+   "strategy": "iron_condor",
+   "structure": {
+    "breakevens": [
+     "741.6550",
+     "800.3450"
+    ],
+    "buying_power": "365.500",
+    "dte": 33,
+    "greeks": {
+     "delta": -1.6151305041229094,
+     "gamma": -0.25180672741341437,
+     "rho": -100.52827898924329,
+     "theta": 2.6979532684214718,
+     "vanna": 1.3098713767671768,
+     "vega": -1562.7271399037227,
+     "volga": 11525.088325686673
+    },
+    "kind": "iron_condor",
+    "legs": [
+     {
+      "intent": "long put wing",
+      "occ_symbol": "SPY261030P00738000",
+      "premium": "3.55",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short put",
+      "occ_symbol": "SPY261030P00743000",
+      "premium": "4.145",
+      "ratio": 1,
+      "side": "short"
+     },
+     {
+      "intent": "short call",
+      "occ_symbol": "SPY261030C00799000",
+      "premium": "2.66",
+      "ratio": 1,
+      "side": "short"
+     },
+     {
+      "intent": "long call wing",
+      "occ_symbol": "SPY261030C00804000",
+      "premium": "1.91",
+      "ratio": 1,
+      "side": "long"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 539,
+     "spread_pct": 0.028169014084507067,
+     "volume": 29
+    },
+    "max_gain": "134.500",
+    "max_loss": "365.500",
+    "net_debit_credit": "-1.345"
+   },
+   "ticker": "SPY",
+   "width": 5.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 2.93,
+   "credit": 1.245,
+   "credit_width": 0.249,
+   "dte": 33,
+   "ev_proxy": -44.15,
+   "ev_ratio": -0.1176,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00799000": 0.04,
+    "SPY261030C00804000": 0.02,
+    "SPY261030P00739000": 0.02,
+    "SPY261030P00744000": 0.03
+   },
+   "long_deltas": [
+    0.1731,
+    0.1415
+   ],
+   "natural_credit": 1.19,
+   "pop": 0.6473,
+   "rank": 9,
+   "short_deltas": [
+    0.1986,
+    0.1849
+   ],
+   "strategy": "iron_condor",
+   "structure": {
+    "breakevens": [
+     "742.7550",
+     "800.2450"
+    ],
+    "buying_power": "375.500",
+    "dte": 33,
+    "greeks": {
+     "delta": -1.7883101514061117,
+     "gamma": -0.25585288296262965,
+     "rho": -113.48440253474337,
+     "theta": 2.391859139124442,
+     "vanna": 2.7020876132619094,
+     "vega": -1513.9961460816148,
+     "volga": 10990.83804450807
+    },
+    "kind": "iron_condor",
+    "legs": [
+     {
+      "intent": "long put wing",
+      "occ_symbol": "SPY261030P00739000",
+      "premium": "3.71",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short put",
+      "occ_symbol": "SPY261030P00744000",
+      "premium": "4.205",
+      "ratio": 1,
+      "side": "short"
+     },
+     {
+      "intent": "short call",
+      "occ_symbol": "SPY261030C00799000",
+      "premium": "2.66",
+      "ratio": 1,
+      "side": "short"
+     },
+     {
+      "intent": "long call wing",
+      "occ_symbol": "SPY261030C00804000",
+      "premium": "1.91",
+      "ratio": 1,
+      "side": "long"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 795,
+     "spread_pct": 0.015037593984962419,
+     "volume": 54
+    },
+    "max_gain": "124.500",
+    "max_loss": "375.500",
+    "net_debit_credit": "-1.245"
+   },
+   "ticker": "SPY",
+   "width": 5.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 3.84,
+   "credit": 0.955,
+   "credit_width": 0.191,
+   "dte": 33,
+   "ev_proxy": -10.19,
+   "ev_ratio": -0.0252,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00797000": 0.13,
+    "SPY261030C00802000": 0.02
+   },
+   "long_deltas": [
+    0.1565
+   ],
+   "natural_credit": 0.88,
+   "pop": 0.7818,
+   "rank": 10,
+   "short_deltas": [
+    0.2073
+   ],
+   "strategy": "bear_call",
+   "structure": {
+    "breakevens": [
+     "797.9550"
+    ],
+    "buying_power": "404.500",
+    "dte": 33,
+    "greeks": {
+     "delta": -5.083107444391834,
+     "gamma": -0.15828832144041316,
+     "rho": -345.81215769211803,
+     "theta": 2.4422911486865253,
+     "vanna": 9.088901482242875,
+     "vega": -1069.5732201710189,
+     "volga": 11456.448871041088
+    },
+    "kind": "vertical_credit",
+    "legs": [
+     {
+      "intent": "long call",
+      "occ_symbol": "SPY261030C00802000",
+      "premium": "2.15",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short call",
+      "occ_symbol": "SPY261030C00797000",
+      "premium": "3.105",
+      "ratio": 1,
+      "side": "short"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 733,
+     "spread_pct": 0.041867954911433136,
+     "volume": 57
+    },
+    "max_gain": "95.500",
+    "max_loss": "404.500",
+    "net_debit_credit": "-0.955"
+   },
+   "ticker": "SPY",
+   "width": 5.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 2.06,
+   "credit": 0.9405,
+   "credit_width": 0.1881,
+   "dte": 33,
+   "ev_proxy": -5.51,
+   "ev_ratio": -0.0136,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00798000": 0.07,
+    "SPY261030C00803000": 0.009
+   },
+   "long_deltas": [
+    0.148
+   ],
+   "natural_credit": 0.901,
+   "pop": 0.7908,
+   "rank": 11,
+   "short_deltas": [
+    0.1982
+   ],
+   "strategy": "bear_call",
+   "structure": {
+    "breakevens": [
+     "798.9405"
+    ],
+    "buying_power": "405.9500",
+    "dte": 33,
+    "greeks": {
+     "delta": -5.029149551450214,
+     "gamma": -0.15880673803012402,
+     "rho": -342.19235118871995,
+     "theta": 2.5315983557873363,
+     "vanna": 7.128918300416046,
+     "vega": -1097.6590666278116,
+     "volga": 11315.507618137599
+    },
+    "kind": "vertical_credit",
+    "legs": [
+     {
+      "intent": "long call",
+      "occ_symbol": "SPY261030C00803000",
+      "premium": "2.0045",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short call",
+      "occ_symbol": "SPY261030C00798000",
+      "premium": "2.945",
+      "ratio": 1,
+      "side": "short"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 464,
+     "spread_pct": 0.02376910016977923,
+     "volume": 38
+    },
+    "max_gain": "94.0500",
+    "max_loss": "405.9500",
+    "net_debit_credit": "-0.9405"
+   },
+   "ticker": "SPY",
+   "width": 5.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 1.59,
+   "credit": 0.75,
+   "credit_width": 0.15,
+   "dte": 33,
+   "ev_proxy": -19.85,
+   "ev_ratio": -0.0467,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00799000": 0.04,
+    "SPY261030C00804000": 0.02
+   },
+   "long_deltas": [
+    0.1415
+   ],
+   "natural_credit": 0.72,
+   "pop": 0.798,
+   "rank": 12,
+   "short_deltas": [
+    0.1849
+   ],
+   "strategy": "bear_call",
+   "structure": {
+    "breakevens": [
+     "799.7500"
+    ],
+    "buying_power": "425.00",
+    "dte": 33,
+    "greeks": {
+     "delta": -4.334200079845541,
+     "gamma": -0.16179088030415356,
+     "rho": -295.49253781122457,
+     "theta": 2.0480470040824628,
+     "vanna": -0.6291038026502918,
+     "vega": -985.4089327356678,
+     "volga": 8645.622097251413
+    },
+    "kind": "vertical_credit",
+    "legs": [
+     {
+      "intent": "long call",
+      "occ_symbol": "SPY261030C00804000",
+      "premium": "1.91",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short call",
+      "occ_symbol": "SPY261030C00799000",
+      "premium": "2.66",
+      "ratio": 1,
+      "side": "short"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 846,
+     "spread_pct": 0.015037593984962419,
+     "volume": 65
+    },
+    "max_gain": "75.00",
+    "max_loss": "425.00",
+    "net_debit_credit": "-0.75"
+   },
+   "ticker": "SPY",
+   "width": 5.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 1.34,
+   "credit": 0.715,
+   "credit_width": 0.143,
+   "dte": 33,
+   "ev_proxy": -6.2,
+   "ev_ratio": -0.0145,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030P00740000": 0.02,
+    "SPY261030P00745000": 0.03
+   },
+   "long_deltas": [
+    0.1764
+   ],
+   "natural_credit": 0.69,
+   "pop": 0.8324,
+   "rank": 13,
+   "short_deltas": [
+    0.2071
+   ],
+   "strategy": "bull_put",
+   "structure": {
+    "breakevens": [
+     "744.2850"
+    ],
+    "buying_power": "428.500",
+    "dte": 33,
+    "greeks": {
+     "delta": 3.0759163463673147,
+     "gamma": -0.0922172390804663,
+     "rho": 220.98130536621647,
+     "theta": 0.8131550204973141,
+     "vanna": -0.9776509239231359,
+     "vega": -623.1562552184905,
+     "volga": 3795.399410722017
+    },
+    "kind": "vertical_credit",
+    "legs": [
+     {
+      "intent": "long put",
+      "occ_symbol": "SPY261030P00740000",
+      "premium": "3.74",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short put",
+      "occ_symbol": "SPY261030P00745000",
+      "premium": "4.455",
+      "ratio": 1,
+      "side": "short"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 2854,
+     "spread_pct": 0.006734006734006591,
+     "volume": 562
+    },
+    "max_gain": "71.500",
+    "max_loss": "428.500",
+    "net_debit_credit": "-0.715"
+   },
+   "ticker": "SPY",
+   "width": 5.0
+  },
+  {
+   "atm_iv": 0.13634674999999993,
+   "cost": 3.59,
+   "credit": 0.65,
+   "credit_width": 0.13,
+   "dte": 40,
+   "ev_proxy": 5.84,
+   "ev_ratio": 0.0134,
+   "expiration": "2026-11-06",
+   "leg_spreads": {
+    "SPY261106P00730000": 0.06,
+    "SPY261106P00735000": 0.08
+   },
+   "long_deltas": [
+    0.1489
+   ],
+   "natural_credit": 0.58,
+   "pop": 0.8776,
+   "rank": 14,
+   "short_deltas": [
+    0.173
+   ],
+   "strategy": "bull_put",
+   "structure": {
+    "breakevens": [
+     "734.3500"
+    ],
+    "buying_power": "435.00",
+    "dte": 40,
+    "greeks": {
+     "delta": 2.3947300758743175,
+     "gamma": -0.06419344345854927,
+     "rho": 209.51310549853406,
+     "theta": 0.8419333698055347,
+     "vanna": 1.8411714873942913,
+     "vega": -606.8819756126313,
+     "volga": 2783.350765692223
+    },
+    "kind": "vertical_credit",
+    "legs": [
+     {
+      "intent": "long put",
+      "occ_symbol": "SPY261106P00730000",
+      "premium": "3.58",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short put",
+      "occ_symbol": "SPY261106P00735000",
+      "premium": "4.23",
+      "ratio": 1,
+      "side": "short"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 271,
+     "spread_pct": 0.01891252955082723,
+     "volume": 173
+    },
+    "max_gain": "65.00",
+    "max_loss": "435.00",
+    "net_debit_credit": "-0.65"
+   },
+   "ticker": "SPY",
+   "width": 5.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 3.34,
+   "credit": 0.595,
+   "credit_width": 0.119,
+   "dte": 33,
+   "ev_proxy": -12.53,
+   "ev_ratio": -0.0285,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030P00738000": 0.1,
+    "SPY261030P00743000": 0.03
+   },
+   "long_deltas": [
+    0.1668
+   ],
+   "natural_credit": 0.53,
+   "pop": 0.8478,
+   "rank": 15,
+   "short_deltas": [
+    0.1941
+   ],
+   "strategy": "bull_put",
+   "structure": {
+    "breakevens": [
+     "742.4050"
+    ],
+    "buying_power": "440.500",
+    "dte": 33,
+    "greeks": {
+     "delta": 2.7190695757226315,
+     "gamma": -0.0900158471092608,
+     "rho": 194.96425882198128,
+     "theta": 0.649906264339009,
+     "vanna": 1.9389751794174686,
+     "vega": -577.3182071680549,
+     "volga": 2879.4662284352635
+    },
+    "kind": "vertical_credit",
+    "legs": [
+     {
+      "intent": "long put",
+      "occ_symbol": "SPY261030P00738000",
+      "premium": "3.55",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short put",
+      "occ_symbol": "SPY261030P00743000",
+      "premium": "4.145",
+      "ratio": 1,
+      "side": "short"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 539,
+     "spread_pct": 0.028169014084507067,
+     "volume": 29
+    },
+    "max_gain": "59.500",
+    "max_loss": "440.500",
+    "net_debit_credit": "-0.595"
+   },
+   "ticker": "SPY",
+   "width": 5.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 1.34,
+   "credit": 0.495,
+   "credit_width": 0.099,
+   "dte": 33,
+   "ev_proxy": -24.3,
+   "ev_ratio": -0.0539,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030P00739000": 0.02,
+    "SPY261030P00744000": 0.03
+   },
+   "long_deltas": [
+    0.1731
+   ],
+   "natural_credit": 0.47,
+   "pop": 0.8389,
+   "rank": 16,
+   "short_deltas": [
+    0.1986
+   ],
+   "strategy": "bull_put",
+   "structure": {
+    "breakevens": [
+     "743.5050"
+    ],
+    "buying_power": "450.500",
+    "dte": 33,
+    "greeks": {
+     "delta": 2.545889928439429,
+     "gamma": -0.0940620026584762,
+     "rho": 182.0081352764812,
+     "theta": 0.34381213504197916,
+     "vanna": 3.331191415912201,
+     "vega": -528.587213345947,
+     "volga": 2345.2159472566564
+    },
+    "kind": "vertical_credit",
+    "legs": [
+     {
+      "intent": "long put",
+      "occ_symbol": "SPY261030P00739000",
+      "premium": "3.71",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short put",
+      "occ_symbol": "SPY261030P00744000",
+      "premium": "4.205",
+      "ratio": 1,
+      "side": "short"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 795,
+     "spread_pct": 0.007134363852556328,
+     "volume": 54
+    },
+    "max_gain": "49.500",
+    "max_loss": "450.500",
+    "net_debit_credit": "-0.495"
+   },
+   "ticker": "SPY",
+   "width": 5.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 3.1,
+   "credit": -6.67,
+   "credit_width": null,
+   "dte": 33,
+   "ev_proxy": 161.74,
+   "ev_ratio": 0.2425,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030P00757000": 0.06,
+    "SPY261030P00777000": 0.06
+   },
+   "long_deltas": [
+    0.5324
+   ],
+   "natural_credit": -6.73,
+   "pop": 0.4589,
+   "rank": 17,
+   "short_deltas": [
+    0.2974
+   ],
+   "strategy": "bear_put_debit",
+   "structure": {
+    "breakevens": [
+     "770.3300"
+    ],
+    "buying_power": "667.00",
+    "dte": 33,
+    "greeks": {
+     "delta": -23.474516490253386,
+     "gamma": 0.33923311158547986,
+     "rho": -1697.2007840224064,
+     "theta": 2.182560711079363,
+     "vanna": 153.59749371224547,
+     "vega": 1199.146962368587,
+     "volga": -13751.196571520415
+    },
+    "kind": "vertical_debit",
+    "legs": [
+     {
+      "intent": "long put",
+      "occ_symbol": "SPY261030P00777000",
+      "premium": "13.16",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short put",
+      "occ_symbol": "SPY261030P00757000",
+      "premium": "6.49",
+      "ratio": 1,
+      "side": "short"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 910,
+     "spread_pct": 0.009244992295839694,
+     "volume": 36
+    },
+    "max_gain": "1333.00",
+    "max_loss": "667.00",
+    "net_debit_credit": "6.67"
+   },
+   "ticker": "SPY",
+   "width": 20.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 5.6,
+   "credit": -6.42,
+   "credit_width": null,
+   "dte": 33,
+   "ev_proxy": 154.31,
+   "ev_ratio": 0.2404,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030P00758000": 0.16,
+    "SPY261030P00777000": 0.06
+   },
+   "long_deltas": [
+    0.5324
+   ],
+   "natural_credit": -6.53,
+   "pop": 0.4622,
+   "rank": 18,
+   "short_deltas": [
+    0.307
+   ],
+   "strategy": "bear_put_debit",
+   "structure": {
+    "breakevens": [
+     "770.5800"
+    ],
+    "buying_power": "642.00",
+    "dte": 33,
+    "greeks": {
+     "delta": -22.522068408116194,
+     "gamma": 0.3180653949764687,
+     "rho": -1628.5827883755296,
+     "theta": 2.241437970614113,
+     "vanna": 149.4306908558228,
+     "vega": 1084.2859193154563,
+     "volga": -12522.841013369969
+    },
+    "kind": "vertical_debit",
+    "legs": [
+     {
+      "intent": "long put",
+      "occ_symbol": "SPY261030P00777000",
+      "premium": "13.16",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short put",
+      "occ_symbol": "SPY261030P00758000",
+      "premium": "6.74",
+      "ratio": 1,
+      "side": "short"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 1218,
+     "spread_pct": 0.023738872403560853,
+     "volume": 36
+    },
+    "max_gain": "1258.00",
+    "max_loss": "642.00",
+    "net_debit_credit": "6.42"
+   },
+   "ticker": "SPY",
+   "width": 19.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 12.1,
+   "credit": -7.31,
+   "credit_width": null,
+   "dte": 33,
+   "ev_proxy": 143.66,
+   "ev_ratio": 0.1965,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030P00757000": 0.06,
+    "SPY261030P00778000": 0.42
+   },
+   "long_deltas": [
+    0.5454
+   ],
+   "natural_credit": -7.55,
+   "pop": 0.4636,
+   "rank": 19,
+   "short_deltas": [
+    0.2974
+   ],
+   "strategy": "bear_put_debit",
+   "structure": {
+    "breakevens": [
+     "770.6900"
+    ],
+    "buying_power": "731.00",
+    "dte": 33,
+    "greeks": {
+     "delta": -24.784233175578407,
+     "gamma": 0.3252522539287972,
+     "rho": -1794.2688463852037,
+     "theta": 2.230101096366896,
+     "vanna": 163.63953648656283,
+     "vega": 1170.1071627937336,
+     "volga": -13207.00760220544
+    },
+    "kind": "vertical_debit",
+    "legs": [
+     {
+      "intent": "long put",
+      "occ_symbol": "SPY261030P00778000",
+      "premium": "13.8",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short put",
+      "occ_symbol": "SPY261030P00757000",
+      "premium": "6.49",
+      "ratio": 1,
+      "side": "short"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 159,
+     "spread_pct": 0.030434782608695646,
+     "volume": 79
+    },
+    "max_gain": "1369.00",
+    "max_loss": "731.00",
+    "net_debit_credit": "7.31"
+   },
+   "ticker": "SPY",
+   "width": 21.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 14.6,
+   "credit": -7.06,
+   "credit_width": null,
+   "dte": 33,
+   "ev_proxy": 136.23,
+   "ev_ratio": 0.193,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030P00758000": 0.16,
+    "SPY261030P00778000": 0.42
+   },
+   "long_deltas": [
+    0.5454
+   ],
+   "natural_credit": -7.35,
+   "pop": 0.4668,
+   "rank": 20,
+   "short_deltas": [
+    0.307
+   ],
+   "strategy": "bear_put_debit",
+   "structure": {
+    "breakevens": [
+     "770.9400"
+    ],
+    "buying_power": "706.00",
+    "dte": 33,
+    "greeks": {
+     "delta": -23.831785093441216,
+     "gamma": 0.304084537319786,
+     "rho": -1725.6508507383269,
+     "theta": 2.288978355901646,
+     "vanna": 159.47273363014017,
+     "vega": 1055.2461197406028,
+     "volga": -11978.652044054994
+    },
+    "kind": "vertical_debit",
+    "legs": [
+     {
+      "intent": "long put",
+      "occ_symbol": "SPY261030P00778000",
+      "premium": "13.8",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short put",
+      "occ_symbol": "SPY261030P00758000",
+      "premium": "6.74",
+      "ratio": 1,
+      "side": "short"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 159,
+     "spread_pct": 0.030434782608695646,
+     "volume": 79
+    },
+    "max_gain": "1294.00",
+    "max_loss": "706.00",
+    "net_debit_credit": "7.06"
+   },
+   "ticker": "SPY",
+   "width": 20.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 9.35,
+   "credit": -8.115,
+   "credit_width": null,
+   "dte": 33,
+   "ev_proxy": 122.09,
+   "ev_ratio": 0.1505,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030P00757000": 0.06,
+    "SPY261030P00779000": 0.31
+   },
+   "long_deltas": [
+    0.5573
+   ],
+   "natural_credit": -8.3,
+   "pop": 0.4661,
+   "rank": 21,
+   "short_deltas": [
+    0.2974
+   ],
+   "strategy": "bear_put_debit",
+   "structure": {
+    "breakevens": [
+     "770.8850"
+    ],
+    "buying_power": "811.500",
+    "dte": 33,
+    "greeks": {
+     "delta": -25.968187782429467,
+     "gamma": 0.2919940574046118,
+     "rho": -1884.1715111290873,
+     "theta": 2.0312237292317192,
+     "vanna": 171.87526414796025,
+     "vega": 1135.2200439894632,
+     "volga": -12609.239770327484
+    },
+    "kind": "vertical_debit",
+    "legs": [
+     {
+      "intent": "long put",
+      "occ_symbol": "SPY261030P00779000",
+      "premium": "14.605",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short put",
+      "occ_symbol": "SPY261030P00757000",
+      "premium": "6.49",
+      "ratio": 1,
+      "side": "short"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 347,
+     "spread_pct": 0.021225607668606674,
+     "volume": 12
+    },
+    "max_gain": "1388.500",
+    "max_loss": "811.500",
+    "net_debit_credit": "8.115"
+   },
+   "ticker": "SPY",
+   "width": 22.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 11.85,
+   "credit": -7.865,
+   "credit_width": null,
+   "dte": 33,
+   "ev_proxy": 114.66,
+   "ev_ratio": 0.1458,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030P00758000": 0.16,
+    "SPY261030P00779000": 0.31
+   },
+   "long_deltas": [
+    0.5573
+   ],
+   "natural_credit": -8.1,
+   "pop": 0.4693,
+   "rank": 22,
+   "short_deltas": [
+    0.307
+   ],
+   "strategy": "bear_put_debit",
+   "structure": {
+    "breakevens": [
+     "771.1350"
+    ],
+    "buying_power": "786.500",
+    "dte": 33,
+    "greeks": {
+     "delta": -25.015739700292276,
+     "gamma": 0.27082634079560064,
+     "rho": -1815.5535154822105,
+     "theta": 2.090100988766469,
+     "vanna": 167.7084612915376,
+     "vega": 1020.3590009363324,
+     "volga": -11380.884212177036
+    },
+    "kind": "vertical_debit",
+    "legs": [
+     {
+      "intent": "long put",
+      "occ_symbol": "SPY261030P00779000",
+      "premium": "14.605",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short put",
+      "occ_symbol": "SPY261030P00758000",
+      "premium": "6.74",
+      "ratio": 1,
+      "side": "short"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 347,
+     "spread_pct": 0.023738872403560853,
+     "volume": 12
+    },
+    "max_gain": "1313.500",
+    "max_loss": "786.500",
+    "net_debit_credit": "7.865"
+   },
+   "ticker": "SPY",
+   "width": 21.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 1.54,
+   "credit": -13.16,
+   "credit_width": null,
+   "dte": 33,
+   "ev_proxy": 62.94,
+   "ev_ratio": 0.0478,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030P00777000": 0.06
+   },
+   "long_deltas": [
+    0.5324
+   ],
+   "natural_credit": -13.19,
+   "pop": 0.3765,
+   "rank": 23,
+   "short_deltas": [],
+   "strategy": "long_put",
+   "structure": {
+    "breakevens": [
+     "763.8400"
+    ],
+    "buying_power": "1316.00",
+    "dte": 33,
+    "greeks": {
+     "delta": -53.15309816713678,
+     "gamma": 1.3652354333230479,
+     "rho": -3825.4366021847836,
+     "theta": -12.916054359421258,
+     "vanna": 37.01002172144879,
+     "vega": 9223.682451405939,
+     "volga": 679.1305275891967
+    },
+    "kind": "long_put",
+    "legs": [
+     {
+      "intent": "long put",
+      "occ_symbol": "SPY261030P00777000",
+      "premium": "13.16",
+      "ratio": 1,
+      "side": "long"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 1286,
+     "spread_pct": 0.004559270516717228,
+     "volume": 36
+    },
+    "max_gain": "76384.00",
+    "max_loss": "1316.00",
+    "net_debit_credit": "13.16"
+   },
+   "ticker": "SPY",
+   "width": null
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 10.54,
+   "credit": -13.8,
+   "credit_width": null,
+   "dte": 33,
+   "ev_proxy": 44.86,
+   "ev_ratio": 0.0325,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030P00778000": 0.42
+   },
+   "long_deltas": [
+    0.5454
+   ],
+   "natural_credit": -14.01,
+   "pop": 0.381,
+   "rank": 24,
+   "short_deltas": [],
+   "strategy": "long_put",
+   "structure": {
+    "breakevens": [
+     "764.2000"
+    ],
+    "buying_power": "1380.0",
+    "dte": 33,
+    "greeks": {
+     "delta": -54.462814852461804,
+     "gamma": 1.3512545756663652,
+     "rho": -3922.504664547581,
+     "theta": -12.868513974133725,
+     "vanna": 47.05206449576615,
+     "vega": 9194.642651831085,
+     "volga": 1223.319496904173
+    },
+    "kind": "long_put",
+    "legs": [
+     {
+      "intent": "long put",
+      "occ_symbol": "SPY261030P00778000",
+      "premium": "13.8",
+      "ratio": 1,
+      "side": "long"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 159,
+     "spread_pct": 0.030434782608695646,
+     "volume": 79
+    },
+    "max_gain": "76420.0",
+    "max_loss": "1380.0",
+    "net_debit_credit": "13.8"
+   },
+   "ticker": "SPY",
+   "width": null
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 7.79,
+   "credit": -14.605,
+   "credit_width": null,
+   "dte": 33,
+   "ev_proxy": 23.29,
+   "ev_ratio": 0.0159,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030P00779000": 0.31
+   },
+   "long_deltas": [
+    0.5573
+   ],
+   "natural_credit": -14.76,
+   "pop": 0.3834,
+   "rank": 25,
+   "short_deltas": [],
+   "strategy": "long_put",
+   "structure": {
+    "breakevens": [
+     "764.3950"
+    ],
+    "buying_power": "1460.500",
+    "dte": 33,
+    "greeks": {
+     "delta": -55.646769459312864,
+     "gamma": 1.3179963791421798,
+     "rho": -4012.4073292914645,
+     "theta": -13.067391341268902,
+     "vanna": 55.28779215716359,
+     "vega": 9159.755533026815,
+     "volga": 1821.0873287821296
+    },
+    "kind": "long_put",
+    "legs": [
+     {
+      "intent": "long put",
+      "occ_symbol": "SPY261030P00779000",
+      "premium": "14.605",
+      "ratio": 1,
+      "side": "long"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 347,
+     "spread_pct": 0.021225607668606674,
+     "volume": 12
+    },
+    "max_gain": "76439.500",
+    "max_loss": "1460.500",
+    "net_debit_credit": "14.605"
+   },
+   "ticker": "SPY",
+   "width": null
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 1.54,
+   "credit": -13.48,
+   "credit_width": null,
+   "dte": 33,
+   "ev_proxy": -12.31,
+   "ev_ratio": -0.0091,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00772000": 0.06
+   },
+   "long_deltas": [
+    0.5344
+   ],
+   "natural_credit": -13.51,
+   "pop": 0.3504,
+   "rank": 26,
+   "short_deltas": [],
+   "strategy": "long_call",
+   "structure": {
+    "breakevens": [
+     "785.4800"
+    ],
+    "buying_power": "1348.00",
+    "dte": 33,
+    "greeks": {
+     "delta": 53.52089633155743,
+     "gamma": 1.274856894090964,
+     "rho": 3610.273297795148,
+     "theta": -23.144313391827204,
+     "vanna": -14.180207351726379,
+     "vega": 9216.53883956089,
+     "volga": 290.6325797076167
+    },
+    "kind": "long_call",
+    "legs": [
+     {
+      "intent": "long call",
+      "occ_symbol": "SPY261030C00772000",
+      "premium": "13.48",
+      "ratio": 1,
+      "side": "long"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 364,
+     "spread_pct": 0.004451038575667692,
+     "volume": 781
+    },
+    "max_gain": null,
+    "max_loss": "1348.00",
+    "net_debit_credit": "13.48"
+   },
+   "ticker": "SPY",
+   "width": null
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 13.04,
+   "credit": -14.48,
+   "credit_width": null,
+   "dte": 33,
+   "ev_proxy": -17.71,
+   "ev_ratio": -0.0122,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00770000": 0.52
+   },
+   "long_deltas": [
+    0.5601
+   ],
+   "natural_credit": -14.74,
+   "pop": 0.3623,
+   "rank": 27,
+   "short_deltas": [],
+   "strategy": "long_call",
+   "structure": {
+    "breakevens": [
+     "784.4800"
+    ],
+    "buying_power": "1448.00",
+    "dte": 33,
+    "greeks": {
+     "delta": 56.08260129568758,
+     "gamma": 1.2706119553627875,
+     "rho": 3779.8323145566465,
+     "theta": -23.12070355728688,
+     "vanna": -33.25061999514042,
+     "vega": 9144.841925384173,
+     "volga": 1180.390686619192
+    },
+    "kind": "long_call",
+    "legs": [
+     {
+      "intent": "long call",
+      "occ_symbol": "SPY261030C00770000",
+      "premium": "14.48",
+      "ratio": 1,
+      "side": "long"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 5716,
+     "spread_pct": 0.03591160220994472,
+     "volume": 2513
+    },
+    "max_gain": null,
+    "max_loss": "1448.00",
+    "net_debit_credit": "14.48"
+   },
+   "ticker": "SPY",
+   "width": null
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 11.54,
+   "credit": -13.96,
+   "credit_width": null,
+   "dte": 33,
+   "ev_proxy": -17.9,
+   "ev_ratio": -0.0128,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00771000": 0.46
+   },
+   "long_deltas": [
+    0.5473
+   ],
+   "natural_credit": -14.19,
+   "pop": 0.3566,
+   "rank": 28,
+   "short_deltas": [],
+   "strategy": "long_call",
+   "structure": {
+    "breakevens": [
+     "784.9600"
+    ],
+    "buying_power": "1396.00",
+    "dte": 33,
+    "greeks": {
+     "delta": 54.80292704885035,
+     "gamma": 1.2743509031094475,
+     "rho": 3695.2765993744238,
+     "theta": -23.128393479484483,
+     "vanna": -23.760541076228968,
+     "vega": 9185.461505194193,
+     "volga": 665.0572368358335
+    },
+    "kind": "long_call",
+    "legs": [
+     {
+      "intent": "long call",
+      "occ_symbol": "SPY261030C00771000",
+      "premium": "13.96",
+      "ratio": 1,
+      "side": "long"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 793,
+     "spread_pct": 0.032951289398280736,
+     "volume": 519
+    },
+    "max_gain": null,
+    "max_loss": "1396.00",
+    "net_debit_credit": "13.96"
+   },
+   "ticker": "SPY",
+   "width": null
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 14.34,
+   "credit": -9.185,
+   "credit_width": null,
+   "dte": 33,
+   "ev_proxy": -128.46,
+   "ev_ratio": -0.1399,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00770000": 0.52,
+    "SPY261030C00789000": 0.05
+   },
+   "long_deltas": [
+    0.5601
+   ],
+   "natural_credit": -9.47,
+   "pop": 0.4275,
+   "rank": 29,
+   "short_deltas": [
+    0.3043
+   ],
+   "strategy": "bull_call_debit",
+   "structure": {
+    "breakevens": [
+     "779.1850"
+    ],
+    "buying_power": "918.500",
+    "dte": 33,
+    "greeks": {
+     "delta": 25.570984708029272,
+     "gamma": 0.01077462361628867,
+     "rho": 1700.0998753825256,
+     "theta": -5.838806379971889,
+     "vanna": -192.72712452327875,
+     "vega": 1019.515665427044,
+     "volga": -17673.48208108447
+    },
+    "kind": "vertical_debit",
+    "legs": [
+     {
+      "intent": "long call",
+      "occ_symbol": "SPY261030C00770000",
+      "premium": "14.48",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short call",
+      "occ_symbol": "SPY261030C00789000",
+      "premium": "5.295",
+      "ratio": 1,
+      "side": "short"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 1125,
+     "spread_pct": 0.03591160220994472,
+     "volume": 208
+    },
+    "max_gain": "981.500",
+    "max_loss": "918.500",
+    "net_debit_credit": "9.185"
+   },
+   "ticker": "SPY",
+   "width": 19.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 14.09,
+   "credit": -9.57,
+   "credit_width": null,
+   "dte": 33,
+   "ev_proxy": -136.39,
+   "ev_ratio": -0.1425,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00770000": 0.52,
+    "SPY261030C00790000": 0.04
+   },
+   "long_deltas": [
+    0.5601
+   ],
+   "natural_credit": -9.85,
+   "pop": 0.4226,
+   "rank": 30,
+   "short_deltas": [
+    0.29
+   ],
+   "strategy": "bull_call_debit",
+   "structure": {
+    "breakevens": [
+     "779.5700"
+    ],
+    "buying_power": "957.00",
+    "dte": 33,
+    "greeks": {
+     "delta": 27.009164082401472,
+     "gamma": 0.024697882169501195,
+     "rho": 1796.8766833260345,
+     "theta": -6.434079871861993,
+     "vanna": -202.8432881385374,
+     "vega": 1196.4379393842264,
+     "volga": -20501.734829875786
+    },
+    "kind": "vertical_debit",
+    "legs": [
+     {
+      "intent": "long call",
+      "occ_symbol": "SPY261030C00770000",
+      "premium": "14.48",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short call",
+      "occ_symbol": "SPY261030C00790000",
+      "premium": "4.91",
+      "ratio": 1,
+      "side": "short"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 5716,
+     "spread_pct": 0.03591160220994472,
+     "volume": 708
+    },
+    "max_gain": "1043.00",
+    "max_loss": "957.00",
+    "net_debit_credit": "9.57"
+   },
+   "ticker": "SPY",
+   "width": 20.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 12.84,
+   "credit": -8.665,
+   "credit_width": null,
+   "dte": 33,
+   "ev_proxy": -128.66,
+   "ev_ratio": -0.1485,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00771000": 0.46,
+    "SPY261030C00789000": 0.05
+   },
+   "long_deltas": [
+    0.5473
+   ],
+   "natural_credit": -8.92,
+   "pop": 0.4214,
+   "rank": 31,
+   "short_deltas": [
+    0.3043
+   ],
+   "strategy": "bull_call_debit",
+   "structure": {
+    "breakevens": [
+     "779.6650"
+    ],
+    "buying_power": "866.500",
+    "dte": 33,
+    "greeks": {
+     "delta": 24.29131046119204,
+     "gamma": 0.01451357136294873,
+     "rho": 1615.544160200303,
+     "theta": -5.846496302169491,
+     "vanna": -183.2370456043673,
+     "vega": 1060.1352452370638,
+     "volga": -18188.815530867825
+    },
+    "kind": "vertical_debit",
+    "legs": [
+     {
+      "intent": "long call",
+      "occ_symbol": "SPY261030C00771000",
+      "premium": "13.96",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short call",
+      "occ_symbol": "SPY261030C00789000",
+      "premium": "5.295",
+      "ratio": 1,
+      "side": "short"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 793,
+     "spread_pct": 0.032951289398280736,
+     "volume": 208
+    },
+    "max_gain": "933.500",
+    "max_loss": "866.500",
+    "net_debit_credit": "8.665"
+   },
+   "ticker": "SPY",
+   "width": 18.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 2.84,
+   "credit": -8.185,
+   "credit_width": null,
+   "dte": 33,
+   "ev_proxy": -123.06,
+   "ev_ratio": -0.1504,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00772000": 0.06,
+    "SPY261030C00789000": 0.05
+   },
+   "long_deltas": [
+    0.5344
+   ],
+   "natural_credit": -8.24,
+   "pop": 0.4149,
+   "rank": 32,
+   "short_deltas": [
+    0.3043
+   ],
+   "strategy": "bull_call_debit",
+   "structure": {
+    "breakevens": [
+     "780.1850"
+    ],
+    "buying_power": "818.500",
+    "dte": 33,
+    "greeks": {
+     "delta": 23.00927974389912,
+     "gamma": 0.01501956234446511,
+     "rho": 1530.5408586210274,
+     "theta": -5.862416214512212,
+     "vanna": -173.6567118798647,
+     "vega": 1091.2125796037608,
+     "volga": -18563.24018799604
+    },
+    "kind": "vertical_debit",
+    "legs": [
+     {
+      "intent": "long call",
+      "occ_symbol": "SPY261030C00772000",
+      "premium": "13.48",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short call",
+      "occ_symbol": "SPY261030C00789000",
+      "premium": "5.295",
+      "ratio": 1,
+      "side": "short"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 364,
+     "spread_pct": 0.009442870632672467,
+     "volume": 208
+    },
+    "max_gain": "881.500",
+    "max_loss": "818.500",
+    "net_debit_credit": "8.185"
+   },
+   "ticker": "SPY",
+   "width": 17.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 12.59,
+   "credit": -9.05,
+   "credit_width": null,
+   "dte": 33,
+   "ev_proxy": -136.58,
+   "ev_ratio": -0.1509,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00771000": 0.46,
+    "SPY261030C00790000": 0.04
+   },
+   "long_deltas": [
+    0.5473
+   ],
+   "natural_credit": -9.3,
+   "pop": 0.4166,
+   "rank": 33,
+   "short_deltas": [
+    0.29
+   ],
+   "strategy": "bull_call_debit",
+   "structure": {
+    "breakevens": [
+     "780.0500"
+    ],
+    "buying_power": "905.00",
+    "dte": 33,
+    "greeks": {
+     "delta": 25.72948983556424,
+     "gamma": 0.028436829916161255,
+     "rho": 1712.3209681438118,
+     "theta": -6.441769794059596,
+     "vanna": -193.35320921962594,
+     "vega": 1237.0575191942462,
+     "volga": -21017.068279659146
+    },
+    "kind": "vertical_debit",
+    "legs": [
+     {
+      "intent": "long call",
+      "occ_symbol": "SPY261030C00771000",
+      "premium": "13.96",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short call",
+      "occ_symbol": "SPY261030C00790000",
+      "premium": "4.91",
+      "ratio": 1,
+      "side": "short"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 793,
+     "spread_pct": 0.032951289398280736,
+     "volume": 519
+    },
+    "max_gain": "995.00",
+    "max_loss": "905.00",
+    "net_debit_credit": "9.05"
+   },
+   "ticker": "SPY",
+   "width": 19.0
+  },
+  {
+   "atm_iv": 0.13293525000000003,
+   "cost": 2.59,
+   "credit": -8.57,
+   "credit_width": null,
+   "dte": 33,
+   "ev_proxy": -130.98,
+   "ev_ratio": -0.1528,
+   "expiration": "2026-10-30",
+   "leg_spreads": {
+    "SPY261030C00772000": 0.06,
+    "SPY261030C00790000": 0.04
+   },
+   "long_deltas": [
+    0.5344
+   ],
+   "natural_credit": -8.62,
+   "pop": 0.4101,
+   "rank": 34,
+   "short_deltas": [
+    0.29
+   ],
+   "strategy": "bull_call_debit",
+   "structure": {
+    "breakevens": [
+     "780.5700"
+    ],
+    "buying_power": "857.00",
+    "dte": 33,
+    "greeks": {
+     "delta": 24.447459118271322,
+     "gamma": 0.028942820897677635,
+     "rho": 1627.3176665645362,
+     "theta": -6.457689706402316,
+     "vanna": -183.77287549512334,
+     "vega": 1268.1348535609432,
+     "volga": -21391.492936787363
+    },
+    "kind": "vertical_debit",
+    "legs": [
+     {
+      "intent": "long call",
+      "occ_symbol": "SPY261030C00772000",
+      "premium": "13.48",
+      "ratio": 1,
+      "side": "long"
+     },
+     {
+      "intent": "short call",
+      "occ_symbol": "SPY261030C00790000",
+      "premium": "4.91",
+      "ratio": 1,
+      "side": "short"
+     }
+    ],
+    "liquidity": {
+     "open_interest": 364,
+     "spread_pct": 0.008146639511201636,
+     "volume": 708
+    },
+    "max_gain": "943.00",
+    "max_loss": "857.00",
+    "net_debit_credit": "8.57"
+   },
+   "ticker": "SPY",
+   "width": 18.0
+  }
+ ]
+}

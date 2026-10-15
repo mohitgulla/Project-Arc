@@ -185,8 +185,8 @@ class TestProfilesConfig:
         assert cd.sleeves is not None
         rows = [(x.name, x.dte_min, x.dte_max, x.max_positions, x.exit_policy) for x in cd.sleeves]
         assert rows == [
-            ("short", 10, 29, 5, "short"),
-            ("swing", 30, 60, 5, None),
+            ("short", 10, 35, 5, "short"),
+            ("swing", 36, 60, 5, None),
         ]
         assert cd.strategies_for("bullish") == ["bull_call_debit", "long_call"]
         assert cd.strategies_for("bearish") == ["bear_put_debit", "long_put"]
@@ -209,7 +209,7 @@ class TestProfilesConfig:
         assert DEFAULT_ACCOUNT_PROFILE == "cash_debit"
         assert s.account_profile == "cash_debit"
         assert s.profile.name == "cash_debit"
-        assert s.entry_dte_window == (10, 60)  # D97: union of short 10-29 + swing 30-60
+        assert s.entry_dte_window == (10, 60)  # D97/D118: union of short 10-35 + swing 36-60
 
     def test_env_switch_needs_no_code_change(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("ARC_ACCOUNT_PROFILE", "margin")

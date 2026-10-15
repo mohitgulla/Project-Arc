@@ -163,12 +163,13 @@ kinds:
 # rules as `kinds:`. No block = byte-identical behaviour.
 #
 # D97 (owner, 2026-10-11; D44/D86 waived, ships on; E22.4): the short sleeve
-# (entry DTE 10-29) of the cash profiles. A 10-29 DTE debit has steeper theta and
+# (entry DTE 10-35 since D118, was 10-29) of the cash profiles. A short-DTE debit
+# has steeper theta and
 # gamma, so it takes profit faster (0.40 vs 0.60 of the debit), stops tighter and
 # intraday on the 10-min marks (0.50 vs 0.75, not EOD-only), locks profit earlier
 # (arm 0.30 / floor 0.10) and exits before the last-week decay (close_at_dte 3 vs
 # 7). expiry_guard (flat_by_dte 1) and the fill-day guard still apply. The swing
-# sleeve (30-60) has no block and keeps the D23/D78 `kinds:` rules above.
+# sleeve (36-60 since D118) has no block and keeps the D23/D78 `kinds:` rules above.
 # Rollback (Slack, no PR): `profiles.cash_debit.sleeves.short.max_positions 0`
 # closes the sleeve to new opens.
 sleeves:

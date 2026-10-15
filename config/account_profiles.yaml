@@ -42,11 +42,12 @@ profiles:
     buying_power: cash_settled
     allow_short_legs: covered_only
     # D97 (E22.4): two entry-DTE sleeves, 5 + 5 slots (= max_open_positions 10);
-    # DTE 30 belongs to swing. Close the short sleeve without a PR (Slack):
+    # D118: short 10-35 / swing 36-60 (was 10-29 / 30-60); DTE 36 belongs to swing.
+    # Close the short sleeve without a PR (Slack):
     # `profiles.cash_debit.sleeves.short.max_positions 0`.
     sleeves:
-      short: {dte_min: 10, dte_max: 29, max_positions: 5, exit_policy: short}
-      swing: {dte_min: 30, dte_max: 60, max_positions: 5}
+      short: {dte_min: 10, dte_max: 35, max_positions: 5, exit_policy: short}
+      swing: {dte_min: 36, dte_max: 60, max_positions: 5}
     stance_strategies:
       bullish: [bull_call_debit, long_call]
       bearish: [bear_put_debit, long_put]
@@ -59,8 +60,8 @@ profiles:
     buying_power: cash_settled
     allow_short_legs: none
     sleeves:  # D97 (E22.4): same sleeves as cash_debit
-      short: {dte_min: 10, dte_max: 29, max_positions: 5, exit_policy: short}
-      swing: {dte_min: 30, dte_max: 60, max_positions: 5}
+      short: {dte_min: 10, dte_max: 35, max_positions: 5, exit_policy: short}
+      swing: {dte_min: 36, dte_max: 60, max_positions: 5}
     stance_strategies:
       bullish: [long_call]
       bearish: [long_put]

@@ -3176,6 +3176,69 @@ _STRIKE_LEVELS_TUNABLES: tuple[Tunable, ...] = (
     ),
 )
 
+# E2.6 (D116): liquidity-aware strike / expiry choice (strategy.yaml `scanner.liquidity_rank`).
+# Selection inside the unchanged delta bands only: no band, size, cap or gate input moves,
+# so no risk direction (applies at once).
+_LIQUIDITY_RANK_TUNABLES: tuple[Tunable, ...] = (
+    Tunable(
+        key="scanner.liquidity_rank.enabled",
+        group=Group.ENTRIES,
+        type=ValueType.CHOICE,
+        description="E2.6: pick strikes inside the delta bands by delta fit minus lambda x a "
+        "liquidity score (OI, volume, spread; a vertical by its thinner leg) and give the "
+        "expiry with most near-spot volume in a sleeve a rank bonus. off = rollback "
+        "(selection and menus as before).",
+        target=Target.STRATEGY,
+        risk=Risk.NONE,
+        path=("scanner", "liquidity_rank", "enabled"),
+        choices=("on", "off"),
+        aliases=("liquidity_rank",),
+    ),
+    *(
+        Tunable(
+            key=f"scanner.liquidity_rank.weights.{term}",
+            group=Group.ENTRIES,
+            type=_F,
+            description=f"E2.6: weight of the {label} term in the liquidity score "
+            "(the three weights are normalised by their sum).",
+            target=Target.STRATEGY,
+            risk=Risk.NONE,
+            path=("scanner", "liquidity_rank", "weights", term),
+            min=0.0,
+            max=1.0,
+        )
+        for term, label in (
+            ("oi", "log open interest"),
+            ("volume", "log volume"),
+            ("spread", "tight spread"),
+        )
+    ),
+    Tunable(
+        key="scanner.liquidity_rank.lambda",
+        group=Group.ENTRIES,
+        type=_F,
+        description="E2.6: how much liquidity score offsets delta fit (fit is in band "
+        "half-widths); 0 = delta fit only.",
+        target=Target.STRATEGY,
+        risk=Risk.NONE,
+        path=("scanner", "liquidity_rank", "lambda"),
+        min=0.0,
+        max=2.0,
+    ),
+    Tunable(
+        key="scanner.liquidity_rank.expiry_mu",
+        group=Group.ENTRIES,
+        type=_F,
+        description="E2.6: scanner rank bonus per unit of an expiry's share of its sleeve's "
+        "near-spot volume (reorders only).",
+        target=Target.STRATEGY,
+        risk=Risk.NONE,
+        path=("scanner", "liquidity_rank", "expiry_mu"),
+        min=0.0,
+        max=1.0,
+    ),
+)
+
 # E5.16 (D116): the stale-pick cooldown (strategy.yaml `research.stale_pick:`). It only
 # narrows the idea pool Research sees (never a gate input): no risk direction.
 _STALE_PICK_TUNABLES: tuple[Tunable, ...] = (
@@ -3229,6 +3292,7 @@ REGISTRY: dict[str, Tunable] = {
         *_RANGE_EDGES_TUNABLES,
         *_PULLBACK_TUNABLES,
         *_STRIKE_LEVELS_TUNABLES,
+        *_LIQUIDITY_RANK_TUNABLES,
         *_STALE_PICK_TUNABLES,
         *_MARKET_HEALTH_TUNABLES,
         *_OPTIONS_FAST_TUNABLES,
@@ -3676,6 +3740,7 @@ _STRATEGY_SWITCHES = frozenset(
         ("range_edges", "enabled"),  # E23.1 (D98)
         ("pullback_watch", "enabled"),  # E23.2 (D98)
         ("strike_levels", "enabled"),  # E23.3 (D98)
+        ("scanner", "liquidity_rank", "enabled"),  # E2.6 (D116)
     }
 )
 # E20.3: choice switches in strategy.yaml (E12.5) -> the control value when absent.

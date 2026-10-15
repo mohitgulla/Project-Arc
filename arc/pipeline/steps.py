@@ -3090,7 +3090,9 @@ def _menu_entry(
     non-control ``pipeline.menu_measure``, so the control menu is byte-identical.
     ``be_atr`` (E16.5) appears only with ``scanner.max_be_atr`` set and ATR14 known.
     ``sleeve`` (E22.2) appears only for a profile with DTE sleeves. ``levels`` (E23.3)
-    appears only with ``strike_levels`` on and a level known on the target's side."""
+    appears only with ``strike_levels`` on and a level known on the target's side.
+    ``liquidity`` (E2.6) appears only with ``scanner.liquidity_rank`` on: the thinnest
+    leg's score, OI and volume and the widest leg spread."""
     st = c.structure
     extra: dict[str, Any] = {}
     if sleeve is not None:
@@ -3106,6 +3108,14 @@ def _menu_entry(
         extra["be_atr"] = round(be_atr, 2)
     if levels:
         extra["levels"] = levels
+    liq = st.liquidity
+    if liq.score is not None:  # E2.6 (D116): only with scanner.liquidity_rank on
+        extra["liquidity"] = {
+            "score": liq.score,
+            "min_leg_oi": liq.open_interest,
+            "min_leg_volume": liq.volume,
+            "spread_pct": round(liq.spread_pct, 4),
+        }
     return {
         "structure_type": _structure_type(c),
         "strategy": c.strategy.value,
@@ -3360,6 +3370,7 @@ def _quant_menus(ctx: JobContext, env: PipelineEnv, items: list[ResearchRankedIt
     recorded in ``sleeves_full``. A single-window profile takes the pre-E22.2 path.
     """
     from arc.scanner import ScanParams, scan
+    from arc.scanner.liquidity import liquidity_rank_from
 
     settings = ctx.settings
     m = _QuantMenus()
@@ -3453,7 +3464,13 @@ def _quant_menus(ctx: JobContext, env: PipelineEnv, items: list[ResearchRankedIt
         try:
             # E22.2: a sleeved profile keeps the whole scanner pool, cut per sleeve below.
             top = None if open_sleeves is not None else pool
-            params = ScanParams.from_settings(settings, strategies=strategies, top=top)
+            params = ScanParams.from_settings(
+                settings,
+                strategies=strategies,
+                top=top,
+                # E2.6 (D116): None (off) = the pre-E2.6 strike selection
+                liquidity_rank=liquidity_rank_from(ctx.routines.scanner.liquidity_rank),
+            )
             history = iv_store.series(item.ticker, until=today) if iv_store is not None else {}
             res = scan(
                 env.market, item.ticker, params, as_of=today, iv_history=history, now=ctx.now

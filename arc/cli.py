@@ -161,6 +161,14 @@ def _add_scan_args(p: argparse.ArgumentParser) -> None:
         help="Upsert today's 30-DTE IV (alpaca_cm30) into iv_daily (needs a store)",
     )
     p.add_argument("--json", action="store_true", help="Emit the full result as JSON")
+    p.add_argument(
+        "--liquidity-rank",
+        choices=["config", "on", "off"],
+        default="config",
+        help="E2.6 (D116): liquidity-aware strike / expiry choice inside the delta bands. "
+        "config (default) = config/strategy.yaml scanner.liquidity_rank (with --db's "
+        "overrides); on / off force it (off = the pre-E2.6 selection)",
+    )
 
 
 def _make_parser() -> argparse.ArgumentParser:
@@ -436,6 +444,14 @@ def _fmt_candidate(c: ScanCandidate) -> str:
     )
     head = f"{c.rank:>3}  {c.strategy.value:<15} {c.expiration} {c.dte:>3}d  {strikes:<16} "
     tail = f"PoP {c.pop:.2f}  EV {c.ev_proxy:>7.2f}  maxL {c.structure.max_loss:.2f}"
+    liq = c.structure.liquidity
+    if liq.score is not None:  # E2.6 (D116): only with scanner.liquidity_rank on
+        tail += (
+            f"  liq {liq.score:.2f} (OI {liq.open_interest:,} vol {liq.volume:,} "
+            f"spr {liq.spread_pct:.1%}"
+            + ("" if not c.expiry_bonus else f" exp+{c.expiry_bonus:.3f}")
+            + ")"
+        )
     if c.credit_width is None:  # debit structure (D25): long Δ / short Δ, debit, EV/maxL
         longs = "/".join(f"{d * 100:.0f}" for d in c.long_deltas)
         shorts = "/".join(f"{d * 100:.0f}" for d in c.short_deltas) or "-"
@@ -594,6 +610,27 @@ def _chains_iv_conn(args: argparse.Namespace) -> sqlite3.Connection | None:
     return conn
 
 
+def _chains_liquidity_rank(args: argparse.Namespace, conn: sqlite3.Connection | None) -> Any:
+    """E2.6 (D116): the scanner's ``liquidity_rank`` for ``arc chains`` (``None`` = off)."""
+    from arc.control.effective import effective_routines
+    from arc.routines.config import LiquidityRankSettings
+    from arc.scanner.liquidity import liquidity_rank_from
+
+    if args.liquidity_rank == "off":
+        return None
+    old = conn.row_factory if conn is not None else None
+    if conn is not None:
+        conn.row_factory = sqlite3.Row
+    try:
+        cfg = effective_routines(conn).scanner.liquidity_rank
+    finally:
+        if conn is not None:
+            conn.row_factory = old
+    if args.liquidity_rank == "on" and not cfg.enabled:
+        cfg = LiquidityRankSettings.model_validate({**cfg.model_dump(), "enabled": True})
+    return liquidity_rank_from(cfg)
+
+
 def _record_chain_iv(
     store: Any, provider: MarketDataProvider, ticker: str, as_of: Any, settings: Any
 ) -> None:
@@ -666,6 +703,7 @@ def _chains(args: argparse.Namespace) -> int:
                 f"{args.stance} stance\n"
             )
             return 2
+    iv_conn = _chains_iv_conn(args)
     try:
         params = ScanParams.from_settings(
             settings,
@@ -676,12 +714,12 @@ def _chains(args: argparse.Namespace) -> int:
             strategies=strategies,
             rank_by=None if measure or args.rank_by == "scanner" else args.rank_by,
             top=pool,
+            liquidity_rank=_chains_liquidity_rank(args, iv_conn),
         )
     except ValueError as exc:
         sys.stderr.write(f"arc chains: {exc}\n")
         return 2
 
-    iv_conn = _chains_iv_conn(args)
     results = []
     menu_keys: dict[tuple[str, int], float | None] = {}
     be_vals: dict[tuple[str, int], float | None] = {}  # E16.5: (ticker, rank) -> be_atr
