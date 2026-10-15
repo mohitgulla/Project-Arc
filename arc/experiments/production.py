@@ -426,7 +426,10 @@ def build_production_panel(
     t0_eq = run.t0_equity
     book = sorted(run.production_book)
     book_set = set(book)
-    first = ev._first_session(run.t0)  # noqa: SLF001
+    # D117: the same first session as the verdict series (v3 counts a partial t0 day);
+    # production's own P&L that day runs from its previous close, so it includes the
+    # pre-t0 minutes (descriptive panel only)
+    first = ev._first_session(run.t0, partial=True)  # noqa: SLF001
     last = now.astimezone(ET).date()
     days = sessions_between(first, last)
 
