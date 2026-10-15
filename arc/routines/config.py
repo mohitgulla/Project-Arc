@@ -1267,6 +1267,35 @@ class ScannerStrategySettings(BaseModel):
     liquidity_rank: LiquidityRankSettings = Field(default_factory=LiquidityRankSettings)
 
 
+class StalePickSettings(BaseModel):
+    """E5.16 (D116): the stale-pick cooldown of Research's ranked shortlist.
+
+    A ``ticker|stance`` Research ranked in ``after_loops`` consecutive full loops of
+    the session without a tradeable structure (a proposal sized >= 1 contract that
+    passed the gate) is removed from the idea pool for the next ``suppress_loops``
+    ``research`` runs (any status), then eligible again with its streak reset.
+    Computed from the journal (:mod:`arc.pipeline.stale_pick`). ``after_loops: 0`` is
+    off: no query, no journal row, the prompt byte-identical to before E5.16.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    after_loops: Annotated[int, Field(ge=0, le=20)] = 0
+    suppress_loops: Annotated[int, Field(ge=1, le=40)] = 10
+
+    @property
+    def enabled(self) -> bool:
+        return self.after_loops > 0
+
+
+class ResearchStrategySettings(BaseModel):
+    """E5.16 (D116): Research knobs in strategy.yaml ``research:``."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    stale_pick: StalePickSettings = Field(default_factory=StalePickSettings)
+
+
 class RoutinesConfig(BaseModel):
     """Top-level ``config/routines.yaml``."""
 
@@ -1333,6 +1362,8 @@ class RoutinesConfig(BaseModel):
     strike_levels: StrikeLevelsSettings = Field(default_factory=StrikeLevelsSettings)
     # E2.6 (D116): liquidity-aware strike / expiry choice (strategy.yaml `scanner:`)
     scanner: ScannerStrategySettings = Field(default_factory=ScannerStrategySettings)
+    # E5.16 (D116): the stale-pick cooldown (strategy.yaml `research.stale_pick:`)
+    research: ResearchStrategySettings = Field(default_factory=ResearchStrategySettings)
 
     @model_validator(mode="before")
     @classmethod

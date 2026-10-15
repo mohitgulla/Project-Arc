@@ -518,10 +518,14 @@ function GreeksCard({ o, monitorS, caps }: { o: Overview; monitorS?: number; cap
   const cadence = monitorS ?? o.stale_after_s / STALE_FACTOR;
   const stale = o.marks_stale || isStale(g.at, cadence, now);
   // D57: the gate caps dollar delta (Σ Δ × spot); a pre-D57 heartbeat has none (—).
+  // D116 (E3.8): debit verticals / long options count at signed max loss in both caps;
+  // the plain Σ Δ × spot is shown in the tip (— on a heartbeat written before E3.8).
   const dollarDelta = g.dollar_delta ?? null;
+  const dollarDeltaRaw = g.dollar_delta_raw ?? null;
   const dollarCap = g.dollar_delta_cap ?? null;
   // D62: beta-weighted dollar delta (SPY-equivalent); a pre-D62 heartbeat has none (—).
   const betaDelta = g.beta_dollar_delta ?? null;
+  const betaDeltaRaw = g.beta_dollar_delta_raw ?? null;
   const betaCap = g.beta_delta_cap ?? null;
   const betaRows = Object.entries(g.delta_by_underlying ?? {}).sort(
     ([, a], [, b]) => Math.abs(b.beta_dollar_delta) - Math.abs(a.beta_dollar_delta),
@@ -544,7 +548,18 @@ function GreeksCard({ o, monitorS, caps }: { o: Overview; monitorS?: number; cap
               <InfoTip
                 label="About net dollar delta"
                 testid="greeks-info-dollar-delta"
-                formula={<>|Σ Δ × spot| ≤ {capText(caps?.portfolio_dollar_delta_cap_pct)} × equity</>}
+                formula={
+                  <>
+                    |Σ Δ × spot| ≤ {capText(caps?.portfolio_dollar_delta_cap_pct)} × equity
+                    <span className="mt-1 block" data-testid="greeks-debit-max-loss-note">
+                      Debit structures count at max loss: debit verticals and long calls/puts add sign(Δ) × max loss,
+                      not Δ × spot.
+                    </span>
+                    <span className="block" data-testid="greeks-dollar-delta-raw">
+                      Plain Σ Δ × spot: {dollarDeltaRaw === null ? "—" : formatMoney(dollarDeltaRaw, "allocation")}
+                    </span>
+                  </>
+                }
               >
                 How many dollars of stock the whole book behaves like (longs minus shorts).
               </InfoTip>
@@ -565,6 +580,10 @@ function GreeksCard({ o, monitorS, caps }: { o: Overview; monitorS?: number; cap
                 formula={
                   <>
                     |Σ Δ × spot × max(β,1)| ≤ {capText(caps?.portfolio_beta_delta_cap_pct)} × equity · β = 1y daily vs SPY
+                    <span className="mt-1 block">
+                      Debit structures count at max loss × max(β,1). Plain Σ Δ × spot × max(β,1):{" "}
+                      {betaDeltaRaw === null ? "—" : formatMoney(betaDeltaRaw, "allocation")}
+                    </span>
                     {betaRows.length > 0 && (
                       <span className="mt-1 block" data-testid="greeks-beta-breakdown">
                         {betaRows.map(([t, r]) => (

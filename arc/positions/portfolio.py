@@ -188,13 +188,21 @@ class PortfolioPosition(BaseModel):
 
 class GreekUsage(BaseModel):
     """Net exposure against its gate cap. Delta (D57): net dollar delta and the dollar
-    cap; vega: $ per vol point and its cap."""
+    cap; vega: $ per vol point and its cap. D116 (E3.8): the delta caps count debit
+    verticals / long options at sign(Δ) × max loss; ``net_raw`` keeps Σ Δ × spot."""
 
     model_config = _FORBID
 
     net: float
     cap: float
     pct_used: float | None = Field(None, description="|net| / cap; None when the cap is 0")
+    net_raw: float | None = Field(
+        None,
+        description=(
+            "D116 (delta rows only): the plain Σ Δ × spot (× β) before debit structures "
+            "are counted at max loss. Display only; None for vega or when unknown."
+        ),
+    )
 
 
 class PortfolioAggregates(BaseModel):

@@ -129,6 +129,18 @@ scanner:
     lambda: 0.5                 # key scanner.liquidity_rank.lambda
     expiry_mu: 0.25             # key scanner.liquidity_rank.expiry_mu
 
+# E5.16 (D116, owner 2026-10-14): stale-pick cooldown. A ticker|stance Research ranked in
+# `after_loops` consecutive full loops (no_change skips ignored) without a tradeable
+# structure (a proposal sized >= 1 contract that passed the gate) leaves the idea pool for
+# the next `suppress_loops` research runs (any status, ~100 min at the 10-min cadence), then
+# comes back with its streak reset. Computed from the journal; listed to Research and on the
+# shortlist card's "Suppressed" section. Shipped on (D86); `after_loops: 0` = rollback
+# (prompt byte-identical).
+research:
+  stale_pick:
+    after_loops: 4              # key stale_pick_after_loops (0 = off)
+    suppress_loops: 10          # key stale_pick_suppress_loops
+
 # E16.4 (D76/D83): one code-rendered `Market health (…)` line in Research's market block.
 # The market_health job writes its daily read whatever this says. The thresholds only
 # label that line (never a gate or pipeline input). Percentiles are 1-year (252 prior

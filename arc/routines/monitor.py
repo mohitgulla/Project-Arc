@@ -288,9 +288,14 @@ def monitor(ctx: JobContext, env: PipelineEnv) -> JobResult:
                 "valued": True,
                 "max_loss": float(max_loss),
                 "delta": g.delta,
-                "dollar_delta": float(portfolio.dollar_delta),  # D57: Σ Δ × spot, $
-                # D62: Σ Δ × spot × max(β, 1), $; its cap; per-underlying breakdown
+                # D57/D116: the gate's measure: Σ Δ × spot, except debit verticals /
+                # long options at sign(Δ) × max loss (E3.8); $
+                "dollar_delta": float(portfolio.dollar_delta),
+                # D62: the same terms × max(β, 1), $; its cap; per-underlying breakdown
                 "beta_dollar_delta": float(portfolio.beta_dollar_delta),
+                # D116: the plain Σ Δ × spot (× β) for display; the gate never reads it
+                "dollar_delta_raw": float(portfolio.dollar_delta_raw),
+                "beta_dollar_delta_raw": float(portfolio.beta_dollar_delta_raw),
                 "beta_delta_cap": settings.portfolio_beta_delta_cap_pct * float(info.equity),
                 "dollar_delta_cap": settings.portfolio_dollar_delta_cap_pct * float(info.equity),
                 "delta_by_underlying": dict(sorted(breakdown.items())),

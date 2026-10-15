@@ -26,7 +26,7 @@ PYTEST_WORKERS ?= auto
 GATE_TESTS := tests/test_gate.py tests/test_halt.py tests/test_gate_token.py \
 	tests/test_gate_hook_policy.py tests/test_gate_band.py tests/test_account_profiles.py \
 	tests/test_day_trades.py tests/test_gate_ticks.py tests/test_gate_live_size_cap.py \
-	tests/test_gate_sleeves.py tests/test_gate_caps.py
+	tests/test_gate_sleeves.py tests/test_gate_caps.py tests/test_gate_delta.py
 
 # Full suite: every test file runs exactly once.
 test: test-rest test-gate

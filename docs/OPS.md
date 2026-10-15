@@ -456,7 +456,7 @@ Outside the session the pages show the last in-session monitor run, marked stale
 |---|---|
 | Status strip | active `halts`, latest `tick`/`health` heartbeats, open `ops_alerts` |
 | P&L / equity | latest `monitor` heartbeat (intraday equity, day P&L); `pnl_snapshots` (reconciled realized/unrealized, Day/MTD/YTD via `arc.reconcile.performance`) |
-| Greeks | latest `monitor` heartbeat: net dollar delta (Σ Δ × spot, D57) against the gate's `portfolio_dollar_delta_cap_pct` × equity (1.00), beta-weighted net dollar delta (Σ Δ × spot × max(β, 1), D62) against `portfolio_beta_delta_cap_pct` × equity (2.00) with the per-underlying β in its ⓘ, ν against `portfolio_vega_cap_pct` × equity, plus Γ Θ and max loss per underlying against the active D116 tier (`max_alloc_pct` 15% while deployed max loss — open + in-flight opens — is below `alloc_tier_threshold_pct` 60% of equity, else `max_alloc_pct_reduced` 10%), with a "Deployed N% of equity · Base/Reduced Tier" line; every row has an ⓘ |
+| Greeks | latest `monitor` heartbeat: net dollar delta (Σ Δ × spot, D57; debit verticals and long calls/puts count sign(Δ) × max loss, D116/E3.8, with the plain Σ Δ × spot in the ⓘ) against the gate's `portfolio_dollar_delta_cap_pct` × equity (1.00), beta-weighted net dollar delta (the same terms × max(β, 1), D62) against `portfolio_beta_delta_cap_pct` × equity (2.00) with the per-underlying β in its ⓘ, ν against `portfolio_vega_cap_pct` × equity, plus Γ Θ and max loss per underlying against the active D116 tier (`max_alloc_pct` 15% while deployed max loss — open + in-flight opens — is below `alloc_tier_threshold_pct` 60% of equity, else `max_alloc_pct_reduced` 10%), with a "Deployed N% of equity · Base/Reduced Tier" line; every row has an ⓘ |
 | Positions | `open_structures` + broker legs from the `monitor` heartbeat; "held at broker" from the last `positions_snapshots` |
 | Proposals / Trades | `proposals` + latest `gate_decisions` + `approval_requests` + `executions` |
 | Halts | `halts`, active first |
@@ -3092,3 +3092,35 @@ The reduced tier is never above the base tier: an older override that set
 `max_alloc_pct` below 10% caps both tiers at it. All three keys are registry knobs
 (`!arc config set max_alloc_pct_reduced 8%`, ceiling 20%; raising one is riskier and
 needs a confirm code).
+
+## E5.16 stale-pick cooldown (D116)
+
+A `ticker|stance` Research ranked in `research.stale_pick.after_loops` **4** consecutive
+full loops of the session without a tradeable structure is removed from the idea pool for
+the next `suppress_loops` **10** `research` runs (any status: ok, failed, `no_change`;
+~100 min at the 10-min cadence), then comes back with its streak reset.
+
+- **Full loop:** a `research` run that completed its evaluation (journaled
+  `market_read`). `no_change` skips, failed runs and guard/budget no-trade runs neither
+  extend nor break a streak.
+- **Tradeable:** in the run's chain, a proposal for the ticker that sized ≥ 1 contract
+  (`sizing:*` payload `contracts`) and passed the gate (`gate:pass`). A gate fail or a
+  0-contract sizing is not tradeable. A full loop that did not rank the key breaks its
+  streak. Streaks never cross sessions (ET day).
+- Computed from the store's own journal (`arc/pipeline/stale_pick.py`; no table, so it
+  survives restarts and each experiment arm reads its own store). One
+  `stale_pick_suppressed` row per suppression start (payload: stance, streak, trigger
+  run, `back_at`).
+- Research sees each suppressed pick under the dedupe heading, e.g. `- MU bullish —
+  stale: ranked 4 loops, no tradeable structure (back 12:20 ET)`. The shortlist's
+  `suppressed` list and the Slack Research card section **"Suppressed (n)"** (was
+  "Suppressed by dedupe") carry both kinds, each line prefixed `dedupe: …` or `stale: …`.
+  A suppression start/end is a loop-digest fact, so the loop runs in full when it changes.
+
+Replay of 2026-10-14 (live store copy): CAKE / MU / XOM bullish suppressed after the 10:30
+loop (back 12:20), CAKE / XOM again after 13:10 (back 15:00), MU after 14:00 (back 15:50).
+
+**Switches** (`config/strategy.yaml research.stale_pick:`, registry): `stale_pick_after_loops`
+(0–20; 0 = off, prompt byte-identical) and `stale_pick_suppress_loops` (1–40). Shipped on
+(D86/D116). Rollback: `!arc config set stale_pick_after_loops 0`. Never a gate input.
+Check: `select subject, reason_text, at from decisions where reason_code='stale_pick_suppressed'`.

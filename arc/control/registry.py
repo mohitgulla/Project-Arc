@@ -813,8 +813,8 @@ _STATIC: tuple[Tunable, ...] = (
         "portfolio_dollar_delta_cap_pct",
         Group.RISK,
         _F,
-        "D57/D62: |net dollar delta| (Σ Δ share-eq × spot) cap as a share of equity "
-        "(gate rule greek_caps).",
+        "D57/D62: |net dollar delta| (Σ Δ share-eq × spot; D116: debit verticals and long "
+        "options at sign(Δ) × max loss) cap as a share of equity (gate rule greek_caps).",
         Risk.UP,
         unit="pct",
         min=0.10,
@@ -825,7 +825,8 @@ _STATIC: tuple[Tunable, ...] = (
         "portfolio_beta_delta_cap_pct",
         Group.RISK,
         _F,
-        "D62: |beta-weighted net dollar delta| (Σ Δ share-eq × spot × max(β vs SPY, 1)) "
+        "D62: |beta-weighted net dollar delta| (Σ Δ share-eq × spot × max(β vs SPY, 1); "
+        "D116: debit verticals and long options at sign(Δ) × max loss × max(β, 1)) "
         "cap as a share of equity (gate rule greek_caps).",
         Risk.UP,
         unit="pct",
@@ -3238,6 +3239,42 @@ _LIQUIDITY_RANK_TUNABLES: tuple[Tunable, ...] = (
     ),
 )
 
+# E5.16 (D116): the stale-pick cooldown (strategy.yaml `research.stale_pick:`). It only
+# narrows the idea pool Research sees (never a gate input): no risk direction.
+_STALE_PICK_TUNABLES: tuple[Tunable, ...] = (
+    Tunable(
+        key="stale_pick_after_loops",
+        group=Group.ENTRIES,
+        type=_I,
+        description="E5.16: a ticker|stance Research ranked in this many consecutive full "
+        "loops without a tradeable structure (sized >= 1 and gate pass) is suppressed "
+        "(0 = off, prompt as before E5.16).",
+        target=Target.STRATEGY,
+        risk=Risk.NONE,
+        path=("research", "stale_pick", "after_loops"),
+        unit="loops",
+        min=0,
+        max=20,
+        hard_ceiling=20,
+        aliases=("research.stale_pick.after_loops",),
+    ),
+    Tunable(
+        key="stale_pick_suppress_loops",
+        group=Group.ENTRIES,
+        type=_I,
+        description="E5.16: research runs a stale pick stays out of the idea pool before it "
+        "is eligible again (streak reset).",
+        target=Target.STRATEGY,
+        risk=Risk.NONE,
+        path=("research", "stale_pick", "suppress_loops"),
+        unit="loops",
+        min=1,
+        max=40,
+        hard_ceiling=40,
+        aliases=("research.stale_pick.suppress_loops",),
+    ),
+)
+
 REGISTRY: dict[str, Tunable] = {
     t.key: t
     for t in (
@@ -3256,6 +3293,7 @@ REGISTRY: dict[str, Tunable] = {
         *_PULLBACK_TUNABLES,
         *_STRIKE_LEVELS_TUNABLES,
         *_LIQUIDITY_RANK_TUNABLES,
+        *_STALE_PICK_TUNABLES,
         *_MARKET_HEALTH_TUNABLES,
         *_OPTIONS_FAST_TUNABLES,
         *_CARRYOVER_TUNABLES,

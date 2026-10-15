@@ -196,6 +196,9 @@ class ReasonCode(StrEnum):
     LOOP_FORCED_FREE_SLOTS = "loop_forced_free_slots"
     # E22.3 (D97): Research ranked fewer than research.min_ranked with free slots (noted)
     RESEARCH_UNDER_RANKED = "research_under_ranked"
+    # E5.16 (D116): a ticker|stance ranked N full loops without a tradeable structure
+    # leaves the idea pool for the next M research runs (one row per suppression start)
+    STALE_PICK_SUPPRESSED = "stale_pick_suppressed"
     # sizing (D18)
     SIZING_OK = "sizing:ok"
     SIZING_CAPPED = "sizing:capped"
@@ -461,6 +464,7 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.LOOP_NO_CHANGE: "Loop skipped: inputs unchanged",
     ReasonCode.LOOP_FORCED_FREE_SLOTS: "Loop ran in full: free slots, no opens today",
     ReasonCode.RESEARCH_UNDER_RANKED: "Research ranked fewer names than asked",
+    ReasonCode.STALE_PICK_SUPPRESSED: "Suppressed: ranked repeatedly, never tradeable",
     ReasonCode.SIZING_OK: "Sized at Risk's suggestion",
     ReasonCode.SIZING_CAPPED: "Size capped at 5% of equity",
     ReasonCode.SIZING_CAP_ZERO: "Cap allows zero contracts",
