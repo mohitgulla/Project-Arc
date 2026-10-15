@@ -350,9 +350,11 @@ def test_tech_segment_rng_part() -> None:
 # ---------------------------------------------------------------------------
 
 # Research prompt / journal of this fixture run on main 6989a93 (anti-chase on, under
-# tests/conftest.py env pins), captured before E23.1.
-MAIN_RESEARCH_SHA = "69c800bc1349099b3b0df71bfecc9aa156d004c7e0d00ef5541a223eea794a24"
-MAIN_JOURNAL_SHA = "7ae2e25a3ff6175ba23452f546ee8acd0c1a7ccfb69d824f8ed528385eea47dd"
+# tests/conftest.py env pins), captured before E23.1. Re-taken for D118 (sleeves 10-35 /
+# 36-60): the only prompt change is the entry-window line, and the journal gains three
+# NVDA `menu_not_chosen` rows (its 30-35 DTE expiries now also get a short-sleeve menu).
+MAIN_RESEARCH_SHA = "5f5eb361cda42c8c7fb333cedb1ebd5ceae31111d3362841b347687cd931ccb7"
+MAIN_JOURNAL_SHA = "97102ae4892b69ffaffbb0804b15a720b1556f0682ac1a485fa3d25100f2fe08"
 
 
 @pytest.fixture

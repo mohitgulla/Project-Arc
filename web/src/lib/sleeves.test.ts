@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { apiQuery, perfQuery, sleeveTitle, tradesLink, VERDICT_LABEL, type SleeveStats } from "./performance";
+import { apiQuery, perfQuery, sleeveMetrics, sleeveTitle, tradesLink, type SleeveStats } from "./performance";
 import { ALL_SLEEVES, activeSleeve, sleeveName, sleeveOptions, sleeveUsageLine, sleeveWindow, type SleeveMeta } from "./sleeves";
 import { activeFilterCount, tradeQuery } from "./trades";
 
@@ -60,11 +60,24 @@ describe("performance sleeve query", () => {
     expect(tradesLink({ ...item, filter: { sleeve: "short", stage: "closed" } }, period, "swing")).toContain("sleeve=short");
   });
 
-  it("titles sleeves and verdicts in Title Case", () => {
-    const s = { sleeve: "short", dte_min: 10, dte_max: 29 } as SleeveStats;
-    expect(sleeveTitle(s)).toBe("Short 10–29 DTE");
+  it("shows six sleeve metrics, 3 + 3, with no median, CI, exits or verdict", () => {
+    const s = {
+      sleeve: "short", dte_min: 10, dte_max: 35, mean_pnl: -100, median_pnl: -80, mean_net_pnl: -100.37,
+      ci_low: -200.63, ci_high: -0.11, mean_pct_of_max_loss: -0.1894, profit_factor: 0.42, mean_days_held: 1.3,
+      entry_slippage: 26.5, mean_mae: -135.83, mean_mfe: 80.83, exit_reasons: { stop: 1 }, verdict: "collect", ready: false,
+    } as unknown as SleeveStats;
+    const m = sleeveMetrics(s);
+    expect(m.map((x) => x.label)).toEqual(["Mean", "P&L", "Profit factor", "Days held", "Slippage", "MAE / MFE"]);
+    expect(m[1]?.value).toMatch(/%$/);
+    expect(m[2]?.value).toBe("0.42");
+    expect(sleeveMetrics({ ...s, profit_factor: null }).find((x) => x.label === "Profit factor")?.value).toBe("—");
+    expect(JSON.stringify(m)).not.toMatch(/median|CI|Exits|Collecting|Ready/i);
+  });
+
+  it("titles sleeves in Title Case", () => {
+    const s = { sleeve: "short", dte_min: 10, dte_max: 35 } as SleeveStats;
+    expect(sleeveTitle(s)).toBe("Short 10–35 DTE");
     expect(sleeveTitle({ ...s, sleeve: "other", dte_min: null, dte_max: null })).toBe("Other");
-    expect(VERDICT_LABEL.shrink).toBe("Shrink To 2 Slots");
   });
 });
 

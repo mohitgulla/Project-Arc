@@ -1,7 +1,7 @@
 """E22.4 (D97) switch-on: the shipped cash profiles trade two entry-DTE sleeves.
 
-- cash_debit / cash_long_only ship ``short`` 10-29 (5 slots, exit block ``short``) and
-  ``swing`` 30-60 (5 slots, the kind policy); margin is untouched.
+- cash_debit / cash_long_only ship ``short`` 10-35 (5 slots, exit block ``short``) and
+  ``swing`` 36-60 (D118; was 10-29 / 30-60) (5 slots, the kind policy); margin is untouched.
 - ``config/exits.yaml`` ``sleeves.short`` gives the three debit kinds a faster take
   profit (0.40), a tighter intraday stop (0.50 of the debit), an earlier profit lock
   (0.30 -> 0.10) and close_at_dte 3; a swing position keeps the D23/D78 rules.
@@ -57,14 +57,22 @@ class TestShippedProfiles:
         s = _settings(profile)
         assert [
             (x.name, x.dte_min, x.dte_max, x.max_positions, x.exit_policy) for x in s.entry_sleeves
-        ] == [("short", 10, 29, 5, "short"), ("swing", 30, 60, 5, None)]
+        ] == [("short", 10, 35, 5, "short"), ("swing", 36, 60, 5, None)]
         assert s.entry_dte_window == (10, 60)
         # the slot caps sum to the book cap
         assert sum(x.max_positions or 0 for x in s.entry_sleeves) == s.max_open_positions == 10
 
     @pytest.mark.parametrize(
         ("dte", "sleeve"),
-        [(9, None), (10, "short"), (29, "short"), (30, "swing"), (60, "swing"), (61, None)],
+        [
+            (9, None),
+            (10, "short"),
+            (30, "short"),
+            (35, "short"),
+            (36, "swing"),
+            (60, "swing"),
+            (61, None),
+        ],
     )
     def test_windows_never_overlap(self, dte: int, sleeve: str | None) -> None:
         got = _settings().sleeve_for_dte(dte)
@@ -161,9 +169,12 @@ class TestShortSleeveLongCall:
         assert check_rules(r, pnl=0.0, dte=7, eod=False) is ExitReason.DTE_EXIT
         assert check_rules(r, pnl=0.0, dte=8, eod=False) is None
 
-    def test_dte_30_is_swing(self) -> None:
-        block, _ = _rules_at_entry_dte(30)
+    def test_dte_36_is_swing(self) -> None:
+        """D118: the swing sleeve starts at 36 DTE; 30-35 now take the short block."""
+        block, _ = _rules_at_entry_dte(36)
         assert block is None
+        block, _ = _rules_at_entry_dte(35)
+        assert block == "short"
 
     def test_short_debit_vertical_uses_short_block(self) -> None:
         s = _settings()

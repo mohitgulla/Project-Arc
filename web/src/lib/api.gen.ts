@@ -6065,6 +6065,11 @@ export interface components {
              */
             opens: number;
             /**
+             * Profit Factor
+             * @description Σ winning ÷ |Σ losing| realised P&L; None with no losing dollars
+             */
+            profit_factor?: number | null;
+            /**
              * Ready
              * @default false
              */

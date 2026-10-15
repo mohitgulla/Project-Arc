@@ -37,8 +37,8 @@ import {
   type PerfQuery,
   type Performance,
   FUNNEL_STAGE_LABEL,
-  VERDICT_LABEL,
   feedSplit,
+  sleeveMetrics,
   sleeveTitle,
   stageConversion,
 } from "../lib/performance";
@@ -364,7 +364,7 @@ function ModelCard({ p }: { p: Performance }) {
   );
 }
 
-/** E22.5 (D97): per-sleeve stats over the period and the keep/shrink verdict (report only). */
+/** E22.5 (D97): per-sleeve stats over the period; six metrics, 3 + 3 (D118). */
 function SleevesCard({ p }: { p: Performance }) {
   const rows = p.sleeve_stats ?? [];
   if (rows.length === 0) return null;
@@ -374,7 +374,7 @@ function SleevesCard({ p }: { p: Performance }) {
     </TitleTip>
   );
   return (
-    <Card title="Sleeves" headerExtra={tip} subtitle={EXPLAIN.sleeves.sub}>
+    <Card title="Sleeves" headerExtra={tip}>
       <ul className="grid gap-3" data-testid="sleeve-stats">
         {rows.map((s) => (
           <li key={s.sleeve} data-sleeve={s.sleeve} className="grid gap-1">
@@ -383,34 +383,18 @@ function SleevesCard({ p }: { p: Performance }) {
               <span className="text-caption text-secondary tabular-nums">
                 {s.closed} closed · {s.opens} opened · {pct(s.win_rate)} win
               </span>
-              {s.verdict && (
-                <span className="ml-auto text-caption text-secondary" data-testid="sleeve-verdict">
-                  {VERDICT_LABEL[s.verdict]}
-                  {s.ready ? "" : " · Not Ready"}
-                </span>
-              )}
             </div>
-            <KeyValueList
-              columns={2}
-              items={[
-                { label: "Mean / median", value: `${money(s.mean_pnl)} / ${money(s.median_pnl)}` },
-                {
-                  label: "Mean net (90% CI)",
-                  value: `${money(s.mean_net_pnl)} (${money(s.ci_low)} … ${money(s.ci_high)})`,
-                },
-                { label: "P&L / max loss", value: pct(s.mean_pct_of_max_loss) },
-                { label: "Days held", value: ratio(s.mean_days_held, 1) },
-                { label: "Entry slippage", value: money(s.entry_slippage) },
-                { label: "MAE / MFE", value: `${money(s.mean_mae)} / ${money(s.mean_mfe)}` },
-                {
-                  label: "Exits",
-                  value:
-                    Object.entries(s.exit_reasons ?? {})
-                      .map(([k, n]) => `${k.replace(/_/g, " ")} ${n}`)
-                      .join(" · ") || "—",
-                },
-              ]}
-            />
+            {/* 3 + 3 side by side from 560 px (MAE / MFE needs the room); stacked below. */}
+            <div className="grid gap-x-6 min-[560px]:grid-cols-2" data-testid="sleeve-metrics">
+              {[0, 3].map((at) => (
+                <KeyValueList
+                  key={at}
+                  items={sleeveMetrics(s)
+                    .slice(at, at + 3)
+                    .map((m) => ({ label: m.label, value: <span className="whitespace-nowrap">{m.value}</span> }))}
+                />
+              ))}
+            </div>
           </li>
         ))}
       </ul>
