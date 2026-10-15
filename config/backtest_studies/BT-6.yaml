@@ -19,11 +19,13 @@ arms:
             vertical_debit: {take_profit_pct_of_debit: 1.0, profit_lock: null}
             long_call: {take_profit_pct_of_debit: 1.0, profit_lock: null}
             long_put: {take_profit_pct_of_debit: 1.0, profit_lock: null}
-    t2:                          # hold
-      overlay:
-        exits:
-          default: {take_profit_pct_of_debit: null, close_at_dte: null, profit_lock: null}
+    t2:                          # hold: E18.3's hold on the debit kinds. Written as BT-2's
+      overlay:                   # control overlay (credit kinds too, which cash_debit never
+        exits:                   # trades) so both share one exits hash and one menu cache.
+          default: {take_profit_pct_of_max_gain: null, take_profit_pct_of_debit: null, close_at_dte: null, profit_lock: null}
           kinds:
+            vertical_credit: {take_profit_pct_of_max_gain: null, stop: null, close_at_dte: null, profit_lock: null}
+            iron_condor: {take_profit_pct_of_max_gain: null, stop: null, close_at_dte: null, profit_lock: null}
             vertical_debit: {take_profit_pct_of_debit: null, stop: null, close_at_dte: null, profit_lock: null}
             long_call: {take_profit_pct_of_debit: null, stop: null, close_at_dte: null, profit_lock: null}
             long_put: {take_profit_pct_of_debit: null, stop: null, close_at_dte: null, profit_lock: null}
