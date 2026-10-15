@@ -85,6 +85,7 @@ from arc.utils.calendar import (
     is_session,
     next_session,
     previous_session,
+    session_close,
     session_open,
     sessions_between,
 )
@@ -507,10 +508,19 @@ def _legacy_cash(conn: sqlite3.Connection, legacy: set[str]) -> dict[_dt.date, f
     return out
 
 
-def _first_session(t0: _dt.datetime) -> _dt.date:
-    """The first ET session that opens at or after t0 (a mid-session t0 skips that day)."""
+def _first_session(t0: _dt.datetime, *, partial: bool = False) -> _dt.date:
+    """The first ET session of an experiment started at *t0*.
+
+    A t0 at or before the open always counts that day. A mid-session t0 skips that
+    day unless *partial* (D117): then the day counts as a partial session, t0 to the
+    close. Only a spec v3 series is *partial*: every arm (control included) opens flat
+    at the same t0 equity at the same instant, so t0 to the close is still a paired
+    observation. Up to spec v2 control is production's broker equity, whose previous
+    EOD row includes the pre-t0 morning, so those keep the full-session rule. A t0 at
+    or after the close (or on a non-session day) starts at the next session.
+    """
     day = t0.astimezone(ET).date()
-    if is_session(day) and session_open(day) >= t0:
+    if is_session(day) and (session_open(day) >= t0 or (partial and t0 < session_close(day))):
         return day
     return next_session(day)
 
@@ -549,7 +559,7 @@ def _series(
     legacy: set[str] = set() if v3 else set(run.production_book)
     marks = _legacy_marks(conn, legacy)
     cash = _legacy_cash(conn, legacy)
-    first = _first_session(run.t0)
+    first = _first_session(run.t0, partial=v3)
     last = now.astimezone(ET).date()
     days = sessions_between(first, last)
     t0_eq = run.t0_equity

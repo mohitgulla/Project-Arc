@@ -2000,7 +2000,7 @@ Dry run (scratch stores, fixtures, no broker, no orders), any time:
 5. `experiments.runner.enabled` is `true` (`!arc config experiments`) and the
    routines tick cron is installed (`hermes cron list`).
 
-**Start (before the 09:30 ET open, so the first session is the same day):**
+**Start** (spec v3: any time before the 16:00 ET close counts that day, partially if after the open, D117; v1/v2: before the 09:30 ET open, else the first session is the next day):
 
     arc experiment create --spec config/experiments/live/xp1_aa_k3.yaml --owner-approval slack:<ts> --db data/arc.db
     arc experiment register XP-1 --owner-approval slack:<ts> --db data/arc.db
