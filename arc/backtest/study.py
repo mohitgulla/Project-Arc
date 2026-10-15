@@ -218,15 +218,54 @@ class StudyPeriod(BaseModel):
         return self
 
 
+#: Pre-registered rule kinds. Each one is an earlier card's rule, applied verbatim:
+#:
+#: * ``d25_challenge`` — E7.5 / D25 (:func:`arc.backtest.ranking.challenge`): treatment
+#:   beats control on net P&L and max DD in >= ``min_subperiod_wins`` trend sub-periods
+#:   **and** the CI lower bound of the daily P&L difference is > 0.
+#: * ``entry_filter`` — E16.3 (:func:`arc.backtest.entry_filter.entry_filter_challenge`):
+#:   treatment = filter on, control = off. Recommend if the treatment has a smaller max
+#:   DD, net P&L not lower in >= ``min_subperiod_wins`` sub-periods and a CI lower bound
+#:   > −``ci_floor_frac_of_base`` × |control net P&L|.
+#: * ``keep_control`` — E18.3 (``scripts/exit_policy_report.keep_rule``): keep the
+#:   control (the shipped policy) if its net P&L is not lower than the treatment's in
+#:   >= ``min_subperiod_wins`` sub-periods **and** its max DD is not higher than the
+#:   treatment's by more than ``dd_tolerance``; otherwise recommend the treatment.
+#: * ``regime_keep`` — E17.3 (:func:`arc.backtest.regime_compare.regime_verdict`): keep
+#:   the control if, in every profile, it is not worse than the treatment on net P&L and
+#:   max DD and the CI upper bound of (control − treatment) is > 0; roll back if it is
+#:   worse on both in any profile; otherwise keep, inconclusive.
+RuleKind = Literal["d25_challenge", "entry_filter", "keep_control", "regime_keep"]
+
+
 class StudyRule(BaseModel):
-    """The pre-registered D25 rule (:func:`arc.backtest.ranking.challenge`)."""
+    """The pre-registered decision rule (see :data:`RuleKind`)."""
 
     model_config = _FORBID
 
-    kind: Literal["d25_challenge"] = "d25_challenge"
+    kind: RuleKind = "d25_challenge"
     min_subperiod_wins: int = Field(2, ge=1)
     subperiods: list[str] = Field(default_factory=lambda: ["bear", "sideways", "bull"])
     bootstrap: BootstrapSpec = Field(default_factory=lambda: BootstrapSpec())
+    ci_floor_frac_of_base: float | None = Field(
+        None, ge=0.0, le=1.0, description="entry_filter: CI floor as a share of |control P&L|"
+    )
+    dd_tolerance: float | None = Field(
+        None, ge=0.0, le=1.0, description="keep_control: control's max DD may exceed by this"
+    )
+    verbatim: str | None = Field(
+        None, description="The original card's rule text, quoted unchanged in the report"
+    )
+
+    @model_validator(mode="after")
+    def _params(self) -> StudyRule:
+        if self.kind == "entry_filter" and self.ci_floor_frac_of_base is None:
+            msg = "decision_rule: entry_filter needs ci_floor_frac_of_base"
+            raise ValueError(msg)
+        if self.kind == "keep_control" and self.dd_tolerance is None:
+            msg = "decision_rule: keep_control needs dd_tolerance"
+            raise ValueError(msg)
+        return self
 
     @property
     def decision(self) -> DecisionRule:
@@ -235,8 +274,35 @@ class StudyRule(BaseModel):
         )
 
     def text(self) -> str:
-        """The rule exactly as the D25 decision table states it."""
-        return self.decision.text(self.bootstrap.ci)
+        """The rule as the deciding code states it (``verbatim`` is quoted separately)."""
+        ci = self.bootstrap.ci
+        subs = ", ".join(self.subperiods)
+        n = len(self.subperiods)
+        if self.kind == "entry_filter":
+            from arc.backtest.entry_filter import EntryFilterRule
+
+            return EntryFilterRule(
+                min_subperiods_not_lower=self.min_subperiod_wins,
+                ci_floor_frac_of_base=float(self.ci_floor_frac_of_base or 0.0),
+            ).text(ci, self.subperiods)
+        if self.kind == "keep_control":
+            return (
+                f"Keep the control if its net P&L is not lower than the treatment's in ≥ "
+                f"{self.min_subperiod_wins} of {n} trend sub-periods ({subs}) **and** its "
+                f"max drawdown is not higher than the treatment's by more than "
+                f"{float(self.dd_tolerance or 0.0):.0%}. Otherwise recommend the treatment "
+                f"(as a future XP arm, never a direct flip)."
+            )
+        if self.kind == "regime_keep":
+            return (
+                "Keep the control if, in every profile, it is not worse than the treatment "
+                "on net P&L **and** max drawdown, **and** the upper bound of the "
+                f"{ci:.0%} block-bootstrap CI of the daily P&L difference (control − "
+                "treatment) is > 0. Roll back to the treatment if the control is worse on "
+                "both net P&L and drawdown in any profile. Otherwise keep the control, "
+                "inconclusive."
+            )
+        return self.decision.text(ci)
 
 
 class StudySpec(BaseModel):
@@ -276,9 +342,19 @@ class StudySpec(BaseModel):
         return v
 
 
+#: Optional rule fields added by E7.14. Left out of the hash while unset, so a spec
+#: written before them (BT-1) keeps its hash and its ledger lines / holdout lock.
+_OPTIONAL_RULE_FIELDS: tuple[str, ...] = ("ci_floor_frac_of_base", "dd_tolerance", "verbatim")
+
+
 def study_hash(spec: StudySpec) -> str:
     """The pre-registration lock: canonical-JSON SHA-256 of the whole spec (E10.1)."""
-    return document_hash(spec.model_dump(mode="json"))
+    doc = spec.model_dump(mode="json")
+    rule = doc["decision_rule"]
+    for k in _OPTIONAL_RULE_FIELDS:
+        if rule.get(k) is None:
+            rule.pop(k, None)
+    return document_hash(doc)
 
 
 def arm_set_hash(spec: StudySpec) -> str:
@@ -559,20 +635,116 @@ def _primary(m: ArmMetrics, metric: str) -> float:
 def compare_runs(
     control: SimRun, treatment: SimRun, rule: StudyRule, *, primary: float = 0.0
 ) -> dict[str, Any]:
-    """The D25 rule, verbatim: :func:`challenge` (treatment vs control), plus the primary
-    metric's difference for the ladder's sign-flip check."""
-    row = challenge(
-        _as_rank_run(control), _as_rank_run(treatment), rule=rule.decision, boot=rule.bootstrap
-    )
+    """The spec's rule kind, verbatim (treatment vs control), plus the primary metric's
+    difference for the ladder's sign-flip check.
+
+    Every kind returns ``switch`` = "the rule recommends the treatment" (for
+    ``regime_keep`` that is the per-profile "control worse on both" leg; the study-level
+    verdict across profiles is :func:`regime_call`), ``call`` (plain words) and the
+    bootstrap CI of the daily P&L difference treatment − control.
+    """
+    from arc.backtest.ranking import _max_dd, block_bootstrap_ci, subperiod_stats
+
+    c, t = _as_rank_run(control), _as_rank_run(treatment)
+    boot = rule.bootstrap
+    if rule.kind == "entry_filter":
+        from arc.backtest.entry_filter import EntryFilterRule, entry_filter_challenge
+
+        row = entry_filter_challenge(
+            c,
+            t,
+            rule=EntryFilterRule(
+                min_subperiods_not_lower=rule.min_subperiod_wins,
+                ci_floor_frac_of_base=float(rule.ci_floor_frac_of_base or 0.0),
+            ),
+            subperiods=rule.decision,
+            boot=boot,
+        )
+        rec = bool(row["recommend"])
+        return {
+            "subperiods_won": int(row["subperiods_not_lower"]),  # type: ignore[call-overload]
+            "won": str(row["not_lower"]),
+            "pnl_diff": round(float(row["pnl_diff"]), 2),  # type: ignore[arg-type]
+            "ci_lo": round(float(row["ci_lo"]), 2),  # type: ignore[arg-type]
+            "ci_hi": round(float(row["ci_hi"]), 2),  # type: ignore[arg-type]
+            "ci_floor": round(float(row["ci_floor"]), 2),  # type: ignore[arg-type]
+            "smaller_dd": bool(row["smaller_dd"]),
+            "switch": rec,
+            "call": "recommend the forward experiment" if rec else "do not recommend",
+            "primary_diff": round(primary, 4),
+        }
+    if rule.kind in ("keep_control", "regime_keep"):
+        idx = c.equity.index.union(t.equity.index)
+        a = t.equity.reindex(idx).ffill().bfill()
+        b = c.equity.reindex(idx).ffill().bfill()
+        diff = (a.diff().fillna(0.0) - b.diff().fillna(0.0)).to_numpy(dtype=float)
+        point, lo, hi = block_bootstrap_ci(
+            diff, resamples=boot.resamples, block=boot.block_days, ci=boot.ci, seed=boot.seed
+        )
+        dd_c, dd_t = _max_dd(c.equity), _max_dd(t.equity)
+        pnl_c = float(c.trades["pnl"].sum()) if len(c.trades) else 0.0
+        pnl_t = float(t.trades["pnl"].sum()) if len(t.trades) else 0.0
+        out: dict[str, Any] = {
+            "pnl_diff": round(point, 2),
+            "ci_lo": round(lo, 2),
+            "ci_hi": round(hi, 2),
+            "max_dd_control": round(dd_c, 2),
+            "max_dd_treatment": round(dd_t, 2),
+            "primary_diff": round(primary, 4),
+        }
+        if rule.kind == "keep_control":
+            sc, st = subperiod_stats(c, rule.subperiods), subperiod_stats(t, rule.subperiods)
+            not_lower = [lab for lab in rule.subperiods if sc[lab][0] >= st[lab][0]]
+            tol = float(rule.dd_tolerance or 0.0)
+            dd_ok = dd_c <= dd_t * (1 + tol) if dd_t > 0 else dd_c <= 0
+            keep = len(not_lower) >= rule.min_subperiod_wins and dd_ok
+            return out | {
+                "subperiods_won": len(not_lower),
+                "won": ",".join(not_lower) or "–",
+                "dd_ok": bool(dd_ok),
+                "switch": not keep,
+                "call": "keep control" if keep else "recommend the treatment (future XP arm)",
+            }
+        # regime_keep: control vs treatment, per profile (the CI here is control − treatment)
+        pnl_ok, dd_ok = pnl_c >= pnl_t, dd_c <= dd_t
+        return out | {
+            "subperiods_won": 0,
+            "won": "–",
+            "pnl_not_worse": bool(pnl_ok),
+            "dd_not_worse": bool(dd_ok),
+            "ci_hi_control_minus_treatment": round(-lo, 2),
+            "switch": bool(not pnl_ok and not dd_ok),
+            "call": "roll back to the treatment"
+            if not pnl_ok and not dd_ok
+            else ("keep control" if pnl_ok and dd_ok and -lo > 0 else "keep, inconclusive"),
+        }
+    row = challenge(c, t, rule=rule.decision, boot=boot)
+    sw = bool(row["switch"])
     return {
         "subperiods_won": int(row["subperiods_won"]),  # type: ignore[call-overload]
         "won": str(row["won"]),
         "pnl_diff": round(float(row["pnl_diff"]), 2),  # type: ignore[arg-type]
         "ci_lo": round(float(row["ci_lo"]), 2),  # type: ignore[arg-type]
         "ci_hi": round(float(row["ci_hi"]), 2),  # type: ignore[arg-type]
-        "switch": bool(row["switch"]),
+        "switch": sw,
+        "call": "switch candidate" if sw else "keep control",
         "primary_diff": round(primary, 4),
     }
+
+
+def regime_call(verdicts: Mapping[str, Mapping[str, Mapping[str, Any]]], treatment: str) -> str:
+    """E17.3's study-level verdict across every profile (``regime_keep`` rows)."""
+    rows = [tr[treatment] for tr in verdicts.values() if treatment in tr]
+    if not rows:
+        return "keep, inconclusive"
+    if any(r["switch"] for r in rows):
+        return "roll back to the treatment"
+    if all(
+        r["pnl_not_worse"] and r["dd_not_worse"] and r["ci_hi_control_minus_treatment"] > 0
+        for r in rows
+    ):
+        return "keep control"
+    return "keep, inconclusive"
 
 
 def load_sectors(path: Path | None = None) -> dict[str, str]:
@@ -712,9 +884,10 @@ def segment_verdicts(
 def breakdowns(run: SimRun, sectors: Mapping[str, str]) -> dict[str, list[dict[str, Any]]]:
     t = run.trades
     if not len(t):
-        return {k: [] for k in ("regime", "tier", "sector", "etf", "liquidity")}
+        return {k: [] for k in ("regime", "structure", "tier", "sector", "etf", "liquidity")}
     return {
         "regime": _group(t, "trend"),
+        "structure": _group(t, t["kind"] if "kind" in t else pd.Series("?", index=t.index)),
         "tier": _group(t, t["tier"] if "tier" in t else pd.Series("rest", index=t.index)),
         "sector": _group(t, t["underlying"].map(lambda u: sectors.get(str(u), "unknown"))),
         "etf": _group(
@@ -953,6 +1126,8 @@ def build_report(
             "arm_set_hash": entry.arm_set_hash,
             "phase": entry.phase,
             "rule": spec.decision_rule.text(),
+            "rule_kind": spec.decision_rule.kind,
+            "rule_verbatim": spec.decision_rule.verbatim,
             "primary_metric": spec.primary_metric,
             "universe": entry.universe,
             "universe_ladder": list(spec.universe_ladder),
@@ -984,6 +1159,11 @@ def build_report(
         "breakdowns": brk,
         "segments": segs,
         "segment_verdicts": seg_verdicts,
+        "study_calls": (
+            {t: regime_call(entry.verdicts, t) for t in spec.arms.treatments}
+            if spec.decision_rule.kind == "regime_keep"
+            else {}
+        ),
         "ladder": ladder_flags(entries, spec, entry),
     }
 
@@ -1015,12 +1195,15 @@ def verdict_lines(payload: Mapping[str, Any]) -> list[str]:
     out = []
     for p, tr in payload["verdicts"].items():
         for t, v in tr.items():
-            call = "switch candidate" if v["switch"] else "keep control"
+            call = v.get("call") or ("switch candidate" if v["switch"] else "keep control")
             out.append(
-                f"{word} · {p} · {t} vs control: {call} (won {v['subperiods_won']} "
-                f"sub-periods [{v['won']}], P&L diff {v['pnl_diff']:,.0f}, "
+                f"{word} · {p} · {t} vs control: {call} (sub-periods {v['subperiods_won']} "
+                f"[{v['won']}], P&L diff {v['pnl_diff']:,.0f}, "
                 f"CI [{v['ci_lo']:,.0f}, {v['ci_hi']:,.0f}])"
             )
+    if payload["header"].get("rule_kind") == "regime_keep":
+        for t, call in payload.get("study_calls", {}).items():
+            out.append(f"{word} · all profiles · {t} vs control: {call}")
     return out
 
 
@@ -1060,6 +1243,11 @@ def render_report(payload: Mapping[str, Any]) -> str:
         "",
         f"> {h['rule']}",
         "",
+        *(
+            [f"Original card's wording: _{h['rule_verbatim']}_", ""]
+            if h.get("rule_verbatim")
+            else []
+        ),
         *(f"- {s}" for s in verdict_lines(payload)),
         "",
         "A verdict only recommends: a live change still goes through D44 "
@@ -1166,6 +1354,7 @@ def render_report(payload: Mapping[str, Any]) -> str:
     lines += [_md_table(sp)]
     for title, key in (
         ("By regime", "regime"),
+        ("By structure", "structure"),
         ("By universe tier", "tier"),
         ("By sector", "sector"),
         ("ETF vs single stock", "etf"),
@@ -1175,7 +1364,7 @@ def render_report(payload: Mapping[str, Any]) -> str:
             {"profile": p, "arm": arm, **row}
             for p, by in payload["breakdowns"].items()
             for arm, d in by.items()
-            for row in d[key]
+            for row in d.get(key, [])
         ]
         lines += [f"## {title}", "", _md_table(b)]
     lines += [

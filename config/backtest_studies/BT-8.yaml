@@ -1,0 +1,43 @@
+# E7.14 (D84) data-only control: the original E7.5 six tickers, the E7.5 per-ticker
+# walk (top-1 per ticker), 2024-03 -> 2026-07, old data (alpaca trade closes, smile
+# marks) vs new data (ThetaData closing NBBO, quoted marks). Same simulator, so the
+# difference is the data alone. Run with --tickers SPY,QQQ,IWM,AAPL,NVDA,TSLA.
+# The window lies inside the D84 2024+ holdout, so like BT-1 this spec splits its own
+# range: dev = the E7.5 window, holdout = the sessions after it.
+id: BT-8
+hypothesis: >-
+  Data-only control: switching the E7.5 six-ticker walk from Alpaca smile marks to
+  ThetaData quoted marks changes the incumbents' results by less than the D25 CI.
+owner: owner
+created: 2026-10-15
+arms:
+  control:                       # old data: alpaca partition, smile marks
+    overlay:
+      ranking:
+        backtest:
+          sim: {selection: per_ticker}
+          data: {provider: alpaca, fallback_provider: null, marks: smile}
+  treatments:
+    t1:                          # new data: thetadata partition, quoted marks
+      overlay:
+        ranking:
+          backtest:
+            sim: {selection: per_ticker}
+            data: {provider: thetadata, fallback_provider: null, marks: quoted}
+profiles: [margin, cash_debit]
+universe_ladder: [c125]
+period:
+  dev_start: 2024-03-01
+  dev_end: 2026-07-31
+  holdout_start: 2026-08-03
+  holdout_end: null
+decision_rule:
+  kind: d25_challenge
+  min_subperiod_wins: 2
+  subperiods: [bear, sideways, bull]
+  bootstrap: {resamples: 2000, block_days: 20, ci: 0.90, seed: 7}
+  verbatim: >-
+    The D25 rule with the old data as the incumbent: the new data "differs" only if it
+    passes the rule. Descriptive: no default depends on it.
+primary_metric: net_pnl
+max_variants: 3

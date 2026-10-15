@@ -1,0 +1,31 @@
+# E7.14 (D84) re-run of E7.5 (ranking): the challenger rankers vs each profile's
+# incumbent (margin credit_width, cash_debit debit_width) on real closing quotes,
+# live-shaped cross-name simulator. Its control runs on C125, C250 and C500 are also
+# the universe-size study (same dev period, incumbent setup).
+id: BT-3
+hypothesis: >-
+  E7.5 re-run: no challenger ranker (managed_net_ev, rorc_day, rorc_day_vrp) beats the
+  profile's incumbent under the D25 rule on real quotes.
+owner: owner
+created: 2026-10-15
+arms:
+  control: {}                    # ranker = the profile's incumbent
+  treatments:
+    t1: {ranker: managed_net_ev}
+    t2: {ranker: rorc_day}
+    t3: {ranker: rorc_day_vrp}
+profiles: [margin, cash_debit]
+universe_ladder: [c125, c250, c500]
+decision_rule:
+  kind: d25_challenge
+  min_subperiod_wins: 2
+  subperiods: [bear, sideways, bull]
+  bootstrap: {resamples: 2000, block_days: 20, ci: 0.90, seed: 7}
+  verbatim: >-
+    Switch the default to a challenger only if it beats the incumbent on net P&L
+    (higher) **and** max drawdown (not larger) in ≥ 2 of 3 sub-periods (bear, sideways,
+    bull trend regime at entry), **and** the 90% block-bootstrap CI of its daily P&L
+    difference vs the incumbent excludes 0 (lower bound > 0). Otherwise keep the
+    incumbent and report the closest challenger.
+primary_metric: net_pnl
+max_variants: 3

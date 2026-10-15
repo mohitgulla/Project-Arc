@@ -1,0 +1,27 @@
+# E7.14 (D84) re-run of E17.3: regime model v2 (the backtest sim default, control) vs
+# v1 stance labels, each profile's incumbent ranker.
+id: BT-7
+hypothesis: >-
+  E17.3 re-run: regime v2's stance labels are not worse than v1's on net P&L and max
+  drawdown in either profile.
+owner: owner
+created: 2026-10-15
+arms:
+  control: {}                    # sim.regime_model v2
+  treatments:
+    t1:
+      overlay: {ranking: {backtest: {sim: {regime_model: v1}}}}
+profiles: [margin, cash_debit]
+universe_ladder: [c125, c500]
+decision_rule:
+  kind: regime_keep
+  subperiods: [bear, sideways, bull]
+  bootstrap: {resamples: 2000, block_days: 20, ci: 0.90, seed: 7}
+  verbatim: >-
+    Use the incumbent ranker (margin credit_width, cash_debit debit_width). Keep v2 if,
+    in both profiles, v2 is not worse than v1 on net P&L **and** max drawdown, **and**
+    the upper bound of the 90 % block-bootstrap CI of the daily P&L difference (v2 − v1)
+    is > 0. Roll back to v1 (regime.model: v1) if v2 is worse on both net P&L and
+    drawdown in either profile. Otherwise keep v2, inconclusive.
+primary_metric: net_pnl
+max_variants: 3
