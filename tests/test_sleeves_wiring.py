@@ -111,7 +111,7 @@ class TestScannerAndPrompt:
     def test_shipped_params_are_two_sleeves(self) -> None:
         """E22.4 (D97): the shipped cash_debit scanner scans both sleeve windows."""
         p = ScanParams.from_settings(cfg())
-        assert (p.dte_min, p.dte_max, p.dte_windows) == (10, 60, [(10, 29), (30, 60)])
+        assert (p.dte_min, p.dte_max, p.dte_windows) == (10, 60, [(10, 35), (36, 60)])
 
     def test_sleeved_params(self, tmp_path: Path) -> None:
         p = ScanParams.from_settings(cfg(sleeved_file(tmp_path)))
@@ -124,7 +124,7 @@ class TestScannerAndPrompt:
 
     def test_shipped_prompt_text_names_both_sleeves(self) -> None:
         t = entry_terms(cfg())
-        assert t.window == "10-29 DTE (short) / 30-60 DTE (swing)"
+        assert t.window == "10-35 DTE (short) / 36-60 DTE (swing)"
 
     def test_sleeved_prompt_text(self, tmp_path: Path) -> None:
         t = entry_terms(cfg(sleeved_file(tmp_path)))

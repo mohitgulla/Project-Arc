@@ -361,8 +361,10 @@ def test_gate_never_imports_the_rule() -> None:
 IDEAS = {"PLTR": "bullish", "NVDA": "bullish", "XOM": "bearish"}
 MON = dt.datetime(2026, 9, 28, 10, 30, tzinfo=FIXTURE_NOW.tzinfo)  # two sessions later
 # main (pre-E23.2) with the same two runs: anti-chase on (RSI 60), range edges off
-MAIN_PROMPT_SHAS = ["69c800bc1349099b3b0df71bfecc9aa156d004c7e0d00ef5541a223eea794a24"]
-MAIN_JOURNAL_SHA = "19ac3330a53b28c10f1b4185abce331afdb74410cfa969b103fb4976437d4ea6"
+# D118 re-take (sleeves 10-35 / 36-60): the prompt changes only in the entry-window line;
+# the journal gains three NVDA `menu_not_chosen` rows (30-35 DTE expiries now short).
+MAIN_PROMPT_SHAS = ["5f5eb361cda42c8c7fb333cedb1ebd5ceae31111d3362841b347687cd931ccb7"]
+MAIN_JOURNAL_SHA = "41e892467b623d3b9ab70486a6a6bbb841b88d429dd596b5fd68577240c40e1c"
 
 
 def _routines(pullback: PullbackWatchSettings | None = None, **anti: Any) -> RoutinesConfig:

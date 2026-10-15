@@ -2,7 +2,7 @@
 
 Fixture: the Tower history store (``scripts/tower_fixture_db.py --history``) with entry
 DTEs rewritten so closed trades sit in both sleeves of the cash_debit profile
-(``short`` 10–29, ``swing`` 30–60), plus a pre-D97 30–60 trade (stored before the D80
+(``short`` 10–35, ``swing`` 36–60 since D118), plus a pre-D97 30–60 trade (stored before the D80
 epoch, no stored sleeve: maps to ``swing`` by its DTE) and trades whose DTE fits neither
 (``other``).
 """
@@ -45,8 +45,8 @@ from arc.utils.calendar import ET
 REPO = Path(__file__).resolve().parents[1]
 NOW = dt.datetime(2026, 9, 28, 15, 40, tzinfo=ET)
 SLEEVES = [
-    DteSleeve(name="short", dte_min=10, dte_max=29, max_positions=5, exit_policy="short"),
-    DteSleeve(name="swing", dte_min=30, dte_max=60, max_positions=5),
+    DteSleeve(name="short", dte_min=10, dte_max=35, max_positions=5, exit_policy="short"),
+    DteSleeve(name="swing", dte_min=36, dte_max=60, max_positions=5),
 ]
 EPOCH = dt.datetime(2026, 8, 1, tzinfo=ET)  # the fixture history runs ~Jun..Sep
 
@@ -105,7 +105,7 @@ def layout(tmp_path_factory: pytest.TempPathFactory) -> SimpleNamespace:
         _set_dte(conn, sid, dte)
     # open book: 2 short, 1 swing
     opens = [r[0] for r in conn.execute("SELECT id FROM open_structures WHERE status = 'open'")]
-    for sid, dte in zip(opens, (12, 25, 33), strict=False):
+    for sid, dte in zip(opens, (12, 25, 40), strict=False):
         _set_dte(conn, sid, dte)
     conn.execute(
         "INSERT OR REPLACE INTO routine_state(key, value, updated_at) VALUES (?, ?, ?)",
@@ -139,7 +139,7 @@ def test_sleeve_is_derived_from_entry_dte(layout: SimpleNamespace, conn) -> None
         assert got[sid] == name
     assert got[layout.pre] == "swing"  # pre-D97 45 DTE, no stored sleeve
     assert {got[s] for s in layout.sleeve} == {"short", "swing", OTHER}
-    assert sleeve_name(SLEEVES, 29) == "short" and sleeve_name(SLEEVES, 30) == "swing"
+    assert sleeve_name(SLEEVES, 35) == "short" and sleeve_name(SLEEVES, 36) == "swing"
     assert sleeve_name(SLEEVES, None) == OTHER and sleeve_name(SLEEVES, 61) == OTHER
 
 
@@ -156,20 +156,23 @@ def test_sleeve_report_counts_every_trade_once(layout: SimpleNamespace, conn) ->
         if mine:
             assert s.mean_pnl == pytest.approx(s.realised / len(mine))
             assert s.win_rate == pytest.approx(sum(c.realised_pnl > 0 for c in mine) / len(mine))
+            gw = sum(c.realised_pnl for c in mine if c.realised_pnl > 0)
+            gl = sum(c.realised_pnl for c in mine if c.realised_pnl <= 0)
+            assert s.profit_factor == (pytest.approx(gw / -gl) if gl < 0 else None)
             assert sum(s.exit_reasons.values()) == len(mine)
             assert s.mean_days_held is not None and s.mean_days_held >= 0
             assert s.mean_net_pnl is not None and s.mean_net_pnl <= s.mean_pnl + 1e-9
             assert s.ci_low is not None and s.ci_low <= s.mean_net_pnl <= s.ci_high  # type: ignore[operator]
     other = rep.sleeves[-1]
     assert other.verdict is None and other.window is None
-    assert rep.sleeves[0].window == "10–29" and rep.sleeves[0].max_positions == 5
+    assert rep.sleeves[0].window == "10–35" and rep.sleeves[0].max_positions == 5
     assert rep.measurement_start == EPOCH
     assert (
         sum(s.opens for s in rep.sleeves)
         == conn.execute("SELECT COUNT(*) FROM open_structures").fetchone()[0]
     )
     text = "\n".join(sleeve_report_lines(rep))
-    assert "short 10–29 DTE: opens" in text and "swing 30–60 DTE" in text
+    assert "short 10–35 DTE: opens" in text and "swing 36–60 DTE" in text
     assert "other (entry DTE fits no sleeve)" in text
     assert "rule (D97)" in text
 
@@ -236,7 +239,7 @@ def test_day_recap_lines(layout: SimpleNamespace, conn) -> None:  # noqa: ANN001
         conn, start=EPOCH, end=NOW, now=NOW
     )).astimezone(ET).date()  # fmt: skip
     lines = day_sleeve_lines(conn, day, SLEEVES, now=NOW)
-    assert lines[0].startswith("Short 10–29: ") and lines[1].startswith("Swing 30–60: ")
+    assert lines[0].startswith("Short 10–35: ") and lines[1].startswith("Swing 36–60: ")
     assert lines[0].endswith("2/5 open") and lines[1].endswith("1/5 open")
     assert all(" opened · " in x and " closed" in x for x in lines)
     # a single-window profile keeps the recap unchanged
@@ -251,8 +254,8 @@ def test_day_recap_line_format() -> None:
     c = connect(":memory:")
     migrate(c)
     assert day_sleeve_lines(c, NOW.date(), SLEEVES, now=NOW) == [
-        "Short 10–29: 0 opened · 0 closed · 0/5 open",
-        "Swing 30–60: 0 opened · 0 closed · 0/5 open",
+        "Short 10–35: 0 opened · 0 closed · 0/5 open",
+        "Swing 36–60: 0 opened · 0 closed · 0/5 open",
     ]
 
 
@@ -264,7 +267,7 @@ def test_reconcile_recap_has_no_sleeve_lines(layout: SimpleNamespace, conn) -> N
     view = _day_recap(ctx, report)  # type: ignore[arg-type]
     assert view is not None
     # D109: the Day Recap no longer carries per-sleeve lines
-    assert "Short 10–29" not in view.text and "Swing 30–60" not in view.text
+    assert "Short 10–35" not in view.text and "Swing 36–60" not in view.text
 
 
 # ---------------------------------------------------------------------------
@@ -275,8 +278,8 @@ def test_reconcile_recap_has_no_sleeve_lines(layout: SimpleNamespace, conn) -> N
 def test_meta_and_usage(conn) -> None:  # noqa: ANN001
     meta = sleeve_meta(_settings())
     assert [(m.label, m.dte_min, m.dte_max, m.max_positions) for m in meta] == [
-        ("Short", 10, 29, 5),
-        ("Swing", 30, 60, 5),
+        ("Short", 10, 35, 5),
+        ("Swing", 36, 60, 5),
     ]
     short_exit = {e.kind: e.summary for e in meta[0].exits}
     assert "close at 3 DTE" in short_exit["vertical_debit"]

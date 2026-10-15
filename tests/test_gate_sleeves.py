@@ -250,17 +250,19 @@ class TestSettings:
         ]
 
     def test_shipped_cash_debit_is_d97_sleeves(self) -> None:
-        """E22.4 (D97): the shipped cash_debit profile carries the short + swing sleeves."""
+        """E22.4 (D97): the shipped cash_debit profile carries the short + swing sleeves
+        (D118: short 10-35 / swing 36-60, was 10-29 / 30-60)."""
         s = cfg()
         assert s.profile.has_sleeves
         assert s.entry_dte_window == (10, 60)
         assert [(x.name, x.dte_min, x.dte_max, x.max_positions) for x in s.entry_sleeves] == [
-            ("short", 10, 29, 5),
-            ("swing", 30, 60, 5),
+            ("short", 10, 35, 5),
+            ("swing", 36, 60, 5),
         ]
         assert sum(x.max_positions or 0 for x in s.entry_sleeves) == s.max_open_positions
         assert s.exit_block_for_dte(20) == "short"
-        assert s.exit_block_for_dte(30) is None  # DTE 30 belongs to swing
+        assert s.exit_block_for_dte(35) == "short"  # D118: DTE 30-35 moved to short
+        assert s.exit_block_for_dte(36) is None  # DTE 36 belongs to swing
         assert s.exit_block_for_dte(45) is None
 
     def test_single_window_cash_debit_is_one_default_sleeve(self, tmp_path: Path) -> None:

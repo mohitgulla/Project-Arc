@@ -1,5 +1,5 @@
 /**
- * E22.5 (D97): entry-DTE sleeves (Short 10–29 · Swing 30–60) for the Sleeve filter on
+ * E22.5 (D97): entry-DTE sleeves (Short 10–35 · Swing 36–60, D118) for the Sleeve filter on
  * Trades and Performance and the Overview slot line. Pure, unit-tested in sleeves.test.ts.
  * The sleeves come from `/api/meta` (the effective profile); `[]` = a single-window
  * profile, which shows no filter.
@@ -42,7 +42,7 @@ export function sleeveName(name: string): string {
     .join(" ");
 }
 
-/** "Short 10–29 DTE · 5 slots" */
+/** "Short 10–35 DTE · 5 slots" */
 export function sleeveWindow(s: SleeveMeta): string {
   const slots = s.max_positions == null ? "no slot cap" : `${s.max_positions} slots`;
   return `${s.label} ${s.dte_min}–${s.dte_max} DTE · ${slots}`;

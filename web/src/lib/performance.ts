@@ -79,8 +79,7 @@ export const EXPLAIN = {
     tip: "Trades bucketed by stated confidence; a hit rate below the bucket = over-confident.",
   },
   sleeves: {
-    sub: "Per entry-DTE sleeve · report only",
-    tip: "Read at 30 closed or 6 weeks: keep if mean net P&L ≥ 0; shrink to 2 slots if its 90% CI is below 0. Else collect.",
+    tip: "Closed trades by entry DTE: Short 10–35, Swing 36–60. P&L is the mean % of max loss; profit factor is gross wins ÷ gross losses.",
   },
   breakdowns: {
     tip: "Bar = row P&L relative to the largest row. Reason codes count a trade under every persona code on its open and close.",
@@ -192,14 +191,22 @@ export function costBars(p: Performance): Array<Record<string, number | string>>
 /** Trades list URL for a breakdown row (row click -> Trades pre-filtered). */
 export type SleeveStats = Schemas["SleeveStats"];
 
-/** Title Case keep/shrink/collect (D97 verdict). */
-export const VERDICT_LABEL: Record<NonNullable<SleeveStats["verdict"]>, string> = {
-  keep: "Keep",
-  shrink: "Shrink To 2 Slots",
-  collect: "Keep Collecting",
-};
+/**
+ * The Sleeves card's six metrics, 3 + 3 (D118): outcome (Mean, P&L, Profit factor) on the
+ * left, behaviour (Days held, Slippage, MAE / MFE) on the right.
+ */
+export function sleeveMetrics(s: SleeveStats): Array<{ label: string; value: string }> {
+  return [
+    { label: "Mean", value: money(s.mean_pnl) },
+    { label: "P&L", value: pct(s.mean_pct_of_max_loss) },
+    { label: "Profit factor", value: ratio(s.profit_factor) },
+    { label: "Days held", value: ratio(s.mean_days_held, 1) },
+    { label: "Slippage", value: money(s.entry_slippage) },
+    { label: "MAE / MFE", value: `${money(s.mean_mae)} / ${money(s.mean_mfe)}` },
+  ];
+}
 
-/** "Short 10–29 DTE" / "Other" (entry DTE in no sleeve). */
+/** "Short 10–35 DTE" / "Other" (entry DTE in no sleeve). */
 export function sleeveTitle(s: SleeveStats): string {
   const name = s.sleeve.charAt(0).toUpperCase() + s.sleeve.slice(1);
   return s.dte_min == null || s.dte_max == null ? name : `${name} ${s.dte_min}–${s.dte_max} DTE`;
