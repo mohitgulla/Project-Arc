@@ -1,7 +1,9 @@
 # E7.14 (D84) re-run of E7.2 / D4: managed exits vs hold-to-expiry on the D4 structure x
-# delta menus, on real closing quotes, C125 dev -> C500 confirm -> holdout. The
-# structure x delta grid is the report's "By structure" / "By spec" tables; regime and
-# sub-period splits are the standard tables. Report only: nothing flips.
+# delta menus, on real closing quotes. The structure x delta grid is the report's
+# "By structure" / "By spec" tables; regime and sub-period splits are the standard
+# tables. Report only: nothing flips. Ladder C125 only: the hold arm's exit hash differs
+# from the base menus, so a C500 rung would rebuild 375 names cold twice (dev + holdout,
+# ~9 h); the base-config C500 confirmation is BT-3/5/7.
 id: BT-2
 hypothesis: >-
   E7.2 / D4 re-run: the shipped managed-exit policy (config/exits.yaml) does not beat
@@ -23,7 +25,7 @@ arms:
   treatments:
     t1: {}                       # the shipped policy exits (config/exits.yaml as on main)
 profiles: [margin, cash_debit]
-universe_ladder: [c125, c500]
+universe_ladder: [c125]
 decision_rule:
   kind: d25_challenge
   min_subperiod_wins: 2

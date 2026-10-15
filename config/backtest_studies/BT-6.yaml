@@ -1,7 +1,8 @@
 # E7.14 (D84) re-run of E18.3: exit policy v2 (shipped, control) vs v1 and hold.
 # v1 = take profit 100 % of the debit, no profit lock (scripts/exit_policy_report.py
 # variant_overrides); hold = no take profit, stop, lock or DTE exit on the debit kinds.
-# The backtest has no sleeves (D97 short-sleeve exits are not modelled).
+# The backtest has no sleeves (D97 short-sleeve exits are not modelled). Ladder C125
+# only (E18.3 ran on C125-sized data; v1/hold rebuild cold on any wider rung).
 id: BT-6
 hypothesis: >-
   E18.3 re-run: exit policy v2 keeps under the E18.3 rule against v1 (and against hold)
@@ -30,7 +31,7 @@ arms:
             long_call: {take_profit_pct_of_debit: null, stop: null, close_at_dte: null, profit_lock: null}
             long_put: {take_profit_pct_of_debit: null, stop: null, close_at_dte: null, profit_lock: null}
 profiles: [cash_debit]
-universe_ladder: [c125, c500]
+universe_ladder: [c125]
 decision_rule:
   kind: keep_control
   min_subperiod_wins: 2
