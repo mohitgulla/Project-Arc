@@ -30,6 +30,7 @@ from arc.gate.band import as_grid
 from arc.gate.inputs import AccountSnapshot, ClosedLot, MarketSnapshot, Portfolio, Position, Quote
 from arc.models import Greeks, Leg, LegIntent
 from arc.scanner.iv import atm_iv
+from arc.store.execution import reserved_open_max_loss
 from arc.structures import MarketInputs, analyze, max_gain_loss, net_greeks, parse_occ
 from arc.utils.calendar import ET, dte_calendar
 
@@ -299,6 +300,31 @@ def open_entry_dtes(
     return [entry_dtes.get(label) for _, label, _ in _group_legs(conn, positions)]
 
 
+def deployed_book_max_loss(
+    conn: sqlite3.Connection, positions: Sequence[BrokerPosition], *, now: _dt.datetime
+) -> Decimal:
+    """D116: the book's deployed max loss without valuing it (no spot, no quotes).
+
+    Σ max loss of the same position groups :func:`build_portfolio` builds, plus
+    :func:`reserved_open_max_loss`; equal to
+    ``arc.gate.caps.deployed_max_loss(build_portfolio(...))``. For prompt lines and the
+    free-slots line, which run before (or without) a valued book. Raises
+    :class:`PortfolioError` on a group that cannot be valued or has unbounded risk.
+    """
+    total = Decimal(0)
+    for root, label, legs in _group_legs(conn, positions):
+        try:
+            _, max_loss = max_gain_loss(legs)
+        except Exception as exc:
+            msg = f"cannot value open {root} position ({label}): {exc}"
+            raise PortfolioError(msg) from exc
+        if max_loss is None:
+            msg = f"open {root} position ({label}) has unbounded risk"
+            raise PortfolioError(msg)
+        total += max_loss
+    return total + reserved_open_max_loss(conn, now=now)
+
+
 def build_portfolio(
     conn: sqlite3.Connection,
     positions: Sequence[BrokerPosition],
@@ -309,8 +335,12 @@ def build_portfolio(
     r: float,
     spot_max_spread_pct: float = DEFAULT_SPOT_MAX_SPREAD_PCT,
     delta_breakdown: dict[str, dict[str, float | str]] | None = None,
+    exclude_reserved: str | None = None,
 ) -> Portfolio:
     """Open option positions (max loss per underlying + net Greeks) plus recent closed lots.
+
+    D116: ``reserved_max_loss`` is :func:`reserved_open_max_loss` (in-flight opens,
+    minus *exclude_reserved*, the proposal being re-gated).
 
     D57: ``dollar_delta`` sums each root's net Δ (share-eq) × that root's spot (the same
     spot its Greeks were priced at). D62: ``beta_dollar_delta`` sums the same terms ×
@@ -421,6 +451,7 @@ def build_portfolio(
         greeks=greeks,
         dollar_delta=dollar_delta,
         beta_dollar_delta=beta_dollar_delta,
+        reserved_max_loss=reserved_open_max_loss(conn, now=now, exclude=exclude_reserved),
         closed_lots=lots,
         legs=dict(held),
         opened_today=frozenset(opened_today_symbols(conn, today)),

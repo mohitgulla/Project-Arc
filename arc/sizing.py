@@ -3,7 +3,10 @@
     budget    = cap_pct × equity − existing max loss on the same underlying
     contracts = min(Risk.sizing_suggestion, floor(budget / max_loss_per_contract))
 
-with ``cap_pct`` = ``ArcSettings.max_alloc_pct`` (5%, PLAN §5). At least one
+with ``cap_pct`` = the D116 tiered per-underlying cap (:func:`arc.gate.caps.alloc_tier`:
+``max_alloc_pct`` 15% while deployed max loss < 60% of equity, else
+``max_alloc_pct_reduced`` 10%; PLAN §5), and ``cap_label`` naming that tier in the
+no-trade reason. At least one
 contract is proposed when a single contract fits under the remaining budget;
 otherwise there is no trade. The Risk persona's suggestion is advisory: it can
 only lower the count, never raise it above the cap. A suggestion of 0 is Risk
@@ -91,6 +94,7 @@ def size_contracts(
     existing_max_loss: Decimal = Decimal(0),
     cash_available: Decimal | None = None,
     cash_per_contract: Decimal | None = None,
+    cap_label: str | None = None,
 ) -> SizingResult:
     """Apply D18 against the per-underlying budget still free (see module doc).
 
@@ -123,19 +127,20 @@ def size_contracts(
     if equity <= 0:
         return none("invalid_input", f"equity {equity} is not positive")
     budget = Decimal(str(cap_pct)) * equity
+    tier = f" ({cap_label})" if cap_label else ""
     remaining = max(budget - existing, Decimal(0))
     cap = int((remaining / max_loss_per_contract).to_integral_value(rounding=ROUND_FLOOR))
     if cap < 1:
         if existing > 0:
             return none(
                 "budget_exhausted",
-                f"existing max loss {existing} leaves {remaining} of the {budget} cap; "
+                f"existing max loss {existing} leaves {remaining} of the {budget} cap{tier}; "
                 f"one contract needs {max_loss_per_contract}",
                 cap,
             )
         return none(
             "cap_zero",
-            f"one contract (max loss {max_loss_per_contract}) exceeds the {budget} cap",
+            f"one contract (max loss {max_loss_per_contract}) exceeds the {budget} cap{tier}",
             cap,
         )
     if suggestion < 1:

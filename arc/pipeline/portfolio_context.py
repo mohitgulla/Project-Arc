@@ -25,6 +25,7 @@ import structlog
 import yaml
 from pydantic import ConfigDict
 
+from arc.gate.caps import AllocTier, alloc_tier, deployed_max_loss
 from arc.models import Greeks, Stance, Structure
 from arc.positions.evaluate import PositionReview
 from arc.positions.portfolio import (
@@ -61,6 +62,7 @@ __all__ = [
     "PortfolioFlag",
     "PortfolioPosition",
     "build_portfolio_context",
+    "cap_phrase",
     "empty_portfolio_line",
     "exit_block_entries",
     "load_industries",
@@ -329,6 +331,55 @@ def _shares(totals: Mapping[str, float], total: float) -> dict[str, float]:
     return {k: round(v / total, 4) for k, v in sorted(totals.items(), key=lambda kv: -kv[1])}
 
 
+def _alloc_tier(
+    conn: sqlite3.Connection,
+    settings: ArcSettings,
+    equity: Decimal,
+    portfolio: Portfolio | None,
+    as_opened_total: Decimal,
+    now: _dt.datetime,
+) -> AllocTier:
+    """D116: the per-underlying tier for this book (valued book first, else as opened)."""
+    from arc.store.execution import reserved_open_max_loss
+
+    deployed = (
+        deployed_max_loss(portfolio)
+        if portfolio is not None
+        else as_opened_total + reserved_open_max_loss(conn, now=now)
+    )
+    return alloc_tier(deployed, equity, settings)
+
+
+def _alloc_thresholds(tier: AllocTier) -> dict[str, float]:
+    """``thresholds`` keys for the active tier (``max_alloc_pct`` is the active cap)."""
+    return {
+        "max_alloc_pct": float(tier.pct),
+        "alloc_tier_threshold_pct": float(tier.threshold_pct),
+        "alloc_deployed_pct": float(tier.deployed_pct) if tier.deployed_pct is not None else 0.0,
+        "alloc_tier_reduced": 1.0 if tier.tier == "reduced" else 0.0,
+    }
+
+
+def cap_phrase(tier: AllocTier) -> str:
+    """``15% of equity max loss per underlying (15% tier, deployed 7% < 60%)``."""
+    return f"{tier.pct:.0%} of equity max loss per underlying ({tier.describe()})"
+
+
+def _ctx_cap_phrase(pc: PortfolioContext, settings: ArcSettings) -> str:
+    """The cap phrase from a stored context's thresholds (older entries: base setting)."""
+    th = pc.thresholds
+    if "alloc_tier_threshold_pct" not in th:
+        return f"{settings.max_alloc_pct:.0%} of equity max loss per underlying"
+    tier = AllocTier(
+        pct=Decimal(str(th["max_alloc_pct"])),
+        tier="reduced" if th.get("alloc_tier_reduced") else "base",
+        deployed=Decimal(0),
+        deployed_pct=Decimal(str(th.get("alloc_deployed_pct", 0.0))),
+        threshold_pct=Decimal(str(th["alloc_tier_threshold_pct"])),
+    )
+    return cap_phrase(tier)
+
+
 def build_portfolio_context(
     conn: sqlite3.Connection,
     env: PipelineEnv,
@@ -398,9 +449,11 @@ def build_portfolio_context(
         "stance_max_pct": stance_max,
         "expiry_max_pct": expiry_max,
         "greek_near_cap_pct": settings.portfolio_greek_near_cap_pct,
-        "max_alloc_pct": settings.max_alloc_pct,
     }
     if not rows:
+        thresholds |= _alloc_thresholds(
+            _alloc_tier(conn, settings, info.equity, portfolio, Decimal(0), now)
+        )
         return PortfolioContext(as_of=now, empty=True, account=account, thresholds=thresholds)
 
     positions: list[PortfolioPosition] = []
@@ -551,7 +604,10 @@ def build_portfolio_context(
         flags.append("beta_delta_near_cap")
     if vega.pct_used is not None and vega.pct_used >= near:
         flags.append("vega_near_cap")
-    cap_usd = settings.max_alloc_pct * equity
+    # D116: the active per-underlying tier (the gate's own helper, same deployed sum)
+    tier = _alloc_tier(conn, settings, info.equity, portfolio, Decimal(str(total)), now)
+    thresholds |= _alloc_thresholds(tier)
+    cap_usd = float(tier.pct) * equity
     at_cap = sorted(t for t, v in by_under.items() if cap_usd > 0 and v >= cap_usd * 0.999)
 
     aggregates = PortfolioAggregates(
@@ -594,12 +650,18 @@ def build_portfolio_context(
 # ---------------------------------------------------------------------------
 
 
-def empty_portfolio_line(info: AccountInfo, settings: ArcSettings) -> str:
-    """The one portfolio line an empty book puts in Research prompt."""
+def empty_portfolio_line(
+    info: AccountInfo, settings: ArcSettings, tier: AllocTier | None = None
+) -> str:
+    """The one portfolio line an empty book puts in Research prompt.
+
+    D116: *tier* is the active per-underlying tier (default: an empty book's, i.e.
+    nothing deployed).
+    """
+    tier = tier or alloc_tier(Decimal(0), Decimal(str(info.equity)), settings)
     return (
         f"Portfolio: no open positions. Equity ${_f(info.equity):,.2f}. Max "
-        f"{settings.max_open_positions} positions, {settings.max_alloc_pct:.0%} of equity max "
-        "loss per underlying."
+        f"{settings.max_open_positions} positions, {cap_phrase(tier)}."
     )
 
 
@@ -703,8 +765,7 @@ def render_portfolio_context(
     if pc.empty or pc.aggregates is None:
         return (
             f"Portfolio: no open positions. Equity ${a.equity:,.2f}. Max "
-            f"{settings.max_open_positions} positions, {settings.max_alloc_pct:.0%} of equity "
-            "max loss per underlying."
+            f"{settings.max_open_positions} positions, {_ctx_cap_phrase(pc, settings)}."
         )
     ag = pc.aggregates
     limit = max_positions if max_positions is not None else settings.portfolio_context_max_positions
@@ -713,7 +774,7 @@ def render_portfolio_context(
         f"Equity ${a.equity:,.2f} (day P&L {day}, open P&L {a.open_pnl_total:+,.0f}). "
         f"Cash ${a.cash:,.0f}, buying power ${a.buying_power:,.0f}. "
         f"{ag.positions} of {ag.max_positions} positions open; "
-        f"{settings.max_alloc_pct:.0%} of equity max loss per underlying."
+        f"{_ctx_cap_phrase(pc, settings)}."
         + (" HALTED." if a.halted else "")
         + (
             f" Order budget tier: {a.order_budget_tier}." if a.order_budget_tier != "normal" else ""

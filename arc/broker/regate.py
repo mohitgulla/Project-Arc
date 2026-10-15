@@ -306,6 +306,7 @@ def _run(
         wash_sale_days=gs.wash_sale_days,
         r=gs.scanner_risk_free_rate,
         spot_max_spread_pct=gs.spot_max_spread_pct,
+        exclude_reserved=own,  # D116: the order being re-gated is not its own deployed
     )
     decision = evaluate_with_halt(
         HaltSwitch(HaltRepo(conn)),

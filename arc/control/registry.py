@@ -753,14 +753,40 @@ _STATIC: tuple[Tunable, ...] = (
         "max_alloc_pct",
         Group.RISK,
         _F,
-        "D18 cap: max loss per underlying (existing + new) as a share of equity; also the "
-        "sizing cap. Gate rule per_underlying_limit.",
+        "D116 base tier of the D18 cap: max loss per underlying (existing + new) as a share "
+        "of equity while deployed max loss (open + in-flight opens) is below "
+        "alloc_tier_threshold_pct; also the sizing cap. Gate rule per_underlying_limit.",
         Risk.UP,
         unit="pct",
         min=0.005,
-        max=0.10,
-        hard_ceiling=0.10,
+        max=0.20,
+        hard_ceiling=0.20,
         aliases=("per_underlying_cap",),
+    ),
+    _s(
+        "max_alloc_pct_reduced",
+        Group.RISK,
+        _F,
+        "D116 reduced tier: the per-underlying cap once deployed max loss is at or above "
+        "alloc_tier_threshold_pct of equity (never above max_alloc_pct).",
+        Risk.UP,
+        unit="pct",
+        min=0.005,
+        max=0.20,
+        hard_ceiling=0.20,
+        aliases=("per_underlying_cap_reduced",),
+    ),
+    _s(
+        "alloc_tier_threshold_pct",
+        Group.RISK,
+        _F,
+        "D116: deployed max loss (open + in-flight opens, pre-trade) as a share of equity "
+        "at which the per-underlying cap drops from max_alloc_pct to max_alloc_pct_reduced.",
+        Risk.UP,
+        unit="pct",
+        min=0.10,
+        max=1.0,
+        hard_ceiling=1.0,
     ),
     _s(
         "daily_loss_halt_pct",

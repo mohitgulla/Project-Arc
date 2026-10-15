@@ -1410,6 +1410,10 @@
     "value_at": "2026-09-28T14:50:00-04:00"
    },
    "greeks": {
+    "alloc_tier": "base",
+    "alloc_tier_threshold_pct": 0.6,
+    "deployed_max_loss": "20.00",
+    "deployed_pct": 0.0002,
     "gamma": {
      "high_pct": 0.015,
      "med_pct": 0.005,
@@ -1437,6 +1441,8 @@
      "vega_usd": -3.0
     },
     "max_alloc_pct": 0.05,
+    "max_alloc_pct_base": 0.05,
+    "max_alloc_pct_reduced": 0.05,
     "max_loss_by_underlying": {
      "SPY": "20.00"
     },

@@ -36,16 +36,19 @@ Recent activity           ``fills``, ``executions``, close ``proposals``, ``halt
 from __future__ import annotations
 
 import datetime as _dt
+import sqlite3
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from arc.context.ttl import to_db
+from arc.gate.caps import alloc_tier
 from arc.models import Performance  # noqa: TC001 - pydantic field
 from arc.reconcile.baseline import BaselineSource  # noqa: TC001 - pydantic field
 from arc.reconcile.performance import DailyEquity, daily_equity, performance_from
 from arc.routines.config import AdvisoryBand, GreekAdvisorySettings
+from arc.store.execution import reserved_open_max_loss
 from arc.tower.data import (
     Direction,
     GreeksView,
@@ -78,7 +81,6 @@ from arc.tower.data_sleeves import SleeveUsage, sleeve_usage
 from arc.utils.calendar import ET, sessions_between
 
 if TYPE_CHECKING:
-    import sqlite3
     from collections.abc import Sequence
 
     from arc.account_profiles import DteSleeve
@@ -331,9 +333,24 @@ class GreeksSection(BaseModel):
     greeks: GreeksView
     max_loss_by_underlying: dict[str, Decimal] = Field(default_factory=dict)
     per_underlying_cap: Decimal | None = Field(
-        default=None, description="max_alloc_pct × equity (gate rule)"
+        default=None, description="active tier's cap × equity (gate rule, D116)"
     )
-    max_alloc_pct: float
+    max_alloc_pct: float = Field(description="D116: the active tier's cap, share of equity")
+    alloc_tier: Literal["base", "reduced"] | None = Field(
+        default=None, description="D116: active per-underlying tier (None: equity unknown)"
+    )
+    deployed_max_loss: Decimal | None = Field(
+        default=None,
+        description="D116: Σ open max loss + max loss reserved by in-flight opens, dollars",
+    )
+    deployed_pct: float | None = Field(
+        default=None, description="D116: deployed_max_loss / equity (None: equity unknown)"
+    )
+    alloc_tier_threshold_pct: float | None = Field(
+        default=None, description="D116: deployed share of equity at which the cap drops"
+    )
+    max_alloc_pct_base: float | None = Field(default=None, description="D116 base tier")
+    max_alloc_pct_reduced: float | None = Field(default=None, description="D116 reduced tier")
     theta: GreekAdvisory | None = Field(
         default=None, description="D87: Θ, $ per day (uncapped; advisory band only)"
     )
@@ -1382,6 +1399,12 @@ def _status(
     )
 
 
+class _TierCfg(NamedTuple):
+    max_alloc_pct: float
+    max_alloc_pct_reduced: float
+    alloc_tier_threshold_pct: float
+
+
 def _greeks_section(
     monitor: sqlite3.Row | None,
     positions: list[PositionRow],
@@ -1392,6 +1415,9 @@ def _greeks_section(
     stale_after: _dt.timedelta,
     beta_delta_cap_pct: float = 2.00,
     advisory: GreekAdvisorySettings | None = None,
+    max_alloc_pct_reduced: float | None = None,
+    alloc_tier_threshold_pct: float | None = None,
+    reserved_max_loss: Decimal = Decimal(0),
 ) -> GreeksSection:
     advisory = advisory or GreekAdvisorySettings()
     g = _greeks(
@@ -1405,15 +1431,42 @@ def _greeks_section(
     for p in positions:
         if p.status == "open" and p.max_loss is not None:
             by[p.ticker] = by.get(p.ticker, Decimal(0)) + p.max_loss
-    cap = Decimal(str(max_alloc_pct)) * Decimal(str(g.equity)) if g.equity is not None else None
+    # D116: the gate's own tier helper on the same deployed sum (open + in-flight opens)
+    tier_cfg = _TierCfg(
+        max_alloc_pct,
+        max_alloc_pct if max_alloc_pct_reduced is None else max_alloc_pct_reduced,
+        1.0 if alloc_tier_threshold_pct is None else alloc_tier_threshold_pct,
+    )
+    deployed = sum(by.values(), Decimal(0)) + reserved_max_loss
+    tier = alloc_tier(deployed, Decimal(str(g.equity)), tier_cfg) if g.equity is not None else None
+    active = float(tier.pct) if tier is not None else max_alloc_pct
+    cap = tier.pct * Decimal(str(g.equity)) if tier is not None and g.equity is not None else None
     return GreeksSection(
         greeks=g,
         max_loss_by_underlying=dict(sorted(by.items(), key=lambda kv: kv[1], reverse=True)),
         per_underlying_cap=cap,
-        max_alloc_pct=max_alloc_pct,
+        max_alloc_pct=active,
+        alloc_tier=tier.tier if tier is not None and tier.deployed_pct is not None else None,
+        deployed_max_loss=deployed,
+        deployed_pct=(
+            round(float(tier.deployed_pct), 4)
+            if tier is not None and tier.deployed_pct is not None
+            else None
+        ),
+        alloc_tier_threshold_pct=alloc_tier_threshold_pct,
+        max_alloc_pct_base=max_alloc_pct,
+        max_alloc_pct_reduced=min(tier_cfg.max_alloc_pct_reduced, max_alloc_pct),
         theta=_advisory(g.theta, g.equity, advisory.theta, cost_only=True),
         gamma=_advisory(_dollar_gamma(monitor), g.equity, advisory.gamma),
     )
+
+
+def _reserved(conn: sqlite3.Connection, now: _dt.datetime) -> Decimal:
+    """D116: max loss reserved by in-flight opens (SELECT only; 0 on an older store)."""
+    try:
+        return reserved_open_max_loss(conn, now=now)
+    except sqlite3.Error:
+        return Decimal(0)
 
 
 def _dollar_gamma(monitor: sqlite3.Row | None) -> float | None:
@@ -1519,6 +1572,8 @@ def load_overview(
     beta_delta_cap_pct: float = 2.00,
     greek_advisory: GreekAdvisorySettings | None = None,
     sleeves: Sequence[DteSleeve] = (),
+    max_alloc_pct_reduced: float | None = None,
+    alloc_tier_threshold_pct: float | None = None,
 ) -> OverviewResponse:
     """Every Overview section read in one pass as of *now* (SELECT only).
 
@@ -1559,6 +1614,9 @@ def load_overview(
             stale_after=stale_after,
             beta_delta_cap_pct=beta_delta_cap_pct,
             advisory=greek_advisory,
+            max_alloc_pct_reduced=max_alloc_pct_reduced,
+            alloc_tier_threshold_pct=alloc_tier_threshold_pct,
+            reserved_max_loss=_reserved(conn, now_et),
         ),
         proposals=_proposal_rows(conn, now_et),
         proposals_since=now_et - PROPOSAL_WINDOW,

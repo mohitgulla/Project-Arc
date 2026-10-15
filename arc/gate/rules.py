@@ -25,6 +25,7 @@ from pydantic import BaseModel, ConfigDict
 
 from arc.account_profiles import BuyingPower, DayTradeRule, ShortLegPolicy
 from arc.gate.band import MAX_BAND_STEPS, PriceBand, as_grid, band_from_nbbo
+from arc.gate.caps import alloc_tier, deployed_max_loss
 from arc.gate.ticks import TickGrid, order_grid
 from arc.models import GateDecision, Leg, LegIntent, Proposal, QuoteClock
 from arc.models import StructureKind as ModelKind
@@ -243,17 +244,25 @@ def check_max_gain(d: Derived) -> list[Violation]:
 def check_per_underlying(
     d: Derived, account: AccountSnapshot, portfolio: Portfolio, config: ArcSettings
 ) -> list[Violation]:
-    """Existing + new max loss on one underlying ≤ ``max_alloc_pct`` × equity."""
+    """Existing + new max loss on one underlying ≤ the D116 tiered cap × equity.
+
+    The cap (:func:`arc.gate.caps.alloc_tier`) is ``max_alloc_pct`` while the book's
+    deployed max loss (open + reserved in-flight opens, pre-trade) is below
+    ``alloc_tier_threshold_pct`` × equity, else ``max_alloc_pct_reduced``.
+    """
     if d.max_loss_total is None:
         return _v(RuleCode.PER_UNDERLYING, "max loss is unbounded")
+    if account.equity <= 0:
+        return _v(RuleCode.PER_UNDERLYING, f"invalid equity {account.equity}")
     existing = sum((p.max_loss for p in portfolio.positions if p.underlying == d.underlying), _ZERO)
     total = existing + d.max_loss_total
-    limit = _d(config.max_alloc_pct) * account.equity
+    tier = alloc_tier(deployed_max_loss(portfolio), account.equity, config)
+    limit = tier.pct * account.equity
     if total > limit:
         return _v(
             RuleCode.PER_UNDERLYING,
             f"{d.underlying} max loss {total} (existing {existing} + new {d.max_loss_total}) "
-            f"> {limit} ({config.max_alloc_pct:.2%} of equity {account.equity})",
+            f"> {limit} ({tier.describe()}; equity {account.equity})",
         )
     return []
 

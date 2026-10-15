@@ -34,7 +34,8 @@ Portfolio
 ---------
 Sessions are processed in date order; on each session positions whose exit date
 has come are closed first, then tickers are visited in a fixed order. Contracts =
-D18 ``min(suggestion, floor(max_alloc_pct × equity / max loss))`` with no Risk
+D18 ``min(suggestion, floor(cap × equity / max loss))`` (cap: the D116 tier of the held
+book) with no Risk
 persona, so the suggestion is the cap. The pure gate rules
 :func:`arc.gate.rules.check_per_underlying` and
 :func:`arc.gate.rules.check_max_open_positions` are applied, and a cash-settled
@@ -88,6 +89,7 @@ from arc.backtest.universe import UniverseConfig
 from arc.exits.model import model_exits, realized_vol_forecast
 from arc.exits.policy import ExitReason, check_rules, resolve_rules
 from arc.features.technicals import AntiChaseRule
+from arc.gate.caps import alloc_pct_for
 from arc.gate.inputs import AccountSnapshot, Portfolio, Position
 from arc.gate.rules import Derived, check_max_open_positions, check_per_underlying
 from arc.models import Leg, LegIntent, StructureKind
@@ -991,11 +993,14 @@ def run_portfolio(
                 skipped["unsettled"] += 1
                 continue
             ml_unit = out.trade.max_loss
+            eq_d = Decimal(str(round(equity, 2)))
+            # D116: the tiered cap, from the book's deployed max loss (as the gate does)
+            deployed = sum((p.max_loss for p in open_), Decimal(0))
             size = size_contracts(
                 suggestion=10**6,
                 max_loss_per_contract=Decimal(str(round(ml_unit, 2))),
-                equity=Decimal(str(round(equity, 2))),
-                cap_pct=settings.max_alloc_pct,
+                equity=eq_d,
+                cap_pct=alloc_pct_for(deployed, eq_d, settings),
             )
             if not size.trade:
                 skipped["sizing"] += 1

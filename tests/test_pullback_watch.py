@@ -361,7 +361,7 @@ def test_gate_never_imports_the_rule() -> None:
 IDEAS = {"PLTR": "bullish", "NVDA": "bullish", "XOM": "bearish"}
 MON = dt.datetime(2026, 9, 28, 10, 30, tzinfo=FIXTURE_NOW.tzinfo)  # two sessions later
 # main (pre-E23.2) with the same two runs: anti-chase on (RSI 60), range edges off
-MAIN_PROMPT_SHAS = ["14af3b71bfa04014429ab853ef248390c32521c57eef512fa53c1602d8b1720a"]
+MAIN_PROMPT_SHAS = ["69c800bc1349099b3b0df71bfecc9aa156d004c7e0d00ef5541a223eea794a24"]
 MAIN_JOURNAL_SHA = "19ac3330a53b28c10f1b4185abce331afdb74410cfa969b103fb4976437d4ea6"
 
 

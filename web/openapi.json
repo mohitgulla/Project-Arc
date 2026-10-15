@@ -6094,6 +6094,42 @@
         "additionalProperties": false,
         "description": "The gate's portfolio caps (PLAN \u00a75), from the effective settings.",
         "properties": {
+          "alloc_tier_threshold_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D116: deployed max loss / equity at which the cap drops",
+            "title": "Alloc Tier Threshold Pct"
+          },
+          "max_alloc_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D116: per-underlying cap, base tier (deployed below the threshold)",
+            "title": "Max Alloc Pct"
+          },
+          "max_alloc_pct_reduced": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D116: per-underlying cap, reduced tier (deployed at/above the threshold)",
+            "title": "Max Alloc Pct Reduced"
+          },
           "portfolio_beta_delta_cap_pct": {
             "description": "D62: |beta-weighted net dollar delta| cap as a fraction of equity",
             "title": "Portfolio Beta Delta Cap Pct",
@@ -6303,6 +6339,59 @@
       "GreeksSection": {
         "additionalProperties": false,
         "properties": {
+          "alloc_tier": {
+            "anyOf": [
+              {
+                "enum": [
+                  "base",
+                  "reduced"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D116: active per-underlying tier (None: equity unknown)",
+            "title": "Alloc Tier"
+          },
+          "alloc_tier_threshold_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D116: deployed share of equity at which the cap drops",
+            "title": "Alloc Tier Threshold Pct"
+          },
+          "deployed_max_loss": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D116: \u03a3 open max loss + max loss reserved by in-flight opens, dollars",
+            "title": "Deployed Max Loss"
+          },
+          "deployed_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D116: deployed_max_loss / equity (None: equity unknown)",
+            "title": "Deployed Pct"
+          },
           "gamma": {
             "anyOf": [
               {
@@ -6318,8 +6407,33 @@
             "$ref": "#/components/schemas/GreeksView"
           },
           "max_alloc_pct": {
+            "description": "D116: the active tier's cap, share of equity",
             "title": "Max Alloc Pct",
             "type": "number"
+          },
+          "max_alloc_pct_base": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D116 base tier",
+            "title": "Max Alloc Pct Base"
+          },
+          "max_alloc_pct_reduced": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D116 reduced tier",
+            "title": "Max Alloc Pct Reduced"
           },
           "max_loss_by_underlying": {
             "additionalProperties": {
@@ -6339,7 +6453,7 @@
                 "type": "null"
               }
             ],
-            "description": "max_alloc_pct \u00d7 equity (gate rule)",
+            "description": "active tier's cap \u00d7 equity (gate rule, D116)",
             "title": "Per Underlying Cap"
           },
           "theta": {

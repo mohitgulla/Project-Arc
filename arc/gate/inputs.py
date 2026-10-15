@@ -143,6 +143,16 @@ class Portfolio(_Frozen):
             "reads it."
         ),
     )
+    reserved_max_loss: Decimal = Field(
+        Decimal(0),
+        ge=0,
+        description=(
+            "D116 (E3.7): max loss reserved by in-flight opens (approval requests still "
+            "pending, open executions still working / unconfirmed, unfilled part only), "
+            "dollars. Built outside the gate by arc.pipeline.market.reserved_open_max_loss; "
+            "counted toward 'deployed' for the tiered per-underlying cap (arc.gate.caps)."
+        ),
+    )
     closed_lots: list[ClosedLot] = Field(default_factory=list)
     legs: dict[str, int] = Field(
         default_factory=dict,
