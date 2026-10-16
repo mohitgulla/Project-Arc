@@ -1,0 +1,45 @@
+# E7.14 (D84) re-run of E7.5 (ev_proxy) and E7.5b (D79 unified measure: every expiry
+# in the window at the scanner's delta bands, direction_tilt 0.25 fixed before the
+# run). Overlay copied from config/experiments/backtest/e75b_unified_measure.yaml.
+id: BT-4
+hypothesis: >-
+  E7.5 / E7.5b re-run: neither ev_proxy nor the unified-measure menus with
+  managed_net_ev / rorc_day_tilted beat the profile's incumbent under the D25 rule.
+owner: owner
+created: 2026-10-15
+arms:
+  control: {}
+  treatments:
+    t1: {ranker: ev_proxy}
+    t2:
+      ranker: managed_net_ev
+      overlay: &e75b
+        ranking:
+          backtest:
+            direction_tilt: 0.25
+            menus:
+              margin:
+                - {kinds: [bull_put, bear_call, iron_condor], deltas: [0.16, 0.20, 0.25, 0.30], width_pct: 0.02, expiry_mode: all}
+              cash_debit:
+                - {kinds: [bull_call, bear_put], deltas: [0.20, 0.25, 0.30, 0.35], width_pct: 0.02, expiry_mode: all}
+                - {kinds: [long_call, long_put], deltas: [0.40, 0.55, 0.70], expiry_mode: all}
+              cash_long_only:
+                - {kinds: [long_call, long_put], deltas: [0.40, 0.55, 0.70]}
+    t3:
+      ranker: rorc_day_tilted
+      overlay: *e75b
+profiles: [margin, cash_debit]
+universe_ladder: [c125]
+decision_rule:
+  kind: d25_challenge
+  min_subperiod_wins: 2
+  subperiods: [bear, sideways, bull]
+  bootstrap: {resamples: 2000, block_days: 20, ci: 0.90, seed: 7}
+  verbatim: >-
+    A challenger replaces the incumbent (debit_width for cash_debit, credit_width for
+    margin) only if it beats it on net P&L (higher) **and** max drawdown (not larger) in
+    ≥ 2 of 3 sub-periods (bear / sideways / bull trend at entry), **and** the 90 %
+    block-bootstrap CI of the daily P&L difference excludes 0. The tilt verdict uses
+    direction_tilt = 0.25, fixed in the card before the run.
+primary_metric: net_pnl
+max_variants: 3

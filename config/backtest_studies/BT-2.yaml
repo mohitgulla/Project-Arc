@@ -1,0 +1,40 @@
+# E7.14 (D84) re-run of E7.2 / D4: managed exits vs hold-to-expiry on the D4 structure x
+# delta menus, on real closing quotes. The structure x delta grid is the report's
+# "By structure" / "By spec" tables; regime and sub-period splits are the standard
+# tables. Report only: nothing flips. Ladder C125 only: the hold arm's exit hash differs
+# from the base menus, so a C500 rung would rebuild 375 names cold twice (dev + holdout,
+# ~9 h); the base-config C500 confirmation is BT-3/5/7.
+id: BT-2
+hypothesis: >-
+  E7.2 / D4 re-run: the shipped managed-exit policy (config/exits.yaml) does not beat
+  hold-to-expiry on the D4 menus (structure x delta) once real closing quotes replace
+  estimated spreads.
+owner: owner
+created: 2026-10-15
+arms:
+  control:                       # hold to expiry: no take profit, stop, lock or DTE exit
+    overlay:
+      exits:
+        default: {take_profit_pct_of_max_gain: null, take_profit_pct_of_debit: null, close_at_dte: null, profit_lock: null}
+        kinds:
+          vertical_credit: {take_profit_pct_of_max_gain: null, stop: null, close_at_dte: null, profit_lock: null}
+          iron_condor: {take_profit_pct_of_max_gain: null, stop: null, close_at_dte: null, profit_lock: null}
+          vertical_debit: {take_profit_pct_of_debit: null, stop: null, close_at_dte: null, profit_lock: null}
+          long_call: {take_profit_pct_of_debit: null, stop: null, close_at_dte: null, profit_lock: null}
+          long_put: {take_profit_pct_of_debit: null, stop: null, close_at_dte: null, profit_lock: null}
+  treatments:
+    t1: {}                       # the shipped policy exits (config/exits.yaml as on main)
+profiles: [margin, cash_debit]
+universe_ladder: [c125]
+decision_rule:
+  kind: d25_challenge
+  min_subperiod_wins: 2
+  subperiods: [bear, sideways, bull]
+  bootstrap: {resamples: 2000, block_days: 20, ci: 0.90, seed: 7}
+  verbatim: >-
+    D4 (PLAN §0): "management rules don't beat hold-to-expiry statistically; 21-DTE
+    exits only matter for undefined-risk; defined-risk caps tails structurally." E7.2
+    had no pre-registered switch rule, so the D25 rule is applied with hold-to-expiry
+    as the incumbent: managed exits "beat" hold only if they pass it.
+primary_metric: net_pnl
+max_variants: 3

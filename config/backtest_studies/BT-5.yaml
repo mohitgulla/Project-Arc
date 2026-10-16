@@ -1,0 +1,29 @@
+# E7.14 (D84) re-run of E16.3: the anti-chase entry filter (live D78 rule) vs no filter.
+id: BT-5
+hypothesis: >-
+  E16.3 re-run: dropping directional long-premium candidates on stretched days does not
+  pass the E16.3 recommend rule on cash_debit.
+owner: owner
+created: 2026-10-15
+arms:
+  control: {}                    # entry_filter: none
+  treatments:
+    t1:
+      overlay: {ranking: {backtest: {entry_filter: anti_chase}}}
+    t2:
+      overlay: {ranking: {backtest: {entry_filter: anti_chase_vwap}}}
+profiles: [cash_debit]
+universe_ladder: [c125, c500]
+decision_rule:
+  kind: entry_filter
+  min_subperiod_wins: 2
+  ci_floor_frac_of_base: 0.10
+  subperiods: [bear, sideways, bull]
+  bootstrap: {resamples: 2000, block_days: 20, ci: 0.90, seed: 7}
+  verbatim: >-
+    Recommend the forward experiment only if, for cash_debit, the filtered run has a
+    smaller max drawdown **and** a net P&L that is not lower in ≥ 2 of 3 trend
+    sub-periods, **and** the 90 % moving-block (20-day) bootstrap CI of the daily P&L
+    difference has a lower bound > −(10 % of the incumbent's |net P&L|).
+primary_metric: net_pnl
+max_variants: 3

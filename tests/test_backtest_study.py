@@ -24,6 +24,8 @@ from arc.backtest.study import (
     load_ledger,
     load_study,
     run_study,
+    segment_rows,
+    segment_verdicts,
     study_hash,
     variants,
 )
@@ -362,11 +364,16 @@ def test_dev_runs_append_to_the_ledger_and_write_the_report(
     }
     assert set(payload["breakdowns"]["cash_debit"]["control"]) == {
         "regime",
+        "structure",
         "tier",
         "sector",
         "etf",
         "liquidity",
     }
+    segs = payload["segments"]["cash_debit"]["control"]
+    assert [r["segment"] for r in segs] == ["All", "Stocks", "ETFs"]
+    assert "## All / Stocks / ETFs" in md
+    assert set(payload["segment_verdicts"]["cash_debit"]) == {"t1"}
     run_dir = Path(e1.run_dir)
     assert (run_dir / "cash_debit" / "t1" / "trades.csv").is_file()
     assert (run_dir / "report.md").is_file()
@@ -590,3 +597,199 @@ def test_cli_run_dev_writes_ledger_and_report(
     led = load_ledger(tmp_path / "ledger.jsonl")
     assert len(led) == 1 and led[0].at == NOW and led[0].phase == "dev"
     assert (tmp_path / "reports" / "BT-9.md").is_file()
+
+
+def _seg_run(pnls: list[tuple[str, bool, float, str]]) -> Any:
+    import pandas as pd
+
+    from arc.backtest.sim import SimRun
+
+    rows = [
+        {
+            "underlying": u,
+            "etf": etf,
+            "pnl": pnl,
+            "pnl_mid": pnl + 10.0,
+            "max_loss_unit": 200.0,
+            "contracts": 2,
+            "exit_reason": why,
+            "entry_date": dt.date(2022, 1, 3 + i),
+            "exit_date": dt.date(2022, 1, 10 + i),
+        }
+        for i, (u, etf, pnl, why) in enumerate(pnls)
+    ]
+    days = [dt.date(2022, 1, d) for d in range(3, 20)]
+    eq = pd.Series([100_000.0, 101_000.0, 99_000.0, 98_000.0, *[99_500.0] * 13], index=days)
+    return SimRun(
+        ranker="x",
+        profile="margin",
+        trades=pd.DataFrame(rows),
+        equity=eq,
+        decisions=pd.DataFrame(),
+        skips=pd.DataFrame(),
+        skip_counts={},
+    )
+
+
+def test_segment_all_equals_stocks_plus_etfs() -> None:
+    """Owner 2026-10-11: All = Stocks + ETFs (trade counts, P&L sums, costs, exit mix)."""
+    run = _seg_run(
+        [
+            ("AAPL", False, 120.0, "take_profit"),
+            ("SPY", True, -80.0, "stop"),
+            ("NVDA", False, -40.0, "stop"),
+            ("QQQ", True, 55.0, "dte_exit"),
+            ("XOM", False, 10.0, "dte_exit"),
+        ]
+    )
+    rows = {r["segment"]: r for r in segment_rows(run)}
+    a, s, e = rows["All"], rows["Stocks"], rows["ETFs"]
+    assert a["trades"] == s["trades"] + e["trades"] == 5
+    for k in ("net_pnl", "spread_cost", "dd_contribution"):
+        assert a[k] == pytest.approx(s[k] + e[k])
+    assert a["net_pnl"] == pytest.approx(65.0)
+    assert a["spread_cost"] == pytest.approx(50.0)
+    assert a["pnl_per_risk"] == pytest.approx(65.0 / (5 * 400.0))
+    for why, n in a["exit_reasons"].items():
+        assert n == s["exit_reasons"].get(why, 0) + e["exit_reasons"].get(why, 0)
+    assert s["median_pnl"] == pytest.approx(10.0)
+
+
+def test_segment_rows_empty_run() -> None:
+    import pandas as pd
+
+    from arc.backtest.sim import SimRun
+
+    run = SimRun(
+        ranker="x",
+        profile="margin",
+        trades=pd.DataFrame(),
+        equity=pd.Series(dtype=float),
+        decisions=pd.DataFrame(),
+        skips=pd.DataFrame(),
+        skip_counts={},
+    )
+    rows = segment_rows(run)
+    assert [r["trades"] for r in rows] == [0, 0, 0]
+    assert all(r["pnl_per_risk"] is None for r in rows)
+
+
+def test_segment_verdict_flags_sign_split() -> None:
+    ctrl = _seg_run([("AAPL", False, 100.0, "stop"), ("SPY", True, 100.0, "stop")])
+    t1 = _seg_run([("AAPL", False, 150.0, "stop"), ("SPY", True, 50.0, "stop")])
+    t2 = _seg_run([("AAPL", False, 150.0, "stop"), ("SPY", True, 120.0, "stop")])
+    segs = {"control": segment_rows(ctrl), "t1": segment_rows(t1), "t2": segment_rows(t2)}
+    v = segment_verdicts(segs, ["t1", "t2"])
+    assert v["t1"] == {"All": 0.0, "Stocks": 50.0, "ETFs": -50.0, "sign_differs": True}
+    assert v["t2"]["sign_differs"] is False and v["t2"]["All"] == pytest.approx(70.0)
+
+
+# ---------------------------------------------------------------------------
+# E7.14: the earlier cards' rule kinds, applied verbatim
+# ---------------------------------------------------------------------------
+
+
+def _eq_run(pnls: list[tuple[str, float]], equity: list[float]) -> Any:
+    """Trades with a trend label + an explicit equity path (dates 2022-01-03 ..)."""
+    import pandas as pd
+
+    from arc.backtest.sim import SimRun
+
+    rows = [
+        {
+            "underlying": "AAPL",
+            "etf": False,
+            "trend": trend,
+            "pnl": pnl,
+            "pnl_mid": pnl,
+            "max_loss_unit": 100.0,
+            "contracts": 1,
+            "exit_reason": "stop",
+            "entry_date": dt.date(2022, 1, 3) + dt.timedelta(days=i),
+            "exit_date": dt.date(2022, 1, 10) + dt.timedelta(days=i),
+        }
+        for i, (trend, pnl) in enumerate(pnls)
+    ]
+    days = [dt.date(2022, 1, 3) + dt.timedelta(days=i) for i in range(len(equity))]
+    return SimRun(
+        ranker="x",
+        profile="cash_debit",
+        trades=pd.DataFrame(rows),
+        equity=pd.Series(equity, index=days),
+        decisions=pd.DataFrame(),
+        skips=pd.DataFrame(),
+        skip_counts={},
+    )
+
+
+def test_rule_kind_needs_its_parameter() -> None:
+    with pytest.raises(ValueError, match="ci_floor_frac_of_base"):
+        _spec(decision_rule={"kind": "entry_filter"})
+    with pytest.raises(ValueError, match="dd_tolerance"):
+        _spec(decision_rule={"kind": "keep_control"})
+
+
+def test_optional_rule_fields_keep_old_hashes() -> None:
+    """Specs written before E7.14 keep their hash (ledger lines and holdout lock)."""
+    from arc.experiments.models import document_hash
+
+    s = _spec()
+    doc = s.model_dump(mode="json")
+    for k in ("ci_floor_frac_of_base", "dd_tolerance", "verbatim"):
+        doc["decision_rule"].pop(k)
+    assert study_hash(s) == document_hash(doc)
+    assert study_hash(_spec(decision_rule={"verbatim": "x"})) != study_hash(s)
+
+
+def test_entry_filter_kind_matches_e163_function() -> None:
+    from arc.backtest.entry_filter import EntryFilterRule, entry_filter_challenge
+
+    base = _eq_run(
+        [("bull", 100.0), ("bear", -300.0), ("sideways", 0.0)],
+        [25_000.0, 25_100.0, 24_800.0, 24_800.0, 24_900.0],
+    )
+    filt = _eq_run(
+        [("bull", 90.0), ("bear", -100.0)], [25_000.0, 25_090.0, 24_990.0, 24_990.0, 25_000.0]
+    )
+    s = _spec(decision_rule={"kind": "entry_filter", "ci_floor_frac_of_base": 0.10})
+    got = compare_runs(base, filt, s.decision_rule)
+    ref = entry_filter_challenge(
+        _as_rank_run(base),
+        _as_rank_run(filt),
+        rule=EntryFilterRule(min_subperiods_not_lower=2, ci_floor_frac_of_base=0.10),
+        subperiods=s.decision_rule.decision,
+        boot=s.decision_rule.bootstrap,
+    )
+    assert got["switch"] == ref["recommend"]
+    assert got["subperiods_won"] == ref["subperiods_not_lower"]
+    assert got["ci_floor"] == pytest.approx(ref["ci_floor"], abs=0.01)
+    assert "Recommend the forward experiment" in s.decision_rule.text()
+
+
+def test_keep_control_kind_is_e183_keep_rule() -> None:
+    """Control = shipped v2, treatment = v1: keep if not lower in >= 2 sub-periods and
+    DD within +10 %; a DD 20 % worse flips it to 'recommend the treatment'."""
+    v2 = _eq_run([("bull", 50.0), ("bear", 10.0)], [25_000.0, 24_000.0, 25_060.0])
+    v1 = _eq_run([("bull", 80.0), ("bear", -20.0)], [25_000.0, 24_100.0, 25_060.0])
+    rule = _spec(decision_rule={"kind": "keep_control", "dd_tolerance": 0.10}).decision_rule
+    got = compare_runs(v2, v1, rule)
+    # not lower: bear (10 >= -20) and sideways (0 >= 0); DD 1000 vs 900 = +11 % > 10 %
+    assert got["subperiods_won"] == 2 and got["dd_ok"] is False
+    assert got["switch"] is True and got["call"].startswith("recommend")
+    rule2 = _spec(decision_rule={"kind": "keep_control", "dd_tolerance": 0.15}).decision_rule
+    assert compare_runs(v2, v1, rule2)["call"] == "keep control"
+
+
+def test_regime_keep_kind_and_study_call() -> None:
+    from arc.backtest.study import regime_call
+
+    good = _eq_run([("bull", 100.0)], [25_000.0, 25_050.0, 25_100.0])
+    bad = _eq_run([("bull", -100.0)], [25_000.0, 24_800.0, 24_900.0])
+    rule = _spec(decision_rule={"kind": "regime_keep"}).decision_rule
+    keep = compare_runs(good, bad, rule)  # control better on both
+    roll = compare_runs(bad, good, rule)  # control worse on both
+    assert keep["switch"] is False and roll["switch"] is True
+    assert regime_call({"margin": {"t1": keep}, "cash_debit": {"t1": roll}}, "t1") == (
+        "roll back to the treatment"
+    )
+    assert regime_call({"margin": {"t1": keep}}, "t1") in ("keep control", "keep, inconclusive")

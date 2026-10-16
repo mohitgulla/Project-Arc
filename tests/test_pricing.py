@@ -388,6 +388,29 @@ class TestVectorised:
 
 @settings(max_examples=200, deadline=None)
 @given(
+    x=st.lists(
+        st.one_of(
+            st.floats(min_value=-40.0, max_value=40.0, allow_nan=False),
+            st.just(math.inf),
+            st.just(-math.inf),
+            st.just(math.nan),
+        ),
+        min_size=1,
+        max_size=64,
+    )
+)
+def test_ndtr_is_bit_identical_to_norm_cdf(x: list[float]) -> None:
+    """E7.14: price_vectorized uses scipy.special.ndtr for speed; it must equal
+    scipy.stats.norm.cdf bit for bit (incl. inf/nan), so no backtest number moves."""
+    from scipy.special import ndtr
+    from scipy.stats import norm
+
+    a = np.asarray(x, dtype=float)
+    assert np.array_equal(ndtr(a), norm.cdf(a), equal_nan=True)
+
+
+@settings(max_examples=200, deadline=None)
+@given(
     kind=st.sampled_from(["c", "p"]),
     s=st.lists(st.floats(min_value=1.0, max_value=1000.0), min_size=1, max_size=50),
     k=st.floats(min_value=1.0, max_value=1000.0),

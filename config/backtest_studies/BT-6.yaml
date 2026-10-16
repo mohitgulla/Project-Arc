@@ -1,0 +1,46 @@
+# E7.14 (D84) re-run of E18.3: exit policy v2 (shipped, control) vs v1 and hold.
+# v1 = take profit 100 % of the debit, no profit lock (scripts/exit_policy_report.py
+# variant_overrides); hold = no take profit, stop, lock or DTE exit on the debit kinds.
+# The backtest has no sleeves (D97 short-sleeve exits are not modelled). Ladder C125
+# only (E18.3 ran on C125-sized data; v1/hold rebuild cold on any wider rung).
+id: BT-6
+hypothesis: >-
+  E18.3 re-run: exit policy v2 keeps under the E18.3 rule against v1 (and against hold)
+  on cash_debit with real quotes.
+owner: owner
+created: 2026-10-15
+arms:
+  control: {}                    # v2 = config/exits.yaml as on main
+  treatments:
+    t1:                          # v1
+      overlay:
+        exits:
+          default: {take_profit_pct_of_debit: 1.0, profit_lock: null}
+          kinds:
+            vertical_debit: {take_profit_pct_of_debit: 1.0, profit_lock: null}
+            long_call: {take_profit_pct_of_debit: 1.0, profit_lock: null}
+            long_put: {take_profit_pct_of_debit: 1.0, profit_lock: null}
+    t2:                          # hold: E18.3's hold on the debit kinds. Written as BT-2's
+      overlay:                   # control overlay (credit kinds too, which cash_debit never
+        exits:                   # trades) so both share one exits hash and one menu cache.
+          default: {take_profit_pct_of_max_gain: null, take_profit_pct_of_debit: null, close_at_dte: null, profit_lock: null}
+          kinds:
+            vertical_credit: {take_profit_pct_of_max_gain: null, stop: null, close_at_dte: null, profit_lock: null}
+            iron_condor: {take_profit_pct_of_max_gain: null, stop: null, close_at_dte: null, profit_lock: null}
+            vertical_debit: {take_profit_pct_of_debit: null, stop: null, close_at_dte: null, profit_lock: null}
+            long_call: {take_profit_pct_of_debit: null, stop: null, close_at_dte: null, profit_lock: null}
+            long_put: {take_profit_pct_of_debit: null, stop: null, close_at_dte: null, profit_lock: null}
+profiles: [cash_debit]
+universe_ladder: [c125]
+decision_rule:
+  kind: keep_control
+  min_subperiod_wins: 2
+  dd_tolerance: 0.10
+  subperiods: [bear, sideways, bull]
+  bootstrap: {resamples: 2000, block_days: 20, ci: 0.90, seed: 7}
+  verbatim: >-
+    Keep v2 if, for cash_debit, v2's net P&L is not lower than v1's in ≥ 2 of 3 trend
+    sub-periods **and** max drawdown is not higher by more than 10 %. Otherwise recommend
+    rollback (or the best grid cell as a future XP arm, never a direct flip).
+primary_metric: net_pnl
+max_variants: 3

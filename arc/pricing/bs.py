@@ -409,10 +409,22 @@ def price_vectorized(
     df_q = np.exp(-q * t)
     df_r = np.exp(-r * t)
 
-    from scipy.stats import norm as _norm
+    # E7.14: ``ndtr`` is what ``scipy.stats.norm.cdf`` evaluates, minus the frozen-
+    # distribution argument checks (bit-identical, ~5-30x faster on small arrays; the
+    # backtest calls this ~150k times per ticker-quarter).
+    from scipy.special import ndtr
 
-    Nd1 = _norm.cdf(d1)
-    Nd2 = _norm.cdf(d2)
+    Nd1 = ndtr(d1)
+    Nd2 = ndtr(d2)
+
+    is_call = np.char.equal(flag, "c")
+    if is_call.ndim == 0:
+        # E7.14: one leg kind for every element (the exit model's 5000-path re-price).
+        # Same expressions as below, so the result is bit-identical; skips the other
+        # branch and the per-element select.
+        if bool(is_call):
+            return np.asarray(S * df_q * Nd1 - K * df_r * Nd2)
+        return np.asarray(K * df_r * (1.0 - Nd2) - S * df_q * (1.0 - Nd1))
 
     is_call = np.char.equal(flag, "c")
     if is_call.ndim == 0:
