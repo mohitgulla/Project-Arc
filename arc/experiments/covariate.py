@@ -41,7 +41,6 @@ __all__ = [
     "BarsProvider",
     "CachedCloses",
     "FeedPinned",
-    "cboe_vix_closes",
     "partial_first_day",
     "spy_returns",
     "stored_spy_returns",
@@ -238,21 +237,12 @@ def vix_changes(
     return out
 
 
-def cboe_vix_closes() -> dict[_dt.date, float]:  # pragma: no cover - live network
-    """VIX daily closes from Cboe's free ``VIX_History.csv`` (D3; the vol_term client)."""
-    from arc.ingest.options_data import (
-        BROWSER_UA,
-        CBOE_HISTORY_URL,
-        http_get,
-        parse_cboe_history,
-    )
-
-    body = http_get(CBOE_HISTORY_URL.format(index=VIX_INDEX), BROWSER_UA, retries=2)
-    return parse_cboe_history(body.decode("utf-8", "replace"))
-
-
 class CachedCloses:
-    """*fetch* called at most once (one Cboe GET per evaluation, shared by every XP)."""
+    """*fetch* called at most once (one Cboe GET per evaluation, shared by every XP).
+
+    The live fetch is :func:`arc.ingest.options_data.fetch_index_closes` (callers outside
+    the Tower's import path pass it; this module never imports the network client).
+    """
 
     def __init__(self, fetch: Callable[[], Mapping[_dt.date, float]]) -> None:
         self._fetch = fetch

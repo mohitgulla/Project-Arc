@@ -483,3 +483,17 @@ def test_two_covariate_type_i_with_daily_peeking(rho: float) -> None:
     rate = ever / SIMS
     bound = ALPHA + 2 * math.sqrt(ALPHA * (1 - ALPHA) / SIMS)
     assert rate <= bound, (rho, rate)
+
+
+def test_fetch_index_closes_parses_the_cboe_csv_through_the_injected_get() -> None:
+    from arc.ingest.options_data import CBOE_HISTORY_URL, fetch_index_closes
+
+    seen: list[str] = []
+
+    def get(url: str, ua: str) -> bytes:
+        seen.append(url)
+        return b"DATE,OPEN,HIGH,LOW,CLOSE\n10/14/2026,18,19,17,18.5\n10/15/2026,18,19,17,18.09\n"
+
+    got = fetch_index_closes("VIX", get=get)
+    assert seen == [CBOE_HISTORY_URL.format(index="VIX")]
+    assert got == {dt.date(2026, 10, 14): 18.5, dt.date(2026, 10, 15): 18.09}

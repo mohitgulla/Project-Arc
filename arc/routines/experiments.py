@@ -131,9 +131,10 @@ def _vix_closes(ctx: JobContext) -> Callable[[], Mapping[_dt.date, float]] | Non
     """
     if not _live(ctx):
         return None
-    from arc.experiments.covariate import CachedCloses, cboe_vix_closes
+    from arc.experiments.covariate import VIX_INDEX, CachedCloses
+    from arc.ingest.options_data import fetch_index_closes
 
-    return CachedCloses(cboe_vix_closes)
+    return CachedCloses(lambda: fetch_index_closes(VIX_INDEX))
 
 
 def _live(ctx: JobContext) -> bool:

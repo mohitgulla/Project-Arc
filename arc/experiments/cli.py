@@ -716,9 +716,10 @@ def _vix_source(args: argparse.Namespace) -> Any:
     """D120: the VIX closes provider for ``--vix cboe`` (None for ``stored``)."""
     if getattr(args, "vix", "stored") != "cboe" or getattr(args, "stored", False):
         return None
-    from arc.experiments.covariate import CachedCloses, cboe_vix_closes
+    from arc.experiments.covariate import VIX_INDEX, CachedCloses
+    from arc.ingest.options_data import fetch_index_closes
 
-    return CachedCloses(cboe_vix_closes)
+    return CachedCloses(lambda: fetch_index_closes(VIX_INDEX))
 
 
 def _check_row(label: str, c: Any) -> str:
