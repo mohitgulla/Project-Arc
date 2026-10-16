@@ -1,6 +1,8 @@
 """``arc iv`` (E4.12, D55): IV history backfill, Option Strategist import, validation.
 
     arc iv backfill --tickers SPY,QQQ|watch --since 2024-03-01 [--until D] [--db P]
+    arc iv backfill --source theta --universe c125|--tickers-file F|--tickers L
+        [--since D] [--until D] [--data-dir data] [--db P]
     arc iv import-optionstrategist [--file saved.html] [--db P]
     arc iv validate [--tickers ...|watch] [--db P]
     arc iv import-csv [--dir data/iv_history] [--db P]
@@ -33,13 +35,34 @@ def add_iv_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> N
     def db(sp: argparse.ArgumentParser) -> None:
         sp.add_argument("--db", default=None, help="Audit DB (default data/arc.db)")
 
-    b = isub.add_parser("backfill", help="Rebuild 30-DTE IV from Alpaca option daily bars")
+    b = isub.add_parser(
+        "backfill",
+        help="Rebuild 30-DTE IV: Alpaca option daily bars, or the cached ThetaData history",
+    )
+    b.add_argument(
+        "--source",
+        choices=("alpaca", "theta"),
+        default="alpaca",
+        help="alpaca: alpaca_backfill rows from Alpaca option bars (network). theta "
+        "(E7.13, D84): theta_backfill rows from data/option_stats + the cached ThetaData "
+        "quoted chains (no network)",
+    )
     b.add_argument(
         "--tickers",
-        required=True,
+        default=None,
         help="Comma list, or `watch` (today's watch list + open underlyings + SPY/QQQ/IWM)",
     )
-    b.add_argument("--since", type=_dt.date.fromisoformat, required=True, help="YYYY-MM-DD")
+    b.add_argument("--tickers-file", default=None, help="theta: one ticker per line (# comments)")
+    b.add_argument(
+        "--universe", default=None, help="theta: an E7.7 checkpoint of the pull list (c125|c500)"
+    )
+    b.add_argument("--data-dir", default="data", help="theta: parquet cache root (default data)")
+    b.add_argument(
+        "--since",
+        type=_dt.date.fromisoformat,
+        default=None,
+        help="YYYY-MM-DD (alpaca: required; theta: default the whole cache)",
+    )
     b.add_argument(
         "--until", type=_dt.date.fromisoformat, default=None, help="YYYY-MM-DD (default: today)"
     )
@@ -94,6 +117,12 @@ def run_iv(args: argparse.Namespace) -> int:
     settings = effective_settings(conn)
     cmd = args.iv_command
     if cmd == "backfill":
+        if args.source == "theta":  # run by arc.backtest.theta_iv_cli (arc/cli.py)
+            sys.stderr.write("arc iv backfill --source theta: use the arc entry point\n")
+            return 2
+        if not args.tickers or args.since is None:
+            sys.stderr.write("arc iv backfill: --tickers and --since are required\n")
+            return 2
         return _backfill(args, conn, settings, now)
     if cmd == "import-optionstrategist":
         return _import_os(args, conn, settings, now)

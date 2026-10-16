@@ -10,8 +10,9 @@ Selection (deterministic):
 
 * candidates: open underlyings (sorted), then today's active list in its order, then
   SPY / QQQ / IWM; deduplicated, first position wins;
-* *short*: fewer than ``min_obs`` days in :meth:`IvStore.series` (both sources) over
-  the lookback sessions;
+* *short*: fewer than ``min_obs`` days in :meth:`IvStore.series` (every series
+  source, so a name seeded by ``theta_backfill`` (E7.13) is not short) over the
+  lookback sessions;
 * *exhausted*: every lookback session missing from the series already has an
   ``alpaca_backfill`` row in ``iv_skips`` (the backfill tried and could not rebuild
   it), so a re-run cannot add anything: not selected;
@@ -34,6 +35,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
     from arc.iv.backfill import OptionHistory
+    from arc.iv.store import IvSource
 
 #: Market-reference ETFs always kept full (D56 market_reference).
 MARKET_REFERENCE: tuple[str, ...] = ("SPY", "QQQ", "IWM")
@@ -170,13 +172,14 @@ def run_topup(
     r: float,
     dividend_yields: Mapping[str, float],
     clock: Callable[[], float] = time.monotonic,
+    series_sources: Sequence[IvSource] | None = None,
 ) -> TopupResult:
     """Select the short names and backfill them over *sessions* (``since`` .. yesterday).
 
     *history_factory* is only called when something is picked (no Alpaca client, and
     no key needed, on a quiet night).
     """
-    store = IvStore(conn)
+    store = IvStore(conn, series_sources=series_sources)
     picked, short, exhausted = select(
         store, names, lookback, min_obs=min_obs, max_tickers=max_tickers
     )

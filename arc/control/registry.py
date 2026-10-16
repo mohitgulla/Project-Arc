@@ -220,6 +220,7 @@ NOT_EXPOSED: dict[str, str] = {
     "scanner_iv_lookback": "IV-rank statistics window",
     "scanner_iv_history_dir": "path",
     "iv_min_obs_rank": "IV-rank statistics guard (D55); change by PR",
+    "iv_series_sources": "IV series source precedence (E7.13, D84; data provenance); change by PR",
     "iv_crosscheck_max_pts": "data-quality alert threshold (context data only)",
     "iv_crosscheck_max_names": "data-quality alert plumbing",
     "iv_ext_max_age_days": "context freshness (never a gate input)",

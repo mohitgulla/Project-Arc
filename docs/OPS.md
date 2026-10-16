@@ -3124,3 +3124,66 @@ loop (back 12:20), CAKE / XOM again after 13:10 (back 15:00), MU after 14:00 (ba
 (0–20; 0 = off, prompt byte-identical) and `stale_pick_suppress_loops` (1–40). Shipped on
 (D86/D116). Rollback: `!arc config set stale_pick_after_loops 0`. Never a gate input.
 Check: `select subject, reason_text, at from decisions where reason_code='stale_pick_suppressed'`.
+
+## E7.13 option-history top-up + `theta_backfill` IV (D84)
+
+**After the paid month the cache stays current on the free tier, NBBO only.** ThetaData's
+free tier serves the EOD report (closing NBBO, sizes, last trade) one year back at about
+20 req/min, and **no open interest**. Every session fetched after the Value subscription
+ends has quotes but no OI: OI-based liquidity scores (`d9_atm_oi`, `oi_near_atm`,
+`liquidity_quarterly`) stop at the cancel date, and a backtest that needs OI after it falls
+back to its quoted/volume rules. Re-subscribing and setting `history_topup.theta_tier:
+value` fills OI from then on.
+
+**Nightly job: `history.topup`** (20:30 ET, trading days, background lane, `ttl: 3h`).
+Requires the Theta Terminal running on the Mac (`http://127.0.0.1:25503`).
+
+- Names: the `history_topup.universe` checkpoint (`c500`) of the latest E7.7 pull list.
+- Per name: the sessions after its last cached one, through the last completed session
+  (`completed_session`, 16:30 ET cutoff), never before the tier's first servable day. One
+  request covers a short run of sessions (E7.6 resumable download), so a normal night is
+  one request per name (the card's ~25 min for 500 names assumed 3 s per request).
+- Order: behind-first (the oldest cache end goes first), then pull-list priority. No new
+  name starts after `max_runtime_s` (2400 s); the rest are `deferred` and go first next
+  night. A missed night needs no catch-up logic: each name resumes from its own last
+  session. Measured on the free tier 2026-10-15: one 3-session request took 9 s (AAPL)
+  to 38 s (SPY), so a night may cover only part of the 500; since one request fetches
+  up to 7 missing sessions, a name updated every other night costs the same per run and
+  the cache still keeps up (check `deferred` in the run summary).
+- Then: raw daily close + volume for the fetched names (Alpaca SIP, batched), and the new
+  sessions' `theta_backfill` IV points for names whose series is already seeded.
+- Terminal not listening: run `skipped` with `terminal_down`, and one `[Routines]` notice
+  per day (`routine_state history_topup:terminal_down_notice`). Never a failure. Every
+  fetched name erroring is a failure (the usual `[Ops]` alert).
+
+Summary examples: `500 names current through 2026-10-15`, `498/500 behind names topped
+up through 2026-10-15, 498 sessions added · theta_backfill +498 IV rows`. Knobs: the
+`history_topup:` block in `config/routines.yaml` (change by PR; not registry-tunable).
+
+    .venv/bin/arc routines run history.topup --db <scratch> --no-slack   # rehearse
+
+**IV source `theta_backfill`.** IV30 per ticker-day from the cached ThetaData quoted chains
+(NBBO mids, 2020 → now), with the live cm30 method: the E7.16 `data/option_stats/daily`
+value as-is, and sessions newer than that file computed with the same `ticker_stats`
+code (method `theta_quoted_cm30` / `theta_quoted_cm30_topup`). A session with a close but
+no quoted expiry in 7–75 DTE gets an `iv_skips` row; one whose close isn't cached yet is
+retried. Rows are append-only and never rewritten.
+
+Our series takes, per day, the first source of `iv_series_sources` that has a row:
+
+    iv_series_sources: [alpaca_cm30, theta_backfill, alpaca_backfill]   # ArcSettings default
+
+`optionstrategist` is never part of it. Change the order by PR; it is not
+registry-tunable. The pre-market `iv.backfill` counts every series source, so a name
+seeded by `theta_backfill` is no longer short and costs no Alpaca requests.
+
+**Seed (owner-approved one-off on the live DB; rehearse on a copy first).** No network:
+
+    sqlite3 data/arc.db ".backup <scratch>/arc-theta.db"
+    .venv/bin/arc iv backfill --source theta --universe c125 --db <scratch>/arc-theta.db
+    .venv/bin/arc iv backfill --source theta --universe c500     # live, after approval
+
+Also `--tickers A,B|watch` or `--tickers-file F` (one per line, `#` comments), plus
+`--since/--until` and `--data-dir`. The report prints rows per source before → after.
+Run `arc history stats` (E7.16) first for any name whose `option_stats/daily` is missing;
+the seed computes those sessions itself otherwise, which is slower.

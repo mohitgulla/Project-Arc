@@ -1,9 +1,11 @@
 """The ``iv_daily`` store (E4.12, D55): one 30-DTE IV per (ticker, day, source).
 
-Our series (what IV rank / percentile are computed over) prefers the forward
-``alpaca_cm30`` reading of a day and falls back to the ``alpaca_backfill`` one.
-``optionstrategist`` rows are never part of it: they are an external cross-check and
-a clearly labelled fallback percentile only (:func:`latest_external`).
+Our series (what IV rank / percentile are computed over) takes, per day, the first
+source present in ``ArcSettings.iv_series_sources`` (E7.13, D84; default the forward
+``alpaca_cm30`` reading, then ``theta_backfill`` from the cached ThetaData quoted
+chains, then ``alpaca_backfill`` from Alpaca option bars). ``optionstrategist`` rows
+are never part of it: they are an external cross-check and a clearly labelled fallback
+percentile only (:func:`latest_external`).
 """
 
 from __future__ import annotations
@@ -24,12 +26,25 @@ if TYPE_CHECKING:
 
 log = structlog.get_logger(__name__)
 
-IvSource = Literal["alpaca_cm30", "alpaca_backfill", "optionstrategist"]
+IvSource = Literal["alpaca_cm30", "alpaca_backfill", "optionstrategist", "theta_backfill"]
 FORWARD: IvSource = "alpaca_cm30"
 BACKFILL: IvSource = "alpaca_backfill"
 OPTIONSTRATEGIST: IvSource = "optionstrategist"
-#: Our series, in preference order for a day that has both.
-SERIES_SOURCES: tuple[IvSource, ...] = (FORWARD, BACKFILL)
+THETA: IvSource = "theta_backfill"  # E7.13 (D84): cached ThetaData quoted chains
+#: Every source that may be part of our series (``optionstrategist`` never is).
+SERIES_CANDIDATES: frozenset[IvSource] = frozenset({FORWARD, THETA, BACKFILL})
+
+
+def default_series_sources() -> tuple[IvSource, ...]:
+    """The configured default precedence (``ArcSettings.iv_series_sources``)."""
+    from arc.config import ArcSettings
+
+    return tuple(ArcSettings.model_fields["iv_series_sources"].default)
+
+
+#: Our series, in preference order for a day that has several (the config default;
+#: callers with settings pass ``settings.iv_series_sources``).
+SERIES_SOURCES: tuple[IvSource, ...] = default_series_sources()
 
 
 @dataclass(frozen=True)
@@ -83,8 +98,17 @@ _COLS = (
 class IvStore:
     """Read/write ``iv_daily`` and ``iv_skips`` (the caller owns the connection)."""
 
-    def __init__(self, conn: sqlite3.Connection) -> None:
+    def __init__(
+        self, conn: sqlite3.Connection, *, series_sources: Sequence[IvSource] | None = None
+    ) -> None:
         self.conn = conn
+        self.series_sources: tuple[IvSource, ...] = (
+            tuple(series_sources) if series_sources else SERIES_SOURCES
+        )
+        bad = set(self.series_sources) - SERIES_CANDIDATES
+        if bad:
+            msg = f"not a series source: {sorted(bad)} (allowed {sorted(SERIES_CANDIDATES)})"
+            raise ValueError(msg)
 
     # -- writes ----------------------------------------------------------------
 
@@ -180,10 +204,10 @@ class IvStore:
         return [_row(r) for r in self.conn.execute(sql + " ORDER BY day", args).fetchall()]
 
     def series(self, ticker: str, *, until: _dt.date | None = None) -> dict[_dt.date, float]:
-        """Our IV series for *ticker*: ``alpaca_cm30`` per day, else ``alpaca_backfill``."""
-        rank = {s: i for i, s in enumerate(SERIES_SOURCES)}
+        """Our IV series for *ticker*: per day, the first of :attr:`series_sources` present."""
+        rank = {s: i for i, s in enumerate(self.series_sources)}
         best: dict[_dt.date, tuple[int, float]] = {}
-        for r in self.rows(ticker, SERIES_SOURCES, until=until):
+        for r in self.rows(ticker, self.series_sources, until=until):
             k = rank[r.source]
             if r.day not in best or k < best[r.day][0]:
                 best[r.day] = (k, r.iv30)
@@ -211,7 +235,9 @@ class IvStore:
         return {str(r[0]): int(r[1]) for r in rows}
 
 
-def safe_store(conn: sqlite3.Connection | None) -> IvStore | None:
+def safe_store(
+    conn: sqlite3.Connection | None, *, series_sources: Sequence[IvSource] | None = None
+) -> IvStore | None:
     """An :class:`IvStore` when *conn* has the table (``None`` before migrate / no store)."""
     if conn is None:
         return None
@@ -219,7 +245,7 @@ def safe_store(conn: sqlite3.Connection | None) -> IvStore | None:
         conn.execute("SELECT 1 FROM iv_daily LIMIT 1")
     except sqlite3.OperationalError:
         return None
-    return IvStore(conn)
+    return IvStore(conn, series_sources=series_sources)
 
 
 def import_csv_dir(

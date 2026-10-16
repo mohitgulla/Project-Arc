@@ -20,6 +20,7 @@ from __future__ import annotations
 import importlib
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -1014,6 +1015,7 @@ def iv_backfill_source(
         r=s.scanner_risk_free_rate,
         dividend_yields=s.iv_dividend_yields,
         clock=clock or _time.monotonic,
+        series_sources=s.iv_series_sources,  # E7.13: theta_backfill counts too
     )
     rep = res.report
     if rep is not None and rep.tickers and not res.days_added:
@@ -1022,6 +1024,96 @@ def iv_backfill_source(
             msg = f"IV backfill failed for every picked ticker (e.g. {errors[0]})"
             raise RuntimeError(msg)
     _data_result(ctx, "iv_backfill", "alpaca", res.metrics(), res.days_added)
+    return JobResult(summary=res.summary(), metrics=res.metrics())
+
+
+HISTORY_TOPUP_DOWN_DAY = "history_topup:terminal_down_notice"
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def history_topup_source(
+    ctx: JobContext,
+    provider_factory: Callable[[], Any] | None = None,
+    bars: Any | None = None,
+    terminal_check: Callable[[str], bool] | None = None,
+    clock: Callable[[], float] | None = None,
+) -> JobResult:
+    """E7.13 (D84): nightly ThetaData free-tier top-up of the C500 option-history cache.
+
+    Fetches each behind name's sessions through the last completed one (behind-first,
+    capped by ``history_topup.max_runtime_s``; the rest resume next run), refreshes their
+    raw daily closes, then appends the new sessions' ``theta_backfill`` IV points for
+    names whose series is already seeded. A Terminal that isn't listening is a skip
+    (``terminal_down``) with one ``[Routines]`` notice per day, never a failure.
+    """
+    import time as _time
+
+    from arc.backtest.history_topup import run_topup, terminal_up
+    from arc.backtest.universe import checkpoint_symbols, load_universe
+    from arc.data.history.thetadata import ThetaTier, tier_earliest_date
+    from arc.routines.runs import RoutineStateRepo
+    from arc.utils.calendar import completed_session
+
+    cfg = ctx.routines.history_topup
+    data_dir = Path(cfg.data_dir)
+    if not data_dir.is_absolute():
+        data_dir = _REPO_ROOT / data_dir
+    up = terminal_check or terminal_up
+    if not up(cfg.theta_url):
+        state = RoutineStateRepo(ctx.conn)
+        day = ctx.now.astimezone(ET).date().isoformat()
+        notice = ""
+        if state.get(HISTORY_TOPUP_DOWN_DAY) != day:
+            state.set(HISTORY_TOPUP_DOWN_DAY, day, now=ctx.now)
+            notice = (
+                f"history top-up skipped: terminal_down (Theta Terminal not listening at "
+                f"{cfg.theta_url}); the option-history cache resumes from its last session "
+                "once it runs (OPS § E7.13)"
+            )
+        msg = f"terminal_down: Theta Terminal not listening at {cfg.theta_url}"
+        raise JobSkippedError(msg, notice=notice)
+    try:
+        _, rows, _ = load_universe(data_dir, cfg.universe_version)
+    except FileNotFoundError as exc:
+        msg = f"no E7.7 universe under {data_dir}/backtest_universe ({exc})"
+        raise JobSkippedError(msg) from exc
+    names = checkpoint_symbols(rows, cfg.universe)
+    end = completed_session(ctx.now)
+    tier = ThetaTier(cfg.theta_tier)
+    earliest = tier_earliest_date(tier, end)
+    if provider_factory is None:  # pragma: no cover - live Terminal (integration)
+        from arc.data.history.thetadata import ThetaDataEodProvider
+
+        def _theta() -> Any:
+            return ThetaDataEodProvider(
+                base_url=cfg.theta_url, tier=tier, min_interval_s=cfg.request_interval_s
+            )
+
+        provider_factory = _theta
+
+    if bars is None:  # pragma: no cover - live Alpaca (integration)
+        from arc.backtest.universe import AlpacaDailyBarsBatch
+
+        bars = AlpacaDailyBarsBatch()
+    res = run_topup(
+        data_dir=data_dir,
+        names=names,
+        end=end,
+        earliest=earliest,
+        provider_factory=provider_factory,
+        bars=bars,
+        max_runtime_s=cfg.max_runtime_s,
+        need_oi=tier is not ThetaTier.FREE,
+        conn=ctx.conn,
+        now=ctx.now,
+        iv_append=cfg.iv_append,
+        clock=clock or _time.monotonic,
+    )
+    if res.results and len(res.errors) == len(res.results):
+        msg = f"history top-up failed for every name (e.g. {res.errors[0].underlying}: "
+        msg += f"{(res.errors[0].error or '')[:120]})"
+        raise RuntimeError(msg)
+    _data_result(ctx, "history_topup", "thetadata", res.metrics(), res.sessions_added)
     return JobResult(summary=res.summary(), metrics=res.metrics())
 
 
@@ -2948,6 +3040,7 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "ex_dividend": "arc.routines.handlers:ex_dividend_source",
     "iv.record": "arc.routines.handlers:iv_record_source",  # E4.12 (D55) daily 30-DTE IV
     "iv.backfill": "arc.routines.handlers:iv_backfill_source",  # E16.1 (D76) / D81 pre-market
+    "history.topup": "arc.routines.handlers:history_topup_source",  # E7.13 (D84) nightly Theta
     "betas": "arc.routines.handlers:betas_source",  # E3.6 (D62) daily 1y beta vs SPY
     "levels": "arc.routines.handlers:levels_source",  # E23.0 (D98) volume profile + OI walls
     # E4.8 (D46): Finnhub per-ticker context (typed kinds, shared 55/min budget)
