@@ -1,23 +1,26 @@
 """``arc experiment adopt``: an owner-approved Analyst proposal becomes a registered XP
 (E21.4, PLAN D86).
 
-The one way a new experiment enters the registry. Deterministic, idempotent per ``P-<n>``:
+The one way a new experiment enters the registry. Deterministic, idempotent per proposal:
 
 1. read the proposal (an ``xp_backlog.json`` entry, or the Analyst's approved
-   ``proposals/P-<n>.yaml``), pick the next free ``XP-<n>`` across the DB, the specs
-   committed in the working tree and ``origin/main`` (:func:`next_free_id`);
+   ``proposals/XP-<n>.yaml``). D121: an Analyst proposal reserved its ``XP-<n>`` when it was
+   proposed and registers under that id (``--id XP-<n>``); adopt refuses when the id is
+   already taken in the DB or the specs (:func:`check_reserved_id`). Without ``--id``
+   (owner-made specs) it picks the next free ``XP-<n>`` across the DB, the specs committed
+   in the working tree and ``origin/main`` (:func:`next_free_id`);
 2. fill the defaults from ``config/experiments.yaml`` and validate: ``kind: ab``, exactly
    :data:`K_TREATMENTS` treatments, every overlay target loads, the arms (the treatments
    plus the control arm) fit ``experiments.runner.max_parallel_arms``. The spec is always
    written as v3 (D108): ``spec_version: 3`` and ``arms.control: {overlay: {}}``, so control
    runs as its own flat arm ``XP-<n>:control`` on the experiment account;
-3. ``create`` + ``register`` with ``proposal_ref: P-<n>`` (``registered``, or ``queued``
+3. ``create`` + ``register`` with ``proposal_ref: XP-<n>`` (``registered``, or ``queued``
    with the reason when its area or the arm cap is busy);
 4. commit ``config/experiments/live/xp<n>_<slug>.yaml`` through an auto-merged PR on
    branch ``xp/<n>`` (:mod:`arc.experiments.publish`);
 5. one line in the #arc-investor day thread.
 
-A re-run for the same ``P-<n>`` finds the experiment by its ``proposal_ref`` and only
+A re-run for the same proposal finds the experiment by its ``proposal_ref`` and only
 retries what is missing (register, the PR, nothing else). ``--dry-run`` runs 1-3 on an
 in-memory copy of the store and prints the file, branch, PR text and Slack line.
 """
@@ -42,7 +45,8 @@ from arc.experiments.models import (
 )
 from arc.experiments.publish import EXPERIMENTS_DIR, VERDICTS_DIR
 from arc.experiments.store import (
-    PROPOSAL_REF_RE,
+    LEGACY_PROPOSAL_REF_RE,
+    PROPOSAL_ID_RE,
     ExperimentError,
     ExperimentStore,
     check_owner_approval,
@@ -65,6 +69,7 @@ __all__ = [
     "Proposal",
     "adopt",
     "adopt_pr_body",
+    "check_reserved_id",
     "load_proposal",
     "next_free_id",
     "spec_file_text",
@@ -82,8 +87,10 @@ _XP_NUM_RE = re.compile(r"\bXP-([1-9]\d*)\b")
 _TERMINAL = frozenset(
     {ExperimentStatus.STOPPED, ExperimentStatus.PROMOTED, ExperimentStatus.REJECTED}
 )
-#: the Analyst's placeholder id in an approved ``proposals/P-<n>.yaml``
+#: a pre-D121 approved spec's placeholder id (adopt picked the number)
 _PLACEHOLDER_IDS = frozenset({"XP-<next>", "XP-<n>", ""})
+#: D121: the reserved experiment id ``--id`` names
+RESERVED_ID_RE = re.compile(r"^XP-[1-9]\d*$")
 
 
 class AdoptError(ExperimentError):
@@ -132,8 +139,10 @@ class AdoptResult:
 
 
 def load_proposal(data: Mapping[str, Any], *, proposal_id: str | None = None) -> Proposal:
-    """A :class:`Proposal` from a backlog entry (``{"id": "P-<n>", "spec": {...}}``) or an
-    approved spec document (``proposals/P-<n>.yaml``; *proposal_id* names it)."""
+    """A :class:`Proposal` from a backlog entry (``{"id": "XP-<n>", "spec": {...}}``) or an
+    approved spec document (``proposals/XP-<n>.yaml``; *proposal_id* names it). D121: the
+    spec may carry its own reserved id (it must equal the proposal id); a legacy ``P-<n>``
+    proposal still reads, with a placeholder id."""
     if isinstance(data.get("spec"), dict):  # an xp_backlog.json entry
         pid = str(data.get("id") or proposal_id or "")
         if proposal_id and pid != proposal_id:
@@ -149,24 +158,36 @@ def load_proposal(data: Mapping[str, Any], *, proposal_id: str | None = None) ->
         pid = proposal_id or ""
         spec = dict(data)
         by = str(spec.pop("proposed_by", None) or "owner")
-    if not PROPOSAL_REF_RE.match(pid):
-        msg = f"proposal id {pid!r} must look like P-<n> (pass it, or name the file P-<n>.yaml)"
+    if LEGACY_PROPOSAL_REF_RE.match(pid):
+        msg = (
+            f"proposal id {pid}: P-<n> ids are retired (D121); the Analyst's backlog names its "
+            "XP-<n> (`python3 arc_analyst.py backlog`)"
+        )
         raise AdoptError(msg)
-    if str(spec.get("id", "")) not in _PLACEHOLDER_IDS:
-        msg = f"{pid}: the proposal already carries id {spec['id']!r}; adopt assigns it"
+    if not PROPOSAL_ID_RE.match(pid):
+        msg = (
+            f"proposal id {pid!r} must look like XP-<n> (pass it, or name the file "
+            "XP-<n>.yaml; D121)"
+        )
+        raise AdoptError(msg)
+    sid = str(spec.get("id", ""))
+    if sid not in _PLACEHOLDER_IDS and sid != pid:
+        msg = f"{pid}: the proposal carries id {sid!r}; it must be its own reserved id or none"
         raise AdoptError(msg)
     spec.pop("id", None)
     return Proposal(proposal_id=pid, spec=spec, proposed_by=by)
 
 
 def read_proposal_file(path: Path | str, proposal_id: str | None = None) -> Proposal:
-    """:func:`load_proposal` of a YAML/JSON file; a ``P-<n>.yaml`` name gives the id."""
+    """:func:`load_proposal` of a YAML/JSON file; an ``XP-<n>.yaml`` name gives the id."""
     p = Path(path)
     data = yaml.safe_load(p.read_text()) or {}
     if not isinstance(data, dict):
         msg = f"{p}: top level must be a mapping"
         raise AdoptError(msg)
-    if proposal_id is None and PROPOSAL_REF_RE.match(p.stem):
+    if proposal_id is None and (
+        PROPOSAL_ID_RE.match(p.stem) or LEGACY_PROPOSAL_REF_RE.match(p.stem)
+    ):
         proposal_id = p.stem
     return load_proposal(data, proposal_id=proposal_id)
 
@@ -215,6 +236,38 @@ def next_free_id(store: ExperimentStore, *namespaces: Iterable[str]) -> str:
         used |= _xp_numbers(ns)
         used |= {int(m) for t in ns for m in re.findall(r"\bxp([1-9]\d*)[_.]", t)}
     return f"XP-{max(used, default=0) + 1}"
+
+
+def check_reserved_id(
+    store: ExperimentStore, xid: str, proposal_id: str, *namespaces: Iterable[str]
+) -> str:
+    """D121: *xid* (``--id``) if no experiment in the DB and no spec / verdict file in
+    *namespaces* holds that number yet; else :class:`AdoptError` telling the Analyst to
+    re-reserve. Reserved ids are never reused, so a taken one is never adopted over."""
+    if not RESERVED_ID_RE.match(xid or ""):
+        msg = f"--id {xid!r} must look like XP-<n> (the proposal's reserved id, D121)"
+        raise AdoptError(msg)
+    n = int(xid.split("-")[1])
+    holder = store.get(xid)
+    if holder is not None:
+        msg = (
+            f"{xid} is taken in the registry ({holder.status.value}, proposal "
+            f"{proposal_ref_of(holder) or 'none'}): {proposal_id} must re-reserve a free "
+            "XP id (the Analyst's next `record` or `approve` moves it, D121)"
+        )
+        raise AdoptError(msg)
+    for ns in namespaces:
+        texts = list(ns)
+        taken = _xp_numbers(texts) | {
+            int(m) for t in texts for m in re.findall(r"\bxp([1-9]\d*)[_.]", t)
+        }
+        if n in taken:
+            msg = (
+                f"{xid} is taken by a committed experiment spec: {proposal_id} must re-reserve "
+                "a free XP id (the Analyst's next `record` or `approve` moves it, D121)"
+            )
+            raise AdoptError(msg)
+    return xid
 
 
 def _slug(title: str) -> str:
@@ -274,7 +327,9 @@ def start_command(st: ExperimentState) -> str | None:
 def slack_line(st: ExperimentState, proposal_id: str, start_cmd: str | None) -> str:
     k = len(st.spec.arms.treatments)
     arms = f"control + {k} treatments" if st.spec.control_runs else f"{k} arms"
-    head = f"{st.experiment_id} registered ({proposal_id}), {arms}, area {st.spec.area.value}"
+    # D121: an Analyst proposal registers under its own id, so name it only when it differs
+    ref = "" if proposal_id == st.experiment_id else f" ({proposal_id})"
+    head = f"{st.experiment_id} registered{ref}, {arms}, area {st.spec.area.value}"
     if start_cmd is not None:
         return f"{head}, owner to start after the spec PR merges: `{start_cmd}`"
     behind = _queued_detail(st)[0]
@@ -367,10 +422,13 @@ def adopt(
     repo: Path = REPO_ROOT,
     dry_run: bool = False,
     post: Any = None,
+    experiment_id: str | None = None,
 ) -> AdoptResult:
     """Adopt *proposal* (see the module doc). *main* = ``origin/main`` for the id scan
     (None: skip it); *publisher* opens the spec PR (None: skip); *post(text)* writes the
-    Slack line (None: skip). ``dry_run`` changes nothing (in-memory store copy)."""
+    Slack line (None: skip). ``dry_run`` changes nothing (in-memory store copy).
+    *experiment_id* (``--id``, D121) registers under the proposal's reserved id and
+    refuses a taken one; None picks the next free id (owner-made specs)."""
     approval = check_owner_approval(owner_approval)
     db = _memory_copy(conn) if dry_run else conn
     store = ExperimentStore.for_runner(db, cfg.runner, now=lambda: now)
@@ -380,6 +438,12 @@ def adopt(
     created = False
     if live:
         st = live[-1]
+        if experiment_id is not None and st.experiment_id != experiment_id:
+            msg = (
+                f"{pid} is already adopted as {st.experiment_id}, not --id {experiment_id}; "
+                "re-run without --id or with the registered id"
+            )
+            raise AdoptError(msg)
     elif found:
         ids = ", ".join(s.experiment_id for s in found)
         msg = f"{pid} was already adopted as {ids}, now concluded; a re-run needs a new proposal"
@@ -388,7 +452,10 @@ def adopt(
         namespaces: list[list[str]] = [committed_texts(repo)]
         if main is not None:
             namespaces.append(main_texts(main))
-        xid = next_free_id(store, *namespaces)
+        if experiment_id is not None:
+            xid = check_reserved_id(store, experiment_id, pid, *namespaces)
+        else:
+            xid = next_free_id(store, *namespaces)
         spec = _build_spec(proposal, xid, cfg)
         need = store.arms_of(spec)
         cap = cfg.runner.max_parallel_arms
@@ -431,7 +498,7 @@ def adopt(
     if dry_run:
         db.close()
         return res
-    if post is not None and created:  # once per P-<n>: before the PR, which may fail
+    if post is not None and created:  # once per proposal: before the PR, which may fail
         post(line)
     if publisher is not None:
         pr: PublishResult = publisher.publish(

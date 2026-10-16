@@ -10,8 +10,8 @@ deep-merged over it with `arc.utils.yamlpatch.deep_merge` (the function
 
 Lifecycle:
 
-    arc experiment create --spec config/experiments/live/xp1_aa_k3.yaml --owner-approval P-<n> --db <db>
-    arc experiment register XP-1 --owner-approval P-<n> --db <db>     # locks sha256(canonical spec)
+    arc experiment create --spec config/experiments/live/xp1_aa_k3.yaml --owner-approval XP-<n> --db <db>
+    arc experiment register XP-1 --owner-approval XP-<n> --db <db>     # locks sha256(canonical spec)
     arc experiment show XP-1 --db <db>
     arc experiment verify XP-1 --db <db>
 
@@ -28,12 +28,13 @@ single-treatment run = `t1`) and the stored report's `report_hash` (from
 `t<k>` tested. Any verdict file (win, futility, invalid) frees the leaves.
 
 Who adds specs (D86): specs are added only by `arc experiment adopt` (E21.4) after the
-owner approves an Analyst proposal (`approve P-<n>` in #arc-analyst). It commits
+owner approves an Analyst proposal (`approve XP-<n>` in #arc-analyst; the id was reserved
+when the Analyst proposed it and adopt registers under it, D121). It commits
 `xp<n>_<slug>.yaml` through an auto-merged PR on branch `xp/<n>`, and every concluded
 experiment gets its `verdicts/XP-<n>.yaml` the same way (branch `xp/<n>-verdict`; docs/OPS.md
 §5.18). Cards and PRs never
 draft XP specs here; a strategy PR's only XP touchpoint is its `XP-advisory:` line.
-`create` and `register` refuse without `--owner-approval <P-<n> | slack:<ts> | owner:<note>>`.
+`create` and `register` refuse without `--owner-approval <XP-<n> | slack:<ts> | owner:<note>>`.
 
 Registry reset (owner, 2026-10-13, PLAN D111): every earlier spec, verdict and history
 file was removed and the live registry cleared; XP-1 is the K=3 calibration A/A

@@ -53,10 +53,10 @@ def _arc(*argv: str) -> int:
 
 def _registered(db: Path) -> None:
     assert (
-        _arc("experiment", "create", "--owner-approval", "P-1", "--spec", SPEC, "--db", str(db))
+        _arc("experiment", "create", "--owner-approval", "XP-1", "--spec", SPEC, "--db", str(db))
         == 0
     )
-    assert _arc("experiment", "register", "--owner-approval", "P-1", "XP-1", "--db", str(db)) == 0
+    assert _arc("experiment", "register", "--owner-approval", "XP-1", "XP-1", "--db", str(db)) == 0
 
 
 def _runner(*names: str) -> RunnerConfig:

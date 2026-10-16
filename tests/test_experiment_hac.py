@@ -358,10 +358,10 @@ def test_adopt_writes_the_default_analysis_unless_the_proposal_names_one() -> No
         "backtest_ref": "BT-3",
         "non_inferiority_margin": 0.1,
     }
-    built = ad._build_spec(ad.load_proposal(spec, proposal_id="P-1"), "XP-9", cfg)  # noqa: SLF001
+    built = ad._build_spec(ad.load_proposal(spec, proposal_id="XP-1"), "XP-9", cfg)  # noqa: SLF001
     assert built.analysis == Analysis(covariates=["spy_ret"], hac_lag=5)
     own = {**spec, "analysis": {"covariates": [], "hac_lag": 3}}
-    built = ad._build_spec(ad.load_proposal(own, proposal_id="P-1"), "XP-9", cfg)  # noqa: SLF001
+    built = ad._build_spec(ad.load_proposal(own, proposal_id="XP-1"), "XP-9", cfg)  # noqa: SLF001
     assert built.analysis == Analysis(covariates=[], hac_lag=3)
 
 

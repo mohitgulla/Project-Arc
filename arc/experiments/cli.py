@@ -3,7 +3,7 @@
 - ``arc experiment create --spec <yaml> --owner-approval <ref>``  store a draft (defaults
   filled from ``config/experiments.yaml`` + D26 overrides); a draft may be re-created
 - ``arc experiment register <id> --owner-approval <ref>``  hash-lock the spec; queues if
-  its area is busy. D86: both refuse without ``--owner-approval`` (``P-<n>``,
+  its area is busy. D86: both refuse without ``--owner-approval`` (``XP-<n>``,
   ``slack:<ts>`` or ``owner:<note>``); dev cards never write experiment rows, the owner
   adopts an approved Analyst proposal (``arc experiment adopt``, E21.4)
 - ``arc experiment list [--status S]``
@@ -16,9 +16,10 @@
 - ``arc experiment evaluate [<id>] [--now ISO] [--spy stored|alpaca]``  run the daily
   evaluation now: stores the report and applies its verdict (the
   ``experiments.evaluate`` routine does this, fetching SPY on a live tick)
-- ``arc experiment adopt P-<n> --proposal <backlog json | P-<n>.yaml> --owner-approval
-  slack:<ts>``  E21.4 (D86): next free XP id, defaults, validate, create + register, the
-  spec PR (auto-merge) and one Slack line; idempotent per P-<n>; ``--dry-run`` writes
+- ``arc experiment adopt XP-<n> --id XP-<n> --proposal <backlog json | XP-<n>.yaml>
+  --owner-approval slack:<ts>``  E21.4 (D86): the proposal's reserved id (D121; refused
+  if taken; no ``--id`` = next free id), defaults, validate, create + register, the spec
+  PR (auto-merge) and one Slack line; idempotent per proposal; ``--dry-run`` writes
   nothing
 - ``arc experiment verdict <id> [--dry-run]``  E21.4: the concluded experiment's verdict
   file PR (the daily evaluation opens these itself; this retries or previews one)
@@ -46,7 +47,7 @@ __all__ = ["add_experiment_parser", "run_experiment"]
 
 LOCAL_ACTOR = "local"
 OWNER_APPROVAL_HELP = (
-    "required (D86): the owner's approval of this experiment, P-<n> (Analyst proposal), "
+    "required (D86): the owner's approval of this experiment, XP-<n> (Analyst proposal), "
     "slack:<ts> or owner:<note>; normally set by `arc experiment adopt` (E21.4)"
 )
 
@@ -119,7 +120,7 @@ def add_experiment_parser(sub: argparse._SubParsersAction[argparse.ArgumentParse
         nargs="?",
         default=None,
         help="config/experiments/live/<x>.yaml, or a stored experiment id (default: an ab "
-        "spec with the config/experiments.yaml defaults, e.g. for an Analyst P-<n> proposal)",
+        "spec with the config/experiments.yaml defaults, e.g. for an Analyst XP proposal)",
     )
     pl.add_argument("--sigma", type=float, default=None, help="sigma of d_t (default: A/A's)")
     pl.add_argument(
@@ -138,15 +139,22 @@ def add_experiment_parser(sub: argparse._SubParsersAction[argparse.ArgumentParse
     )
     ad = common(
         esub.add_parser(
-            "adopt", help="E21.4: register an owner-approved Analyst proposal P-<n> (D86)"
+            "adopt", help="E21.4: register an owner-approved Analyst proposal XP-<n> (D86, D121)"
         )
     )
-    ad.add_argument("proposal_id", nargs="?", default=None, help="P-<n>")
+    ad.add_argument("proposal_id", nargs="?", default=None, help="XP-<n> (the proposal id)")
+    ad.add_argument(
+        "--id",
+        dest="experiment_id",
+        default=None,
+        help="D121: register under this reserved XP-<n> (the Analyst proposal's id); refuses "
+        "if the id is taken in the DB or the specs. Omitted: the next free id (owner specs)",
+    )
     ad.add_argument(
         "--proposal",
         required=True,
         help="the proposal: an xp_backlog.json entry (or the whole backlog), or the "
-        "Analyst's approved proposals/P-<n>.yaml",
+        "Analyst's approved proposals/XP-<n>.yaml",
     )
     ad.add_argument("--owner-approval", default=None, help=OWNER_APPROVAL_HELP)
     ad.add_argument("--now", default=None, help="ISO time (default: now)")
@@ -539,7 +547,7 @@ def effect_grid(
 ) -> list[dict[str, Any]]:  # fmt: skip
     """E21.3 (D86): sessions one arm of a *k*-treatment run needs per daily effect.
 
-    What the Analyst's pre-run gate puts in context, so a ``P-<n>`` proposal's
+    What the Analyst's pre-run gate puts in context, so an XP proposal's
     ``sessions_needed`` is read off this table, not guessed.
     """
     from arc.experiments import stats
@@ -746,7 +754,7 @@ def _proposal_from(args: argparse.Namespace) -> Any:
         data = json.loads(path.read_text())
         if isinstance(data, dict) and isinstance(data.get("items"), dict):  # the whole backlog
             if not args.proposal_id:
-                msg = "name the proposal: arc experiment adopt P-<n> --proposal <backlog>"
+                msg = "name the proposal: arc experiment adopt XP-<n> --proposal <backlog>"
                 raise AdoptError(msg)
             entry = next(
                 (e for e in data["items"].values() if e.get("id") == args.proposal_id), None
@@ -786,12 +794,18 @@ def _run_adopt(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
         publisher=None if (args.dry_run or args.no_pr) else GitPublisher(),
         dry_run=args.dry_run,
         post=post,
+        experiment_id=args.experiment_id,
     )
     if args.json:
         _out(json.dumps(res.as_json(), indent=2, default=str))
         return 0
     head = "dry-run (nothing written)" if res.dry_run else ("adopted" if res.created else "found")
-    _out(f"{head}: {res.proposal_id} -> {res.experiment_id} [{res.status}]")
+    ids = (
+        res.experiment_id  # D121: adopted under the proposal's own reserved id
+        if res.proposal_id == res.experiment_id
+        else f"{res.proposal_id} -> {res.experiment_id}"
+    )
+    _out(f"{head}: {ids} [{res.status}]")
     if res.queue_reason:
         _out(f"  queued: {res.queue_reason}")
     _out(f"  area {res.area} · {res.arms} treatments · spec sha256 {res.spec_hash}")
