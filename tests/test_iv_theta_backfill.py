@@ -610,7 +610,10 @@ def test_handler_every_name_failing_is_a_failure(conn: sqlite3.Connection, data_
     ctx = _ctx(conn, data_dir, iv_append=False)
     with pytest.raises(RuntimeError, match="failed for every name"):
         history_topup_source(
-            ctx, provider_factory=lambda: Boom({}), bars=None, terminal_check=lambda u: True
+            ctx,
+            provider_factory=lambda: Boom({}),
+            bars=FakeBars({}),  # never a live Alpaca client: CI has no keys
+            terminal_check=lambda u: True,
         )
 
 
