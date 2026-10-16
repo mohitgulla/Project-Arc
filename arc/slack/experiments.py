@@ -5,12 +5,11 @@ Two shapes, both built from the stored E10.3
 :mod:`arc.slack.blocks` layout (no hand-rolled Block Kit):
 
 - :func:`experiment_line`: the daily status of each running experiment (D108,
-  E25.6): ``[XP-12] Day 14/60``, a bold-italic one-sentence headline (where the
-  treatments stand against the reference, ≤ ``RECAP_MAX``), then one line per
-  treatment, e.g.
-  ``T2 − C • P&L ∆ +0.08%/day (p 0.21 Holm) • Sortino ∆ +0.35 (p 0.04)``
-  (``T1 − P`` for a v1/v2 report, whose reference was production). Also sent to
-  #arc-investor (D65). No production or sleeve stats: those stay on the Tower (D109).
+  E25.6): ``:microscope: [XP-12] Day 14/60``, a blank line, then a bold-italic
+  one-sentence headline (where the treatments stand against the reference,
+  ≤ ``RECAP_MAX``). No per-arm ``Ti − C`` lines: the arm detail is on the Tower's
+  Experiments page (owner 2026-10-16). Also sent to #arc-investor (D65). No
+  production or sleeve stats (D109).
 - :func:`experiment_stop_card`: one card when the evaluation stops an experiment
   (win, futility, invalid). Its header is the daily line with the verdict
   (``[XP-2] Day 25 • Win • P&L ∆ … • Sortino ∆ …``), then a fact grid with the
@@ -38,6 +37,8 @@ if TYPE_CHECKING:
 
 __all__ = ["experiment_line", "experiment_stop_card", "stop_title", "verdict_sentence"]
 
+STATUS_EMOJI = ":microscope:"  # daily status title (owner 2026-10-16)
+
 _VERDICT_LABEL = {
     "win": "Win",
     "futility": "Futility",
@@ -49,17 +50,18 @@ _VERDICT_LABEL = {
 def experiment_line(report: ExperimentReport) -> B.CardView:
     """The daily status of a running experiment (D108, E25.6; text only, no blocks).
 
-    ``[XP-12] Day 14/60``, a bold-italic one-sentence headline (≤ ``RECAP_MAX``, D109),
-    then one ``Ti − C`` line per treatment (all K): P&L ∆ %/day with its Holm p and
-    Sortino ∆ with its p. D119: a pre-registered adjusted spec missing a SPY return
-    adds one "verdict on hold" line. No production (Ti − P) line and no sleeve stats: those stay
-    on the Tower. Posted in the day thread and also sent to #arc-investor (D65).
+    ``:microscope: [XP-12] Day 14/60``, a blank line, then a bold-italic one-sentence
+    headline (≤ ``RECAP_MAX`` = 300 chars, D109). The per-arm ``Ti − C`` lines are not
+    posted (owner 2026-10-16): the Tower's Experiments page carries them. D119: a
+    pre-registered adjusted spec missing a SPY return adds one "verdict on hold" line.
+    No production or sleeve stats. Posted in the day thread and also sent to
+    #arc-investor (D65).
     """
     r = report
     lines = [
-        view.status_title(r),
+        f"{STATUS_EMOJI} {view.status_title(r)}",
+        "",
         bold_italic(view.status_headline(r), RECAP_MAX),
-        *(view.gap_line(r, g) for g in view.arm_gaps(r)),
     ]
     if r.covariate_missing:  # D119: the pre-registered adjusted verdict waits on SPY
         days = ", ".join(d.strftime("%b %-d") for d in r.covariate_missing[:5])
