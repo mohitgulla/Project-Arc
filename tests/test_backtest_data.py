@@ -668,6 +668,42 @@ def test_menu_cache_hit_miss_and_round_trip(data_dir: Path) -> None:
     assert MenuCache(data_dir / "nope").stats().files == 0
 
 
+def test_menu_cache_round_trips_a_nan_greek(data_dir: Path) -> None:
+    """E7.14 regression: a wing with no IV solution (NaN delta/iv) is written as JSON
+    null; reading it back used to raise ``picks.0.delta: valid number`` and kill the run."""
+    import math
+
+    from arc.backtest.engine import TradeLeg
+
+    menu = _menu(data_dir)
+    c0 = menu[0]
+    wing = c0.picks[0].model_copy(update={"delta": math.nan, "iv": math.nan})
+    bad = c0.model_copy(update={"picks": [wing, *c0.picks[1:]]})
+    cache = MenuCache(data_dir)
+    k = _key(menu_hash="nan")
+    cache.put(k, [bad, *menu[1:]])
+    got = cache.get(k)
+    assert got is not None and len(got) == len(menu)
+    p = got[0].picks[0]
+    assert math.isnan(p.delta) and math.isnan(p.iv)
+    assert p.model_dump(exclude={"delta", "iv"}) == wing.model_dump(exclude={"delta", "iv"})
+    assert [c.model_dump() for c in got[1:]] == [c.model_dump() for c in menu[1:]]
+    leg = TradeLeg.model_validate_json(
+        TradeLeg(
+            symbol="X",
+            right="put",
+            strike=1,
+            side=1,
+            mid=1,
+            spread=0.1,
+            fill=1.05,
+            delta=math.nan,
+            iv=math.nan,
+        ).model_dump_json()
+    )
+    assert math.isnan(leg.delta) and math.isnan(leg.iv)
+
+
 @pytest.mark.parametrize(
     "change",
     [

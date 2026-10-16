@@ -22,11 +22,12 @@ long_put      long put @ anchor
 from __future__ import annotations
 
 import datetime as dt  # noqa: TC003 — pydantic fields
+import math
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
 import numpy as np
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -36,6 +37,7 @@ __all__ = [
     "LegPick",
     "StrategyKind",
     "StrategySpec",
+    "nan_if_none",
     "pick_expirations",
     "select_legs",
 ]
@@ -87,8 +89,19 @@ class StrategySpec(BaseModel):
         return f"{self.kind}_d{round(self.delta * 100)}{w}_dte{self.dte_min}-{self.dte_max}"
 
 
+def nan_if_none(v: object) -> object:
+    """JSON has no NaN: pydantic writes a NaN float as ``null``; read it back as NaN."""
+    return math.nan if v is None else v
+
+
 class LegPick(BaseModel):
-    """One selected contract and its side (+1 long / −1 short)."""
+    """One selected contract and its side (+1 long / −1 short).
+
+    ``delta``/``iv`` are informational (pricing uses ``mid``/``spread``) and are NaN on
+    a wing whose quoted mark has no IV solution (e.g. a mid below intrinsic): only the
+    anchor must have a finite delta. NaN serialises to JSON ``null`` and reads back as
+    NaN, so a menu-cache round trip equals the cold build (E7.14).
+    """
 
     model_config = ConfigDict(frozen=True)
 
@@ -101,6 +114,8 @@ class LegPick(BaseModel):
     spread: float
     delta: float
     iv: float
+
+    _nan_greeks = field_validator("delta", "iv", mode="before")(nan_if_none)
 
 
 def pick_expirations(chain: pd.DataFrame, spec: StrategySpec) -> list[dt.date]:
