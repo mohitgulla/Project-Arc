@@ -28,6 +28,9 @@ import structlog
 from arc.routines.handlers import JobResult
 
 if TYPE_CHECKING:
+    import datetime as _dt
+    from collections.abc import Callable, Mapping
+
     from arc.experiments.covariate import BarsProvider
     from arc.experiments.evaluate import ExperimentReport
     from arc.routines.handlers import JobContext
@@ -58,7 +61,9 @@ def experiments_evaluate_step(ctx: JobContext) -> JobResult:
     cfg = experiments_config(ctx.settings)
     # D69: stops promote queued experiments while their arms fit max_parallel_arms
     store = ExperimentStore.for_runner(ctx.conn, cfg.runner, now=lambda: ctx.now)
-    reports = evaluate_running(store, cfg, now=ctx.now, run_id=ctx.run_id, market=_spy_market(ctx))
+    reports = evaluate_running(
+        store, cfg, now=ctx.now, run_id=ctx.run_id, market=_spy_market(ctx), vix=_vix_closes(ctx)
+    )
     for r in reports:
         ctx.record_input(
             f"experiment:{r.experiment_id}",
@@ -116,6 +121,19 @@ def _spy_market(ctx: JobContext) -> BarsProvider | None:
     except Exception as exc:  # noqa: BLE001 - no market data: adjusted verdicts wait
         log.warning("experiments.no_market_data", error=str(exc)[:200])
         return None
+
+
+def _vix_closes(ctx: JobContext) -> Callable[[], Mapping[_dt.date, float]] | None:
+    """D120: VIX daily closes (Cboe history CSV, one GET per tick) on a live tick only.
+
+    Off a live tick the descriptive ΔVIX check reuses the stored ``vix_chg`` values.
+    A failed fetch leaves the days missing (it never holds a verdict).
+    """
+    if not _live(ctx):
+        return None
+    from arc.experiments.covariate import CachedCloses, cboe_vix_closes
+
+    return CachedCloses(cboe_vix_closes)
 
 
 def _live(ctx: JobContext) -> bool:

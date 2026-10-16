@@ -69,6 +69,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from arc.context.ttl import from_db, to_db
 from arc.experiments import stats
+from arc.experiments.covariate_check import CovariateCheck  # noqa: TC001 - pydantic field
 from arc.experiments.models import (
     CONTROL_ARM,
     Analysis,
@@ -94,7 +95,7 @@ from arc.utils.calendar import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
     from pathlib import Path
 
     from arc.experiments.arms import ArmIdentity
@@ -165,6 +166,12 @@ class SessionRow(BaseModel):
         exclude_if=_absent,
         description="D119: SPY's return that session (close to close; partial first session "
         "t0 to close). Persisted so a re-evaluation reproduces the adjusted primary offline",
+    )
+    vix_chg: float | None = Field(
+        None,
+        exclude_if=_absent,
+        description="D120: VIX close minus the previous session's close (vol points); "
+        "absent on the D117 partial first session. Persisted like spy_ret",
     )
 
 
@@ -272,6 +279,11 @@ class Primary(BaseModel):
     primary_unadjusted: Unadjusted | None = Field(
         None, exclude_if=_absent, description="D119: the D44 iid unadjusted primary"
     )
+    covariate_check: CovariateCheck | None = Field(
+        None,
+        exclude_if=_absent,
+        description="D120: SPY-only vs SPY + ΔVIX (descriptive; never a verdict)",
+    )
 
 
 class Secondary(BaseModel):
@@ -376,6 +388,11 @@ class Calibration(BaseModel):
     mde_always_valid_adj: dict[int, float] | None = Field(None, exclude_if=_absent)
     mde_fixed_lr: dict[int, float] | None = Field(None, exclude_if=_absent)
     mde_always_valid_lr: dict[int, float] | None = Field(None, exclude_if=_absent)
+    covariate_check: CovariateCheck | None = Field(
+        None,
+        exclude_if=_absent,
+        description="D120: the ΔVIX check pooled over the Ti - C pairs (descriptive)",
+    )
 
 
 class BreakdownRow(BaseModel):
@@ -434,6 +451,11 @@ class PairReport(BaseModel):
     )
     primary_unadjusted: Unadjusted | None = Field(
         None, exclude_if=_absent, description="D119: the D44 iid unadjusted primary"
+    )
+    covariate_check: CovariateCheck | None = Field(
+        None,
+        exclude_if=_absent,
+        description="D120: SPY-only vs SPY + ΔVIX (descriptive; never a verdict)",
     )
     secondary: Secondary | None = Field(None, description="Sortino (control pairs only)")
     verdict: ArmVerdict | None = Field(None, description="None for descriptive pairs")
@@ -943,6 +965,9 @@ class Method:
     max_factor: float
     aa_sigma: float | None = None
     aa_factor: float | None = None
+    #: D120: the D117 partial first session (no ΔVIX on the free feed): a missing
+    #: ``vix_chg`` there is left out of the fit and never holds a verdict
+    partial_day: _dt.date | None = None
 
     @property
     def waits_on_covariate(self) -> bool:
@@ -974,12 +999,18 @@ def method_for(
             and aa_cal.hac_lag == an.hac_lag
         ):
             factor = aa_cal.hac_factor
+    partial = None
+    if st.running is not None and sp.control_runs:
+        d0 = st.running.t0.astimezone(ET).date()
+        if session_open(d0) < st.running.t0 < session_close(d0):
+            partial = d0
     return Method(
         analysis=an,
         pre_registered=sp.analysis is not None,
         max_factor=cfg.stats.hac_max_factor,
         aa_sigma=known,
         aa_factor=factor,
+        partial_day=partial,
     )
 
 
@@ -993,17 +1024,35 @@ def _long_run(
     sigma_upper_q: float,
     mde: float | None,
     min_sessions: int,
+    vs: list[float | None] | None = None,
 ) -> dict[str, Any] | None:
     """The D119 fields of one series (``adjustment``, ``hac``, ``sigma_*``).
 
-    None: descriptive and nothing to fit.
+    *xs* = SPY returns, *vs* = ΔVIX (D120; only read when the analysis names
+    ``vix_chg``). None: descriptive and nothing to fit.
     """
     an = m.analysis
+    xx: Any
     if an.adjusted:
-        idx = [i for i, x in enumerate(xs) if x is not None]
-        missing = [days[i] for i, x in enumerate(xs) if x is None]
+        cols = {"spy_ret": xs, "vix_chg": vs if vs is not None else [None] * len(d)}
+        use = [cols[c] for c in an.covariates]
+        idx, missing = [], []
+        for i in range(len(d)):
+            vals = [c[i] for c in use]
+            if all(v is not None for v in vals):
+                idx.append(i)
+                continue
+            exempt = days[i] == m.partial_day and all(
+                v is not None or name == "vix_chg"
+                for name, v in zip(an.covariates, vals, strict=True)
+            )
+            if not exempt:  # D120: no ΔVIX on the partial first session holds nothing
+                missing.append(days[i])
         dd = [d[i] for i in idx]
-        xx: list[float] | None = [float(xs[i]) for i in idx]  # type: ignore[arg-type]
+        if len(use) == 1:
+            xx = [float(use[0][i]) for i in idx]  # type: ignore[arg-type]
+        else:
+            xx = np.asarray([[float(c[i]) for c in use] for i in idx]).reshape(len(idx), len(use))  # type: ignore[arg-type]
     else:
         dd, xx, missing = list(d), None, []
     if not m.pre_registered and len(dd) < 2:
@@ -1057,6 +1106,66 @@ def _long_run(
     }
 
 
+def covariate_check_of(
+    d: list[float],
+    xs: list[float | None] | None,
+    vs: list[float | None],
+    m: Method,
+    *,
+    alpha: float,
+    sigma_upper_q: float,
+    mde: float | None,
+    min_sessions: int,
+) -> CovariateCheck | None:
+    """D120: the descriptive ΔVIX check of one series (None: fewer than 4 days with both)."""
+    from arc.experiments.covariate_check import covariate_check
+
+    if xs is None or not any(v is not None for v in vs):
+        return None
+    return covariate_check(
+        d, xs, vs, hac_lag=m.analysis.hac_lag, alpha=alpha, sigma_upper_q=sigma_upper_q,
+        mde=mde, min_sessions=min_sessions, max_factor=m.max_factor, aa_factor=m.aa_factor,
+    )  # fmt: skip
+
+
+def pooled_covariate_check(
+    cal: Calibration,
+    series: list[tuple[list[float], list[float | None], list[float | None]]],
+    *,
+    method: Method,
+    st: ExperimentState,
+    cfg: ExperimentsConfig,
+) -> Calibration:
+    """D120: *cal* plus the ΔVIX check pooled over the Ti - C *series* (unchanged if none)."""
+    from arc.experiments.covariate_check import pooled_check
+
+    if not any(v is not None for _, _, vs in series for v in vs):
+        return cal
+    sp = st.spec
+    assert sp.alpha is not None and sp.min_sessions is not None  # noqa: S101
+    chk = pooled_check(
+        series, hac_lag=method.analysis.hac_lag or cfg.stats.hac_lag, alpha=sp.alpha,
+        sigma_upper_q=cfg.stats.sigma_upper_q, mde=sp.mde, min_sessions=sp.min_sessions,
+        max_factor=method.max_factor,
+    )  # fmt: skip
+    return cal if chk is None else cal.model_copy(update={"covariate_check": chk})
+
+
+def row_waits(row: SessionRow, m: Method) -> bool:
+    """A pre-registered adjusted *m* lacks a covariate it names on *row* (D119/D120).
+
+    ΔVIX on the D117 partial first session is exempt (it never exists there).
+    """
+    if not m.waits_on_covariate:
+        return False
+    for c in m.analysis.covariates:
+        if c == "spy_ret" and row.spy_ret is None:
+            return True
+        if c == "vix_chg" and row.vix_chg is None and row.day != m.partial_day:
+            return True
+    return False
+
+
 def covariate_blocked(primary: Primary | PairReport) -> bool:
     """D119: a pre-registered adjusted primary missing a SPY return (the verdict waits)."""
     a = primary.adjustment
@@ -1074,6 +1183,8 @@ def _primary_from(
     xs: list[float | None] | None = None,
     days: list[_dt.date] | None = None,
     method: Method | None = None,
+    vs: list[float | None] | None = None,
+    check: bool = True,
 ) -> Primary:
     """The primary metric of one paired series *d* (shared by v1 and every v2 pair).
 
@@ -1093,8 +1204,24 @@ def _primary_from(
     days = days if days is not None else [_dt.date.min] * len(d)
     lr = _long_run(
         d, xs, days, method, alpha=alpha, sigma_upper_q=sigma_upper_q, mde=mde,
-        min_sessions=min_sessions,
+        min_sessions=min_sessions, vs=vs,
     )  # fmt: skip
+    cov_check = (
+        None
+        if vs is None or not check
+        else covariate_check_of(
+            d,
+            xs,
+            vs,
+            method,
+            alpha=alpha,
+            sigma_upper_q=sigma_upper_q,
+            mde=mde,
+            min_sessions=min_sessions,
+        )  # fmt: skip
+    )
+    if cov_check is not None:
+        lr = (lr or {}) | {"covariate_check": cov_check}
     if not method.pre_registered:
         return base if lr is None else base.model_copy(update=lr)
     assert lr is not None  # noqa: S101 - a pre-registered method always reports one
@@ -1352,11 +1479,43 @@ def with_spy(
     rows: list[SessionRow],
     *,
     spy: Mapping[_dt.date, float] | None,
+    vix: Mapping[_dt.date, float] | None = None,
 ) -> list[SessionRow]:
-    """*rows* with ``spy_ret`` filled from *spy* (D119; rows without a value stay bare)."""
-    if not spy:
+    """*rows* with ``spy_ret`` (D119) and ``vix_chg`` (D120) filled; others stay bare."""
+    if not spy and not vix:
         return rows
-    return [r.model_copy(update={"spy_ret": spy[r.day]}) if r.day in spy else r for r in rows]
+    out: list[SessionRow] = []
+    for r in rows:
+        upd: dict[str, float] = {}
+        if spy and r.day in spy:
+            upd["spy_ret"] = spy[r.day]
+        if vix and r.day in vix:
+            upd["vix_chg"] = vix[r.day]
+        out.append(r.model_copy(update=upd) if upd else r)
+    return out
+
+
+def vix_series(
+    conn: sqlite3.Connection,
+    st: ExperimentState,
+    days: list[_dt.date],
+    *,
+    vix: Callable[[], Mapping[_dt.date, float]] | None,
+) -> dict[_dt.date, float]:
+    """ΔVIX for *days* (D120): stored reports first, then *vix* (VIX closes) for the rest."""
+    from arc.experiments.covariate import stored_vix_changes, vix_changes
+
+    run = st.running
+    assert run is not None  # noqa: S101 - caller checks
+    if not days:
+        return {}
+    return vix_changes(
+        sorted(set(days)),
+        t0=run.t0,
+        partial_first=st.spec.control_runs,
+        stored=stored_vix_changes(conn, st.experiment_id),
+        closes=vix,
+    )
 
 
 def covariate_series(
@@ -1391,6 +1550,7 @@ def build_report(
     aa_sigma: float | None = None,
     aa_cal: StopDetail | None = None,
     market: BarsProvider | None = None,
+    vix: Callable[[], Mapping[_dt.date, float]] | None = None,
 ) -> ExperimentReport:
     """Evaluate *st* (running, or stopped with a t0) as of *now*. Read-only.
 
@@ -1400,6 +1560,8 @@ def build_report(
 
     D119: *market* supplies SPY's daily bars for sessions no stored report carries
     (None: stored values only); *aa_cal* = the latest A/A stop (adjusted + long-run sigma).
+    D120: *vix* returns VIX daily closes for ΔVIX days no stored report carries (None:
+    stored only); ΔVIX feeds the descriptive ``covariate_check`` only.
     """
     method = method_for(st, cfg, aa_sigma=aa_sigma, aa_cal=aa_cal)
     sp, run = st.spec, st.running
@@ -1415,14 +1577,16 @@ def build_report(
 
         return build_multi_report(
             conn, st, cfg, now=now, aa_sigma=aa_sigma, arm_ids=arm_ids, method=method,
-            market=market,
+            market=market, vix=vix,
         )  # fmt: skip
     t_arm = next(iter(arm_ids.values()))
     legacy = set(run.production_book)
     legacy_hashes = _legacy_hashes(conn, legacy)
     rows, missing = _series(conn, st, now=now, t_arm=t_arm)
     spy = covariate_series(conn, st, [r.day for r in rows], market=market)
-    rows = with_spy(conn, st, rows, spy=spy)
+    dvix = vix_series(conn, st, [r.day for r in rows], vix=vix)
+    rows = with_spy(conn, st, rows, spy=spy, vix=dvix)
+    vs = [r.vix_chg for r in rows] if dvix else None
     d = [r.d for r in rows]
     n = len(d)
     is_aa = sp.kind is ExperimentKind.AA
@@ -1439,6 +1603,7 @@ def build_report(
         xs=[r.spy_ret for r in rows],
         days=[r.day for r in rows],
         method=method,
+        vs=vs,
     )
 
     # -- arms, secondary -----------------------------------------------------
@@ -1476,6 +1641,10 @@ def build_report(
         cal, [(d, [r.spy_ret for r in rows])], lag=method.analysis.hac_lag or cfg.stats.hac_lag,
         st=st, cfg=cfg,
     )  # fmt: skip
+    if vs is not None:
+        cal = pooled_covariate_check(
+            cal, [(d, [r.spy_ret for r in rows], vs)], method=method, st=st, cfg=cfg
+        )
 
     # -- verdict -------------------------------------------------------------
     verdict, why = _verdict(
@@ -1620,12 +1789,15 @@ def _build_paired(
     aa_sigma: float | None,
     aa_cal: StopDetail | None = None,
     market: BarsProvider | None = None,
+    vix: Callable[[], Mapping[_dt.date, float]] | None = None,
 ) -> ExperimentReport:
     """:func:`build_report` on the control store with the arm stores unioned in (E10.2)."""
     from arc.experiments.paired import paired_view
 
     with paired_view(conn) as view:
-        return build_report(view, st, cfg, now=now, aa_sigma=aa_sigma, aa_cal=aa_cal, market=market)
+        return build_report(
+            view, st, cfg, now=now, aa_sigma=aa_sigma, aa_cal=aa_cal, market=market, vix=vix
+        )
 
 
 def evaluate(
@@ -1636,10 +1808,12 @@ def evaluate(
     now: _dt.datetime,
     run_id: str | None = None,
     market: BarsProvider | None = None,
+    vix: Callable[[], Mapping[_dt.date, float]] | None = None,
 ) -> ExperimentReport:
     """Evaluate a running experiment, store the report and apply its verdict (stop).
 
     D119: *market* = SPY's daily bars for the covariate (None: stored values only).
+    D120: *vix* = VIX daily closes for the descriptive ΔVIX check (None: stored only).
     """
     conn = store.conn
     st = store.require(experiment_id)
@@ -1648,7 +1822,7 @@ def evaluate(
         raise ExperimentError(msg)
     report = _build_paired(
         conn, st, cfg, now=now, aa_sigma=store.aa_sigma(), aa_cal=store.aa_calibration(),
-        market=market,
+        market=market, vix=vix,
     )  # fmt: skip
     journal = JournalStore(conn)
     with conn:
@@ -1721,9 +1895,10 @@ def evaluate_running(
     now: _dt.datetime,
     run_id: str | None = None,
     market: BarsProvider | None = None,
+    vix: Callable[[], Mapping[_dt.date, float]] | None = None,
 ) -> list[ExperimentReport]:
     """Evaluate every running experiment (oldest first)."""
     return [
-        evaluate(store, s.experiment_id, cfg, now=now, run_id=run_id, market=market)
+        evaluate(store, s.experiment_id, cfg, now=now, run_id=run_id, market=market, vix=vix)
         for s in store.all(status=ExperimentStatus.RUNNING)
     ]
