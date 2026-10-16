@@ -769,11 +769,11 @@ def test_routine_step_no_notice_while_running(conn: sqlite3.Connection) -> None:
     res = experiments_evaluate_step(_ctx(conn, _after(days)))  # type: ignore[arg-type]
     assert "XP-2 continue n=2" in res.summary and res.notice == ""
     text = res.extra_cards[0].text
-    # D108 (E25.6): title, bold-italic headline, then one Ti − reference line (v1: T1 − P)
-    title, head, gap = text.split("\n")
-    assert title == "[XP-2] Day 2/60"
+    # D108 (E25.6): title, blank line, bold-italic headline; no per-arm lines (2026-10-16)
+    title, blank, head = text.split("\n")
+    assert title == "*:microscope: [XP-2] Day 2/60*" and blank == ""
     assert head.startswith("_*T1 trails production by ") and head.endswith(" after 2 sessions.*_")
-    assert gap.startswith("T1 − P • P&L ∆ ")
+    assert "T1 − P • " not in text
     assert res.extra_cards[0].blocks == []
     assert res.extra_cards[0].broadcast is True
     assert store.require("XP-2").status is ExperimentStatus.RUNNING
