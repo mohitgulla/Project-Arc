@@ -2771,6 +2771,8 @@ export interface components {
          * @description One row of the list: status, area, sessions n/min/max, primary diff + CI, secondary.
          */
         ExperimentListItem: {
+            /** @description D119: the headline primary's SPY regression (null before D119) */
+            adjustment?: components["schemas"]["Adjustment"] | null;
             /** Area */
             area: string;
             /**
@@ -2820,6 +2822,8 @@ export interface components {
              * @description Always-valid mSPRT p of no difference
              */
             primary_p?: number | null;
+            /** @description D119: the D44 iid unadjusted primary (pre-registered specs only) */
+            primary_unadjusted?: components["schemas"]["Unadjusted"] | null;
             reason?: components["schemas"]["StopReason"] | null;
             /**
              * Reference

@@ -701,3 +701,26 @@ def test_tower_api_passes_the_d119_fields_through(tmp_path: Path) -> None:
     assert doc["report"]["analysis"] == ANALYSIS
     assert doc["spec"]["analysis"] == ANALYSIS
     assert doc["report"]["calibration"]["sigma_adj"] > 0
+    # E25.8 (D120): the list row carries the headline primary's adjustment + unadjusted
+    row = client.get("/api/experiments").json()["items"][0]
+    assert row["adjustment"]["estimate"] == pytest.approx(p["adjustment"]["estimate"])
+    assert row["primary_unadjusted"]["mean"] == pytest.approx(p["primary_unadjusted"]["mean"])
+
+
+def test_tower_list_row_has_no_d119_fields_before_d119(tmp_path: Path) -> None:
+    from fastapi.testclient import TestClient
+
+    from arc.tower.api import create_app
+
+    db = tmp_path / "arc.db"
+    c = connect(str(db))
+    migrate(c)
+    store, days, _ = _xp(c, 5, analysis=None)
+    rep = build_report(c, store.require("XP-2"), CFG, now=_after(days))  # no SPY: pre-D119 shape
+    with c:
+        store_report(c, rep, run_id="t")
+    c.close()
+    client = TestClient(create_app(db, clock=lambda: _after(days)))
+    row = client.get("/api/experiments").json()["items"][0]
+    assert row["adjustment"] is None and row["primary_unadjusted"] is None
+    assert row["primary_mean"] == pytest.approx(rep.primary.mean)

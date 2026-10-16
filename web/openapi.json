@@ -5214,6 +5214,17 @@
         "additionalProperties": false,
         "description": "One row of the list: status, area, sessions n/min/max, primary diff + CI, secondary.",
         "properties": {
+          "adjustment": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Adjustment"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D119: the headline primary's SPY regression (null before D119)"
+          },
           "area": {
             "title": "Area",
             "type": "string"
@@ -5360,6 +5371,17 @@
             ],
             "description": "Always-valid mSPRT p of no difference",
             "title": "Primary P"
+          },
+          "primary_unadjusted": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Unadjusted"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D119: the D44 iid unadjusted primary (pre-registered specs only)"
           },
           "reason": {
             "anyOf": [
