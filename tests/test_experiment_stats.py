@@ -771,7 +771,7 @@ def test_routine_step_no_notice_while_running(conn: sqlite3.Connection) -> None:
     text = res.extra_cards[0].text
     # D108 (E25.6): title, blank line, bold-italic headline; no per-arm lines (2026-10-16)
     title, blank, head = text.split("\n")
-    assert title == ":microscope: [XP-2] Day 2/60" and blank == ""
+    assert title == "*:microscope: [XP-2] Day 2/60*" and blank == ""
     assert head.startswith("_*T1 trails production by ") and head.endswith(" after 2 sessions.*_")
     assert "T1 − P • " not in text
     assert res.extra_cards[0].blocks == []

@@ -63,7 +63,7 @@ def test_daily_status_k3_title_blank_line_and_headline_only() -> None:
     assert card.broadcast is True  # "Also send to #arc-investor" (D65)
     assert card.blocks == []
     lines = card.text.split("\n")
-    assert lines[0] == ":microscope: [XP-30] Day 14/40"
+    assert lines[0] == "*:microscope: [XP-30] Day 14/40*"
     assert lines[1] == ""  # owner 2026-10-16: a blank line between title and headline
     head = lines[2]
     assert head.startswith("_*") and head.endswith("*_")

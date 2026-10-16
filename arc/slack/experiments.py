@@ -5,7 +5,7 @@ Two shapes, both built from the stored E10.3
 :mod:`arc.slack.blocks` layout (no hand-rolled Block Kit):
 
 - :func:`experiment_line`: the daily status of each running experiment (D108,
-  E25.6): ``:microscope: [XP-12] Day 14/60``, a blank line, then a bold-italic
+  E25.6): ``*:microscope: [XP-12] Day 14/60*`` (bold), a blank line, then a bold-italic
   one-sentence headline (where the treatments stand against the reference,
   ≤ ``RECAP_MAX``). No per-arm ``Ti − C`` lines: the arm detail is on the Tower's
   Experiments page (owner 2026-10-16). Also sent to #arc-investor (D65). No
@@ -50,7 +50,7 @@ _VERDICT_LABEL = {
 def experiment_line(report: ExperimentReport) -> B.CardView:
     """The daily status of a running experiment (D108, E25.6; text only, no blocks).
 
-    ``:microscope: [XP-12] Day 14/60``, a blank line, then a bold-italic one-sentence
+    ``*:microscope: [XP-12] Day 14/60*`` (bold), a blank line, then a bold-italic one-sentence
     headline (≤ ``RECAP_MAX`` = 300 chars, D109). The per-arm ``Ti − C`` lines are not
     posted (owner 2026-10-16): the Tower's Experiments page carries them. D119: a
     pre-registered adjusted spec missing a SPY return adds one "verdict on hold" line.
@@ -59,7 +59,7 @@ def experiment_line(report: ExperimentReport) -> B.CardView:
     """
     r = report
     lines = [
-        f"{STATUS_EMOJI} {view.status_title(r)}",
+        f"*{STATUS_EMOJI} {B.esc(view.status_title(r))}*",
         "",
         bold_italic(view.status_headline(r), RECAP_MAX),
     ]

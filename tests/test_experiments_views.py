@@ -125,7 +125,7 @@ def test_parity_slack_line_tower_api_and_cli_report(
     assert row["sortino_delta"] == pytest.approx(sd)
     mean, lo, hi = cli["primary"]["mean"], cli["primary"]["ci"]["lo"], cli["primary"]["ci"]["hi"]
     title, blank, headline = line.split("\n")
-    assert title == ":microscope: [XP-2] Day 14/60" and blank == ""
+    assert title == "*:microscope: [XP-2] Day 14/60*" and blank == ""
     assert headline.startswith("_*") and headline.endswith(" after 14 sessions.*_")
     gap = view.status_lines(report)[2]  # the Tower keeps the per-arm line
     want = (
@@ -465,7 +465,7 @@ def test_routine_posts_line_and_stop_card_through_dispatcher(
     # the status and the stop card, each also sent to the channel (D65 "Also send to
     # #arc-investor", E25.6)
     assert len(posts) == 2, posts
-    assert posts[0].startswith(":microscope: [XP-2] Day 14/60\n\n_*")
+    assert posts[0].startswith("*:microscope: [XP-2] Day 14/60*\n\n_*")
     assert posts[1].startswith("[XP-3] Day 25 • Win • P&L ∆ ")
     assert notes.broadcasts == posts
     assert notes.blocks[0] is None and notes.blocks[1] is not None

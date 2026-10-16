@@ -2039,7 +2039,7 @@ the tick spawns `arc experiment arms-tick` after every control loop chain.
 routine, the #arc-investor day thread gets one status per running experiment (also
 sent to the channel):
 
-    :microscope: [XP-30] Day 14/40
+    *:microscope: [XP-30] Day 14/40*
 
     T2 leads control by +0.05%/day (p 1.00 Holm); T1 and T3 within noise after 14 sessions.
 
