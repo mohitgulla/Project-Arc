@@ -1696,6 +1696,31 @@ stores one `ExperimentReport` in the append-only `experiment_reports` table:
   A/A's when recorded, else the running sd inflated to its chi² upper bound
   (`experiments.stats.sigma_upper_q`). Win = lower bound > 0 after
   `min_sessions` **and** Sortino non-inferior (paired bootstrap CI vs margin).
+- **Pre-registered SPY adjustment + HAC (E25.7, D119).** A spec may carry
+  `analysis: {covariates: [spy_ret], hac_lag: 5}` (hash-locked; `arc experiment
+  adopt` writes it into every new spec from `experiments.defaults.analysis`; an
+  owner-written spec may omit it). With it, the primary is the intercept `a` of
+  `d_t = a + b·SPY_ret_t` (OLS on the running data, n ≥ 3): **the daily edge on a
+  flat-market day**. A treatment whose only gain is extra market beta (b > 0) in an
+  up-tape is **not** a win; b̂ is in the report per pair (`primary.adjustment.beta`).
+  Its σ is the residual sd × sqrt(f) × sqrt(1 + n·x̄²/Sxx), f = the Bartlett
+  (Newey-West) long-run factor at lag L on the residual autocorrelations (bias-
+  corrected, floored at 1 and at the AR(1)-implied value, so it only widens the CI).
+  Below 2L+2 sessions f is the A/A's recorded f, else `experiments.stats.hac_max_factor`
+  (4). The chi² `sigma_upper_q` inflation still applies to the plug-in residual sd.
+  The mSPRT, Holm and MDE math run unchanged on (â, σ_LR). `primary_unadjusted` keeps
+  the old iid number for transparency. x_t = SPY close-to-close (D117 partial first
+  session: SPY at t0 → close), read from Alpaca daily bars on `data.alpaca_history_feed`
+  by the 16:40 routine and **stored on the report** (`series[].spy_ret`), so
+  `arc experiment report` reproduces it offline (`--spy alpaca` fetches days no
+  stored report has). A day without a SPY return is listed in `covariate_missing`
+  and **the verdict waits** (the daily Slack line says "Verdict on hold"); it never
+  falls back to the unadjusted CI. A spec without `analysis` (XP-1) keeps the D44
+  iid verdict; the report shows the adjusted + HAC numbers as descriptive fields and
+  the A/A stop records raw, adjusted (`sigma_adj`) and long-run (`hac_factor`) σ plus
+  the β spread, which an adjusted ab spec then uses (pre-D119 A/A stops: the running
+  σ). The Sortino secondary, Ti − P lines and breakdowns stay unadjusted. Changing the
+  method of a pre-registered spec is a PR + D# row, not a registry knob.
 - No guardrail (harm) auto-stops (owner, 2026-10-03): only the primary and
   secondary metrics decide. Each arm's drawdown, worst day and order count are
   in the report for the owner, who stops an experiment by hand

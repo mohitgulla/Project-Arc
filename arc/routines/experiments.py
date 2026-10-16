@@ -28,6 +28,7 @@ import structlog
 from arc.routines.handlers import JobResult
 
 if TYPE_CHECKING:
+    from arc.experiments.covariate import BarsProvider
     from arc.experiments.evaluate import ExperimentReport
     from arc.routines.handlers import JobContext
     from arc.slack.blocks import CardView
@@ -57,7 +58,7 @@ def experiments_evaluate_step(ctx: JobContext) -> JobResult:
     cfg = experiments_config(ctx.settings)
     # D69: stops promote queued experiments while their arms fit max_parallel_arms
     store = ExperimentStore.for_runner(ctx.conn, cfg.runner, now=lambda: ctx.now)
-    reports = evaluate_running(store, cfg, now=ctx.now, run_id=ctx.run_id)
+    reports = evaluate_running(store, cfg, now=ctx.now, run_id=ctx.run_id, market=_spy_market(ctx))
     for r in reports:
         ctx.record_input(
             f"experiment:{r.experiment_id}",
@@ -96,6 +97,25 @@ def experiments_evaluate_step(ctx: JobContext) -> JobResult:
             **{f"verdict_{r.experiment_id}": r.verdict for r in reports},
         },
     )
+
+
+def _spy_market(ctx: JobContext) -> BarsProvider | None:
+    """D119: SPY's daily bars for the covariate, on a live tick only (Alpaca, SIP feed).
+
+    Off a live tick (tests, ``--no-slack`` reruns) the evaluation reuses the SPY
+    returns its stored reports carry and leaves new days missing (an adjusted
+    verdict waits). A provider that cannot be built is logged, never raised.
+    """
+    if not _live(ctx):
+        return None
+    try:
+        from arc.data.alpaca import AlpacaMarketData
+        from arc.experiments.covariate import FeedPinned
+
+        return FeedPinned(AlpacaMarketData(), feed=ctx.settings.alpaca_history_feed)
+    except Exception as exc:  # noqa: BLE001 - no market data: adjusted verdicts wait
+        log.warning("experiments.no_market_data", error=str(exc)[:200])
+        return None
 
 
 def _live(ctx: JobContext) -> bool:

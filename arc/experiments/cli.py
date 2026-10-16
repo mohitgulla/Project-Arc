@@ -10,10 +10,12 @@
 - ``arc experiment show <id> [--json]``
 - ``arc experiment verify <id>``             recompute the spec hash (exit 1 on mismatch)
 - ``arc experiment stop <id> --reason R --actor A``  owner stop
-- ``arc experiment report <id> [--stored] [--now ISO]``  the E10.3 evaluation (read-only:
-  computed as of now, or the latest stored report)
-- ``arc experiment evaluate [<id>] [--now ISO]``  run the daily evaluation now: stores
-  the report and applies its verdict (the ``experiments.evaluate`` routine does this)
+- ``arc experiment report <id> [--stored] [--now ISO] [--spy stored|alpaca]``  the E10.3
+  evaluation (read-only: computed as of now, or the latest stored report). D119:
+  ``--spy alpaca`` fetches SPY's daily bars for sessions no stored report carries
+- ``arc experiment evaluate [<id>] [--now ISO] [--spy stored|alpaca]``  run the daily
+  evaluation now: stores the report and applies its verdict (the
+  ``experiments.evaluate`` routine does this, fetching SPY on a live tick)
 - ``arc experiment adopt P-<n> --proposal <backlog json | P-<n>.yaml> --owner-approval
   slack:<ts>``  E21.4 (D86): next free XP id, defaults, validate, create + register, the
   spec PR (auto-merge) and one Slack line; idempotent per P-<n>; ``--dry-run`` writes
@@ -90,9 +92,23 @@ def add_experiment_parser(sub: argparse._SubParsersAction[argparse.ArgumentParse
         help="text (default) or md: the A/A calibration report as Markdown (E10.4)",
     )
     rp.add_argument("--out", default=None, help="With --format md: write the document here")
+    rp.add_argument(
+        "--spy",
+        choices=["stored", "alpaca"],
+        default="stored",
+        help="D119 covariate: SPY returns the stored reports carry only (default, offline; "
+        "new days stay missing), or alpaca: fetch SPY daily bars for the other days",
+    )
     ev = common(esub.add_parser("evaluate", help="Evaluate running experiments; apply verdicts"))
     ev.add_argument("experiment_id", nargs="?", default=None)
     ev.add_argument("--now", default=None, help="Evaluate as of this ISO time (default: now)")
+    ev.add_argument(
+        "--spy",
+        choices=["stored", "alpaca"],
+        default="stored",
+        help="D119 covariate: SPY returns the stored reports carry only (default, offline; "
+        "new days stay missing), or alpaca: fetch SPY daily bars for the other days",
+    )
     pl = common(
         esub.add_parser(
             "plan", help="D69: sessions needed for K arms with Holm at the A/A sigma (read-only)"
@@ -263,6 +279,7 @@ def report_lines(r: ExperimentReport) -> list[str]:
             else "  (aa: no margin)"
         ),
     ]
+    lines += long_run_lines(r)
     lines.append("  arms:")
     for a in r.arms:
         lines.append(
@@ -282,6 +299,23 @@ def report_lines(r: ExperimentReport) -> list[str]:
         + "  always-valid MDE "
         + ", ".join(f"{n}:{_pct(v)}" for n, v in c.mde_always_valid.items())
     )
+    if c.sigma_adj is not None:
+        lines.append(
+            f"    D119 sigma raw {_pct(c.sigma)}  SPY-adjusted {_pct(c.sigma_adj)}  long-run "
+            f"{_pct(c.sigma_lr)} (f {_num(c.hac_factor)}, lag {c.hac_lag}, rho "
+            + " ".join(f"{x:+.2f}" for x in c.rho or [])
+            + f")  beta spread {_num(c.beta_spread)}"
+        )
+        for label, fx, av in (
+            ("adjusted", c.mde_fixed_adj, c.mde_always_valid_adj),
+            ("long-run", c.mde_fixed_lr, c.mde_always_valid_lr),
+        ):
+            lines.append(
+                f"    {label} MDE "
+                + ", ".join(f"{n}:{_pct(v)}" for n, v in (fx or {}).items())
+                + "  always-valid MDE "
+                + ", ".join(f"{n}:{_pct(v)}" for n, v in (av or {}).items())
+            )
     slip = "-" if c.slippage_gap_bps is None else f"{c.slippage_gap_bps:+.1f} bps"
     lines.append(
         f"    slippage gap {slip}"
@@ -349,7 +383,50 @@ def _multi_arm_lines(r: ExperimentReport) -> list[str]:
             f"    {p.b} vs {p.a:8} n {p.n:3}  mean {_pct(p.mean)}/day  CI {ci}  p {pv}  "
             f"Holm p {hp}  {tag}"
         )
+        if p.adjustment is not None:
+            lines.append("      " + _long_run_line(p, r.alpha).lstrip())
     return lines
+
+
+def _long_run_line(p: Any, alpha: float) -> str:
+    """D119: one primary's (or pair's) adjustment + HAC numbers on one line."""
+    a, h = p.adjustment, p.hac
+    ci = f"[{_pct(a.ci.lo)}, {_pct(a.ci.hi)}]" if a.ci else "-"
+    role = "pre-registered" if a.pre_registered else "descriptive"
+    cov = "+".join(a.covariates) or "unadjusted"
+    miss = (
+        f"  SPY missing {', '.join(map(str, a.covariate_missing))}" if a.covariate_missing else ""
+    )
+    rho = " ".join(f"{x:+.2f}" for x in h.rho) if h is not None and h.rho else "-"
+    f = (
+        "-"
+        if h is None
+        else f"{_num(h.factor)} ({h.source or '-'}; running {_num(h.factor_running)})"
+    )
+    return (
+        f"  D119 {role} ({cov} {a.status}, HAC lag {h.lag if h and h.lag else 'iid'}): n {a.n}"
+        f"  estimate {_pct(a.estimate)}/day  {1 - alpha:.0%} CI {ci}  p "
+        f"{'-' if a.p_value is None else f'{a.p_value:.4f}'}  beta {_num(a.beta)} "
+        f"(se {_num(a.beta_se)}, R2 {_num(a.r2)})  sigma raw {_pct(p.sigma_raw)} adj "
+        f"{_pct(p.sigma_adj)} LR {_pct(p.sigma_lr)} ({a.sigma_source or '-'})  f {f}  rho {rho}"
+        + miss
+    )
+
+
+def long_run_lines(r: ExperimentReport) -> list[str]:
+    """D119: the headline pair's adjusted + HAC primary and (pre-registered) the iid one."""
+    p = r.primary
+    out: list[str] = []
+    if p.adjustment is not None:
+        out.append(_long_run_line(p, r.alpha))
+    if p.primary_unadjusted is not None:
+        u = p.primary_unadjusted
+        ci = f"[{_pct(u.ci.lo)}, {_pct(u.ci.hi)}]" if u.ci else "-"
+        out.append(
+            f"  D44 iid unadjusted (transparency): mean {_pct(u.mean)}/day  CI {ci}  p "
+            f"{'-' if u.p_value is None else f'{u.p_value:.4f}'}  sigma {_pct(u.sigma)}"
+        )
+    return out
 
 
 def production_lines(r: ExperimentReport) -> list[str]:
@@ -585,13 +662,29 @@ def _run_plan(args: argparse.Namespace, store: Any, conn: sqlite3.Connection) ->
     return 0
 
 
+def _spy_market(args: argparse.Namespace, settings: Any) -> Any:
+    """D119: the SPY bar provider for ``--spy alpaca`` (None for ``stored`` or no keys)."""
+    if getattr(args, "spy", "stored") != "alpaca" or getattr(args, "stored", False):
+        return None
+    try:
+        from arc.data.alpaca import AlpacaMarketData
+        from arc.experiments.covariate import FeedPinned
+
+        return FeedPinned(AlpacaMarketData(), feed=settings.alpaca_history_feed)
+    except Exception as exc:  # noqa: BLE001 - no keys: stored SPY returns only
+        _err(f"arc experiment: no SPY market data ({exc}); using stored SPY returns only")
+        return None
+
+
 def _run_eval(args: argparse.Namespace, store: Any, conn: sqlite3.Connection) -> int:
     from arc.control.effective import effective_settings, experiments_config
     from arc.experiments.evaluate import build_report, evaluate, evaluate_running, latest_report
     from arc.experiments.models import ExperimentStatus
 
     now = _parse_now(args.now)
-    cfg = experiments_config(effective_settings(conn))
+    settings = effective_settings(conn)
+    cfg = experiments_config(settings)
+    market = _spy_market(args, settings)
     if args.experiment_command == "report":
         if args.stored:
             rep = latest_report(conn, args.experiment_id)
@@ -608,6 +701,8 @@ def _run_eval(args: argparse.Namespace, store: Any, conn: sqlite3.Connection) ->
                     cfg,
                     now=now,
                     aa_sigma=store.aa_sigma(),
+                    aa_cal=store.aa_calibration(),
+                    market=market,
                 )
         reports = [rep]
         if args.format == "md":
@@ -622,9 +717,9 @@ def _run_eval(args: argparse.Namespace, store: Any, conn: sqlite3.Connection) ->
             if st.status is not ExperimentStatus.RUNNING:
                 _err(f"arc experiment evaluate: {args.experiment_id} is {st.status.value}")
                 return 2
-            reports = [evaluate(store, args.experiment_id, cfg, now=now)]
+            reports = [evaluate(store, args.experiment_id, cfg, now=now, market=market)]
         else:
-            reports = evaluate_running(store, cfg, now=now)
+            reports = evaluate_running(store, cfg, now=now, market=market)
     if args.json:
         payload = [r.model_dump(mode="json") for r in reports]
         _out(json.dumps(payload[0] if args.experiment_command == "report" else payload, indent=2))

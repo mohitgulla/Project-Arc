@@ -51,7 +51,8 @@ def experiment_line(report: ExperimentReport) -> B.CardView:
 
     ``[XP-12] Day 14/60``, a bold-italic one-sentence headline (≤ ``RECAP_MAX``, D109),
     then one ``Ti − C`` line per treatment (all K): P&L ∆ %/day with its Holm p and
-    Sortino ∆ with its p. No production (Ti − P) line and no sleeve stats: those stay
+    Sortino ∆ with its p. D119: a pre-registered adjusted spec missing a SPY return
+    adds one "verdict on hold" line. No production (Ti − P) line and no sleeve stats: those stay
     on the Tower. Posted in the day thread and also sent to #arc-investor (D65).
     """
     r = report
@@ -60,6 +61,14 @@ def experiment_line(report: ExperimentReport) -> B.CardView:
         bold_italic(view.status_headline(r), RECAP_MAX),
         *(view.gap_line(r, g) for g in view.arm_gaps(r)),
     ]
+    if r.covariate_missing:  # D119: the pre-registered adjusted verdict waits on SPY
+        days = ", ".join(d.strftime("%b %-d") for d in r.covariate_missing[:5])
+        more = len(r.covariate_missing) - 5
+        lines.append(
+            f"_Verdict on hold: no SPY return yet for {days}"
+            + (f" (+{more} more)" if more > 0 else "")
+            + "_"
+        )
     return B.CardView(text="\n".join(lines), blocks=[], broadcast=True)
 
 

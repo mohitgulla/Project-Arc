@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from arc.experiments.models import MAX_HAC_LAG, Analysis
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
@@ -51,6 +53,24 @@ class StatsConfig(BaseModel):
         description="No A/A sigma: inflate the running sd to its (1 - q) upper chi2 bound",
     )
     bootstrap_resamples: int = Field(default=2000, ge=200, le=20000)
+    # D119 (E25.7): the descriptive long-run sigma of a spec without `analysis` and the
+    # small-n rule of every HAC primary (a spec's own `analysis.hac_lag` wins for its verdict).
+    hac_lag: int = Field(
+        default=5,
+        ge=1,
+        le=MAX_HAC_LAG,
+        description="D119: Bartlett lag (sessions) of the descriptive long-run sigma",
+    )
+    hac_max_factor: float = Field(
+        default=4.0,
+        ge=1.0,
+        le=20.0,
+        description="D119: long-run variance factor used below 2L+2 sessions with no A/A f",
+    )
+
+
+def _default_analysis() -> Analysis:
+    return Analysis(covariates=["spy_ret"], hac_lag=5)
 
 
 class ExperimentDefaults(BaseModel):
@@ -61,6 +81,9 @@ class ExperimentDefaults(BaseModel):
     min_sessions: int = Field(default=20, ge=1)
     max_sessions: int = Field(default=60, ge=1)
     aa_sessions: int = Field(default=10, ge=1, description="A/A run length (min = max)")
+    # D119: written into every spec `arc experiment adopt` registers (a proposal's own
+    # `analysis:` wins). `create` from an owner-written spec does not add it.
+    analysis: Analysis | None = Field(default_factory=_default_analysis)
 
     @model_validator(mode="after")
     def _window(self) -> ExperimentDefaults:

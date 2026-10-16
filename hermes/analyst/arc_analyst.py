@@ -154,6 +154,7 @@ SPEC_KEYS = (
     "max_sessions",
     "proposed_by",
     "backtest_ref",
+    "analysis",  # D119: pre-registered SPY adjustment + HAC (adopt fills the default)
 )
 EXPERIMENT_ID_RE = re.compile(r"^XP-[1-9]\d*$")
 # Statuses the weekly report must cover (terminal promoted/rejected ones are history).

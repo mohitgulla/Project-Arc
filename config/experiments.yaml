@@ -23,12 +23,21 @@ experiments:
     min_sessions: 20         # no win/futility verdict before this many paired sessions
     max_sessions: 60         # futility stop
     aa_sessions: 10          # A/A experiments: min = max = this unless the spec sets them
+    # D119 (E25.7): the pre-registered analysis `arc experiment adopt` writes into every
+    # new spec (hash-locked there). covariates [spy_ret] tests the intercept of
+    # d_t = a + b*SPY_ret_t (the edge on a flat-market day: extra market beta is not a
+    # win); hac_lag widens sigma by the Newey-West long-run factor (null = iid).
+    analysis:
+      covariates: [spy_ret]
+      hac_lag: 5
 
   # E10.3 evaluation (arc/experiments/evaluate.py). Not copied into specs (not
   # hash-locked): how the numbers are computed, not what the experiment tests.
   stats:
     sigma_upper_q: 0.05      # no A/A sigma: running sd inflated to its 95% upper chi2 bound
     bootstrap_resamples: 2000   # paired bootstrap of the Sortino difference (seeded)
+    hac_lag: 5               # D119: lag of the descriptive long-run sigma (specs without `analysis`)
+    hac_max_factor: 4.0      # D119: HAC factor below 2L+2 sessions when no A/A factor is on record
 
   # E10.2 arm runner (D44). While an experiment is `running`, every arm below runs the
   # trading loop again right after control's loop chain, on the SAME inputs: control's
