@@ -56,8 +56,10 @@ from __future__ import annotations
 import datetime as _dt
 import hashlib
 import json
+import math
 import sqlite3
 from collections import Counter, defaultdict
+from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -69,6 +71,7 @@ from arc.context.ttl import from_db, to_db
 from arc.experiments import stats
 from arc.experiments.models import (
     CONTROL_ARM,
+    Analysis,
     ExperimentKind,
     ExperimentState,
     ExperimentStatus,
@@ -91,10 +94,12 @@ from arc.utils.calendar import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
     from arc.experiments.arms import ArmIdentity
     from arc.experiments.config import ExperimentsConfig
+    from arc.experiments.covariate import BarsProvider
     from arc.experiments.store import ExperimentStore
 
 __all__ = [
@@ -141,6 +146,10 @@ _STOP: dict[str, StopReason] = {
 # ---------------------------------------------------------------------------
 
 
+def _absent(v: object) -> bool:
+    return v is None
+
+
 class SessionRow(BaseModel):
     model_config = _FORBID
 
@@ -151,6 +160,79 @@ class SessionRow(BaseModel):
     legacy_pnl: float = Field(..., description="Legacy book's day P&L removed from control ($)")
     treatment_pnl: float
     d: float = Field(..., description="(treatment_pnl - control_pnl) / t0_equity")
+    spy_ret: float | None = Field(
+        None,
+        exclude_if=_absent,
+        description="D119: SPY's return that session (close to close; partial first session "
+        "t0 to close). Persisted so a re-evaluation reproduces the adjusted primary offline",
+    )
+
+
+class Unadjusted(BaseModel):
+    """D119: the D44 iid unadjusted primary, kept next to a pre-registered one."""
+
+    model_config = _FORBID
+
+    n: int
+    mean: float | None
+    ci: stats.Interval | None
+    sigma: float | None
+    sigma_source: Literal["aa", "running_corrected"] | None
+    tau: float | None
+    p_value: float | None
+
+
+class Adjustment(BaseModel):
+    """D119 (E25.7): the SPY regression of one paired series, ``d_t = a + b x_t + e_t``.
+
+    ``pre_registered`` true: the spec's ``analysis`` block; the primary's ``mean`` /
+    ``ci`` / ``p_value`` / ``sigma`` / ``tau`` are these numbers and the verdict reads
+    them. False: descriptive only (a spec without ``analysis``, e.g. XP-1), computed
+    with ``covariates: [spy_ret]`` and ``experiments.stats.hac_lag``; the verdict stays
+    the D44 iid unadjusted one.
+    """
+
+    model_config = _FORBID
+
+    pre_registered: bool
+    status: Literal["fitted", "insufficient_n", "unadjusted"] = Field(
+        ...,
+        description="fitted = OLS on SPY; insufficient_n = fewer than 3 sessions with a SPY "
+        "return or no SPY variance (plain mean); unadjusted = covariates []",
+    )
+    covariates: list[str] = Field(..., description="[spy_ret] = adjusted; [] = plain mean")
+    n: int = Field(..., description="Sessions in the fit (those with a SPY return)")
+    beta: float | None = Field(None, description="SPY beta of the daily difference (b)")
+    beta_se: float | None = None
+    r2: float | None = Field(None, description="Share of the diff's variance SPY explains")
+    estimate: float | None = Field(
+        None, description="Intercept a: the daily edge on a flat-market day (or the mean)"
+    )
+    ci: stats.Interval | None = Field(None, description="Always-valid (mSPRT) CI on estimate")
+    p_value: float | None = None
+    tau: float | None = None
+    sigma_source: Literal["aa", "running_corrected"] | None = None
+    covariate_missing: list[_dt.date] = Field(
+        default_factory=list,
+        description="Paired sessions without a SPY return: left out of the fit; an adjusted "
+        "pre-registered verdict waits on them",
+    )
+
+
+class Hac(BaseModel):
+    """D119: the Bartlett (Newey-West) long-run variance factor of the residuals."""
+
+    model_config = _FORBID
+
+    lag: int | None = Field(..., description="Bartlett lag L (sessions); None = iid")
+    factor: float | None = Field(None, description="f used (>= 1; sigma_lr = ... sqrt(f))")
+    factor_running: float | None = Field(None, description="f from the series itself")
+    rho: list[float] = Field(default_factory=list, description="Residual rho_1..rho_L (raw)")
+    source: stats.HacSource | None = Field(
+        None,
+        description="iid (no lag) | running (n >= 2L+2) | aa (the A/A's recorded f) | "
+        "cap (n < 2L+2, no A/A f: hac_max_factor)",
+    )
 
 
 class Primary(BaseModel):
@@ -171,6 +253,25 @@ class Primary(BaseModel):
         "(dual of ci: p < alpha iff ci excludes 0)",
     )
     lower_bound_positive: bool = False
+    # -- D119: omitted when absent (reports without a SPY series stay byte-identical) --
+    adjustment: Adjustment | None = Field(
+        None, exclude_if=_absent, description="D119: SPY regression (verdict iff pre_registered)"
+    )
+    hac: Hac | None = Field(None, exclude_if=_absent, description="D119: long-run factor")
+    sigma_raw: float | None = Field(
+        None, exclude_if=_absent, description="D119: sample sd of d (unadjusted)"
+    )
+    sigma_adj: float | None = Field(
+        None, exclude_if=_absent, description="D119: plug-in residual sd sqrt(SSE / df)"
+    )
+    sigma_lr: float | None = Field(
+        None,
+        exclude_if=_absent,
+        description="D119: long-run sigma of the estimate: base * sqrt(f) * intercept factor",
+    )
+    primary_unadjusted: Unadjusted | None = Field(
+        None, exclude_if=_absent, description="D119: the D44 iid unadjusted primary"
+    )
 
 
 class Secondary(BaseModel):
@@ -189,10 +290,6 @@ class Secondary(BaseModel):
         "two-sided vs 0 when there is no margin (aa)",
     )
     non_inferior: bool | None = Field(None, description="None for aa (no margin)")
-
-
-def _absent(v: object) -> bool:
-    return v is None
 
 
 class ArmSummary(BaseModel):
@@ -260,6 +357,25 @@ class Calibration(BaseModel):
     llm_divergence_rate: float | None = Field(
         None, description="Share of paired chains whose arm decisions differ"
     )
+    # -- D119: pooled over the pairs; omitted when no SPY series / HAC was computed --
+    sigma_adj: float | None = Field(
+        None, exclude_if=_absent, description="D119: pooled SPY-adjusted residual sd"
+    )
+    sigma_lr: float | None = Field(
+        None, exclude_if=_absent, description="D119: sigma_adj * sqrt(hac_factor)"
+    )
+    hac_lag: int | None = Field(None, exclude_if=_absent, description="D119: Bartlett lag")
+    hac_factor: float | None = Field(
+        None, exclude_if=_absent, description="D119: pooled long-run variance factor f"
+    )
+    rho: list[float] | None = Field(None, exclude_if=_absent, description="D119: pooled rho_k")
+    beta_spread: float | None = Field(
+        None, exclude_if=_absent, description="D119: max - min SPY beta across the pairs"
+    )
+    mde_fixed_adj: dict[int, float] | None = Field(None, exclude_if=_absent)
+    mde_always_valid_adj: dict[int, float] | None = Field(None, exclude_if=_absent)
+    mde_fixed_lr: dict[int, float] | None = Field(None, exclude_if=_absent)
+    mde_always_valid_lr: dict[int, float] | None = Field(None, exclude_if=_absent)
 
 
 class BreakdownRow(BaseModel):
@@ -301,6 +417,24 @@ class PairReport(BaseModel):
         None, description="Holm-adjusted p (control pairs: over the K treatments; A/A: all pairs)"
     )
     sample_sd: float | None = Field(None, description="Sample sd of the daily diff (calibration)")
+    adjustment: Adjustment | None = Field(
+        None, exclude_if=_absent, description="D119: SPY regression (verdict iff pre_registered)"
+    )
+    hac: Hac | None = Field(None, exclude_if=_absent, description="D119: long-run factor")
+    sigma_raw: float | None = Field(
+        None, exclude_if=_absent, description="D119: sample sd of d (unadjusted)"
+    )
+    sigma_adj: float | None = Field(
+        None, exclude_if=_absent, description="D119: plug-in residual sd sqrt(SSE / df)"
+    )
+    sigma_lr: float | None = Field(
+        None,
+        exclude_if=_absent,
+        description="D119: long-run sigma of the estimate: base * sqrt(f) * intercept factor",
+    )
+    primary_unadjusted: Unadjusted | None = Field(
+        None, exclude_if=_absent, description="D119: the D44 iid unadjusted primary"
+    )
     secondary: Secondary | None = Field(None, description="Sortino (control pairs only)")
     verdict: ArmVerdict | None = Field(None, description="None for descriptive pairs")
     verdict_reason: str | None = None
@@ -391,6 +525,15 @@ class ExperimentReport(BaseModel):
         None,
         exclude_if=_absent,
         description="v3: production vs control vs treatments (descriptive, never a verdict)",
+    )
+    # -- D119 (E25.7): omitted when absent ---------------------------------------------
+    analysis: Analysis | None = Field(
+        None, exclude_if=_absent, description="D119: the spec's pre-registered analysis"
+    )
+    covariate_missing: list[_dt.date] | None = Field(
+        None,
+        exclude_if=_absent,
+        description="D119: paired sessions with no SPY return (an adjusted verdict waits)",
     )
 
     @property
@@ -785,6 +928,141 @@ def _breakdowns(arms: dict[str, list[dict[str, Any]]]) -> list[BreakdownRow]:
     return out
 
 
+@dataclass(frozen=True)
+class Method:
+    """D119: how the long-run primary of one experiment is computed.
+
+    *analysis* = the spec's ``analysis`` (``pre_registered``: the verdict reads it) or,
+    for a spec without one, the descriptive ``[spy_ret]`` + ``experiments.stats.hac_lag``.
+    *aa_sigma* / *aa_factor* = the A/A's sigma on the analysis' footing and its long-run
+    factor (None for an A/A experiment itself, or when none is on record).
+    """
+
+    analysis: Analysis
+    pre_registered: bool
+    max_factor: float
+    aa_sigma: float | None = None
+    aa_factor: float | None = None
+
+    @property
+    def waits_on_covariate(self) -> bool:
+        return self.pre_registered and self.analysis.adjusted
+
+
+def method_for(
+    st: ExperimentState,
+    cfg: ExperimentsConfig,
+    *,
+    aa_sigma: float | None,
+    aa_cal: StopDetail | None,
+) -> Method:
+    """The D119 method of *st* (*aa_sigma*: the raw A/A sigma; *aa_cal*: the A/A stop)."""
+    sp = st.spec
+    an = sp.analysis or Analysis(covariates=["spy_ret"], hac_lag=cfg.stats.hac_lag)
+    known: float | None = None
+    factor: float | None = None
+    if sp.kind is not ExperimentKind.AA:
+        if an.adjusted:
+            known = None if aa_cal is None else aa_cal.sigma_adj
+        else:
+            known = aa_sigma if aa_cal is None else aa_cal.sigma
+        if (
+            known is not None
+            and aa_cal is not None
+            and an.adjusted
+            and an.hac_lag is not None
+            and aa_cal.hac_lag == an.hac_lag
+        ):
+            factor = aa_cal.hac_factor
+    return Method(
+        analysis=an,
+        pre_registered=sp.analysis is not None,
+        max_factor=cfg.stats.hac_max_factor,
+        aa_sigma=known,
+        aa_factor=factor,
+    )
+
+
+def _long_run(
+    d: list[float],
+    xs: list[float | None],
+    days: list[_dt.date],
+    m: Method,
+    *,
+    alpha: float,
+    sigma_upper_q: float,
+    mde: float | None,
+    min_sessions: int,
+) -> dict[str, Any] | None:
+    """The D119 fields of one series (``adjustment``, ``hac``, ``sigma_*``).
+
+    None: descriptive and nothing to fit.
+    """
+    an = m.analysis
+    if an.adjusted:
+        idx = [i for i, x in enumerate(xs) if x is not None]
+        missing = [days[i] for i, x in enumerate(xs) if x is None]
+        dd = [d[i] for i in idx]
+        xx: list[float] | None = [float(xs[i]) for i in idx]  # type: ignore[arg-type]
+    else:
+        dd, xx, missing = list(d), None, []
+    if not m.pre_registered and len(dd) < 2:
+        return None  # descriptive: nothing to show (n < 3 shows status insufficient_n)
+    lr = stats.long_run_primary(
+        dd,
+        xx,
+        hac_lag=an.hac_lag,
+        alpha=alpha,
+        sigma_upper_q=sigma_upper_q,
+        mde=mde,
+        min_sessions=min_sessions,
+        max_factor=m.max_factor,
+        aa_sigma=m.aa_sigma,
+        aa_factor=m.aa_factor,
+    )
+    fitted = lr is not None and lr.fit.adjusted
+    status = "unadjusted" if not an.adjusted else ("fitted" if fitted else "insufficient_n")
+    adj: dict[str, Any] = {
+        "pre_registered": m.pre_registered,
+        "status": status,
+        "covariates": list(an.covariates),
+        "n": len(dd),
+        "covariate_missing": missing,
+    }
+    out: dict[str, Any] = {"sigma_raw": stats.sample_sd(dd) if len(dd) >= 2 else None}
+    if lr is None:
+        return out | {"adjustment": Adjustment(**adj), "hac": Hac(lag=an.hac_lag)}
+    f = lr.fit
+    return out | {
+        "adjustment": Adjustment(
+            **adj,
+            beta=f.beta,
+            beta_se=f.beta_se,
+            r2=f.r2,
+            estimate=f.estimate,
+            ci=lr.ci,
+            p_value=lr.p_value,
+            tau=lr.tau,
+            sigma_source=lr.sigma_source,
+        ),
+        "hac": Hac(
+            lag=an.hac_lag,
+            factor=lr.factor,
+            factor_running=lr.factor_running,
+            rho=lr.rho,
+            source=lr.hac_source,
+        ),
+        "sigma_adj": f.s_e,
+        "sigma_lr": lr.sigma_lr,
+    }
+
+
+def covariate_blocked(primary: Primary | PairReport) -> bool:
+    """D119: a pre-registered adjusted primary missing a SPY return (the verdict waits)."""
+    a = primary.adjustment
+    return bool(a is not None and a.pre_registered and a.covariate_missing)
+
+
 def _primary_from(
     d: list[float],
     *,
@@ -793,8 +1071,62 @@ def _primary_from(
     sigma_upper_q: float,
     mde: float | None,
     min_sessions: int,
+    xs: list[float | None] | None = None,
+    days: list[_dt.date] | None = None,
+    method: Method | None = None,
 ) -> Primary:
-    """The primary metric of one paired series *d* (shared by v1 and every v2 pair)."""
+    """The primary metric of one paired series *d* (shared by v1 and every v2 pair).
+
+    D119: with a *method*, the adjusted + HAC fields are attached (``adjustment``,
+    ``hac``, ``sigma_raw/adj/lr``); when the method is pre-registered they **are** the
+    primary (``mean`` / ``ci`` / ``p_value`` / ``sigma`` / ``tau``) and the D44 iid
+    unadjusted numbers move to ``primary_unadjusted``.
+    *xs* = SPY returns aligned with *d* (None = missing), *days* their sessions.
+    """
+    base = _iid_primary(
+        d, alpha=alpha, known=known, sigma_upper_q=sigma_upper_q, mde=mde,
+        min_sessions=min_sessions,
+    )  # fmt: skip
+    if method is None:
+        return base
+    xs = xs if xs is not None else [None] * len(d)
+    days = days if days is not None else [_dt.date.min] * len(d)
+    lr = _long_run(
+        d, xs, days, method, alpha=alpha, sigma_upper_q=sigma_upper_q, mde=mde,
+        min_sessions=min_sessions,
+    )  # fmt: skip
+    if not method.pre_registered:
+        return base if lr is None else base.model_copy(update=lr)
+    assert lr is not None  # noqa: S101 - a pre-registered method always reports one
+    a: Adjustment = lr["adjustment"]
+    unadjusted = Unadjusted(
+        n=base.n, mean=base.mean, ci=base.ci, sigma=base.sigma,
+        sigma_source=base.sigma_source, tau=base.tau, p_value=base.p_value,
+    )  # fmt: skip
+    return Primary(
+        n=base.n,
+        mean=a.estimate,
+        ci=a.ci,
+        sigma=lr.get("sigma_lr"),
+        sigma_source=a.sigma_source,
+        tau=a.tau,
+        p_value=a.p_value,
+        lower_bound_positive=a.ci is not None and a.ci.lo > 0.0 and not a.covariate_missing,
+        primary_unadjusted=unadjusted,
+        **lr,
+    )
+
+
+def _iid_primary(
+    d: list[float],
+    *,
+    alpha: float,
+    known: float | None,
+    sigma_upper_q: float,
+    mde: float | None,
+    min_sessions: int,
+) -> Primary:
+    """The D44 iid unadjusted primary of *d*."""
     n = len(d)
     ci, sigma, tau = stats.confidence_sequence(
         d,
@@ -950,6 +1282,106 @@ def _calibration(
     )
 
 
+def hac_calibration(
+    cal: Calibration,
+    series: list[tuple[list[float], list[float | None]]],
+    *,
+    lag: int,
+    st: ExperimentState,
+    cfg: ExperimentsConfig,
+) -> Calibration:
+    """D119: *cal* plus the pooled SPY-adjusted and long-run sigma of the *series*.
+
+    Each ``(d, x)`` pair is fitted on its sessions with a SPY return (>= 3); sigma_adj
+    and the factor pool over the fitted pairs (:func:`stats.pooled_hac`). *cal* is
+    returned unchanged when nothing can be fitted (no SPY series: byte-identical JSON).
+    """
+    resids: list[list[float]] = []
+    dfs: list[int] = []
+    betas: list[float] = []
+    for d, xs in series:
+        pts = [(v, x) for v, x in zip(d, xs, strict=True) if x is not None]
+        if len(pts) < 3:
+            continue
+        fit = stats.ols_fit([v for v, _ in pts], [x for _, x in pts])
+        if fit is None or not fit.adjusted:
+            continue
+        resids.append(fit.resid)
+        dfs.append(fit.df)
+        betas.append(float(fit.beta or 0.0))
+    sigma_adj, factor, rho = stats.pooled_hac(resids, dfs, lag)
+    if sigma_adj is None or factor is None:
+        return cal
+    sp = st.spec
+    assert sp.alpha is not None and sp.power is not None  # noqa: S101 - registered spec
+    assert sp.min_sessions is not None and sp.max_sessions is not None  # noqa: S101
+    horizons = _horizons(cfg, sp.min_sessions, sp.max_sessions)
+    sigma_lr = sigma_adj * math.sqrt(factor)
+
+    def tables(sd: float) -> tuple[dict[int, float], dict[int, float]]:
+        tau = stats.mixing_tau(sd, mde=sp.mde, min_sessions=sp.min_sessions)  # type: ignore[arg-type]
+        return (
+            {h: stats.mde_fixed(sd, h) for h in horizons},
+            {
+                h: stats.mde_always_valid(sd, h, tau=tau, alpha=sp.alpha, power=sp.power)  # type: ignore[arg-type]
+                for h in horizons
+            },
+        )
+
+    fa, va = tables(sigma_adj)
+    fl, vl = tables(sigma_lr)
+    return cal.model_copy(
+        update={
+            "sigma_adj": sigma_adj,
+            "sigma_lr": sigma_lr,
+            "hac_lag": lag,
+            "hac_factor": factor,
+            "rho": rho,
+            "beta_spread": max(betas) - min(betas) if betas else None,
+            "mde_fixed_adj": fa,
+            "mde_always_valid_adj": va,
+            "mde_fixed_lr": fl,
+            "mde_always_valid_lr": vl,
+        }
+    )
+
+
+def with_spy(
+    conn: sqlite3.Connection,
+    st: ExperimentState,
+    rows: list[SessionRow],
+    *,
+    spy: Mapping[_dt.date, float] | None,
+) -> list[SessionRow]:
+    """*rows* with ``spy_ret`` filled from *spy* (D119; rows without a value stay bare)."""
+    if not spy:
+        return rows
+    return [r.model_copy(update={"spy_ret": spy[r.day]}) if r.day in spy else r for r in rows]
+
+
+def covariate_series(
+    conn: sqlite3.Connection,
+    st: ExperimentState,
+    days: list[_dt.date],
+    *,
+    market: BarsProvider | None,
+) -> dict[_dt.date, float]:
+    """SPY returns for *days* (D119): stored reports first, then *market* for the rest."""
+    from arc.experiments.covariate import spy_returns, stored_spy_returns
+
+    run = st.running
+    assert run is not None  # noqa: S101 - caller checks
+    if not days:
+        return {}
+    return spy_returns(
+        sorted(set(days)),
+        t0=run.t0,
+        partial_first=st.spec.control_runs,
+        stored=stored_spy_returns(conn, st.experiment_id),
+        market=market,
+    )
+
+
 def build_report(
     conn: sqlite3.Connection,
     st: ExperimentState,
@@ -957,13 +1389,19 @@ def build_report(
     *,
     now: _dt.datetime,
     aa_sigma: float | None = None,
+    aa_cal: StopDetail | None = None,
+    market: BarsProvider | None = None,
 ) -> ExperimentReport:
     """Evaluate *st* (running, or stopped with a t0) as of *now*. Read-only.
 
     D69: a spec with K > 1 treatments gets the multi-arm (``report_version`` 2) report
     (:func:`arc.experiments.multi.build_multi_report`); K = 1 is the v1 report, byte for
     byte as before E15.5.
+
+    D119: *market* supplies SPY's daily bars for sessions no stored report carries
+    (None: stored values only); *aa_cal* = the latest A/A stop (adjusted + long-run sigma).
     """
+    method = method_for(st, cfg, aa_sigma=aa_sigma, aa_cal=aa_cal)
     sp, run = st.spec, st.running
     if run is None:
         msg = f"{st.experiment_id} has no t0 (never started): nothing to evaluate"
@@ -975,11 +1413,16 @@ def build_report(
         # D69: K > 1 -> v2; D108: every spec v3 (any K) -> v3, control arm as reference
         from arc.experiments.multi import build_multi_report
 
-        return build_multi_report(conn, st, cfg, now=now, aa_sigma=aa_sigma, arm_ids=arm_ids)
+        return build_multi_report(
+            conn, st, cfg, now=now, aa_sigma=aa_sigma, arm_ids=arm_ids, method=method,
+            market=market,
+        )  # fmt: skip
     t_arm = next(iter(arm_ids.values()))
     legacy = set(run.production_book)
     legacy_hashes = _legacy_hashes(conn, legacy)
     rows, missing = _series(conn, st, now=now, t_arm=t_arm)
+    spy = covariate_series(conn, st, [r.day for r in rows], market=market)
+    rows = with_spy(conn, st, rows, spy=spy)
     d = [r.d for r in rows]
     n = len(d)
     is_aa = sp.kind is ExperimentKind.AA
@@ -993,6 +1436,9 @@ def build_report(
         sigma_upper_q=cfg.stats.sigma_upper_q,
         mde=sp.mde,
         min_sessions=sp.min_sessions,
+        xs=[r.spy_ret for r in rows],
+        days=[r.day for r in rows],
+        method=method,
     )
 
     # -- arms, secondary -----------------------------------------------------
@@ -1026,6 +1472,10 @@ def build_report(
     # plus this spec's own window
     paired, diverged = _divergence(conn, t_arm, run.t0)
     cal = _calibration(sd, cfg, st, ctrl, treat, paired=paired, diverged=diverged)
+    cal = hac_calibration(
+        cal, [(d, [r.spy_ret for r in rows])], lag=method.analysis.hac_lag or cfg.stats.hac_lag,
+        st=st, cfg=cfg,
+    )  # fmt: skip
 
     # -- verdict -------------------------------------------------------------
     verdict, why = _verdict(
@@ -1067,6 +1517,12 @@ def build_report(
         control_sha=run.control_sha,
         treatment_sha=_treatment_sha(conn, t_arm),
         evaluator_sha=_evaluator_sha(),
+        analysis=sp.analysis,
+        covariate_missing=(
+            primary.adjustment.covariate_missing
+            if method.waits_on_covariate and primary.adjustment is not None
+            else None
+        ),
     )
 
 
@@ -1080,6 +1536,14 @@ def _verdict(
     secondary: Secondary,
 ) -> tuple[Verdict, str]:
     ci = primary.ci
+    if covariate_blocked(primary):
+        assert primary.adjustment is not None  # noqa: S101
+        miss = primary.adjustment.covariate_missing
+        return "continue", (
+            f"waiting on SPY's return for {len(miss)} session(s) "
+            f"({', '.join(d.isoformat() for d in miss[:5])}): the pre-registered adjusted "
+            "primary never falls back to the unadjusted CI"
+        )
     if is_aa and ci is not None and ci.excludes_zero:
         return "invalid", (
             f"A/A arms differ: always-valid CI [{ci.lo:+.4%}, {ci.hi:+.4%}] excludes 0 "
@@ -1154,12 +1618,14 @@ def _build_paired(
     *,
     now: _dt.datetime,
     aa_sigma: float | None,
+    aa_cal: StopDetail | None = None,
+    market: BarsProvider | None = None,
 ) -> ExperimentReport:
     """:func:`build_report` on the control store with the arm stores unioned in (E10.2)."""
     from arc.experiments.paired import paired_view
 
     with paired_view(conn) as view:
-        return build_report(view, st, cfg, now=now, aa_sigma=aa_sigma)
+        return build_report(view, st, cfg, now=now, aa_sigma=aa_sigma, aa_cal=aa_cal, market=market)
 
 
 def evaluate(
@@ -1169,14 +1635,21 @@ def evaluate(
     *,
     now: _dt.datetime,
     run_id: str | None = None,
+    market: BarsProvider | None = None,
 ) -> ExperimentReport:
-    """Evaluate a running experiment, store the report and apply its verdict (stop)."""
+    """Evaluate a running experiment, store the report and apply its verdict (stop).
+
+    D119: *market* = SPY's daily bars for the covariate (None: stored values only).
+    """
     conn = store.conn
     st = store.require(experiment_id)
     if st.status is not ExperimentStatus.RUNNING:
         msg = f"{experiment_id} is {st.status.value}, not running"
         raise ExperimentError(msg)
-    report = _build_paired(conn, st, cfg, now=now, aa_sigma=store.aa_sigma())
+    report = _build_paired(
+        conn, st, cfg, now=now, aa_sigma=store.aa_sigma(), aa_cal=store.aa_calibration(),
+        market=market,
+    )  # fmt: skip
     journal = JournalStore(conn)
     with conn:
         rid = store_report(conn, report, run_id=run_id)
@@ -1213,15 +1686,22 @@ def evaluate(
                 payload={"experiment_id": experiment_id, "report_id": rid},
             )
     if report.verdict != "continue":
-        sigma = report.calibration.sigma if report.kind is ExperimentKind.AA else None
+        cal = report.calibration
+        sigma = cal.sigma if report.kind is ExperimentKind.AA else None
+        record = report.verdict == "futility" and bool(sigma)
         store.stop(
             experiment_id,
             _STOP[report.verdict],
             actor=EVALUATOR_ACTOR,
             detail=StopDetail(
-                sigma=sigma if report.verdict == "futility" and sigma else None,
+                sigma=sigma if record else None,
                 sessions=report.sessions,
                 note=report.verdict_reason[:500],
+                # D119: the A/A also records the adjusted and long-run calibration
+                sigma_adj=cal.sigma_adj if record else None,
+                hac_factor=cal.hac_factor if record else None,
+                hac_lag=cal.hac_lag if record else None,
+                beta_spread=cal.beta_spread if record else None,
             ),
         )
     log.info(
@@ -1240,9 +1720,10 @@ def evaluate_running(
     *,
     now: _dt.datetime,
     run_id: str | None = None,
+    market: BarsProvider | None = None,
 ) -> list[ExperimentReport]:
     """Evaluate every running experiment (oldest first)."""
     return [
-        evaluate(store, s.experiment_id, cfg, now=now, run_id=run_id)
+        evaluate(store, s.experiment_id, cfg, now=now, run_id=run_id, market=market)
         for s in store.all(status=ExperimentStatus.RUNNING)
     ]

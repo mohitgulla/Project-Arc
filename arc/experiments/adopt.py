@@ -317,8 +317,12 @@ def _build_spec(proposal: Proposal, experiment_id: str, cfg: ExperimentsConfig) 
         # D108: control runs production's config as its own flat arm (empty overlay); a
         # non-empty control overlay is left for the model to refuse
         arms = {**arms, "control": arms.get("control") or {"overlay": {}}}
+    analysis = cfg.defaults.analysis
     data = {
         "kind": "ab",
+        # D119: every adopted spec pre-registers the SPY adjustment + HAC sigma unless
+        # the proposal names its own analysis
+        **({"analysis": analysis.model_dump(mode="json")} if analysis is not None else {}),
         **proposal.spec,
         "arms": arms,
         "spec_version": ADOPT_SPEC_VERSION,  # D108: a v2 proposal is written as v3

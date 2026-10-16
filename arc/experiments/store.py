@@ -61,6 +61,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from arc.experiments.config import RunnerConfig
+    from arc.experiments.models import Analysis
 
 __all__ = [
     "OWNER_APPROVAL_RE",
@@ -332,15 +333,30 @@ class ExperimentStore:
             f"+ {need} of {st.experiment_id}"
         )
 
-    def aa_sigma(self) -> float | None:
-        """Sigma recorded by the latest A/A that stopped with one (E10.4), else None."""
-        best: tuple[int, float] | None = None
+    def aa_sigma(self, analysis: Analysis | None = None) -> float | None:
+        """Sigma recorded by the latest A/A that stopped with one (E10.4), else None.
+
+        D119: with an adjusted *analysis* (``covariates: [spy_ret]``) the A/A's SPY-adjusted
+        residual sigma instead; ``None`` when that A/A predates D119 (no ``sigma_adj``), so
+        the adjusted XP falls back to the running sigma. The long-run factor is read
+        separately (:meth:`aa_calibration`).
+        """
+        cal = self.aa_calibration()
+        if cal is None:
+            return None
+        if analysis is not None and analysis.adjusted:
+            return cal.sigma_adj
+        return cal.sigma
+
+    def aa_calibration(self) -> StopDetail | None:
+        """The stop detail of the latest A/A that stopped with a sigma (E10.4 / D119)."""
+        best: tuple[int, StopDetail] | None = None
         for s in self.all():
             if s.kind is not ExperimentKind.AA or s.stop is None or s.stop.sigma is None:
                 continue
             stopped_id = max(e.id for e in s.events if e.status == "stopped")
             if best is None or stopped_id > best[0]:
-                best = (stopped_id, s.stop.sigma)
+                best = (stopped_id, s.stop)
         return best[1] if best else None
 
     # -- writes ------------------------------------------------------------------

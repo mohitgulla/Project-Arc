@@ -668,6 +668,66 @@ export interface components {
              */
             tone: "neutral" | "neg" | "warn" | "pos";
         };
+        /**
+         * Adjustment
+         * @description D119 (E25.7): the SPY regression of one paired series, ``d_t = a + b x_t + e_t``.
+         *
+         *     ``pre_registered`` true: the spec's ``analysis`` block; the primary's ``mean`` /
+         *     ``ci`` / ``p_value`` / ``sigma`` / ``tau`` are these numbers and the verdict reads
+         *     them. False: descriptive only (a spec without ``analysis``, e.g. XP-1), computed
+         *     with ``covariates: [spy_ret]`` and ``experiments.stats.hac_lag``; the verdict stays
+         *     the D44 iid unadjusted one.
+         */
+        Adjustment: {
+            /**
+             * Beta
+             * @description SPY beta of the daily difference (b)
+             */
+            beta?: number | null;
+            /** Beta Se */
+            beta_se?: number | null;
+            /** @description Always-valid (mSPRT) CI on estimate */
+            ci?: components["schemas"]["Interval"] | null;
+            /**
+             * Covariate Missing
+             * @description Paired sessions without a SPY return: left out of the fit; an adjusted pre-registered verdict waits on them
+             */
+            covariate_missing?: string[];
+            /**
+             * Covariates
+             * @description [spy_ret] = adjusted; [] = plain mean
+             */
+            covariates: string[];
+            /**
+             * Estimate
+             * @description Intercept a: the daily edge on a flat-market day (or the mean)
+             */
+            estimate?: number | null;
+            /**
+             * N
+             * @description Sessions in the fit (those with a SPY return)
+             */
+            n: number;
+            /** P Value */
+            p_value?: number | null;
+            /** Pre Registered */
+            pre_registered: boolean;
+            /**
+             * R2
+             * @description Share of the diff's variance SPY explains
+             */
+            r2?: number | null;
+            /** Sigma Source */
+            sigma_source?: ("aa" | "running_corrected") | null;
+            /**
+             * Status
+             * @description fitted = OLS on SPY; insufficient_n = fewer than 3 sessions with a SPY return or no SPY variance (plain mean); unadjusted = covariates []
+             * @enum {string}
+             */
+            status: "fitted" | "insufficient_n" | "unadjusted";
+            /** Tau */
+            tau?: number | null;
+        };
         /** AlertRow */
         AlertRow: {
             /**
@@ -722,6 +782,28 @@ export interface components {
              * @default false
              */
             shared_from_control: boolean;
+        };
+        /**
+         * Analysis
+         * @description D119 (E25.7): the pre-registered analysis of the primary (hash-locked with the spec).
+         *
+         *     ``covariates: [spy_ret]`` fits ``d_t = a + b * SPY_ret_t`` on the running data and
+         *     tests the intercept ``a`` (the daily edge on a flat-market day); ``[]`` tests the
+         *     plain mean. ``hac_lag`` scales the residual sigma by a Newey-West/Bartlett long-run
+         *     factor over that many sessions (floored at 1); ``None`` keeps the iid sigma.
+         *     A spec without the block keeps the D44 method (iid, unadjusted).
+         */
+        Analysis: {
+            /**
+             * Covariates
+             * @description [] = unadjusted; [spy_ret]
+             */
+            covariates: "spy_ret"[];
+            /**
+             * Hac Lag
+             * @description Bartlett lag in sessions; null = iid
+             */
+            hac_lag: number | null;
         };
         /** AppInfo */
         AppInfo: {
@@ -1268,6 +1350,11 @@ export interface components {
          */
         Calibration: {
             /**
+             * Beta Spread
+             * @description D119: max - min SPY beta across the pairs
+             */
+            beta_spread?: number | null;
+            /**
              * Divergent Chains
              * @default 0
              */
@@ -1277,6 +1364,16 @@ export interface components {
              * @description treatment - control fill rate
              */
             fill_rate_gap?: number | null;
+            /**
+             * Hac Factor
+             * @description D119: pooled long-run variance factor f
+             */
+            hac_factor?: number | null;
+            /**
+             * Hac Lag
+             * @description D119: Bartlett lag
+             */
+            hac_lag?: number | null;
             /**
              * Llm Divergence Rate
              * @description Share of paired chains whose arm decisions differ
@@ -1289,6 +1386,14 @@ export interface components {
             mde_always_valid?: {
                 [key: string]: number;
             };
+            /** Mde Always Valid Adj */
+            mde_always_valid_adj?: {
+                [key: string]: number;
+            } | null;
+            /** Mde Always Valid Lr */
+            mde_always_valid_lr?: {
+                [key: string]: number;
+            } | null;
             /**
              * Mde Fixed
              * @description sessions -> 2.8 sigma / sqrt(n)
@@ -1296,16 +1401,39 @@ export interface components {
             mde_fixed?: {
                 [key: string]: number;
             };
+            /** Mde Fixed Adj */
+            mde_fixed_adj?: {
+                [key: string]: number;
+            } | null;
+            /** Mde Fixed Lr */
+            mde_fixed_lr?: {
+                [key: string]: number;
+            } | null;
             /**
              * Paired Chains
              * @default 0
              */
             paired_chains: number;
             /**
+             * Rho
+             * @description D119: pooled rho_k
+             */
+            rho?: number[] | null;
+            /**
              * Sigma
              * @description Sample sd of d_t (fraction of t0 equity)
              */
             sigma?: number | null;
+            /**
+             * Sigma Adj
+             * @description D119: pooled SPY-adjusted residual sd
+             */
+            sigma_adj?: number | null;
+            /**
+             * Sigma Lr
+             * @description D119: sigma_adj * sqrt(hac_factor)
+             */
+            sigma_lr?: number | null;
             /**
              * Slippage Gap Bps
              * @description treatment - control mean slippage
@@ -2757,6 +2885,8 @@ export interface components {
         ExperimentReport: {
             /** Alpha */
             alpha: number;
+            /** @description D119: the spec's pre-registered analysis */
+            analysis?: components["schemas"]["Analysis"] | null;
             /** Area */
             area: string;
             /** Arms */
@@ -2777,6 +2907,11 @@ export interface components {
             config_hash: string;
             /** Control Sha */
             control_sha: string;
+            /**
+             * Covariate Missing
+             * @description D119: paired sessions with no SPY return (an adjusted verdict waits)
+             */
+            covariate_missing?: string[] | null;
             /**
              * Evaluated At
              * Format: date-time
@@ -2862,6 +2997,8 @@ export interface components {
         ExperimentSpec: {
             /** Alpha */
             alpha?: number | null;
+            /** @description D119: pre-registered SPY adjustment + HAC sigma of the primary; absent = the D44 iid unadjusted method (and the spec hashes exactly as before D119) */
+            analysis?: components["schemas"]["Analysis"] | null;
             area: components["schemas"]["Area"];
             arms?: components["schemas"]["Arms"];
             /**
@@ -3355,6 +3492,37 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /**
+         * Hac
+         * @description D119: the Bartlett (Newey-West) long-run variance factor of the residuals.
+         */
+        Hac: {
+            /**
+             * Factor
+             * @description f used (>= 1; sigma_lr = ... sqrt(f))
+             */
+            factor?: number | null;
+            /**
+             * Factor Running
+             * @description f from the series itself
+             */
+            factor_running?: number | null;
+            /**
+             * Lag
+             * @description Bartlett lag L (sessions); None = iid
+             */
+            lag: number | null;
+            /**
+             * Rho
+             * @description Residual rho_1..rho_L (raw)
+             */
+            rho?: number[];
+            /**
+             * Source
+             * @description iid (no lag) | running (n >= 2L+2) | aa (the A/A's recorded f) | cap (n < 2L+2, no A/A f: hac_max_factor)
+             */
+            source?: ("iid" | "running" | "aa" | "cap") | null;
         };
         /** HaltRow */
         HaltRow: {
@@ -4490,6 +4658,8 @@ export interface components {
              * @description Baseline arm (control, or Ti for Ti vs Tj)
              */
             a: string;
+            /** @description D119: SPY regression (verdict iff pre_registered) */
+            adjustment?: components["schemas"]["Adjustment"] | null;
             /**
              * Arm Id
              * @description b's arm_id
@@ -4512,6 +4682,8 @@ export interface components {
              * @description True = no verdict (Ti vs Tj)
              */
             descriptive: boolean;
+            /** @description D119: long-run factor */
+            hac?: components["schemas"]["Hac"] | null;
             /**
              * Holm P
              * @description Holm-adjusted p (control pairs: over the K treatments; A/A: all pairs)
@@ -4533,6 +4705,8 @@ export interface components {
              * @description Always-valid mSPRT p (dual of ci)
              */
             p_value?: number | null;
+            /** @description D119: the D44 iid unadjusted primary */
+            primary_unadjusted?: components["schemas"]["Unadjusted"] | null;
             /**
              * Sample Sd
              * @description Sample sd of the daily diff (calibration)
@@ -4547,6 +4721,21 @@ export interface components {
             series?: components["schemas"]["SessionRow"][];
             /** Sigma */
             sigma: number | null;
+            /**
+             * Sigma Adj
+             * @description D119: plug-in residual sd sqrt(SSE / df)
+             */
+            sigma_adj?: number | null;
+            /**
+             * Sigma Lr
+             * @description D119: long-run sigma of the estimate: base * sqrt(f) * intercept factor
+             */
+            sigma_lr?: number | null;
+            /**
+             * Sigma Raw
+             * @description D119: sample sd of d (unadjusted)
+             */
+            sigma_raw?: number | null;
             /** Sigma Source */
             sigma_source: ("aa" | "running_corrected") | null;
             /** Tau */
@@ -5037,8 +5226,12 @@ export interface components {
          * @description Paired daily net P&L difference (fraction of t0 equity) and its always-valid CI.
          */
         Primary: {
+            /** @description D119: SPY regression (verdict iff pre_registered) */
+            adjustment?: components["schemas"]["Adjustment"] | null;
             /** @description Always-valid (mSPRT) two-sided CI */
             ci?: components["schemas"]["Interval"] | null;
+            /** @description D119: long-run factor */
+            hac?: components["schemas"]["Hac"] | null;
             /**
              * Lower Bound Positive
              * @default false
@@ -5059,8 +5252,25 @@ export interface components {
              * @description Always-valid mSPRT p of no difference (dual of ci: p < alpha iff ci excludes 0)
              */
             p_value?: number | null;
+            /** @description D119: the D44 iid unadjusted primary */
+            primary_unadjusted?: components["schemas"]["Unadjusted"] | null;
             /** Sigma */
             sigma: number | null;
+            /**
+             * Sigma Adj
+             * @description D119: plug-in residual sd sqrt(SSE / df)
+             */
+            sigma_adj?: number | null;
+            /**
+             * Sigma Lr
+             * @description D119: long-run sigma of the estimate: base * sqrt(f) * intercept factor
+             */
+            sigma_lr?: number | null;
+            /**
+             * Sigma Raw
+             * @description D119: sample sd of d (unadjusted)
+             */
+            sigma_raw?: number | null;
             /** Sigma Source */
             sigma_source: ("aa" | "running_corrected") | null;
             /**
@@ -5938,6 +6148,11 @@ export interface components {
              */
             legacy_pnl: number;
             /**
+             * Spy Ret
+             * @description D119: SPY's return that session (close to close; partial first session t0 to close). Persisted so a re-evaluation reproduces the adjusted primary offline
+             */
+            spy_ret?: number | null;
+            /**
              * Treatment Equity
              * @description Treatment arm's virtual equity ($)
              */
@@ -6497,6 +6712,21 @@ export interface components {
         StopBasis: "credit_multiple" | "pct_max_loss" | "pct_debit";
         /** StopDetail */
         StopDetail: {
+            /**
+             * Beta Spread
+             * @description D119: max - min of the pairs' SPY beta
+             */
+            beta_spread?: number | null;
+            /**
+             * Hac Factor
+             * @description D119: pooled Bartlett long-run variance factor f
+             */
+            hac_factor?: number | null;
+            /**
+             * Hac Lag
+             * @description D119: lag f was measured at
+             */
+            hac_lag?: number | null;
             /** Note */
             note?: string | null;
             /** Sessions */
@@ -6506,6 +6736,11 @@ export interface components {
              * @description Daily P&L-diff stdev (% equity); A/A records it
              */
             sigma?: number | null;
+            /**
+             * Sigma Adj
+             * @description D119: pooled SPY-adjusted residual sigma
+             */
+            sigma_adj?: number | null;
         };
         /**
          * StopReason
@@ -7181,6 +7416,25 @@ export interface components {
             underlying_down?: number | null;
             /** Underlying Up */
             underlying_up?: number | null;
+        };
+        /**
+         * Unadjusted
+         * @description D119: the D44 iid unadjusted primary, kept next to a pre-registered one.
+         */
+        Unadjusted: {
+            ci: components["schemas"]["Interval"] | null;
+            /** Mean */
+            mean: number | null;
+            /** N */
+            n: number;
+            /** P Value */
+            p_value: number | null;
+            /** Sigma */
+            sigma: number | null;
+            /** Sigma Source */
+            sigma_source: ("aa" | "running_corrected") | null;
+            /** Tau */
+            tau: number | null;
         };
         /** UniverseActiveRow */
         UniverseActiveRow: {
