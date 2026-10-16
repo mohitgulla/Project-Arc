@@ -107,12 +107,13 @@ def started(tmp_path: Path) -> tuple[Path, str]:
     control = tmp_path / "control.db"
     assert (
         _arc(
-            "experiment", "create", "--owner-approval", "P-1", "--spec", SPEC, "--db", str(control)
+            "experiment", "create", "--owner-approval", "XP-1", "--spec", SPEC, "--db", str(control)
         )
         == 0
     )
     assert (
-        _arc("experiment", "register", "--owner-approval", "P-1", "XP-1", "--db", str(control)) == 0
+        _arc("experiment", "register", "--owner-approval", "XP-1", "XP-1", "--db", str(control))
+        == 0
     )
     conn = _db(control)
     start_arms(

@@ -126,8 +126,8 @@ def add_arms(conn: sqlite3.Connection, control_path: Path, now: dt.datetime) -> 
         return clock[0]
 
     store = ExperimentStore(conn, now=tick)
-    store.create(_spec(), actor="local", owner_approval="P-1")
-    store.register(EXPERIMENT_ID, actor="local", owner_approval="P-1")
+    store.create(_spec(), actor="local", owner_approval="XP-1")
+    store.register(EXPERIMENT_ID, actor="local", owner_approval="XP-1")
     store.start(
         EXPERIMENT_ID,
         RunningDetail(

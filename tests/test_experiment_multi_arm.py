@@ -124,9 +124,9 @@ def _probe(number: str = ACCT, equity: str = "100000", positions: int = 0, order
 
 def _registered(conn: sqlite3.Connection, spec: ExperimentSpec, runner: RunnerConfig) -> None:
     store = ExperimentStore.for_runner(conn, runner)
-    store.create(spec, actor=OWNER, owner_approval="P-1")
+    store.create(spec, actor=OWNER, owner_approval="XP-1")
     assert (
-        store.register(spec.id, actor=OWNER, owner_approval="P-1").status
+        store.register(spec.id, actor=OWNER, owner_approval="XP-1").status
         is ExperimentStatus.REGISTERED
     )
 
@@ -370,42 +370,43 @@ def test_max_parallel_arms_queues_then_promotes(tmp_path: Path) -> None:
     conn = _db()
     store = ExperimentStore.for_runner(conn, _shared(max_parallel_arms=5), now=lambda: T0)
     for eid, k in (("XP-20", 3), ("XP-21", 3), ("XP-22", 2)):
-        store.create(_spec(eid, k=k), actor=OWNER, owner_approval="P-1")
+        store.create(_spec(eid, k=k), actor=OWNER, owner_approval="XP-1")
     assert (
-        store.register("XP-20", actor=OWNER, owner_approval="P-1").status
+        store.register("XP-20", actor=OWNER, owner_approval="XP-1").status
         is ExperimentStatus.REGISTERED
     )
-    st = store.register("XP-21", actor=OWNER, owner_approval="P-1")  # 3 + 3 > 5
+    st = store.register("XP-21", actor=OWNER, owner_approval="XP-1")  # 3 + 3 > 5
     assert st.status is ExperimentStatus.QUEUED
     assert st.events[-1].detail is not None
     assert "max_parallel_arms 5" in st.events[-1].detail["arm_cap"]
     assert (
-        store.register("XP-22", actor=OWNER, owner_approval="P-1").status
+        store.register("XP-22", actor=OWNER, owner_approval="XP-1").status
         is ExperimentStatus.REGISTERED
     )  # 3 + 2
     store.stop("XP-20", StopReason.OWNER, actor=OWNER)  # 2 used: XP-21 (3) fits
     assert store.require("XP-21").status is ExperimentStatus.REGISTERED
     # one experiment wider than the cap could never start: refused outright
-    store.create(_spec("XP-23", k=6), actor=OWNER, owner_approval="P-1")
+    store.create(_spec("XP-23", k=6), actor=OWNER, owner_approval="XP-1")
     with pytest.raises(Exception, match="could never start"):  # noqa: PT011
-        store.register("XP-23", actor=OWNER, owner_approval="P-1")
+        store.register("XP-23", actor=OWNER, owner_approval="XP-1")
 
 
 def test_aa_is_exempt_from_the_area_lock_but_ab_is_not(tmp_path: Path) -> None:
     store = ExperimentStore(_db(), now=lambda: T0)
-    store.create(_spec("XP-20", kind="ab", area="exits", k=1), actor=OWNER, owner_approval="P-1")
-    store.create(_spec("XP-21", kind="aa", area="exits", k=2), actor=OWNER, owner_approval="P-1")
-    store.create(_spec("XP-22", kind="ab", area="exits", k=1), actor=OWNER, owner_approval="P-1")
+    store.create(_spec("XP-20", kind="ab", area="exits", k=1), actor=OWNER, owner_approval="XP-1")
+    store.create(_spec("XP-21", kind="aa", area="exits", k=2), actor=OWNER, owner_approval="XP-1")
+    store.create(_spec("XP-22", kind="ab", area="exits", k=1), actor=OWNER, owner_approval="XP-1")
     assert (
-        store.register("XP-20", actor=OWNER, owner_approval="P-1").status
+        store.register("XP-20", actor=OWNER, owner_approval="XP-1").status
         is ExperimentStatus.REGISTERED
     )
     assert (
-        store.register("XP-21", actor=OWNER, owner_approval="P-1").status
+        store.register("XP-21", actor=OWNER, owner_approval="XP-1").status
         is ExperimentStatus.REGISTERED
     )  # A/A
     assert (
-        store.register("XP-22", actor=OWNER, owner_approval="P-1").status is ExperimentStatus.QUEUED
+        store.register("XP-22", actor=OWNER, owner_approval="XP-1").status
+        is ExperimentStatus.QUEUED
     )  # A/B
     assert [s.experiment_id for s in store.active_in_area("exits")] == ["XP-20"]
 
@@ -683,8 +684,8 @@ def test_cli_fixture_k3_aa_shared(tmp_path: Path, capsys: pytest.CaptureFixture[
     xcfg = tmp_path / "experiments.yaml"
     xcfg.write_text(yaml.safe_dump(cfg))
     db = ("--db", str(tmp_path / "arc.db"))
-    assert _arc("experiment", "create", "--owner-approval", "P-1", "--spec", str(spec), *db) == 0
-    assert _arc("experiment", "register", "--owner-approval", "P-1", "XP-20", *db) == 0
+    assert _arc("experiment", "create", "--owner-approval", "XP-1", "--spec", str(spec), *db) == 0
+    assert _arc("experiment", "register", "--owner-approval", "XP-1", "XP-20", *db) == 0
     capsys.readouterr()
     assert (
         _arc("experiment", "start", "XP-20", "--fixtures", "--t0-equity", "10000",

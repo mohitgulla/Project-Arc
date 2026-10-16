@@ -309,8 +309,8 @@ def _probe(keys_env: str) -> ArmAccount:
 def _start(conn: sqlite3.Connection, eid: str, k: int, tmp: Path, **kw: Any) -> Any:
     runner = kw.pop("runner", None) or _runner()
     store = ExperimentStore.for_runner(conn, runner)
-    store.create(_spec(eid, k), actor=OWNER, owner_approval="P-1")
-    store.register(eid, actor=OWNER, owner_approval="P-1")
+    store.create(_spec(eid, k), actor=OWNER, owner_approval="XP-1")
+    store.register(eid, actor=OWNER, owner_approval="XP-1")
     return start_arms(
         conn, eid, actor=OWNER, now=kw.pop("now", FIXTURE_NOW), t0_equity=D("10000"),
         runner=runner, arm_dir=tmp / "arms", control_sha="abcdef1", aa_override=True,
@@ -350,8 +350,8 @@ def test_dedicated_arms_carry_no_code(tmp_path: Path) -> None:
         }),
         ExperimentDefaults(),
     )  # fmt: skip
-    store.create(sp, actor=OWNER, owner_approval="P-1")
-    store.register("XP-32", actor=OWNER, owner_approval="P-1")
+    store.create(sp, actor=OWNER, owner_approval="XP-1")
+    store.register("XP-32", actor=OWNER, owner_approval="XP-1")
     start_arms(
         conn, "XP-32", actor=OWNER, now=FIXTURE_NOW, t0_equity=D("10000"),
         runner=_runner("dedicated"), arm_dir=tmp_path / "arms", control_sha="abcdef1",

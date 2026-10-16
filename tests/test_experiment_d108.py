@@ -108,8 +108,8 @@ def _probe(equity: str = "100000") -> Any:
 
 def _registered(conn: sqlite3.Connection, spec: ExperimentSpec, runner: RunnerConfig) -> None:
     store = ExperimentStore.for_runner(conn, runner)
-    store.create(spec, actor="local", owner_approval="P-1")
-    assert store.register(spec.id, actor="local", owner_approval="P-1").status is (
+    store.create(spec, actor="local", owner_approval="XP-1")
+    assert store.register(spec.id, actor="local", owner_approval="XP-1").status is (
         ExperimentStatus.REGISTERED
     )
 
@@ -207,7 +207,7 @@ def test_create_refuses_a_v3_spec_with_a_control_overlay(tmp_path: Path) -> None
     p = tmp_path / "spec.yaml"
     p.write_text(yaml.safe_dump(doc))
     db = tmp_path / "arc.db"
-    argv = ["experiment", "create", "--owner-approval", "P-1", "--spec", str(p), "--db", str(db)]
+    argv = ["experiment", "create", "--owner-approval", "XP-1", "--spec", str(p), "--db", str(db)]
     assert main(argv) != 0
     conn = _db(db)
     assert ExperimentStore(conn).get("XP-32") is None
@@ -301,11 +301,11 @@ def test_parallel_arm_cap_counts_the_control_arm(tmp_path: Path) -> None:
     runner = _shared().model_copy(update={"max_parallel_arms": 3})
     store = ExperimentStore.for_runner(conn, runner)
     # control + t1..t3 = 4 arms > 3: refused at register; a v2 K=3 (3 arms) fits
-    store.create(_spec("XP-41"), actor="local", owner_approval="P-1")
+    store.create(_spec("XP-41"), actor="local", owner_approval="XP-1")
     with pytest.raises(ExperimentError, match="runs 4 arms, more than max_parallel_arms 3"):
-        store.register("XP-41", actor="local", owner_approval="P-1")
-    store.create(_spec("XP-48", version=2), actor="local", owner_approval="P-1")
-    assert store.register("XP-48", actor="local", owner_approval="P-1").status is (
+        store.register("XP-41", actor="local", owner_approval="XP-1")
+    store.create(_spec("XP-48", version=2), actor="local", owner_approval="XP-1")
+    assert store.register("XP-48", actor="local", owner_approval="XP-1").status is (
         ExperimentStatus.REGISTERED
     )
 
@@ -418,8 +418,8 @@ def test_start_cli_json_names_the_production_book(tmp_path: Path, capsys: Any) -
     p = tmp_path / "spec.yaml"
     p.write_text(yaml.safe_dump(_doc("XP-47")))
     for argv in (
-        ["experiment", "create", "--owner-approval", "P-1", "--spec", str(p)],
-        ["experiment", "register", "--owner-approval", "P-1", "XP-47"],
+        ["experiment", "create", "--owner-approval", "XP-1", "--spec", str(p)],
+        ["experiment", "register", "--owner-approval", "XP-1", "XP-47"],
     ):
         assert main([*argv, "--db", str(db)]) == 0
     capsys.readouterr()

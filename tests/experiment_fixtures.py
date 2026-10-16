@@ -74,8 +74,8 @@ def start(
         return clock[0]
 
     store = ExperimentStore(conn, now=now)
-    store.create(sp, actor="local", owner_approval="P-1")
-    store.register(sp.id, actor="local", owner_approval="P-1")
+    store.create(sp, actor="local", owner_approval="XP-1")
+    store.register(sp.id, actor="local", owner_approval="XP-1")
     store.start(
         sp.id,
         RunningDetail(
@@ -222,8 +222,9 @@ def reviewer_registry(conn: sqlite3.Connection) -> dict[str, str]:
         return clock[0]
 
     later = ExperimentStore(conn, now=now)
-    later.create(spec("XP-2"), actor="local", owner_approval="P-1")
-    later.register("XP-2", actor="local", owner_approval="P-1")
+    # D121: an adopted Analyst proposal registers under its own reserved id
+    later.create(spec("XP-2"), actor="local", owner_approval="XP-2")
+    later.register("XP-2", actor="local", owner_approval="XP-2")
     t0 = clock[0] + dt.timedelta(hours=1)
     later.start(
         "XP-2",
@@ -232,8 +233,8 @@ def reviewer_registry(conn: sqlite3.Connection) -> dict[str, str]:
     )
     running_at = clock[0]
     later.create(
-        spec("XP-3", hypothesis="stop at 2x credit beats 3x"), actor="local", owner_approval="P-1"
+        spec("XP-3", hypothesis="stop at 2x credit beats 3x"), actor="local", owner_approval="XP-3"
     )
-    later.register("XP-3", actor="local", owner_approval="P-1")
+    later.register("XP-3", actor="local", owner_approval="XP-3")
     conn.commit()
     return {"x2_running_at": running_at.isoformat()}

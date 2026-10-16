@@ -262,9 +262,10 @@ def test_pre_e13_12_store_loads_with_no_personas(tmp_path: Path) -> None:
 def control(tmp_path: Path) -> Path:
     db = tmp_path / "control.db"
     assert (
-        _arc("experiment", "create", "--owner-approval", "P-1", "--spec", XP5, "--db", str(db)) == 0
+        _arc("experiment", "create", "--owner-approval", "XP-1", "--spec", XP5, "--db", str(db))
+        == 0
     )
-    assert _arc("experiment", "register", "--owner-approval", "P-1", "XP-5", "--db", str(db)) == 0
+    assert _arc("experiment", "register", "--owner-approval", "XP-1", "XP-5", "--db", str(db)) == 0
     return db
 
 
@@ -551,7 +552,7 @@ def test_migration_026_keeps_every_experiment_row_and_the_triggers(tmp_path: Pat
             "experiment",
             "create",
             "--owner-approval",
-            "P-1",
+            "XP-1",
             "--spec",
             XP5,
             "--db",

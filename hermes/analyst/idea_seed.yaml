@@ -3,7 +3,7 @@
 # These are the never-adopted, dev-drafted forward-experiment specs that D86 retired from
 # config/experiments/live/. Each lead names the variable(s), the treatment values the old
 # draft tested, where it came from and the evidence so far. The Analyst decides, run by run,
-# whether a lead becomes a `P-<n>` proposal (one area, control + exactly 3 treatments, D108) or is
+# whether a lead becomes a `XP-<n>` proposal (one area, control + exactly 3 treatments, D108) or is
 # dropped with a reason (E21.3). The flags these drafts flipped keep their shipped values.
 #
 # install.sh copies this file to <profile>/analyst/idea_seed.yaml; `arc_analyst.py

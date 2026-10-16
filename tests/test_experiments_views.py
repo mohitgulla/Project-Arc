@@ -67,7 +67,7 @@ def fixture_db(tmp_path: Path) -> tuple[Path, dt.datetime]:
     now = _after(days)
     store._now = lambda: now  # noqa: SLF001
     evaluate(store, "XP-2", CFG, now=now)
-    store.create(fx.spec("XP-1", kind="aa"), actor="local", owner_approval="P-1")
+    store.create(fx.spec("XP-1", kind="aa"), actor="local", owner_approval="XP-1")
     c.close()
     return db, now
 

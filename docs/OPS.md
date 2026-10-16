@@ -1622,9 +1622,9 @@ python3 …/arc_analyst.py check-report RUN_DIR/report.md       # ≤ 3,500 char
 python3 …/arc_analyst.py mark RUN_DIR                         # advance the watermark
 python3 …/arc_analyst.py triage A-3 wontfix "why"             # owner: accepted|wontfix|fixed
 python3 …/arc_analyst.py ship A-4 "note"                      # owner: quick change shipped → next run reviews it
-python3 …/arc_analyst.py approve P-2 "note" --approval slack:<ts>  # owner: proposals/P-2.yaml → arc experiment adopt (E21.4)
-python3 …/arc_analyst.py drop P-3 "why"                       # owner
-python3 …/arc_analyst.py reprioritise P-3 "why" [--score X]   # owner: pin to the top / override value
+python3 …/arc_analyst.py approve XP-4 "note" --approval slack:<ts>  # owner: proposals/XP-4.yaml → arc experiment adopt --id XP-4 (E21.4, D121)
+python3 …/arc_analyst.py drop XP-5 "why"                      # owner (XP-5 stays a gap, never reused)
+python3 …/arc_analyst.py reprioritise XP-5 "why" [--score X]  # owner: pin to the top / override value
 python3 …/arc_analyst.py backlog                              # ranked backlog with each value formula
 python3 …/arc_analyst.py reset                                # next run reviews unconditionally
 ```
@@ -1642,8 +1642,8 @@ ranked P-id (or `none: <why>`) or whose `next_slot` misses a blocking
 experiment, a running experiment without `stop_advice`, or a missing status
 line for any of the six standing themes. Obvious config flaws are allowed at
 any N. Owner commands in the report thread: `create A-<n>`, `ship A-<n>`,
-`comment A-<n>`, `wontfix A-<n> <why>`, `accept A-<n>`, `approve P-<n>`,
-`drop P-<n> <why>`, `reprioritise P-<n> <why>`, `rerun`.
+`comment A-<n>`, `wontfix A-<n> <why>`, `accept A-<n>`, `approve XP-<n>`,
+`drop XP-<n> <why>`, `reprioritise XP-<n> <why>`, `rerun`.
 
 ### 5.17 Forward A/B experiment registry (E10.1, D44)
 
@@ -1653,8 +1653,8 @@ Specs live in `config/experiments/live/<id>.yaml`; defaults (alpha 0.05, power
 tunable as `experiments.*` (`!arc config experiments`). The treatment overlay uses
 the same deep-merge format as the backtest overlays in `config/experiments/*.yaml`.
 
-    arc experiment create --spec config/experiments/live/xp1_aa_k3.yaml --owner-approval P-<n>
-    arc experiment register XP-1 --owner-approval P-<n>   # locks sha256(canonical spec); queued if the area is busy
+    arc experiment create --spec config/experiments/live/xp1_aa_k3.yaml --owner-approval XP-<n>
+    arc experiment register XP-1 --owner-approval XP-<n>   # locks sha256(canonical spec); queued if the area is busy
     arc experiment show XP-1 [--json]
     arc experiment verify XP-1          # exit 1 when the stored spec no longer matches the lock
     arc experiment list [--status running]
@@ -1664,7 +1664,7 @@ the same deep-merge format as the backtest overlays in `config/experiments/*.yam
   needs a new id. One `registered`/`running` experiment per area; the next
   queued one is registered when it stops.
 - **Owner approval (D86, E21.2).** `create` and `register` refuse without
-  `--owner-approval <ref>`: `P-<n>` (an Analyst proposal the owner approved in
+  `--owner-approval <ref>`: `XP-<n>` (an Analyst proposal the owner approved in
   #arc-analyst), `slack:<ts>` (the owner's message) or `owner:<note>`. The ref is stored
   in the event `detail` and shown by `arc experiment show`. The refusal names
   `arc experiment adopt` (E21.4), the normal path. Dev cards never create or register
@@ -1732,24 +1732,27 @@ stores one `ExperimentReport` in the append-only `experiment_reports` table:
 **Approve → register → owner start (E21.4, D86; D112).** After the owner approves a
 proposal, everything up to `registered` is automatic; the **start is manual**:
 
-    arc experiment adopt P-2 --proposal <P-2.yaml | xp_backlog.json> \
+    arc experiment adopt XP-4 --id XP-4 --proposal <XP-4.yaml | xp_backlog.json> \
         --owner-approval slack:<ts> --db <db> [--dry-run] [--no-pr] [--no-slack] [--json]
     arc experiment verdict XP-11 [--dry-run]     # retry / preview a verdict PR
 
-- **adopt** (the Analyst's `approve P-<n>` runs it on the live store): picks the next free
-  `XP-<n>` across the DB, the committed specs and `origin/main`, fills the defaults from
-  `config/experiments.yaml`, and validates the spec. It must be `ab` with exactly 3
+- **adopt** (the Analyst's `approve XP-<n>` runs it on the live store): with `--id XP-<n>`
+  (D121) it registers under the proposal's reserved id and refuses one already taken in the
+  DB, the committed specs or `origin/main` (the Analyst then re-reserves); without `--id`
+  it picks the next free `XP-<n>` across the same places. It fills the defaults from
+  `config/experiments.yaml` and validates the spec. It must be `ab` with exactly 3
   treatments (D108; any other count is refused, never trimmed), overlays that validate,
   and arms (control + 3) that fit `max_parallel_arms`. A v2- or v3-shaped proposal is
   always written as spec v3 (`spec_version: 3`, `arms.control: {overlay: {}}`), so control
   runs as the flat-start arm `XP-<n>:control`. Then it runs
-  `create` + `register` with `proposal_ref: P-<n>`, which leaves the experiment
+  `create` + `register` with `proposal_ref: XP-<n>`, which leaves the experiment
   `registered`, or `queued` with the reason. It commits
   `config/experiments/live/xp<n>_<slug>.yaml` on branch `xp/<n>` through a PR with
-  `gh pr merge --auto --squash`, and posts one #arc-investor line ("XP-11 registered
-  (P-2), control + 3 treatments, area entries, owner to start after the spec PR merges:
-  `arc experiment start XP-11`" or "… queued behind XP-9").
-  Re-running for the same P-id only retries what is missing, such as a failed PR.
+  `gh pr merge --auto --squash`, and posts one #arc-investor line ("XP-4 registered,
+  control + 3 treatments, area entries, owner to start after the spec PR merges:
+  `arc experiment start XP-4`" or "… queued behind XP-2"; the proposal is named in
+  brackets only when it differs from the registered id).
+  Re-running for the same proposal only retries what is missing, such as a failed PR.
 - **Owner start (D112; the 09:05 `experiments.autostart` routine and its
   `experiments.autostart.*` knobs are removed).** A `registered` experiment waits for
   the owner. The adopt Slack line, the spec PR body and the Analyst's `approve` reply
@@ -1973,7 +1976,7 @@ cards may use `Lane: fast — <reason>` instead. Cards never add files to
 `--owner-approval`), and never add a default-off flag just so an experiment can flip
 it. An idea worth testing goes in the `XP-advisory:` line; the weekly Analyst turns
 leads (those lines, plus `hermes/analyst/idea_seed.yaml`, which holds the retired
-dev drafts) into `P-<n>` proposals with 3 treatments (D108).
+dev drafts) into `XP-<n>` proposals with 3 treatments (D108).
 
 - `arc experiment report XP-<n>` lists the strategy-path commits that landed since the
   experiment's t0 under "Changes shipped to all arms during this run" (local
