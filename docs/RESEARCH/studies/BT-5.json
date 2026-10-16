@@ -1,0 +1,1043 @@
+{
+ "header": {
+  "study": "BT-5",
+  "hypothesis": "E16.3 re-run: dropping directional long-premium candidates on stretched days does not pass the E16.3 recommend rule on cash_debit.",
+  "owner": "owner",
+  "created": "2026-10-15",
+  "spec_hash": "46e247a2a6e674f1b437fb305aaa828f1035feef49905584d4d0003ee6963e16",
+  "arm_set_hash": "b0111115e027e5524049819e2bfb4d72c014ccb2bcf4acd2bce247cc5533d3d7",
+  "phase": "dev",
+  "rule": "Recommend the forward experiment only if the filtered run has a smaller max drawdown **and** a net P&L not lower in \u2265 2 of 3 trend sub-periods (bear, sideways, bull), **and** the 90% moving-block bootstrap CI of the daily P&L difference has a lower bound > \u221210% of the incumbent's |net P&L|.",
+  "rule_kind": "entry_filter",
+  "rule_verbatim": "Recommend the forward experiment only if, for cash_debit, the filtered run has a smaller max drawdown **and** a net P&L that is not lower in \u2265 2 of 3 trend sub-periods, **and** the 90 % moving-block (20-day) bootstrap CI of the daily P&L difference has a lower bound > \u2212(10 % of the incumbent's |net P&L|).",
+  "primary_metric": "net_pnl",
+  "universe": "c125",
+  "universe_ladder": [
+   "c125",
+   "c500"
+  ],
+  "universe_version": "u500-20261009-s1-e52ff301",
+  "partitions": {
+   "thetadata": 125
+  },
+  "decisions": "2020-01-01 -> 2023-12-31",
+  "data_end": "2024-03-30",
+  "dev_period": "2020-01-01 -> 2023-12-31",
+  "holdout_period": "2024-01-01 -> latest",
+  "not_replayable": "Not replayed: Discovery and Trending tiers (no historical LLM, Reddit or Stocktwits inputs), the LLM stance (a deterministic trend-label proxy stands in), intraday paths (EOD marks only; exits fire on closes).",
+  "git_sha": "05d2fddaffa6",
+  "variants_tried": 1,
+  "max_variants": 3,
+  "overfit_warning": false,
+  "holdout_runs_before": 0,
+  "arms": {
+   "control": {
+    "ranker": "incumbent",
+    "overlay": {}
+   },
+   "t1": {
+    "ranker": "incumbent",
+    "overlay": {
+     "ranking": {
+      "backtest": {
+       "entry_filter": "anti_chase"
+      }
+     }
+    }
+   },
+   "t2": {
+    "ranker": "incumbent",
+    "overlay": {
+     "ranking": {
+      "backtest": {
+       "entry_filter": "anti_chase_vwap"
+      }
+     }
+    }
+   }
+  }
+ },
+ "metrics": {
+  "cash_debit": {
+   "control": {
+    "trades": 585,
+    "net_pnl": -24879.91,
+    "return_pct": -99.52,
+    "cagr": -0.7165,
+    "max_dd_pct": 99.74,
+    "sharpe": -0.28,
+    "sortino": -0.284,
+    "profit_factor": 0.87,
+    "win_rate": 0.504,
+    "avg_days_held": 14.7,
+    "turnover_per_month": 11.51,
+    "cost_share_of_gross": 6.399,
+    "capacity_clipped_share": 0.354,
+    "exit_reasons": {
+     "dte_exit": 0.0376,
+     "expiry": 0.0308,
+     "profit_lock": 0.0581,
+     "stop": 0.3949,
+     "take_profit": 0.4786
+    },
+    "skips": {
+     "screen": 71615,
+     "blackout": 0,
+     "no_candidate": 24610,
+     "unsettled": 0,
+     "sizing": 5693,
+     "gate_per_underlying": 0,
+     "gate_max_open_positions": 3633,
+     "gate_daily_loss": 11245,
+     "gate_max_gain": 0,
+     "cash": 64,
+     "capacity": 492,
+     "no_fill": 196,
+     "exit_delayed": 52
+    }
+   },
+   "t1": {
+    "trades": 389,
+    "net_pnl": -24874.76,
+    "return_pct": -99.5,
+    "cagr": -0.7136,
+    "max_dd_pct": 99.67,
+    "sharpe": -0.638,
+    "sortino": -0.544,
+    "profit_factor": 0.675,
+    "win_rate": 0.488,
+    "avg_days_held": 14.6,
+    "turnover_per_month": 7.65,
+    "cost_share_of_gross": 1.109,
+    "capacity_clipped_share": 0.237,
+    "exit_reasons": {
+     "dte_exit": 0.0386,
+     "expiry": 0.0308,
+     "profit_lock": 0.0694,
+     "stop": 0.3959,
+     "take_profit": 0.4653
+    },
+    "skips": {
+     "screen": 71615,
+     "blackout": 0,
+     "no_candidate": 27223,
+     "unsettled": 0,
+     "sizing": 7651,
+     "gate_per_underlying": 0,
+     "gate_max_open_positions": 1356,
+     "gate_daily_loss": 8933,
+     "gate_max_gain": 0,
+     "cash": 74,
+     "capacity": 265,
+     "no_fill": 137,
+     "exit_delayed": 34
+    }
+   },
+   "t2": {
+    "trades": 416,
+    "net_pnl": -24876.92,
+    "return_pct": -99.51,
+    "cagr": -0.7148,
+    "max_dd_pct": 99.69,
+    "sharpe": -0.641,
+    "sortino": -0.573,
+    "profit_factor": 0.705,
+    "win_rate": 0.498,
+    "avg_days_held": 14.6,
+    "turnover_per_month": 8.18,
+    "cost_share_of_gross": 1.237,
+    "capacity_clipped_share": 0.24,
+    "exit_reasons": {
+     "dte_exit": 0.0312,
+     "expiry": 0.0361,
+     "profit_lock": 0.0505,
+     "stop": 0.3966,
+     "take_profit": 0.4856
+    },
+    "skips": {
+     "screen": 71615,
+     "blackout": 0,
+     "no_candidate": 26722,
+     "unsettled": 0,
+     "sizing": 7452,
+     "gate_per_underlying": 0,
+     "gate_max_open_positions": 1244,
+     "gate_daily_loss": 9578,
+     "gate_max_gain": 0,
+     "cash": 61,
+     "capacity": 259,
+     "no_fill": 143,
+     "exit_delayed": 38
+    }
+   }
+  }
+ },
+ "verdicts": {
+  "cash_debit": {
+   "t1": {
+    "subperiods_won": 2,
+    "won": "bear,sideways",
+    "pnl_diff": 5.15,
+    "ci_lo": -42695.01,
+    "ci_hi": 37460.06,
+    "ci_floor": -2487.99,
+    "smaller_dd": true,
+    "switch": false,
+    "call": "do not recommend",
+    "primary_diff": 5.15
+   },
+   "t2": {
+    "subperiods_won": 2,
+    "won": "bear,sideways",
+    "pnl_diff": 2.99,
+    "ci_lo": -41275.46,
+    "ci_hi": 34164.93,
+    "ci_floor": -2487.99,
+    "smaller_dd": true,
+    "switch": false,
+    "call": "do not recommend",
+    "primary_diff": 2.99
+   }
+  }
+ },
+ "subperiods": {
+  "cash_debit": {
+   "control": [
+    {
+     "period": "2020 crash",
+     "trades": 53,
+     "net_pnl": -18862.39,
+     "win_rate": 0.528,
+     "max_dd_pct": 65.98
+    },
+    {
+     "period": "2020-21 bull",
+     "trades": 317,
+     "net_pnl": -11573.07,
+     "win_rate": 0.502,
+     "max_dd_pct": 92.84
+    },
+    {
+     "period": "2022 bear",
+     "trades": 144,
+     "net_pnl": -2902.56,
+     "win_rate": 0.521,
+     "max_dd_pct": 94.42
+    },
+    {
+     "period": "2023",
+     "trades": 44,
+     "net_pnl": -490.34,
+     "win_rate": 0.318,
+     "max_dd_pct": 85.59
+    },
+    {
+     "period": "2024 -> latest",
+     "trades": 0,
+     "net_pnl": 0.0,
+     "win_rate": null,
+     "max_dd_pct": 0.0
+    }
+   ],
+   "t1": [
+    {
+     "period": "2020 crash",
+     "trades": 42,
+     "net_pnl": -26959.22,
+     "win_rate": 0.452,
+     "max_dd_pct": 78.16
+    },
+    {
+     "period": "2020-21 bull",
+     "trades": 222,
+     "net_pnl": -6650.23,
+     "win_rate": 0.491,
+     "max_dd_pct": 94.87
+    },
+    {
+     "period": "2022 bear",
+     "trades": 77,
+     "net_pnl": -486.67,
+     "win_rate": 0.481,
+     "max_dd_pct": 70.05
+    },
+    {
+     "period": "2023",
+     "trades": 19,
+     "net_pnl": -298.57,
+     "win_rate": 0.316,
+     "max_dd_pct": 74.22
+    },
+    {
+     "period": "2024 -> latest",
+     "trades": 0,
+     "net_pnl": 0.0,
+     "win_rate": null,
+     "max_dd_pct": 0.0
+    }
+   ],
+   "t2": [
+    {
+     "period": "2020 crash",
+     "trades": 41,
+     "net_pnl": -28548.53,
+     "win_rate": 0.439,
+     "max_dd_pct": 78.31
+    },
+    {
+     "period": "2020-21 bull",
+     "trades": 242,
+     "net_pnl": -7402.77,
+     "win_rate": 0.492,
+     "max_dd_pct": 96.15
+    },
+    {
+     "period": "2022 bear",
+     "trades": 67,
+     "net_pnl": -127.72,
+     "win_rate": 0.552,
+     "max_dd_pct": 53.69
+    },
+    {
+     "period": "2023",
+     "trades": 36,
+     "net_pnl": -338.56,
+     "win_rate": 0.361,
+     "max_dd_pct": 83.88
+    },
+    {
+     "period": "2024 -> latest",
+     "trades": 0,
+     "net_pnl": 0.0,
+     "win_rate": null,
+     "max_dd_pct": 0.0
+    }
+   ]
+  }
+ },
+ "per_period_wins": {
+  "cash_debit": {
+   "t1": [
+    "2020-21 bull",
+    "2022 bear",
+    "2023"
+   ],
+   "t2": [
+    "2020-21 bull",
+    "2022 bear",
+    "2023"
+   ]
+  }
+ },
+ "breakdowns": {
+  "cash_debit": {
+   "control": {
+    "regime": [
+     {
+      "key": "bear",
+      "trades": 138,
+      "net_pnl": -34194.76,
+      "win_rate": 0.377
+     },
+     {
+      "key": "bull",
+      "trades": 447,
+      "net_pnl": 9314.85,
+      "win_rate": 0.544
+     }
+    ],
+    "structure": [
+     {
+      "key": "bear_put",
+      "trades": 122,
+      "net_pnl": -19174.39,
+      "win_rate": 0.369
+     },
+     {
+      "key": "bull_call",
+      "trades": 190,
+      "net_pnl": -3610.58,
+      "win_rate": 0.532
+     },
+     {
+      "key": "long_call",
+      "trades": 257,
+      "net_pnl": 12925.43,
+      "win_rate": 0.553
+     },
+     {
+      "key": "long_put",
+      "trades": 16,
+      "net_pnl": -15020.37,
+      "win_rate": 0.438
+     }
+    ],
+    "tier": [
+     {
+      "key": "core",
+      "trades": 258,
+      "net_pnl": -12954.57,
+      "win_rate": 0.446
+     },
+     {
+      "key": "momentum",
+      "trades": 32,
+      "net_pnl": -7769.23,
+      "win_rate": 0.469
+     },
+     {
+      "key": "rest",
+      "trades": 295,
+      "net_pnl": -4156.11,
+      "win_rate": 0.559
+     }
+    ],
+    "sector": [
+     {
+      "key": "broad_market",
+      "trades": 106,
+      "net_pnl": 10632.61,
+      "win_rate": 0.472
+     },
+     {
+      "key": "communication",
+      "trades": 50,
+      "net_pnl": 971.23,
+      "win_rate": 0.56
+     },
+     {
+      "key": "consumer_discretionary",
+      "trades": 11,
+      "net_pnl": 907.52,
+      "win_rate": 0.636
+     },
+     {
+      "key": "consumer_staples",
+      "trades": 5,
+      "net_pnl": 134.46,
+      "win_rate": 0.6
+     },
+     {
+      "key": "energy",
+      "trades": 27,
+      "net_pnl": 5946.57,
+      "win_rate": 0.704
+     },
+     {
+      "key": "financials",
+      "trades": 76,
+      "net_pnl": -13244.92,
+      "win_rate": 0.382
+     },
+     {
+      "key": "health_care",
+      "trades": 21,
+      "net_pnl": 1250.81,
+      "win_rate": 0.667
+     },
+     {
+      "key": "industrials",
+      "trades": 14,
+      "net_pnl": -3550.41,
+      "win_rate": 0.429
+     },
+     {
+      "key": "technology",
+      "trades": 107,
+      "net_pnl": -11304.15,
+      "win_rate": 0.477
+     },
+     {
+      "key": "unknown",
+      "trades": 168,
+      "net_pnl": -16623.64,
+      "win_rate": 0.524
+     }
+    ],
+    "etf": [
+     {
+      "key": "ETF",
+      "trades": 183,
+      "net_pnl": 9767.85,
+      "win_rate": 0.508
+     },
+     {
+      "key": "single stock",
+      "trades": 402,
+      "net_pnl": -34647.76,
+      "win_rate": 0.502
+     }
+    ],
+    "liquidity": [
+     {
+      "key": "100k-1M",
+      "trades": 319,
+      "net_pnl": -24218.29,
+      "win_rate": 0.489
+     },
+     {
+      "key": "10k-100k",
+      "trades": 170,
+      "net_pnl": 14789.09,
+      "win_rate": 0.594
+     },
+     {
+      "key": "< 10k",
+      "trades": 24,
+      "net_pnl": -8334.74,
+      "win_rate": 0.458
+     },
+     {
+      "key": ">= 1M",
+      "trades": 72,
+      "net_pnl": -7115.97,
+      "win_rate": 0.375
+     }
+    ]
+   },
+   "t1": {
+    "regime": [
+     {
+      "key": "bear",
+      "trades": 81,
+      "net_pnl": -21591.97,
+      "win_rate": 0.432
+     },
+     {
+      "key": "bull",
+      "trades": 308,
+      "net_pnl": -3282.79,
+      "win_rate": 0.503
+     }
+    ],
+    "structure": [
+     {
+      "key": "bear_put",
+      "trades": 68,
+      "net_pnl": -3157.8,
+      "win_rate": 0.471
+     },
+     {
+      "key": "bull_call",
+      "trades": 157,
+      "net_pnl": -5349.99,
+      "win_rate": 0.554
+     },
+     {
+      "key": "long_call",
+      "trades": 151,
+      "net_pnl": 2067.2,
+      "win_rate": 0.45
+     },
+     {
+      "key": "long_put",
+      "trades": 13,
+      "net_pnl": -18434.17,
+      "win_rate": 0.231
+     }
+    ],
+    "tier": [
+     {
+      "key": "core",
+      "trades": 147,
+      "net_pnl": -20833.8,
+      "win_rate": 0.422
+     },
+     {
+      "key": "momentum",
+      "trades": 32,
+      "net_pnl": -1834.42,
+      "win_rate": 0.469
+     },
+     {
+      "key": "rest",
+      "trades": 210,
+      "net_pnl": -2206.53,
+      "win_rate": 0.538
+     }
+    ],
+    "sector": [
+     {
+      "key": "broad_market",
+      "trades": 44,
+      "net_pnl": 1027.04,
+      "win_rate": 0.568
+     },
+     {
+      "key": "communication",
+      "trades": 32,
+      "net_pnl": 644.25,
+      "win_rate": 0.594
+     },
+     {
+      "key": "consumer_discretionary",
+      "trades": 7,
+      "net_pnl": -3530.96,
+      "win_rate": 0.857
+     },
+     {
+      "key": "consumer_staples",
+      "trades": 7,
+      "net_pnl": -111.85,
+      "win_rate": 0.429
+     },
+     {
+      "key": "energy",
+      "trades": 14,
+      "net_pnl": 192.32,
+      "win_rate": 0.5
+     },
+     {
+      "key": "financials",
+      "trades": 73,
+      "net_pnl": -10793.59,
+      "win_rate": 0.329
+     },
+     {
+      "key": "health_care",
+      "trades": 9,
+      "net_pnl": 389.83,
+      "win_rate": 0.778
+     },
+     {
+      "key": "industrials",
+      "trades": 7,
+      "net_pnl": -55.1,
+      "win_rate": 0.286
+     },
+     {
+      "key": "technology",
+      "trades": 70,
+      "net_pnl": -11245.81,
+      "win_rate": 0.386
+     },
+     {
+      "key": "unknown",
+      "trades": 126,
+      "net_pnl": -1390.88,
+      "win_rate": 0.556
+     }
+    ],
+    "etf": [
+     {
+      "key": "ETF",
+      "trades": 113,
+      "net_pnl": 2769.59,
+      "win_rate": 0.593
+     },
+     {
+      "key": "single stock",
+      "trades": 276,
+      "net_pnl": -27644.35,
+      "win_rate": 0.446
+     }
+    ],
+    "liquidity": [
+     {
+      "key": "100k-1M",
+      "trades": 224,
+      "net_pnl": -24405.92,
+      "win_rate": 0.478
+     },
+     {
+      "key": "10k-100k",
+      "trades": 123,
+      "net_pnl": 4768.15,
+      "win_rate": 0.52
+     },
+     {
+      "key": "< 10k",
+      "trades": 14,
+      "net_pnl": -3758.51,
+      "win_rate": 0.357
+     },
+     {
+      "key": ">= 1M",
+      "trades": 28,
+      "net_pnl": -1478.49,
+      "win_rate": 0.5
+     }
+    ]
+   },
+   "t2": {
+    "regime": [
+     {
+      "key": "bear",
+      "trades": 80,
+      "net_pnl": -23540.11,
+      "win_rate": 0.412
+     },
+     {
+      "key": "bull",
+      "trades": 336,
+      "net_pnl": -1336.81,
+      "win_rate": 0.518
+     }
+    ],
+    "structure": [
+     {
+      "key": "bear_put",
+      "trades": 64,
+      "net_pnl": -3891.17,
+      "win_rate": 0.453
+     },
+     {
+      "key": "bull_call",
+      "trades": 176,
+      "net_pnl": -4025.72,
+      "win_rate": 0.562
+     },
+     {
+      "key": "long_call",
+      "trades": 160,
+      "net_pnl": 2688.91,
+      "win_rate": 0.469
+     },
+     {
+      "key": "long_put",
+      "trades": 16,
+      "net_pnl": -19648.94,
+      "win_rate": 0.25
+     }
+    ],
+    "tier": [
+     {
+      "key": "core",
+      "trades": 153,
+      "net_pnl": -19818.36,
+      "win_rate": 0.438
+     },
+     {
+      "key": "momentum",
+      "trades": 29,
+      "net_pnl": -2346.97,
+      "win_rate": 0.552
+     },
+     {
+      "key": "rest",
+      "trades": 234,
+      "net_pnl": -2711.59,
+      "win_rate": 0.53
+     }
+    ],
+    "sector": [
+     {
+      "key": "broad_market",
+      "trades": 49,
+      "net_pnl": 2640.77,
+      "win_rate": 0.531
+     },
+     {
+      "key": "communication",
+      "trades": 36,
+      "net_pnl": 32.48,
+      "win_rate": 0.556
+     },
+     {
+      "key": "consumer_discretionary",
+      "trades": 6,
+      "net_pnl": -3542.88,
+      "win_rate": 0.667
+     },
+     {
+      "key": "consumer_staples",
+      "trades": 5,
+      "net_pnl": 32.07,
+      "win_rate": 0.6
+     },
+     {
+      "key": "energy",
+      "trades": 13,
+      "net_pnl": -88.77,
+      "win_rate": 0.538
+     },
+     {
+      "key": "financials",
+      "trades": 81,
+      "net_pnl": -9328.68,
+      "win_rate": 0.37
+     },
+     {
+      "key": "health_care",
+      "trades": 8,
+      "net_pnl": 198.5,
+      "win_rate": 0.625
+     },
+     {
+      "key": "industrials",
+      "trades": 8,
+      "net_pnl": -400.39,
+      "win_rate": 0.25
+     },
+     {
+      "key": "technology",
+      "trades": 73,
+      "net_pnl": -13015.66,
+      "win_rate": 0.425
+     },
+     {
+      "key": "unknown",
+      "trades": 137,
+      "net_pnl": -1404.37,
+      "win_rate": 0.577
+     }
+    ],
+    "etf": [
+     {
+      "key": "ETF",
+      "trades": 126,
+      "net_pnl": 6191.22,
+      "win_rate": 0.611
+     },
+     {
+      "key": "single stock",
+      "trades": 290,
+      "net_pnl": -31068.14,
+      "win_rate": 0.448
+     }
+    ],
+    "liquidity": [
+     {
+      "key": "100k-1M",
+      "trades": 239,
+      "net_pnl": -22164.03,
+      "win_rate": 0.494
+     },
+     {
+      "key": "10k-100k",
+      "trades": 131,
+      "net_pnl": 2337.93,
+      "win_rate": 0.534
+     },
+     {
+      "key": "< 10k",
+      "trades": 13,
+      "net_pnl": -2302.89,
+      "win_rate": 0.385
+     },
+     {
+      "key": ">= 1M",
+      "trades": 33,
+      "net_pnl": -2747.94,
+      "win_rate": 0.424
+     }
+    ]
+   }
+  }
+ },
+ "segments": {
+  "cash_debit": {
+   "control": [
+    {
+     "segment": "All",
+     "trades": 585,
+     "win_rate": 0.504,
+     "net_pnl": -24879.91,
+     "mean_pnl": -42.53,
+     "median_pnl": 2.34,
+     "pnl_per_risk": -0.053,
+     "dd_contribution": -44734.41,
+     "spread_cost": 29488.41,
+     "exit_reasons": {
+      "dte_exit": 22,
+      "expiry": 18,
+      "profit_lock": 34,
+      "stop": 231,
+      "take_profit": 280
+     }
+    },
+    {
+     "segment": "Stocks",
+     "trades": 402,
+     "win_rate": 0.502,
+     "net_pnl": -34647.76,
+     "mean_pnl": -86.19,
+     "median_pnl": 1.13,
+     "pnl_per_risk": -0.1151,
+     "dd_contribution": -39129.42,
+     "spread_cost": 17017.76,
+     "exit_reasons": {
+      "dte_exit": 16,
+      "expiry": 13,
+      "profit_lock": 30,
+      "stop": 153,
+      "take_profit": 190
+     }
+    },
+    {
+     "segment": "ETFs",
+     "trades": 183,
+     "win_rate": 0.508,
+     "net_pnl": 9767.85,
+     "mean_pnl": 53.38,
+     "median_pnl": 34.42,
+     "pnl_per_risk": 0.0581,
+     "dd_contribution": -5605.0,
+     "spread_cost": 12470.65,
+     "exit_reasons": {
+      "dte_exit": 6,
+      "expiry": 5,
+      "profit_lock": 4,
+      "stop": 78,
+      "take_profit": 90
+     }
+    }
+   ],
+   "t1": [
+    {
+     "segment": "All",
+     "trades": 389,
+     "win_rate": 0.488,
+     "net_pnl": -24874.76,
+     "mean_pnl": -63.95,
+     "median_pnl": -2.82,
+     "pnl_per_risk": -0.1466,
+     "dd_contribution": -37748.69,
+     "spread_cost": 13078.26,
+     "exit_reasons": {
+      "dte_exit": 15,
+      "expiry": 12,
+      "profit_lock": 27,
+      "stop": 154,
+      "take_profit": 181
+     }
+    },
+    {
+     "segment": "Stocks",
+     "trades": 276,
+     "win_rate": 0.446,
+     "net_pnl": -27644.35,
+     "mean_pnl": -100.16,
+     "median_pnl": -16.79,
+     "pnl_per_risk": -0.2714,
+     "dd_contribution": -30145.05,
+     "spread_cost": 5259.85,
+     "exit_reasons": {
+      "dte_exit": 13,
+      "expiry": 7,
+      "profit_lock": 24,
+      "stop": 116,
+      "take_profit": 116
+     }
+    },
+    {
+     "segment": "ETFs",
+     "trades": 113,
+     "win_rate": 0.593,
+     "net_pnl": 2769.59,
+     "mean_pnl": 24.51,
+     "median_pnl": 64.09,
+     "pnl_per_risk": 0.0408,
+     "dd_contribution": -7603.64,
+     "spread_cost": 7818.41,
+     "exit_reasons": {
+      "dte_exit": 2,
+      "expiry": 5,
+      "profit_lock": 3,
+      "stop": 38,
+      "take_profit": 65
+     }
+    }
+   ],
+   "t2": [
+    {
+     "segment": "All",
+     "trades": 416,
+     "win_rate": 0.498,
+     "net_pnl": -24876.92,
+     "mean_pnl": -59.8,
+     "median_pnl": -0.79,
+     "pnl_per_risk": -0.131,
+     "dd_contribution": -39990.16,
+     "spread_cost": 13758.42,
+     "exit_reasons": {
+      "dte_exit": 13,
+      "expiry": 15,
+      "profit_lock": 21,
+      "stop": 165,
+      "take_profit": 202
+     }
+    },
+    {
+     "segment": "Stocks",
+     "trades": 290,
+     "win_rate": 0.448,
+     "net_pnl": -31068.14,
+     "mean_pnl": -107.13,
+     "median_pnl": -16.79,
+     "pnl_per_risk": -0.272,
+     "dd_contribution": -33787.43,
+     "spread_cost": 5736.14,
+     "exit_reasons": {
+      "dte_exit": 12,
+      "expiry": 11,
+      "profit_lock": 18,
+      "stop": 123,
+      "take_profit": 126
+     }
+    },
+    {
+     "segment": "ETFs",
+     "trades": 126,
+     "win_rate": 0.611,
+     "net_pnl": 6191.22,
+     "mean_pnl": 49.14,
+     "median_pnl": 45.21,
+     "pnl_per_risk": 0.0818,
+     "dd_contribution": -6202.73,
+     "spread_cost": 8022.28,
+     "exit_reasons": {
+      "dte_exit": 1,
+      "expiry": 4,
+      "profit_lock": 3,
+      "stop": 42,
+      "take_profit": 76
+     }
+    }
+   ]
+  }
+ },
+ "segment_verdicts": {
+  "cash_debit": {
+   "t1": {
+    "All": 5.15,
+    "Stocks": 7003.41,
+    "ETFs": -6998.26,
+    "sign_differs": true
+   },
+   "t2": {
+    "All": 2.99,
+    "Stocks": 3579.62,
+    "ETFs": -3576.63,
+    "sign_differs": true
+   }
+  }
+ },
+ "study_calls": {},
+ "ladder": [
+  {
+   "at": "2026-10-15T23:00:03-04:00",
+   "phase": "dev",
+   "universe": "c125",
+   "profile": "cash_debit",
+   "treatment": "t1",
+   "primary_diff": 5.15,
+   "ci_lo": -42695.01,
+   "ci_hi": 37460.06,
+   "switch": false,
+   "sign_flip_vs_first_rung": false
+  },
+  {
+   "at": "2026-10-15T23:00:03-04:00",
+   "phase": "dev",
+   "universe": "c125",
+   "profile": "cash_debit",
+   "treatment": "t2",
+   "primary_diff": 2.99,
+   "ci_lo": -41275.46,
+   "ci_hi": 34164.93,
+   "switch": false,
+   "sign_flip_vs_first_rung": false
+  }
+ ]
+}
