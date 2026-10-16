@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING, Literal
 
 import pandas as pd
 import structlog
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from arc.backtest.chain import prepare_chain
 from arc.backtest.regime import BacktestRegimeModel, regime_labels
@@ -43,6 +43,7 @@ from arc.backtest.strategies import (
     LegPick,
     StrategyKind,
     StrategySpec,
+    nan_if_none,
     pick_expirations,
     select_legs,
 )
@@ -104,6 +105,8 @@ class TradeLeg(BaseModel):
     fill: float
     delta: float
     iv: float
+
+    _nan_greeks = field_validator("delta", "iv", mode="before")(nan_if_none)  # see LegPick
 
 
 class Trade(BaseModel):
