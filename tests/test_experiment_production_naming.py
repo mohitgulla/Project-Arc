@@ -56,28 +56,33 @@ GAP_LINE = re.compile(
 )
 
 
-def test_daily_status_k3_title_headline_and_three_ti_minus_c_lines() -> None:
+def test_daily_status_k3_title_blank_line_and_headline_only() -> None:
     r = _k3_open()
     assert r.verdict == "continue" and r.reference == "control"
     card = experiment_line(r)
     assert card.broadcast is True  # "Also send to #arc-investor" (D65)
     assert card.blocks == []
     lines = card.text.split("\n")
-    assert lines[0] == "[XP-30] Day 14/40"
-    head = lines[1]
+    assert lines[0] == "*:microscope: [XP-30] Day 14/40*"
+    assert lines[1] == ""  # owner 2026-10-16: a blank line between title and headline
+    head = lines[2]
     assert head.startswith("_*") and head.endswith("*_")
     assert len(head) - 4 <= RECAP_MAX
     assert head == (
         "_*T2 leads control by +0.05%/day (p 1.00 Holm); T1 and T3 within noise"
         " after 14 sessions.*_"
     )
-    assert [ln.split(" ", 1)[0] for ln in lines[2:]] == ["T1", "T2", "T3"]
-    for ln in lines[2:]:
+    # owner 2026-10-16: no per-arm Ti − C lines in Slack; the Tower carries them
+    assert len(lines) == 3
+    assert " − C • " not in card.text and "Sortino" not in card.text
+    tower = view.status_lines(r)
+    assert [ln.split(" ", 1)[0] for ln in tower[2:]] == ["T1", "T2", "T3"]
+    for ln in tower[2:]:
         assert GAP_LINE.fullmatch(ln), ln
-    # the gap lines carry the report's Holm-adjusted numbers
+    # the Tower's gap lines carry the report's Holm-adjusted numbers
     by = {p.b: p for p in r.pairwise or [] if p.kind == "control_vs_treatment"}
     assert (
-        f"P&L ∆ {view.pct(by['t2'].mean)}/day (p {view.p_text(by['t2'].holm_p)} Holm)" in lines[3]
+        f"P&L ∆ {view.pct(by['t2'].mean)}/day (p {view.p_text(by['t2'].holm_p)} Holm)" in tower[3]
     )
 
 

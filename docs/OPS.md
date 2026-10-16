@@ -2039,16 +2039,22 @@ the tick spawns `arc experiment arms-tick` after every control loop chain.
 routine, the #arc-investor day thread gets one status per running experiment (also
 sent to the channel):
 
-    [XP-30] Day 14/40
+    *:microscope: [XP-30] Day 14/40*
+
     T2 leads control by +0.05%/day (p 1.00 Holm); T1 and T3 within noise after 14 sessions.
+
+The per-arm lines below are on the Tower's Experiments page (Slack shows only the
+title and headline, owner 2026-10-16):
+
     T1 − C • P&L ∆ +0.03%/day (p 1.00 Holm) • Sortino ∆ +1.62 (p 0.04)
     T2 − C • P&L ∆ +0.05%/day (p 1.00 Holm) • Sortino ∆ +2.91 (p 0.07)
     T3 − C • P&L ∆ +0.01%/day (p 1.00 Holm) • Sortino ∆ +0.48 (p 0.19)
 
 - `Day N/max`: paired sessions so far (every arm has an EOD snapshot) over the spec's
   max. A session an arm missed is skipped and listed under `missing` in the report.
-- The headline (bold italic in Slack) says where the treatments stand: decided arms
-  first, else the arm with the largest gap, then the rest.
+- The headline (bold italic in Slack, up to 300 chars like the Day Recap, D109) says
+  where the treatments stand: decided arms first, else the arm with the largest gap,
+  then the rest.
 - `Ti − C`: treatment minus the flat control arm (spec v3). `P&L ∆` is the mean of
   d_t, % of t0 equity per day, with its always-valid p, Holm-adjusted across the K
   treatments. On an A/A it should hover around 0 with a large p. A v1/v2 report
