@@ -164,8 +164,9 @@ line under "Obvious flaws" as `→ Sentinel` and do not draft a card for it.
      t<k>" until it is promoted (E21.4; the verdict file is already committed).
    - An A/A (`kind: aa`) never wins: read it for sigma (the plan grid uses it). An A/A `invalid`
      is a harness flaw (→ Sentinel), not a strategy finding.
-8. **BACKTEST STUDIES (D84, E7.12 study framework; you never run one).** A study runs for hours
-   and is the owner's (or a card's) to commit and run. For an untested hypothesis (a `theme`,
+8. **BACKTEST STUDIES (D84, E7.12 study framework, E26.2/D121; you never run one).** A study
+   runs for hours: the owner approves it, `arc backtest study adopt` commits it and the nightly
+   runner runs it (21:30–08:30 ET, one at a time). For an untested hypothesis (a `theme`,
    `data-gap` or live-evidence `xp-proposal`) you may attach `study_spec`: a draft
    `config/backtest_studies/BT-<next>.yaml` in the E7.12 format (`StudySpec`, extra=forbid):
    `hypothesis`, `profiles` (margin | cash_debit | cash_long_only), `arms.control` (the base
@@ -175,6 +176,22 @@ line under "Obvious flaws" as `→ Sentinel` and do not draft a card for it.
    `owner`, `created`, `universe_ladder` and `decision_rule`: `record` assigns `BT-<next>`, sets
    the ladder `[c125, c500]` and keeps the D25 rule, and writes `RUN_DIR/study-specs/BT-<n>.yaml`
    for the owner. You never edit `config/`. The next run reads the verdict from the ledger.
+   - **Every `study_spec` needs `study_value`** (D121), the BT ranking inputs:
+     `{"pct_per_day", "source", "affected_share", "p_success", "nights_needed"}`. Value =
+     `pct_per_day × affected_share × p_success ÷ nights_needed`: the same formula as an XP, with
+     cost in **compute nights** (read the per-rung compute in `## Backtest queue`: the full
+     ladder c125 dev → c500 dev → c500 holdout, rounded up to whole nights). `record` makes it a
+     `kind: bt` backlog entry keyed `bt:<finding key>`: re-list the same key to keep its BT-<n>
+     (an edit updates the draft while it is `proposed`). A BT number is never reused, and a
+     dropped, queued or stopped key is frozen: a `study_spec` on it is rejected, so propose a
+     new design under a new key.
+   - XP and BT proposals share **one ranking** by value (`backlog` prints it). Name
+     `next_study: BT-<n>` (the top-ranked BT draft, or another with `next_study_reason`), or
+     `next_study: none: <why>`. `next_experiment` stays XP-only.
+   - The owner approves at most **2 BT approvals per ISO week** (America/New_York, Monday 00:00);
+     with more drafts, put the best two first. `## Backtest queue` shows each approved study's
+     status (`queued | running | concluded | stopped | failed`), next rung, nights so far and
+     ETA; its verdicts still come from the ledger.
 
 ## Procedure
 1. Read `references/lessons.md` if it exists (calibration from owner triage).
@@ -259,7 +276,9 @@ line under "Obvious flaws" as `→ Sentinel` and do not draft a card for it.
                    "profiles": ["margin"],
                    "arms": {"control": {}, "treatments": {
                      "t1": {"overlay": {"exits": {"default": {"take_profit_pct_of_max_gain": 0.4}}}},
-                     "t2": {"overlay": {"exits": {"default": {"take_profit_pct_of_max_gain": 0.3}}}}}}}
+                     "t2": {"overlay": {"exits": {"default": {"take_profit_pct_of_max_gain": 0.3}}}}}}},
+    "study_value": {"pct_per_day": 0.04, "source": "BT-3 dev diff", "affected_share": 0.5,
+                    "p_success": 0.3, "nights_needed": 2}
   }],
   "resolved": [{"key": "existing key", "evidence": "why it no longer holds (numbers)"}],
   "quick_changes_none": "",
@@ -271,7 +290,9 @@ line under "Obvious flaws" as `→ Sentinel` and do not draft a card for it.
   "seed_drops": [{"seed_id": "S-3", "reason": "no evidence after 6 weeks"}],
   "next_experiment": "XP-<n> | none: <why>",
   "next_reason": "only when next_experiment is not the top-ranked proposal",
-  "next_slot": "free now | exits frees when XP-2 stops (~Nov 12)"
+  "next_slot": "free now | exits frees when XP-2 stops (~Nov 12)",
+  "next_study": "BT-<n> | none: <why>",
+  "next_study_reason": "only when next_study is not the top-ranked BT draft"
 }
 ```
 `quick_change` is required for (and only on) `quick-change`, `proposal` for (and only on)
@@ -279,7 +300,8 @@ line under "Obvious flaws" as `→ Sentinel` and do not draft a card for it.
 a `theme`, `data-gap` or live-evidence `xp-proposal`, i.e. an untested hypothesis. `verdict: quiet` only when
 nothing is medium or above. With no quick change, `quick_changes_none` says why. `experiments`
 lists every draft/queued/registered/running/stopped experiment in the context with its registry
-status (and `stop_advice` when running); `next_experiment` and `next_slot` are required.
+status (and `stop_advice` when running); `next_experiment`, `next_slot` and `next_study` are
+required. `study_value` is required for (and only on) a finding with a `study_spec`.
 
 ## Slack report format (final response; Slack markdown; no tables; ≤ 3,500 chars)
 ```
@@ -302,11 +324,12 @@ status (and `stop_advice` when running); `next_experiment` and `next_slot` are r
 • backlog top 5: XP-<a> <value> <title> · XP-<b> … (or "empty")
 *Backtest* (one line per study with a new verdict since the last run; else "no new verdict")
 • *BT-<n>* <hypothesis> · <c125|c500> <dev|holdout> <switch|keep control> diff $<±d> CI [<lo>, <hi>] · <citable | hypothesis only> · drafts: BT-<m> (RUN_DIR/study-specs)
+• *Next BT:* *BT-<n>* <hypothesis> · value <score> = <pct>%/day × share <s> × p <p> ÷ <nights> nights · queue: BT-<m> <status> ETA <k> nights (or none: <why>)
 *Obvious flaws*
 • *A-<n>* [<severity>] <key = value> — <why it contradicts D#> (or "none")
 *Ledger*: new A-… · still open A-… · resolved A-… (evidence) · backlog new XP-… · dropped XP-…
 
-_Reply in thread: `@hermes create A-<n>` · `ship A-<n>` · `comment A-<n>` · `wontfix A-<n> <why>` · `accept A-<n>` · `approve XP-<n>` · `drop XP-<n> <why>` · `reprioritise XP-<n> <why>` · `rerun`. Artefacts: <RUN_DIR>_
+_Reply in thread: `@hermes create A-<n>` · `ship A-<n>` · `comment A-<n>` · `wontfix A-<n> <why>` · `accept A-<n>` · `approve XP-<n>` · `drop XP-<n> <why>` · `reprioritise XP-<n> <why>` · `approve BT-<n>` · `drop BT-<n> <why>` · `stop BT-<n> <why>` · `rerun`. Artefacts: <RUN_DIR>_
 ```
 
 ## Owner commands in the Analyst channel (interactive turns, not the cron)
@@ -345,12 +368,24 @@ from `python3 ~/.hermes/profiles/arc-analyst/scripts/arc_analyst.py backlog`.
   the reply names the entry's new XP id for the owner to approve.
   The backlog entry then moves to `registered`. Reply with the printed XP id, PR URL and start
   estimate. If adopt fails, reply with its error. Re-sending `approve XP-<n>` retries it, and is
-  idempotent per XP-<n>. `approve P-<n>` (a retired id) replies with the XP id to use, and
-  `approve BT-<n>` is not wired yet (E26.2): the command routes on the prefix.
+  idempotent per XP-<n>. `approve P-<n>` (a retired id) replies with the XP id to use. The
+  command routes on the prefix.
+- `approve BT-<n>` · `drop BT-<n> <why>` · `stop BT-<n> <why>` (E26.2, D121; owner only):
+  - `approve BT-<n> [note]`: `arc_analyst.py approve BT-<n> "<note>" --approval slack:<ts>`
+    (`<ts>` = the owner's message ts). It enforces at most **2 BT approvals per ISO week**
+    (ET; a refusal names the week's approvals and when the cap resets; reply with it as is),
+    then runs `arc backtest study adopt`: the draft is validated and hash-locked, committed to
+    `config/backtest_studies/BT-<n>.yaml` on `bt/<n>` (auto-merged PR) and queued in
+    `data/backtest/queue.json`. Reply with the PR URL, queue position and ETA it prints. If
+    adopt fails, reply with its error: re-sending `approve BT-<n>` retries (idempotent; the
+    approval keeps its week).
+  - `drop BT-<n> <why>`: a draft that was never committed (`arc_analyst.py drop BT-<n> "<why>"`).
+  - `stop BT-<n> <why>`: a queued or running study (`arc_analyst.py stop BT-<n> "<why>"`, which
+    runs `arc backtest study stop`; the runner obeys at its next check).
 - `drop XP-<n> <why>`: `arc_analyst.py drop XP-<n> "<why>"`.
 - `reprioritise XP-<n> <why>`: `arc_analyst.py reprioritise XP-<n> "<why>"` pins it to the top
   (`reprioritise XP-<n> "<why>" --score <x>` overrides its value instead). Reply with the rank.
-- `backlog`: `arc_analyst.py backlog` (ranked, with each formula).
+- `backlog`: `arc_analyst.py backlog` (XP and BT in one ranking, with each formula).
 - `rerun`: `arc_analyst.py reset`, then `hermes -p arc-analyst cron run <arc-analyst-weekly-audit id from hermes -p arc-analyst cron list>`.
 - `register XP-<n>` / `start XP-<n>` / `stop XP-<n>` / `promote XP-<n>`: not yours. Point to
   `approve XP-<n>` (registration) or the owner's `arc experiment stop`; promotion is the owner's

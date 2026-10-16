@@ -334,6 +334,7 @@ def test_dev_runs_append_to_the_ledger_and_write_the_report(
     assert e1.phase == "dev" and (e1.start, e1.end) == (DAYS[0], DEV_END)
     assert e1.spec_hash == study_hash(s) and e1.git_sha == "abc123"
     assert e1.variants == 1 and e2.variants == 1  # same arm set on two rungs
+    assert e1.runtime_s is not None and e1.runtime_s >= 0  # E26.2: the queue's ETA input
     assert e1.partitions == {"thetadata": 2} and e1.universe_version == "u-test"
     assert set(e1.metrics["cash_debit"]) == {"control", "t1"}
     m = e1.metrics["cash_debit"]["control"]

@@ -1,4 +1,8 @@
-"""``arc backtest study run|show|ledger`` (card E7.12, PLAN D84): the study framework CLI."""
+"""``arc backtest study run|show|ledger`` (card E7.12, PLAN D84): the study framework CLI.
+
+E26.2 (D121) adds ``adopt`` (commit an owner-approved Analyst draft via an auto-merged PR
+and queue it), ``queue`` (the study queue with ETAs) and ``stop`` (the owner's
+``stop BT-<n> <why>``)."""
 
 from __future__ import annotations
 
@@ -9,6 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from arc.backtest.pull import CheckpointIncompleteError
+from arc.backtest.queue import DEFAULT_QUEUE
 from arc.backtest.study import (
     DEFAULT_LEDGER,
     DEFAULT_REPORT_DIR,
@@ -103,11 +108,50 @@ def add_study_parser(bs: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     common(led)
     led.add_argument("--json", action="store_true", help="Raw JSON lines")
 
+    ad = ss.add_parser(
+        "adopt",
+        help="E26.2 (D121): commit an owner-approved Analyst draft study (auto-merged PR "
+        "on bt/<n>) and queue it for the nightly runner",
+    )
+    common(ad)
+    ad.add_argument("--spec", type=Path, required=True, help="The draft (RUN_DIR/study-specs)")
+    ad.add_argument(
+        "--approval", required=True, help="slack:<ts> of the owner's `approve BT-<n>` message"
+    )
+    ad.add_argument("--queue", type=Path, default=DEFAULT_QUEUE, help="The study queue file")
+    ad.add_argument(
+        "--expect-hash", default=None, help="Refuse unless the draft still has this spec hash"
+    )
+    ad.add_argument("--dry-run", action="store_true", help="Validate only; write nothing")
+    ad.add_argument(
+        "--dry-run-pr", action="store_true", help="Skip the PR step only (queue is written)"
+    )
+    ad.add_argument("--no-fetch", action="store_true", help="Do not read origin/main")
+    ad.add_argument("--now", type=_now, default=None, help="Approval time (tests)")
+    ad.add_argument("--json", action="store_true", help="One JSON object")
+
+    qu = ss.add_parser("queue", help="E26.2: the study queue (status, rung, nights, ETA)")
+    qu.add_argument("--queue", type=Path, default=DEFAULT_QUEUE)
+    qu.add_argument("--ledger", type=Path, default=DEFAULT_LEDGER, help="Research ledger")
+    qu.add_argument("--json", action="store_true", help="One JSON object")
+
+    sp = ss.add_parser("stop", help="E26.2: owner stop of a queued/running study (D121)")
+    sp.add_argument("id", help="BT-<n>")
+    sp.add_argument("--reason", required=True, help="The owner's reason")
+    sp.add_argument("--queue", type=Path, default=DEFAULT_QUEUE)
+    sp.add_argument("--json", action="store_true", help="One JSON object")
+
 
 def run_study_cli(args: argparse.Namespace) -> int:
     cmd = args.study_command
     if cmd == "ledger":
         return _ledger(args)
+    if cmd == "adopt":
+        return _adopt(args)
+    if cmd == "queue":
+        return _queue(args)
+    if cmd == "stop":
+        return _stop(args)
     path = study_path(args.id, args.studies_dir)
     if not path.is_file():
         sys.stderr.write(f"arc backtest study: no spec {path}\n")
@@ -239,4 +283,84 @@ def _run(args: argparse.Namespace, spec: object) -> int:
     sys.stdout.write((Path(entry.run_dir) / "report.md").read_text())
     sys.stdout.write("\n" + "\n".join(verdict_lines(payload)) + "\n")
     sys.stdout.write(f"\nledger: {args.ledger} · run dir: {entry.run_dir}\n")
+    return 0
+
+
+def _adopt(args: argparse.Namespace) -> int:
+    from arc.backtest.study_adopt import AdoptStudyError, adopt_study
+    from arc.experiments.publish import GitMainView, GitPublisher, PublishError
+    from arc.utils.calendar import now_et
+
+    try:
+        res = adopt_study(
+            args.id,
+            args.spec,
+            approval=args.approval,
+            now=args.now or now_et(),
+            queue_path=args.queue,
+            ledger=args.ledger,
+            studies_dir=args.studies_dir,
+            main=None if args.no_fetch else GitMainView(),
+            publisher=None if (args.dry_run or args.dry_run_pr) else GitPublisher(),
+            expect_hash=args.expect_hash,
+            dry_run=args.dry_run,
+            dry_run_pr=args.dry_run_pr,
+        )
+    except (AdoptStudyError, PublishError) as exc:
+        sys.stderr.write(f"arc backtest study adopt: refused: {exc}\n")
+        return 3
+    if args.json:
+        sys.stdout.write(json.dumps(res.as_json(), sort_keys=True, default=str) + "\n")
+        return 0
+    head = "dry-run (nothing written)" if res.dry_run else ("queued" if res.created else "found")
+    out = [
+        f"{head}: {res.id} [{res.status}] spec sha256 {res.spec_hash}",
+        f"  file: {res.path} (branch {res.branch})",
+        f"  PR: {res.pr_url or '-'} ({res.pr_status})",
+        f"  queue position {res.queue_position or '-'} · ETA "
+        f"{res.eta_nights if res.eta_nights is not None else '?'} night(s)",
+    ]
+    if res.dry_run:
+        out += ["  PR body:", *("    " + x for x in res.pr_body.splitlines())]
+        out += ["  spec file:", *("    " + x for x in res.file_text.splitlines())]
+    sys.stdout.write("\n".join(out) + "\n")
+    return 0
+
+
+def _queue(args: argparse.Namespace) -> int:
+    from arc.backtest.queue import eta_rows, load_queue, rung_estimates
+
+    entries = load_ledger(args.ledger)
+    rows = eta_rows(load_queue(args.queue), entries)
+    est = rung_estimates(entries)
+    if args.json:
+        doc = {"entries": rows, "rung_estimates": est, "queue": str(args.queue)}
+        sys.stdout.write(json.dumps(doc, sort_keys=True, default=str) + "\n")
+        return 0
+    if not rows:
+        sys.stdout.write(f"study queue empty ({args.queue})\n")
+    for r in rows:
+        eta = r["eta_nights"]
+        sys.stdout.write(
+            f"{r['id']} [{r['status']}] next {r['ladder_state'] or '-'} · nights so far "
+            f"{r['nights']} · ETA {eta if eta is not None else '?' if r['queue_position'] else '-'}"
+            f" night(s) · {r['pr_url'] or 'no PR'}"
+            + (f" · {r['stop_reason']}" if r["stop_reason"] else "")
+            + "\n"
+        )
+    return 0
+
+
+def _stop(args: argparse.Namespace) -> int:
+    from arc.backtest.queue import QueueError, stop_entry, update_queue
+
+    try:
+        e = update_queue(args.queue, lambda q: stop_entry(q, args.id, args.reason))
+    except QueueError as exc:
+        sys.stderr.write(f"arc backtest study stop: refused: {exc}\n")
+        return 3
+    if args.json:
+        sys.stdout.write(json.dumps(e.model_dump(mode="json"), sort_keys=True) + "\n")
+    else:
+        sys.stdout.write(f"{e.id} -> stopped ({e.stop_reason})\n")
     return 0
