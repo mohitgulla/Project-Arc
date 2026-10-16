@@ -18,7 +18,12 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, ConfigDict, Field
 
 from arc.experiments import view
-from arc.experiments.evaluate import ExperimentReport, latest_report
+from arc.experiments.evaluate import (
+    Adjustment,
+    ExperimentReport,
+    Unadjusted,
+    latest_report,
+)
 from arc.experiments.models import (  # noqa: TC001 - pydantic resolves field annotations
     ExperimentEvent,
     ExperimentKind,
@@ -99,6 +104,14 @@ class ExperimentListItem(BaseModel):
         None,
         description="D108: 'control' when the verdicts compare with the spec v3 control arm; "
         "null when they compare with production (v1/v2) or before the first evaluation",
+    )
+    # D120 (E25.8): the headline primary's D119 fields, so the list shows the SPY-adjusted
+    # effect as its headline too. Absent (null) on reports written before D119.
+    adjustment: Adjustment | None = Field(
+        None, description="D119: the headline primary's SPY regression (null before D119)"
+    )
+    primary_unadjusted: Unadjusted | None = Field(
+        None, description="D119: the D44 iid unadjusted primary (pre-registered specs only)"
     )
 
 
@@ -182,6 +195,8 @@ def _item(st: ExperimentState, rep: ExperimentReport | None) -> ExperimentListIt
         headline_arm=headline,
         arm_verdicts=verdicts,
         reference=rep.reference,
+        adjustment=rep.primary.adjustment,
+        primary_unadjusted=rep.primary.primary_unadjusted,
     )
 
 
