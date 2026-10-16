@@ -3,20 +3,23 @@
 - ``arc experiment create --spec <yaml> --owner-approval <ref>``  store a draft (defaults
   filled from ``config/experiments.yaml`` + D26 overrides); a draft may be re-created
 - ``arc experiment register <id> --owner-approval <ref>``  hash-lock the spec; queues if
-  its area is busy. D86: both refuse without ``--owner-approval`` (``P-<n>``,
+  its area is busy. D86: both refuse without ``--owner-approval`` (``XP-<n>``,
   ``slack:<ts>`` or ``owner:<note>``); dev cards never write experiment rows, the owner
   adopts an approved Analyst proposal (``arc experiment adopt``, E21.4)
 - ``arc experiment list [--status S]``
 - ``arc experiment show <id> [--json]``
 - ``arc experiment verify <id>``             recompute the spec hash (exit 1 on mismatch)
 - ``arc experiment stop <id> --reason R --actor A``  owner stop
-- ``arc experiment report <id> [--stored] [--now ISO]``  the E10.3 evaluation (read-only:
-  computed as of now, or the latest stored report)
-- ``arc experiment evaluate [<id>] [--now ISO]``  run the daily evaluation now: stores
-  the report and applies its verdict (the ``experiments.evaluate`` routine does this)
-- ``arc experiment adopt P-<n> --proposal <backlog json | P-<n>.yaml> --owner-approval
-  slack:<ts>``  E21.4 (D86): next free XP id, defaults, validate, create + register, the
-  spec PR (auto-merge) and one Slack line; idempotent per P-<n>; ``--dry-run`` writes
+- ``arc experiment report <id> [--stored] [--now ISO] [--spy stored|alpaca]``  the E10.3
+  evaluation (read-only: computed as of now, or the latest stored report). D119:
+  ``--spy alpaca`` fetches SPY's daily bars for sessions no stored report carries
+- ``arc experiment evaluate [<id>] [--now ISO] [--spy stored|alpaca]``  run the daily
+  evaluation now: stores the report and applies its verdict (the
+  ``experiments.evaluate`` routine does this, fetching SPY on a live tick)
+- ``arc experiment adopt XP-<n> --id XP-<n> --proposal <backlog json | XP-<n>.yaml>
+  --owner-approval slack:<ts>``  E21.4 (D86): the proposal's reserved id (D121; refused
+  if taken; no ``--id`` = next free id), defaults, validate, create + register, the spec
+  PR (auto-merge) and one Slack line; idempotent per proposal; ``--dry-run`` writes
   nothing
 - ``arc experiment verdict <id> [--dry-run]``  E21.4: the concluded experiment's verdict
   file PR (the daily evaluation opens these itself; this retries or previews one)
@@ -44,7 +47,7 @@ __all__ = ["add_experiment_parser", "run_experiment"]
 
 LOCAL_ACTOR = "local"
 OWNER_APPROVAL_HELP = (
-    "required (D86): the owner's approval of this experiment, P-<n> (Analyst proposal), "
+    "required (D86): the owner's approval of this experiment, XP-<n> (Analyst proposal), "
     "slack:<ts> or owner:<note>; normally set by `arc experiment adopt` (E21.4)"
 )
 
@@ -90,9 +93,59 @@ def add_experiment_parser(sub: argparse._SubParsersAction[argparse.ArgumentParse
         help="text (default) or md: the A/A calibration report as Markdown (E10.4)",
     )
     rp.add_argument("--out", default=None, help="With --format md: write the document here")
+    rp.add_argument(
+        "--spy",
+        choices=["stored", "alpaca"],
+        default="stored",
+        help="D119 covariate: SPY returns the stored reports carry only (default, offline; "
+        "new days stay missing), or alpaca: fetch SPY daily bars for the other days",
+    )
+    rp.add_argument(
+        "--vix",
+        choices=["stored", "cboe"],
+        default="stored",
+        help="D120 descriptive ΔVIX: the stored reports' values only (default, offline), "
+        "or cboe: fetch Cboe's VIX history CSV for the other days",
+    )
     ev = common(esub.add_parser("evaluate", help="Evaluate running experiments; apply verdicts"))
     ev.add_argument("experiment_id", nargs="?", default=None)
     ev.add_argument("--now", default=None, help="Evaluate as of this ISO time (default: now)")
+    ev.add_argument(
+        "--spy",
+        choices=["stored", "alpaca"],
+        default="stored",
+        help="D119 covariate: SPY returns the stored reports carry only (default, offline; "
+        "new days stay missing), or alpaca: fetch SPY daily bars for the other days",
+    )
+    ev.add_argument(
+        "--vix",
+        choices=["stored", "cboe"],
+        default="stored",
+        help="D120 descriptive ΔVIX: the stored reports' values only (default, offline), "
+        "or cboe: fetch Cboe's VIX history CSV for the other days",
+    )
+    cc = common(
+        esub.add_parser(
+            "covariate-check",
+            help="D120 (E25.9): SPY-only vs SPY + ΔVIX per pair, pooled, and the "
+            "pre-registered add-or-not rule (descriptive, read-only)",
+        )
+    )
+    cc.add_argument("experiment_id")
+    cc.add_argument("--now", default=None, help="Evaluate as of this ISO time (default: now)")
+    cc.add_argument(
+        "--spy",
+        choices=["stored", "alpaca"],
+        default="stored",
+        help="SPY returns: stored only (default) or alpaca (fetch the other days)",
+    )
+    cc.add_argument(
+        "--vix",
+        choices=["stored", "cboe"],
+        default="stored",
+        help="D120 descriptive ΔVIX: the stored reports' values only (default, offline), "
+        "or cboe: fetch Cboe's VIX history CSV for the other days",
+    )
     pl = common(
         esub.add_parser(
             "plan", help="D69: sessions needed for K arms with Holm at the A/A sigma (read-only)"
@@ -103,7 +156,7 @@ def add_experiment_parser(sub: argparse._SubParsersAction[argparse.ArgumentParse
         nargs="?",
         default=None,
         help="config/experiments/live/<x>.yaml, or a stored experiment id (default: an ab "
-        "spec with the config/experiments.yaml defaults, e.g. for an Analyst P-<n> proposal)",
+        "spec with the config/experiments.yaml defaults, e.g. for an Analyst XP proposal)",
     )
     pl.add_argument("--sigma", type=float, default=None, help="sigma of d_t (default: A/A's)")
     pl.add_argument(
@@ -122,15 +175,22 @@ def add_experiment_parser(sub: argparse._SubParsersAction[argparse.ArgumentParse
     )
     ad = common(
         esub.add_parser(
-            "adopt", help="E21.4: register an owner-approved Analyst proposal P-<n> (D86)"
+            "adopt", help="E21.4: register an owner-approved Analyst proposal XP-<n> (D86, D121)"
         )
     )
-    ad.add_argument("proposal_id", nargs="?", default=None, help="P-<n>")
+    ad.add_argument("proposal_id", nargs="?", default=None, help="XP-<n> (the proposal id)")
+    ad.add_argument(
+        "--id",
+        dest="experiment_id",
+        default=None,
+        help="D121: register under this reserved XP-<n> (the Analyst proposal's id); refuses "
+        "if the id is taken in the DB or the specs. Omitted: the next free id (owner specs)",
+    )
     ad.add_argument(
         "--proposal",
         required=True,
         help="the proposal: an xp_backlog.json entry (or the whole backlog), or the "
-        "Analyst's approved proposals/P-<n>.yaml",
+        "Analyst's approved proposals/XP-<n>.yaml",
     )
     ad.add_argument("--owner-approval", default=None, help=OWNER_APPROVAL_HELP)
     ad.add_argument("--now", default=None, help="ISO time (default: now)")
@@ -263,6 +323,7 @@ def report_lines(r: ExperimentReport) -> list[str]:
             else "  (aa: no margin)"
         ),
     ]
+    lines += long_run_lines(r)
     lines.append("  arms:")
     for a in r.arms:
         lines.append(
@@ -282,6 +343,23 @@ def report_lines(r: ExperimentReport) -> list[str]:
         + "  always-valid MDE "
         + ", ".join(f"{n}:{_pct(v)}" for n, v in c.mde_always_valid.items())
     )
+    if c.sigma_adj is not None:
+        lines.append(
+            f"    D119 sigma raw {_pct(c.sigma)}  SPY-adjusted {_pct(c.sigma_adj)}  long-run "
+            f"{_pct(c.sigma_lr)} (f {_num(c.hac_factor)}, lag {c.hac_lag}, rho "
+            + " ".join(f"{x:+.2f}" for x in c.rho or [])
+            + f")  beta spread {_num(c.beta_spread)}"
+        )
+        for label, fx, av in (
+            ("adjusted", c.mde_fixed_adj, c.mde_always_valid_adj),
+            ("long-run", c.mde_fixed_lr, c.mde_always_valid_lr),
+        ):
+            lines.append(
+                f"    {label} MDE "
+                + ", ".join(f"{n}:{_pct(v)}" for n, v in (fx or {}).items())
+                + "  always-valid MDE "
+                + ", ".join(f"{n}:{_pct(v)}" for n, v in (av or {}).items())
+            )
     slip = "-" if c.slippage_gap_bps is None else f"{c.slippage_gap_bps:+.1f} bps"
     lines.append(
         f"    slippage gap {slip}"
@@ -349,7 +427,50 @@ def _multi_arm_lines(r: ExperimentReport) -> list[str]:
             f"    {p.b} vs {p.a:8} n {p.n:3}  mean {_pct(p.mean)}/day  CI {ci}  p {pv}  "
             f"Holm p {hp}  {tag}"
         )
+        if p.adjustment is not None:
+            lines.append("      " + _long_run_line(p, r.alpha).lstrip())
     return lines
+
+
+def _long_run_line(p: Any, alpha: float) -> str:
+    """D119: one primary's (or pair's) adjustment + HAC numbers on one line."""
+    a, h = p.adjustment, p.hac
+    ci = f"[{_pct(a.ci.lo)}, {_pct(a.ci.hi)}]" if a.ci else "-"
+    role = "pre-registered" if a.pre_registered else "descriptive"
+    cov = "+".join(a.covariates) or "unadjusted"
+    miss = (
+        f"  SPY missing {', '.join(map(str, a.covariate_missing))}" if a.covariate_missing else ""
+    )
+    rho = " ".join(f"{x:+.2f}" for x in h.rho) if h is not None and h.rho else "-"
+    f = (
+        "-"
+        if h is None
+        else f"{_num(h.factor)} ({h.source or '-'}; running {_num(h.factor_running)})"
+    )
+    return (
+        f"  D119 {role} ({cov} {a.status}, HAC lag {h.lag if h and h.lag else 'iid'}): n {a.n}"
+        f"  estimate {_pct(a.estimate)}/day  {1 - alpha:.0%} CI {ci}  p "
+        f"{'-' if a.p_value is None else f'{a.p_value:.4f}'}  beta {_num(a.beta)} "
+        f"(se {_num(a.beta_se)}, R2 {_num(a.r2)})  sigma raw {_pct(p.sigma_raw)} adj "
+        f"{_pct(p.sigma_adj)} LR {_pct(p.sigma_lr)} ({a.sigma_source or '-'})  f {f}  rho {rho}"
+        + miss
+    )
+
+
+def long_run_lines(r: ExperimentReport) -> list[str]:
+    """D119: the headline pair's adjusted + HAC primary and (pre-registered) the iid one."""
+    p = r.primary
+    out: list[str] = []
+    if p.adjustment is not None:
+        out.append(_long_run_line(p, r.alpha))
+    if p.primary_unadjusted is not None:
+        u = p.primary_unadjusted
+        ci = f"[{_pct(u.ci.lo)}, {_pct(u.ci.hi)}]" if u.ci else "-"
+        out.append(
+            f"  D44 iid unadjusted (transparency): mean {_pct(u.mean)}/day  CI {ci}  p "
+            f"{'-' if u.p_value is None else f'{u.p_value:.4f}'}  sigma {_pct(u.sigma)}"
+        )
+    return out
 
 
 def production_lines(r: ExperimentReport) -> list[str]:
@@ -462,7 +583,7 @@ def effect_grid(
 ) -> list[dict[str, Any]]:  # fmt: skip
     """E21.3 (D86): sessions one arm of a *k*-treatment run needs per daily effect.
 
-    What the Analyst's pre-run gate puts in context, so a ``P-<n>`` proposal's
+    What the Analyst's pre-run gate puts in context, so an XP proposal's
     ``sessions_needed`` is read off this table, not guessed.
     """
     from arc.experiments import stats
@@ -585,13 +706,159 @@ def _run_plan(args: argparse.Namespace, store: Any, conn: sqlite3.Connection) ->
     return 0
 
 
+def _spy_market(args: argparse.Namespace, settings: Any) -> Any:
+    """D119: the SPY bar provider for ``--spy alpaca`` (None for ``stored`` or no keys)."""
+    if getattr(args, "spy", "stored") != "alpaca" or getattr(args, "stored", False):
+        return None
+    try:
+        from arc.data.alpaca import AlpacaMarketData
+        from arc.experiments.covariate import FeedPinned
+
+        return FeedPinned(AlpacaMarketData(), feed=settings.alpaca_history_feed)
+    except Exception as exc:  # noqa: BLE001 - no keys: stored SPY returns only
+        _err(f"arc experiment: no SPY market data ({exc}); using stored SPY returns only")
+        return None
+
+
+def _vix_source(args: argparse.Namespace) -> Any:
+    """D120: the VIX closes provider for ``--vix cboe`` (None for ``stored``)."""
+    if getattr(args, "vix", "stored") != "cboe" or getattr(args, "stored", False):
+        return None
+    from arc.experiments.covariate import VIX_INDEX, CachedCloses
+    from arc.ingest.options_data import fetch_index_closes
+
+    return CachedCloses(lambda: fetch_index_closes(VIX_INDEX))
+
+
+def _check_row(label: str, c: Any) -> str:
+    return (
+        f"  {label:<12} n={c.n:<3} σ_spy {_pct(c.sigma_spy)}  σ_spy+vix {_pct(c.sigma_spy_vix)}  "
+        f"F {c.partial_f:.2f} (iid {c.partial_f_iid:.2f}, df {c.partial_df[0]},"
+        f"{c.partial_df[1]}, f {c.hac_factor:.2f} {c.hac_source}) p {c.partial_p:.4f}  "
+        f"b_vix {c.b_vix * 100:+.4f}%/pt ± {c.b_vix_se * 100:.4f}  "
+        f"hw@{c.plan_n} {_pct(c.ci_halfwidth_spy)} -> {_pct(c.ci_halfwidth_spy_vix)} "
+        f"({c.ci_shrink:+.1%} narrower)"
+    )
+
+
+def covariate_check_lines(r: Any) -> list[str]:
+    """D120: the ``arc experiment covariate-check`` table (per pair, pooled, rule)."""
+    from arc.experiments.covariate_check import MIN_CI_SHRINK, PARTIAL_P_MAX, rule_result
+
+    days = [s.day for s in r.series]
+    have = sum(1 for s in r.series if s.spy_ret is not None and s.vix_chg is not None)
+    out = [
+        f"{r.experiment_id} ΔVIX covariate check (D120, descriptive; never a verdict)",
+        f"  sessions {r.sessions} (with SPY + ΔVIX: {have})"
+        + (f"  {days[0]}..{days[-1]}" if days else ""),
+    ]
+    for s in r.series:
+        vix = "-" if s.vix_chg is None else f"{s.vix_chg:+.2f} pts"
+        out.append(f"    {s.day}  SPY {_pct(s.spy_ret)}  ΔVIX {vix}")
+    pairs = [p for p in (r.pairwise or []) if p.kind == "control_vs_treatment"]
+    if not pairs:
+        pairs_iter = [(f"{r.headline_arm or 'treatment'} - C", r.primary.covariate_check)]
+    else:
+        pairs_iter = [(f"{p.b} - {p.a}", p.covariate_check) for p in pairs]
+    for label, c in pairs_iter:
+        out.append(_check_row(label, c) if c is not None else f"  {label:<12} - (< 4 sessions)")
+    pooled = r.calibration.covariate_check
+    if pooled is None:
+        out.append("  pooled       - (no pair has 4 sessions with SPY + ΔVIX)")
+        return out
+    out.append(_check_row(f"pooled ({pooled.pairs})", pooled))
+    rule = rule_result(pooled)
+    out += [
+        "  pre-registered rule (PLAN D120), pooled Ti - C:",
+        f"    (1) partial F p < {PARTIAL_P_MAX}: {'yes' if rule.partial_p_ok else 'no'} "
+        f"(p {pooled.partial_p:.4f})",
+        f"    (2) CI half-width at n={pooled.plan_n} shrinks >= {MIN_CI_SHRINK:.0%}: "
+        f"{'yes' if rule.ci_shrink_ok else 'no'} ({pooled.ci_shrink:+.1%})",
+        "    (3) 2-covariate type-I sim <= alpha + 2 MC SE: tests/test_experiment_covariate_"
+        "check.py (slow)",
+        "  => "
+        + (
+            "recommend adding vix_chg (owner-approved D120 amendment PR)"
+            if rule.recommend_add
+            else "keep SPY-only; record these numbers in D120"
+        ),
+    ]
+    return out
+
+
+def _run_covariate_check(args: argparse.Namespace) -> int:
+    """``arc experiment covariate-check``: read-only (``mode=ro``); stores nothing."""
+    from arc.control.effective import effective_settings, experiments_config
+    from arc.experiments.evaluate import build_report
+    from arc.experiments.paired import paired_view
+    from arc.experiments.store import ExperimentError, ExperimentStore
+    from arc.store.db import connect_ro
+
+    try:
+        conn = connect_ro(args.db)
+    except FileNotFoundError as exc:
+        _err(f"arc experiment covariate-check: {exc}")
+        return 2
+    try:
+        settings = effective_settings(conn)
+        cfg = experiments_config(settings)
+        now = _parse_now(args.now)
+        store = ExperimentStore(conn, now=lambda: now)
+        try:
+            st = store.require(args.experiment_id)
+        except ExperimentError as exc:
+            _err(f"arc experiment covariate-check: {exc}")
+            return 2
+        with paired_view(conn) as view:
+            rep = build_report(
+                view, st, cfg, now=now, aa_sigma=store.aa_sigma(),
+                aa_cal=store.aa_calibration(), market=_spy_market(args, settings),
+                vix=_vix_source(args),
+            )  # fmt: skip
+    finally:
+        conn.close()
+    if args.json:
+        pairs = [p for p in (rep.pairwise or []) if p.kind == "control_vs_treatment"]
+        doc = {
+            "experiment_id": rep.experiment_id,
+            "sessions": rep.sessions,
+            "series": [
+                {"day": s.day.isoformat(), "spy_ret": s.spy_ret, "vix_chg": s.vix_chg}
+                for s in rep.series
+            ],
+            "pairs": {
+                p.b: None if p.covariate_check is None else p.covariate_check.model_dump()
+                for p in pairs
+            }
+            or {
+                "treatment": None
+                if rep.primary.covariate_check is None
+                else rep.primary.covariate_check.model_dump()
+            },
+            "pooled": None
+            if rep.calibration.covariate_check is None
+            else rep.calibration.covariate_check.model_dump(),
+        }
+        if rep.calibration.covariate_check is not None:
+            from arc.experiments.covariate_check import rule_result
+
+            doc["rule"] = rule_result(rep.calibration.covariate_check).model_dump()
+        _out(json.dumps(doc, indent=2))
+    else:
+        _out("\n".join(covariate_check_lines(rep)))
+    return 0
+
+
 def _run_eval(args: argparse.Namespace, store: Any, conn: sqlite3.Connection) -> int:
     from arc.control.effective import effective_settings, experiments_config
     from arc.experiments.evaluate import build_report, evaluate, evaluate_running, latest_report
     from arc.experiments.models import ExperimentStatus
 
     now = _parse_now(args.now)
-    cfg = experiments_config(effective_settings(conn))
+    settings = effective_settings(conn)
+    cfg = experiments_config(settings)
+    market = _spy_market(args, settings)
+    vix = _vix_source(args)
     if args.experiment_command == "report":
         if args.stored:
             rep = latest_report(conn, args.experiment_id)
@@ -608,6 +875,9 @@ def _run_eval(args: argparse.Namespace, store: Any, conn: sqlite3.Connection) ->
                     cfg,
                     now=now,
                     aa_sigma=store.aa_sigma(),
+                    aa_cal=store.aa_calibration(),
+                    market=market,
+                    vix=vix,
                 )
         reports = [rep]
         if args.format == "md":
@@ -622,9 +892,9 @@ def _run_eval(args: argparse.Namespace, store: Any, conn: sqlite3.Connection) ->
             if st.status is not ExperimentStatus.RUNNING:
                 _err(f"arc experiment evaluate: {args.experiment_id} is {st.status.value}")
                 return 2
-            reports = [evaluate(store, args.experiment_id, cfg, now=now)]
+            reports = [evaluate(store, args.experiment_id, cfg, now=now, market=market, vix=vix)]
         else:
-            reports = evaluate_running(store, cfg, now=now)
+            reports = evaluate_running(store, cfg, now=now, market=market, vix=vix)
     if args.json:
         payload = [r.model_dump(mode="json") for r in reports]
         _out(json.dumps(payload[0] if args.experiment_command == "report" else payload, indent=2))
@@ -651,7 +921,7 @@ def _proposal_from(args: argparse.Namespace) -> Any:
         data = json.loads(path.read_text())
         if isinstance(data, dict) and isinstance(data.get("items"), dict):  # the whole backlog
             if not args.proposal_id:
-                msg = "name the proposal: arc experiment adopt P-<n> --proposal <backlog>"
+                msg = "name the proposal: arc experiment adopt XP-<n> --proposal <backlog>"
                 raise AdoptError(msg)
             entry = next(
                 (e for e in data["items"].values() if e.get("id") == args.proposal_id), None
@@ -691,12 +961,18 @@ def _run_adopt(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
         publisher=None if (args.dry_run or args.no_pr) else GitPublisher(),
         dry_run=args.dry_run,
         post=post,
+        experiment_id=args.experiment_id,
     )
     if args.json:
         _out(json.dumps(res.as_json(), indent=2, default=str))
         return 0
     head = "dry-run (nothing written)" if res.dry_run else ("adopted" if res.created else "found")
-    _out(f"{head}: {res.proposal_id} -> {res.experiment_id} [{res.status}]")
+    ids = (
+        res.experiment_id  # D121: adopted under the proposal's own reserved id
+        if res.proposal_id == res.experiment_id
+        else f"{res.proposal_id} -> {res.experiment_id}"
+    )
+    _out(f"{head}: {ids} [{res.status}]")
     if res.queue_reason:
         _out(f"  queued: {res.queue_reason}")
     _out(f"  area {res.area} · {res.arms} treatments · spec sha256 {res.spec_hash}")
@@ -779,6 +1055,8 @@ def run_experiment(args: argparse.Namespace) -> int:
         return run_arm_tick(args)
     if cmd == "regime-panel":  # E25.5: read-only view, never opens the store read-write
         return run_regime_panel(args)
+    if cmd == "covariate-check":  # E25.9: read-only view, stores nothing
+        return _run_covariate_check(args)
     conn = _open(args.db)
     try:
         from arc.control.effective import effective_settings, experiments_config

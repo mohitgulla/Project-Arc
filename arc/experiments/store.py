@@ -19,8 +19,9 @@ Rules enforced here (and, for the spec lock, by a DB trigger too):
   within ``experiments.runner.max_parallel_arms`` (:meth:`ExperimentStore.for_runner`);
   a registration that would exceed it is ``queued`` until arms free up.
 - **Owner approval (D86).** ``create`` and ``register`` require an ``owner_approval``
-  reference (``P-<n>`` Analyst proposal, ``slack:<ts>`` thread message, or
-  ``owner:<note>``), stored in the event ``detail``. Dev cards never write experiment
+  reference (``XP-<n>`` Analyst proposal, D121; a legacy ``P-<n>`` is still read;
+  ``slack:<ts>`` thread message, or ``owner:<note>``), stored in the event ``detail``.
+  Dev cards never write experiment
   rows; specs arrive through ``arc experiment adopt`` (E21.4) after the owner approves.
 - **A/A first.** An ``ab`` experiment may not start until an ``aa`` experiment has
   stopped with a recorded sigma (E10.4). The owner can override; the override is
@@ -61,9 +62,12 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from arc.experiments.config import RunnerConfig
+    from arc.experiments.models import Analysis
 
 __all__ = [
     "OWNER_APPROVAL_RE",
+    "LEGACY_PROPOSAL_REF_RE",
+    "PROPOSAL_ID_RE",
     "PROPOSAL_REF_RE",
     "AaRequiredError",
     "ExperimentError",
@@ -99,13 +103,15 @@ class OwnerApprovalError(ExperimentError):
     """``create`` / ``register`` without a well-formed owner-approval reference (D86)."""
 
 
-#: D86: ``P-<n>`` (an approved Analyst proposal), ``slack:<ts>`` (the owner's message),
-#: or ``owner:<free text>`` (a shell decision the owner records by hand).
-OWNER_APPROVAL_RE = re.compile(r"^(P-[1-9]\d*|slack:\d+\.\d+|owner:\S.{0,199})$")
+#: D86: an approved Analyst proposal, ``slack:<ts>`` (the owner's message), or
+#: ``owner:<free text>`` (a shell decision the owner records by hand). D121: a proposal is
+#: ``XP-<n>`` (its reserved id). The retired ``P-<n>`` is refused on a new write and only
+#: read back from old rows (:func:`proposal_ref_of`).
+OWNER_APPROVAL_RE = re.compile(r"^(XP-[1-9]\d*|slack:\d+\.\d+|owner:\S.{0,199})$")
 ADOPT_HINT = (
     "experiments enter the registry only after the owner approves an Analyst proposal: "
-    "use `arc experiment adopt P-<n>` (E21.4), or pass --owner-approval "
-    "<P-<n> | slack:<ts> | owner:<note>> (PLAN D86)"
+    "use `arc experiment adopt XP-<n>` (E21.4, D121), or pass --owner-approval "
+    "<XP-<n> | slack:<ts> | owner:<note>> (PLAN D86)"
 )
 
 
@@ -114,27 +120,36 @@ def check_owner_approval(ref: str | None) -> str:
     ref = (ref or "").strip()
     if not OWNER_APPROVAL_RE.match(ref):
         what = f"invalid owner approval {ref!r}" if ref else "owner approval required"
+        if LEGACY_PROPOSAL_REF_RE.match(ref):
+            what += " (P-<n> ids are retired, D121: use the proposal's XP-<n>)"
         msg = f"{what}: {ADOPT_HINT}"
         raise OwnerApprovalError(msg)
     return ref
 
 
-PROPOSAL_REF_RE = re.compile(r"^P-[1-9]\d*$")
+#: D121: an Analyst proposal is ``XP-<n>`` (the id reserved when it is proposed, and the
+#: id it registers under). ``P-<n>`` (D86) is retired and kept only as a read alias for
+#: old ``proposal_ref`` / ``owner_approval`` rows. ``PROPOSAL_ID_RE`` is what a new
+#: write accepts; ``PROPOSAL_REF_RE`` is what a read accepts.
+PROPOSAL_ID_RE = re.compile(r"^XP-[1-9]\d*$")
+PROPOSAL_REF_RE = re.compile(r"^(?:XP|P)-[1-9]\d*$")
+LEGACY_PROPOSAL_REF_RE = re.compile(r"^P-[1-9]\d*$")
 
 
 def _proposal_ref(ref: str | None) -> dict[str, str]:
-    """``{"proposal_ref": "P-<n>"}`` for the event detail (E21.4), ``{}`` for None."""
+    """``{"proposal_ref": "XP-<n>"}`` for the event detail (E21.4), ``{}`` for None."""
     if ref is None:
         return {}
-    if not PROPOSAL_REF_RE.match(ref):
-        msg = f"proposal_ref {ref!r} must look like P-<n> (an Analyst proposal)"
+    if not PROPOSAL_ID_RE.match(ref):
+        msg = f"proposal_ref {ref!r} must look like XP-<n> (an Analyst proposal, D121)"
         raise OwnerApprovalError(msg)
     return {"proposal_ref": ref}
 
 
 def proposal_ref_of(st: ExperimentState) -> str | None:
-    """The ``P-<n>`` an experiment adopts: its ``proposal_ref`` (E21.4) or a ``P-<n>``
-    ``owner_approval`` (D86), from its earliest event naming one."""
+    """The proposal an experiment adopts (``XP-<n>``, or a legacy ``P-<n>``): its
+    ``proposal_ref`` (E21.4) or a proposal-shaped ``owner_approval`` (D86), from its
+    earliest event naming one."""
     for e in st.events:
         for key in ("proposal_ref", "owner_approval"):
             ref = str(e.detail.get(key) or "")
@@ -332,15 +347,30 @@ class ExperimentStore:
             f"+ {need} of {st.experiment_id}"
         )
 
-    def aa_sigma(self) -> float | None:
-        """Sigma recorded by the latest A/A that stopped with one (E10.4), else None."""
-        best: tuple[int, float] | None = None
+    def aa_sigma(self, analysis: Analysis | None = None) -> float | None:
+        """Sigma recorded by the latest A/A that stopped with one (E10.4), else None.
+
+        D119: with an adjusted *analysis* (``covariates: [spy_ret]``) the A/A's SPY-adjusted
+        residual sigma instead; ``None`` when that A/A predates D119 (no ``sigma_adj``), so
+        the adjusted XP falls back to the running sigma. The long-run factor is read
+        separately (:meth:`aa_calibration`).
+        """
+        cal = self.aa_calibration()
+        if cal is None:
+            return None
+        if analysis is not None and analysis.adjusted:
+            return cal.sigma_adj
+        return cal.sigma
+
+    def aa_calibration(self) -> StopDetail | None:
+        """The stop detail of the latest A/A that stopped with a sigma (E10.4 / D119)."""
+        best: tuple[int, StopDetail] | None = None
         for s in self.all():
             if s.kind is not ExperimentKind.AA or s.stop is None or s.stop.sigma is None:
                 continue
             stopped_id = max(e.id for e in s.events if e.status == "stopped")
             if best is None or stopped_id > best[0]:
-                best = (stopped_id, s.stop.sigma)
+                best = (stopped_id, s.stop)
         return best[1] if best else None
 
     # -- writes ------------------------------------------------------------------
@@ -414,7 +444,7 @@ class ExperimentStore:
 
         Refused once the experiment left draft: the spec is hash-locked. Refused
         without an *owner_approval* reference (D86, :func:`check_owner_approval`).
-        *proposal_ref* (E21.4, ``P-<n>``) names the Analyst proposal it adopts.
+        *proposal_ref* (E21.4, ``XP-<n>``, D121) names the Analyst proposal it adopts.
         """
         approval = check_owner_approval(owner_approval)
         ref = _proposal_ref(proposal_ref)

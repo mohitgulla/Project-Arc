@@ -1,7 +1,8 @@
 """IV history done right (E4.12, D55).
 
 - :mod:`arc.iv.store`  the ``iv_daily`` table: upsert, the per-ticker series the
-  regime/scanner read (``alpaca_cm30`` then ``alpaca_backfill``; Option Strategist rows
+  regime/scanner read (``ArcSettings.iv_series_sources`` precedence, default
+  ``alpaca_cm30`` > ``theta_backfill`` (E7.13) > ``alpaca_backfill``; Option Strategist rows
   are never mixed in), and the fresh external percentile.
 - :mod:`arc.iv.record`  the forward ``iv.record`` routine (15:50 ET): 30-DTE constant-
   maturity ATM IV from the Alpaca chain with a Cboe ``iv30`` cross-check.

@@ -177,6 +177,17 @@ def fetch_vol_term(
     return vol_term_from_closes(closes, band=band)
 
 
+def fetch_index_closes(
+    index: str = "VIX", *, get: Callable[[str, str], bytes] | None = None
+) -> dict[_dt.date, float]:
+    """D120 (E25.9): one Cboe index's daily closes (``*_History.csv``, free per D3)."""
+    if get is None:
+        body = http_get(CBOE_HISTORY_URL.format(index=index), BROWSER_UA, retries=2)
+    else:
+        body = get(CBOE_HISTORY_URL.format(index=index), BROWSER_UA)
+    return parse_cboe_history(body.decode("utf-8", "replace"))
+
+
 # ---------------------------------------------------------------------------
 # Macro calendar (FOMC + BLS + BEA)
 # ---------------------------------------------------------------------------

@@ -282,6 +282,47 @@ class Arms(BaseModel):
         return self.treatments[n]
 
 
+#: D119 (E25.7): the covariates a spec may pre-register for the primary's adjustment.
+#: D120 (E25.9): ``vix_chg`` (ΔVIX, vol points) is legal so a future spec *can*
+#: pre-register it; no default names it (the D120 rule decides, in a separate PR).
+#: Only exogenous market series the treatment cannot affect may be added here.
+Covariate = Literal["spy_ret", "vix_chg"]
+#: D119: the largest Newey-West lag (sessions) a spec or the config may name.
+MAX_HAC_LAG = 20
+
+
+class Analysis(BaseModel):
+    """D119 (E25.7): the pre-registered analysis of the primary (hash-locked with the spec).
+
+    ``covariates: [spy_ret]`` fits ``d_t = a + b * SPY_ret_t`` on the running data and
+    tests the intercept ``a`` (the daily edge on a flat-market day); ``[]`` tests the
+    plain mean. ``hac_lag`` scales the residual sigma by a Newey-West/Bartlett long-run
+    factor over that many sessions (floored at 1); ``None`` keeps the iid sigma.
+    A spec without the block keeps the D44 method (iid, unadjusted).
+    """
+
+    model_config = _FORBID
+
+    covariates: list[Covariate] = Field(
+        ..., description="[] = unadjusted; [spy_ret]; D120: vix_chg may be added"
+    )
+    hac_lag: int | None = Field(
+        ..., ge=1, le=MAX_HAC_LAG, description="Bartlett lag in sessions; null = iid"
+    )
+
+    @field_validator("covariates")
+    @classmethod
+    def _unique(cls, v: list[Covariate]) -> list[Covariate]:
+        if len(set(v)) != len(v):
+            msg = "analysis.covariates lists a covariate twice"
+            raise ValueError(msg)
+        return v
+
+    @property
+    def adjusted(self) -> bool:
+        return bool(self.covariates)
+
+
 class ExperimentSpec(BaseModel):
     """A pre-registrable experiment (``config/experiments/live/*.yaml``).
 
@@ -316,6 +357,13 @@ class ExperimentSpec(BaseModel):
     proposed_by: str = Field(..., description="owner | A-<n> (an arc-analyst finding)")
     backtest_ref: str | None = Field(
         default=None, description="E7.5 run dir / compare verdict (required for ab)"
+    )
+    analysis: Analysis | None = Field(
+        default=None,
+        description=(
+            "D119: pre-registered SPY adjustment + HAC sigma of the primary; absent = the "
+            "D44 iid unadjusted method (and the spec hashes exactly as before D119)"
+        ),
     )
 
     @field_validator("id")
@@ -408,9 +456,12 @@ class ExperimentSpec(BaseModel):
 
 
 def _canonical_doc(spec: ExperimentSpec) -> dict[str, Any]:
-    """The hashed document. A v1 spec keeps its v1 shape (``arms.treatment``), so every
+    """The hashed document. A spec without ``analysis`` (D119) omits the key, and a v1
+    spec keeps its v1 shape (``arms.treatment``), so every
     hash locked before D69 recomputes unchanged."""
     doc = spec.model_dump(mode="json")
+    if spec.analysis is None:
+        del doc["analysis"]  # D119: absent block = the pre-D119 document, byte for byte
     if spec.spec_version == 1:
         arms = doc["arms"]
         doc["arms"] = {
@@ -508,6 +559,18 @@ class StopDetail(BaseModel):
     )
     sessions: int | None = Field(default=None, ge=0)
     note: str | None = None
+    # -- D119 (E25.7): A/A calibration of the adjusted + HAC primary ----------------
+    # Absent on pre-D119 stop events (they keep loading: sigma only).
+    sigma_adj: float | None = Field(
+        default=None, gt=0.0, description="D119: pooled SPY-adjusted residual sigma"
+    )
+    hac_factor: float | None = Field(
+        default=None, ge=1.0, description="D119: pooled Bartlett long-run variance factor f"
+    )
+    hac_lag: int | None = Field(default=None, ge=1, description="D119: lag f was measured at")
+    beta_spread: float | None = Field(
+        default=None, ge=0.0, description="D119: max - min of the pairs' SPY beta"
+    )
 
 
 class ExperimentEvent(BaseModel):

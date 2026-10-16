@@ -543,8 +543,8 @@ def test_ab_uses_aa_sigma_when_recorded(conn: sqlite3.Connection) -> None:
             detail=__import__("arc.experiments.models", fromlist=["StopDetail"]).StopDetail(
                 sigma=0.002))  # fmt: skip
     store = ExperimentStore(conn, now=lambda: fx.T0)
-    store.create(fx.spec(), actor="local", owner_approval="P-1")
-    store.register("XP-2", actor="local", owner_approval="P-1")
+    store.create(fx.spec(), actor="local", owner_approval="XP-1")
+    store.register("XP-2", actor="local", owner_approval="XP-1")
     from arc.experiments.models import RunningDetail
 
     store.start("XP-2", RunningDetail(t0=fx.T0, t0_equity=1e5, control_sha=fx.CONTROL_SHA),
@@ -700,7 +700,7 @@ def _outcome(
 
 def test_evaluate_refuses_non_running(conn: sqlite3.Connection) -> None:
     store = ExperimentStore(conn, now=lambda: fx.T0)
-    store.create(fx.spec(), actor="local", owner_approval="P-1")
+    store.create(fx.spec(), actor="local", owner_approval="XP-1")
     with pytest.raises(ExperimentError, match="not running"):
         evaluate(store, "XP-2", CFG, now=fx.T0)
     with pytest.raises(ExperimentError, match="never started"):
@@ -769,11 +769,11 @@ def test_routine_step_no_notice_while_running(conn: sqlite3.Connection) -> None:
     res = experiments_evaluate_step(_ctx(conn, _after(days)))  # type: ignore[arg-type]
     assert "XP-2 continue n=2" in res.summary and res.notice == ""
     text = res.extra_cards[0].text
-    # D108 (E25.6): title, bold-italic headline, then one Ti − reference line (v1: T1 − P)
-    title, head, gap = text.split("\n")
-    assert title == "[XP-2] Day 2/60"
+    # D108 (E25.6): title, blank line, bold-italic headline; no per-arm lines (2026-10-16)
+    title, blank, head = text.split("\n")
+    assert title == "*:microscope: [XP-2] Day 2/60*" and blank == ""
     assert head.startswith("_*T1 trails production by ") and head.endswith(" after 2 sessions.*_")
-    assert gap.startswith("T1 − P • P&L ∆ ")
+    assert "T1 − P • " not in text
     assert res.extra_cards[0].blocks == []
     assert res.extra_cards[0].broadcast is True
     assert store.require("XP-2").status is ExperimentStatus.RUNNING

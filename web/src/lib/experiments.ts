@@ -267,6 +267,238 @@ function toneOf(lo: number | null | undefined, hi: number | null | undefined): T
   return ciTone({ primary_ci_lo: lo, primary_ci_hi: hi });
 }
 
+// ---------------------------------------------------------------------------
+// D120 (E25.8): the SPY-adjusted primary as the headline, the unadjusted alongside
+// ---------------------------------------------------------------------------
+
+export type Adjustment = Schemas["Adjustment"];
+export type Hac = Schemas["Hac"];
+export type Unadjusted = Schemas["Unadjusted"];
+export type Analysis = Schemas["Analysis"];
+type Interval = { lo: number; hi: number } | null | undefined;
+
+/**
+ * The fields of one primary the headline reads: a v1 `Primary`, a v2 `PairReport` and
+ * (via {@link listPrimary}) a list row all carry them. With a pre-registered analysis the
+ * top-level mean/ci/p **are** the adjusted numbers and the D44 ones sit in
+ * `primary_unadjusted`; without one the top-level numbers are D44 and `adjustment` is
+ * descriptive (D119).
+ */
+export interface PrimaryLike {
+  mean?: number | null;
+  ci?: Interval;
+  p_value?: number | null;
+  adjustment?: Adjustment | null;
+  primary_unadjusted?: Unadjusted | null;
+  hac?: Hac | null;
+  sigma_lr?: number | null;
+}
+
+export type Basis = "adjusted" | "unadjusted";
+export type HeadlineReason = "insufficient_n" | "no_variance" | "covariate_missing" | "unadjusted_spec";
+
+export interface EstimateView {
+  est: number | null;
+  lo: number | null;
+  hi: number | null;
+  p: number | null;
+}
+
+export interface HeadlineView extends EstimateView {
+  basis: Basis;
+  /** why the headline fell back to the unadjusted number (absent: adjusted, or pre-D119) */
+  reason?: HeadlineReason;
+  /** the fallback chip (SPY adjustment pending / SPY day missing / no SPY variance) */
+  chip?: PillView;
+  /** "SPY-adjusted (flat-market day)" / "Unadjusted" */
+  label: string;
+  /** the other estimate for the second, muted line (null: nothing to show) */
+  other: (EstimateView & { label: string }) | null;
+}
+
+export const ADJUSTED_LABEL = "SPY-adjusted (flat-market day)";
+
+function est(mean: number | null | undefined, ci: Interval, p: number | null | undefined): EstimateView {
+  return { est: mean ?? null, lo: ci?.lo ?? null, hi: ci?.hi ?? null, p: p ?? null };
+}
+
+/** The D44 iid unadjusted numbers of *p*: `primary_unadjusted` when pre-registered, else the top level. */
+export function unadjustedOf(p: PrimaryLike): EstimateView {
+  const u = p.adjustment?.pre_registered ? p.primary_unadjusted : null;
+  return u ? est(u.mean, u.ci, u.p_value) : est(p.mean, p.ci, p.p_value);
+}
+
+function adjustedOf(a: Adjustment): EstimateView {
+  return est(a.estimate, a.ci, a.p_value);
+}
+
+/**
+ * The headline of one primary (D120): the SPY-adjusted intercept whenever the fit is in
+ * (`status == "fitted"` with no missing SPY day), for every XP; otherwise the unadjusted
+ * number with a chip saying why. A report written before D119 (no `adjustment`) gets the
+ * plain unadjusted headline with no chip and no second line, i.e. exactly as before.
+ */
+export function headlineEstimate(p: PrimaryLike): HeadlineView {
+  const a = p.adjustment;
+  const un = unadjustedOf(p);
+  if (!a) return { basis: "unadjusted", label: "Unadjusted", ...un, other: null };
+  const missing = (a.covariate_missing ?? []).length > 0;
+  if (a.status === "fitted" && !missing && a.estimate !== null && a.estimate !== undefined) {
+    const other = un.est === null ? null : { label: "Unadjusted", ...un };
+    return { basis: "adjusted", label: ADJUSTED_LABEL, ...adjustedOf(a), other };
+  }
+  let reason: HeadlineReason;
+  let chip: PillView;
+  if (missing) {
+    reason = "covariate_missing";
+    chip = { label: a.pre_registered ? "SPY day missing — verdict on hold" : "SPY day missing", tone: "warn" };
+  } else if (a.status === "insufficient_n") {
+    reason = a.n < 3 ? "insufficient_n" : "no_variance";
+    chip = { label: a.n < 3 ? "SPY adjustment pending (n < 3)" : "no SPY variance", tone: "neutral" };
+  } else {
+    reason = "unadjusted_spec";
+    chip = { label: "Unadjusted by spec", tone: "neutral" };
+  }
+  const fitted = a.status === "fitted" && a.estimate !== null && a.estimate !== undefined;
+  const other = fitted ? { label: "SPY-adjusted (partial)", ...adjustedOf(a) } : null;
+  return { basis: "unadjusted", label: "Unadjusted", ...un, reason, chip, other };
+}
+
+/** A list row as a {@link PrimaryLike} (its numbers are the headline pair's primary). */
+export function listPrimary(r: Pick<ExperimentRow, "primary_mean" | "primary_ci_lo" | "primary_ci_hi" | "primary_p" | "adjustment" | "primary_unadjusted">): PrimaryLike {
+  const ci = r.primary_ci_lo !== null && r.primary_ci_lo !== undefined && r.primary_ci_hi !== null && r.primary_ci_hi !== undefined
+    ? { lo: r.primary_ci_lo, hi: r.primary_ci_hi }
+    : null;
+  return { mean: r.primary_mean, ci, p_value: r.primary_p, adjustment: r.adjustment, primary_unadjusted: r.primary_unadjusted };
+}
+
+/** "+0.12% [−0.30, +0.54] · p 0.61" (an estimate's text on one line). */
+export function estimateText(e: EstimateView): string {
+  if (e.est === null) return "n/a";
+  const ci = e.lo !== null && e.hi !== null ? ` [${pct(e.lo, 2, { unit: "" })}, ${pct(e.hi, 2, { unit: "" })}]` : "";
+  return `${pct(e.est)}${ci} · p ${pText(e.p)}`;
+}
+
+/** The muted second line: "Unadjusted: +0.12% [−0.30, +0.54] · p 0.61", or null. */
+export function otherLine(h: HeadlineView): string | null {
+  return h.other ? `${h.other.label}: ${estimateText(h.other)}` : null;
+}
+
+export interface VerdictBasisView {
+  basis: Basis;
+  /** the spec carries no `analysis` block (registered before D119, e.g. XP-1) */
+  preD119: boolean;
+}
+
+/** What the verdict is decided on: the spec's pre-registered analysis (D119), else D44 unadjusted. */
+export function verdictBasis(x: { analysis?: Analysis | null } | null | undefined): VerdictBasisView {
+  const an = x?.analysis;
+  if (!an) return { basis: "unadjusted", preD119: true };
+  return { basis: (an.covariates ?? []).includes("spy_ret") ? "adjusted" : "unadjusted", preD119: false };
+}
+
+/**
+ * The verdict chip's extra text when the headline basis differs from the verdict basis:
+ * an adjusted headline on a spec that decides on the unadjusted number. A fallback headline
+ * on an adjusted spec already carries its own chip (pending / on hold), so no note.
+ */
+export function verdictNote(h: HeadlineView, v: VerdictBasisView): string | null {
+  if (h.basis !== "adjusted" || v.basis !== "unadjusted") return null;
+  return v.preD119 ? "verdict on unadjusted — spec pre-dates D119" : "verdict on unadjusted (pre-registered)";
+}
+
+const HAC_SOURCE: Record<string, string> = { running: "running", aa: "A/A", cap: "cap", iid: "iid" };
+
+export interface StatChip {
+  key: "beta" | "r2" | "hac" | "sigma_lr";
+  label: string;
+  tip: string;
+}
+
+/** β̂ ± SE, R², HAC f (source) and σ_LR of one primary; empty before D119 or without a fit. */
+export function statChips(p: PrimaryLike): StatChip[] {
+  const a = p.adjustment;
+  if (!a) return [];
+  const out: StatChip[] = [];
+  if (a.beta !== null && a.beta !== undefined) {
+    const se = a.beta_se !== null && a.beta_se !== undefined ? ` ± ${a.beta_se.toFixed(2)}` : "";
+    out.push({
+      key: "beta",
+      label: `β̂ ${a.beta.toFixed(2).replace("-", MINUS)}${se}`,
+      tip: "How much of the daily gap is SPY moving: the gap moves β̂ × SPY's daily return. Near 0 means the arms differ by more than market exposure.",
+    });
+  }
+  if (a.r2 !== null && a.r2 !== undefined) {
+    out.push({ key: "r2", label: `R² ${a.r2.toFixed(2)}`, tip: "Share of the day-to-day swings in the gap that SPY's move explains (0 to 1)." });
+  }
+  const f = p.hac?.factor;
+  if (f !== null && f !== undefined) {
+    const src = p.hac?.source ? ` (${HAC_SOURCE[p.hac.source] ?? p.hac.source})` : "";
+    out.push({
+      key: "hac",
+      label: `HAC f ${f.toFixed(1)}${src}`,
+      tip: "How much day-to-day carry (positions held across sessions) widened the range: the noise is scaled by √f, f ≥ 1. Running = measured from this run; A/A = from the A/A check; cap = too few sessions yet, the maximum is used.",
+    });
+  }
+  if (p.sigma_lr !== null && p.sigma_lr !== undefined) {
+    out.push({
+      key: "sigma_lr",
+      label: `σ_LR ${pct(p.sigma_lr, 2, { sign: false })}`,
+      tip: "Long-run daily noise of the estimate after the SPY adjustment and the carry correction, as a share of t0 equity. The range is built from it.",
+    });
+  }
+  return out;
+}
+
+/**
+ * D120 gap flag: the adjusted and unadjusted estimates differ by more than one adjusted SE
+ * (σ_LR / √n) and β̂ is clearly non-zero (|β̂| > 2·SE) — the raw gap is mostly market beta.
+ */
+export function mostlyBeta(p: PrimaryLike): boolean {
+  const a = p.adjustment;
+  if (!a || a.status !== "fitted") return false;
+  const adj = a.estimate;
+  const un = unadjustedOf(p).est;
+  const { beta, beta_se: bse } = a;
+  const s = p.sigma_lr;
+  if (adj === null || adj === undefined || un === null || beta === null || beta === undefined) return false;
+  if (bse === null || bse === undefined || s === null || s === undefined || a.n <= 0) return false;
+  return Math.abs(adj - un) > s / Math.sqrt(a.n) && Math.abs(beta) > 2 * bse;
+}
+
+export const MOSTLY_BETA: PillView = { label: "Mostly market beta", tone: "warn" };
+
+export interface AdjustedPairView {
+  arm: string;
+  headline: HeadlineView;
+  other: string | null;
+  chips: StatChip[];
+  verdict: PillView;
+  verdictNote: string | null;
+  mostlyBeta: boolean;
+}
+
+/**
+ * One block per Ti − C pair (or the K=1 primary) for the SPY-adjustment panel. Empty for a
+ * report written before D119 (nothing carries `adjustment`), so the page is unchanged there.
+ */
+export function adjustedPairs(
+  r: ExperimentReport | null | undefined,
+  spec?: { analysis?: Analysis | null } | null,
+): AdjustedPairView[] {
+  if (!r) return [];
+  const vb = verdictBasis(spec ?? r);
+  const view = (arm: string, p: PrimaryLike, verdict: string | null | undefined): AdjustedPairView => {
+    const h = headlineEstimate(p);
+    return { arm, headline: h, other: otherLine(h), chips: statChips(p), verdict: verdictPill(verdict), verdictNote: verdictNote(h, vb), mostlyBeta: mostlyBeta(p) };
+  };
+  const pairs = controlPairs(r);
+  const out = pairs.length > 0
+    ? pairs.map((p) => view(armShort(p.b), p, p.verdict))
+    : [view(armShort(treatmentArm(r)), r.primary, r.verdict)];
+  return out.some((x) => x.headline.basis === "adjusted" || x.headline.reason) ? out : [];
+}
+
 /** Control-vs-treatment pairs of a v2 report (verdict-bearing), in arm order. */
 export function controlPairs(r: ExperimentReport | null | undefined): PairReport[] {
   return (r?.pairwise ?? []).filter((p) => p.kind === "control_vs_treatment");
@@ -281,38 +513,21 @@ export function treatmentArm(r: ExperimentReport | null | undefined): string {
   return r?.arms.find((a) => a.arm !== "control")?.arm ?? "treatment";
 }
 
-/** One row per treatment vs the reference (Control in v3): the always-valid CI on the daily gap. */
+/**
+ * One row per treatment vs the reference (Control in v3): the always-valid CI on the daily
+ * gap. D120: each row is the pair's headline estimate (SPY-adjusted when fitted), so a
+ * report written before D119 renders exactly as before.
+ */
 export function resultRows(r: ExperimentReport | null | undefined): ForestRow[] {
   if (!r) return [];
+  const row = (label: string, p: PrimaryLike, right: string): ForestRow[] => {
+    const h = headlineEstimate(p);
+    if (h.est === null || h.lo === null || h.hi === null) return [];
+    return [{ label, est: h.est * 100, lo: h.lo * 100, hi: h.hi * 100, tone: toneOf(h.lo, h.hi), right }];
+  };
   const pairs = controlPairs(r);
-  if (pairs.length > 0) {
-    return pairs.flatMap((p) =>
-      p.ci && p.mean !== null && p.mean !== undefined
-        ? [
-            {
-              label: armShort(p.b),
-              est: p.mean * 100,
-              lo: p.ci.lo * 100,
-              hi: p.ci.hi * 100,
-              tone: toneOf(p.ci.lo, p.ci.hi),
-              right: `Holm p ${pText(p.holm_p)}`,
-            },
-          ]
-        : [],
-    );
-  }
-  const ci = r.primary.ci;
-  if (!ci || r.primary.mean === null || r.primary.mean === undefined) return [];
-  return [
-    {
-      label: armShort(treatmentArm(r)),
-      est: r.primary.mean * 100,
-      lo: ci.lo * 100,
-      hi: ci.hi * 100,
-      tone: toneOf(ci.lo, ci.hi),
-      right: `p ${pText(r.primary.p_value)}`,
-    },
-  ];
+  if (pairs.length > 0) return pairs.flatMap((p) => row(armShort(p.b), p, `Holm p ${pText(p.holm_p)}`));
+  return row(armShort(treatmentArm(r)), r.primary, `p ${pText(headlineEstimate(r.primary).p)}`);
 }
 
 /** Ti vs Tj (descriptive): "T2 − T1" with its CI. */

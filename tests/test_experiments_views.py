@@ -67,7 +67,7 @@ def fixture_db(tmp_path: Path) -> tuple[Path, dt.datetime]:
     now = _after(days)
     store._now = lambda: now  # noqa: SLF001
     evaluate(store, "XP-2", CFG, now=now)
-    store.create(fx.spec("XP-1", kind="aa"), actor="local", owner_approval="P-1")
+    store.create(fx.spec("XP-1", kind="aa"), actor="local", owner_approval="XP-1")
     c.close()
     return db, now
 
@@ -124,9 +124,10 @@ def test_parity_slack_line_tower_api_and_cli_report(
     sd = cli["secondary"]["diff_ci"]["estimate"]
     assert row["sortino_delta"] == pytest.approx(sd)
     mean, lo, hi = cli["primary"]["mean"], cli["primary"]["ci"]["lo"], cli["primary"]["ci"]["hi"]
-    title, headline, gap = line.split("\n")
-    assert title == "[XP-2] Day 14/60"
+    title, blank, headline = line.split("\n")
+    assert title == "*:microscope: [XP-2] Day 14/60*" and blank == ""
     assert headline.startswith("_*") and headline.endswith(" after 14 sessions.*_")
+    gap = view.status_lines(report)[2]  # the Tower keeps the per-arm line
     want = (
         f"T1 − P • P&L ∆ {view.pct(mean)}/day (p {view.p_text(cli['primary']['p_value'])})"
         f" • Sortino ∆ {view.ratio(sd, sign=True)} (p {view.p_text(cli['secondary']['p_value'])})"
@@ -464,7 +465,7 @@ def test_routine_posts_line_and_stop_card_through_dispatcher(
     # the status and the stop card, each also sent to the channel (D65 "Also send to
     # #arc-investor", E25.6)
     assert len(posts) == 2, posts
-    assert posts[0].startswith("[XP-2] Day 14/60\n_*")
+    assert posts[0].startswith("*:microscope: [XP-2] Day 14/60*\n\n_*")
     assert posts[1].startswith("[XP-3] Day 25 • Win • P&L ∆ ")
     assert notes.broadcasts == posts
     assert notes.blocks[0] is None and notes.blocks[1] is not None

@@ -1,0 +1,29 @@
+run,profile,what,trades,net_pnl,end_equity,return_pct,max_dd_pct,win_rate,pnl_per_risk,return_on_risk,mean_r,eq_2020_06_30,eq_2021_12_31,eq_2022_12_31
+legacy,margin,E7.11/E7.14 simulator (reproduces the BT-3 control book),440,-17294.35,7705.65,-69.18,83.0,0.732,-0.039,-0.0321,-0.0509,16103.0,19759.0,10740.0
+legacy,cash_debit,E7.11/E7.14 simulator (reproduces the BT-3 control book),585,-24879.91,120.09,-99.52,99.74,0.504,-0.053,-0.0038,-0.0211,6489.0,3894.0,477.0
+marks_only,margin,exit-book fix only (splits still ignored),459,-20434.73,4565.27,-81.74,87.22,0.708,-0.0378,-0.0466,-0.0634,20459.0,22980.0,15572.0
+marks_only,cash_debit,exit-book fix only (splits still ignored),441,-24905.27,94.73,-99.62,99.78,0.478,-0.1139,-0.1933,-0.0619,4033.0,1073.0,443.0
+fixed,margin,corrected simulator: base book for attribution,469,-17354.35,7645.65,-69.42,83.32,0.721,-0.0295,-0.0221,-0.0439,20459.0,25933.0,18492.0
+fixed,cash_debit,corrected simulator: base book for attribution,431,-24876.19,123.81,-99.5,99.73,0.501,-0.1212,-0.1902,-0.0402,4033.0,651.0,300.0
+est_spread,margin,"fills at the costs.yaml estimated spread (4 % of mid, min $0.03) not the quote",447,-21975.82,3024.18,-87.9,91.84,0.702,-0.0436,-0.06,-0.0697,20607.0,23191.0,12203.0
+est_spread,cash_debit,"fills at the costs.yaml estimated spread (4 % of mid, min $0.03) not the quote",468,-24897.0,103.0,-99.59,99.78,0.483,-0.0723,-0.0407,-0.0604,6289.0,1122.0,277.0
+half_size,margin,contracts x 0.5,508,-13487.05,11512.95,-53.95,64.7,0.697,-0.0397,-0.0299,-0.0561,20627.0,20737.0,15556.0
+half_size,cash_debit,contracts x 0.5,676,-24720.69,279.31,-98.88,99.11,0.47,-0.0893,-0.0703,-0.0869,10810.0,3529.0,1450.0
+half_slots,margin,max_open_positions 10 -> 5,273,-21284.84,3715.16,-85.14,87.85,0.674,-0.065,-0.0668,-0.0774,22435.0,16302.0,11067.0
+half_slots,cash_debit,max_open_positions 10 -> 5,362,-24902.76,97.24,-99.61,99.72,0.472,-0.0948,-0.0503,-0.0777,11647.0,1328.0,552.0
+day_risk_cap,margin,new max loss per day <= 15 % of equity (one max_alloc_pct position),445,-13482.52,11517.48,-53.93,68.61,0.71,-0.0313,-0.0212,-0.0429,18699.0,18190.0,13129.0
+day_risk_cap,cash_debit,new max loss per day <= 15 % of equity (one max_alloc_pct position),610,-24794.82,205.18,-99.18,99.66,0.492,-0.0473,-0.0722,-0.0479,8003.0,20870.0,1133.0
+no_bull_put__no_bull_call,margin,minus bull_put (margin) / bull_call (cash_debit),314,-13965.51,11034.49,-55.86,68.65,0.643,-0.047,-0.0073,-0.0556,12951.0,14910.0,11416.0
+no_bull_put__no_bull_call,cash_debit,minus bull_put (margin) / bull_call (cash_debit),340,-24857.59,142.41,-99.43,99.64,0.438,-0.12,-0.1362,-0.0941,4668.0,581.0,499.0
+no_bear_call__no_bear_put,margin,minus bear_call (margin) / bear_put (cash_debit),426,-15581.74,9418.26,-62.33,84.7,0.728,-0.0324,-0.024,-0.0397,18816.0,25838.0,12314.0
+no_bear_call__no_bear_put,cash_debit,minus bear_call (margin) / bear_put (cash_debit),380,-24845.56,154.44,-99.38,99.67,0.482,-0.1342,-0.2361,-0.0441,3887.0,620.0,290.0
+no_iron_condor__no_long_call,margin,minus iron_condor (margin) / long_call (cash_debit),404,-20501.22,4498.78,-82.0,85.6,0.785,-0.0511,-0.0482,-0.0352,15840.0,16816.0,10450.0
+no_iron_condor__no_long_call,cash_debit,minus iron_condor (margin) / long_call (cash_debit),390,-24879.66,120.34,-99.52,99.54,0.513,-0.1541,-0.0684,-0.0351,5492.0,3290.0,608.0
+no_long_put,margin,minus long_put (cash_debit),469,-17354.35,7645.65,-69.42,83.32,0.721,-0.0295,-0.0221,-0.0439,20459.0,25933.0,18492.0
+no_long_put,cash_debit,minus long_put (cash_debit),461,-24876.61,123.39,-99.51,99.85,0.505,-0.0431,-0.014,-0.0347,19028.0,707.0,299.0
+BT-3 control (E7.14),margin,,440,-17294.35,7705.65,-69.18,83.0,0.732,-0.039,-0.0321,-0.0509,16103.0,19759.0,10740.0
+BT-2 hold (E7.14),margin,,319,-23996.5,1003.5,-95.99,96.51,0.624,-0.1023,-0.0546,-0.0424,11593.0,20212.0,2624.0
+BT-2 managed (E7.14),margin,,440,-17294.35,7705.65,-69.18,83.0,0.732,-0.039,-0.0321,-0.0509,16103.0,19759.0,10740.0
+BT-3 control (E7.14),cash_debit,,585,-24879.91,120.09,-99.52,99.74,0.504,-0.053,-0.0038,-0.0211,6489.0,3894.0,477.0
+BT-2 hold (E7.14),cash_debit,,142,-24906.98,93.02,-99.63,99.8,0.254,-0.343,-0.3599,-0.1053,6774.0,198.0,103.0
+BT-2 managed (E7.14),cash_debit,,585,-24879.91,120.09,-99.52,99.74,0.504,-0.053,-0.0038,-0.0211,6489.0,3894.0,477.0

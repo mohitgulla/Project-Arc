@@ -50,3 +50,34 @@ class SimSettings(BaseModel):
     )
     per_name_depth: int = Field(3, ge=1, description="Candidates per name in the pool")
     daily_loss_rule: bool = Field(True, description="check_daily_loss blocks the day's opens")
+    # E7.17 (loss attribution): sim correctness fixes, on by default.
+    exit_marks: Literal["all_quotes", "entry_chain"] = Field(
+        "all_quotes",
+        description="all_quotes = an open position is marked (and exits) on every two-sided "
+        "closing quote of its legs, as live marks it; entry_chain = only on contracts the "
+        "entry chain keeps (the E7.11 behaviour: a leg wider than max_quoted_spread_pct "
+        "made the position unmarkable, so stops waited and losers rode to expiry)",
+    )
+    splits: Literal["adjust", "ignore"] = Field(
+        "adjust",
+        description="adjust = a whole-number forward split inside the hold follows the "
+        "re-struck contract (strike / r, value x r) and settles on the adjusted close; a "
+        "non-standard adjustment (reverse split, 3:2, spin-off) leaves the candidate "
+        "unsettled. Trend labels and momentum read split-adjusted closes. ignore = E7.11",
+    )
+    # E7.17 counterfactual knobs (attribution runs only; defaults = no change).
+    fill_spread: Literal["quoted", "estimated"] = Field(
+        "quoted",
+        description="estimated = fills (entry and exit) use the cost model's estimated "
+        "spread max(spread_min, spread_pct * mid) instead of the quoted one; selection, "
+        "the spread rule and marks stay quoted",
+    )
+    size_scale: float = Field(
+        1.0, gt=0.0, le=1.0, description="Contracts x scale (floored; < 1 contract = skip)"
+    )
+    max_new_risk_pct_day: float | None = Field(
+        None, gt=0.0, le=1.0, description="Cap on the day's new max loss / equity (None = off)"
+    )
+    exclude_kinds: tuple[str, ...] = Field(
+        (), description="Strategy kinds never opened (structure counterfactuals)"
+    )

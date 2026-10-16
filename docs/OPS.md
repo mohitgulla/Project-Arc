@@ -1622,9 +1622,9 @@ python3 …/arc_analyst.py check-report RUN_DIR/report.md       # ≤ 3,500 char
 python3 …/arc_analyst.py mark RUN_DIR                         # advance the watermark
 python3 …/arc_analyst.py triage A-3 wontfix "why"             # owner: accepted|wontfix|fixed
 python3 …/arc_analyst.py ship A-4 "note"                      # owner: quick change shipped → next run reviews it
-python3 …/arc_analyst.py approve P-2 "note" --approval slack:<ts>  # owner: proposals/P-2.yaml → arc experiment adopt (E21.4)
-python3 …/arc_analyst.py drop P-3 "why"                       # owner
-python3 …/arc_analyst.py reprioritise P-3 "why" [--score X]   # owner: pin to the top / override value
+python3 …/arc_analyst.py approve XP-4 "note" --approval slack:<ts>  # owner: proposals/XP-4.yaml → arc experiment adopt --id XP-4 (E21.4, D121)
+python3 …/arc_analyst.py drop XP-5 "why"                      # owner (XP-5 stays a gap, never reused)
+python3 …/arc_analyst.py reprioritise XP-5 "why" [--score X]  # owner: pin to the top / override value
 python3 …/arc_analyst.py backlog                              # ranked backlog with each value formula
 python3 …/arc_analyst.py reset                                # next run reviews unconditionally
 ```
@@ -1642,8 +1642,8 @@ ranked P-id (or `none: <why>`) or whose `next_slot` misses a blocking
 experiment, a running experiment without `stop_advice`, or a missing status
 line for any of the six standing themes. Obvious config flaws are allowed at
 any N. Owner commands in the report thread: `create A-<n>`, `ship A-<n>`,
-`comment A-<n>`, `wontfix A-<n> <why>`, `accept A-<n>`, `approve P-<n>`,
-`drop P-<n> <why>`, `reprioritise P-<n> <why>`, `rerun`.
+`comment A-<n>`, `wontfix A-<n> <why>`, `accept A-<n>`, `approve XP-<n>`,
+`drop XP-<n> <why>`, `reprioritise XP-<n> <why>`, `rerun`.
 
 ### 5.17 Forward A/B experiment registry (E10.1, D44)
 
@@ -1653,8 +1653,8 @@ Specs live in `config/experiments/live/<id>.yaml`; defaults (alpha 0.05, power
 tunable as `experiments.*` (`!arc config experiments`). The treatment overlay uses
 the same deep-merge format as the backtest overlays in `config/experiments/*.yaml`.
 
-    arc experiment create --spec config/experiments/live/xp1_aa_k3.yaml --owner-approval P-<n>
-    arc experiment register XP-1 --owner-approval P-<n>   # locks sha256(canonical spec); queued if the area is busy
+    arc experiment create --spec config/experiments/live/xp1_aa_k3.yaml --owner-approval XP-<n>
+    arc experiment register XP-1 --owner-approval XP-<n>   # locks sha256(canonical spec); queued if the area is busy
     arc experiment show XP-1 [--json]
     arc experiment verify XP-1          # exit 1 when the stored spec no longer matches the lock
     arc experiment list [--status running]
@@ -1664,7 +1664,7 @@ the same deep-merge format as the backtest overlays in `config/experiments/*.yam
   needs a new id. One `registered`/`running` experiment per area; the next
   queued one is registered when it stops.
 - **Owner approval (D86, E21.2).** `create` and `register` refuse without
-  `--owner-approval <ref>`: `P-<n>` (an Analyst proposal the owner approved in
+  `--owner-approval <ref>`: `XP-<n>` (an Analyst proposal the owner approved in
   #arc-analyst), `slack:<ts>` (the owner's message) or `owner:<note>`. The ref is stored
   in the event `detail` and shown by `arc experiment show`. The refusal names
   `arc experiment adopt` (E21.4), the normal path. Dev cards never create or register
@@ -1696,6 +1696,48 @@ stores one `ExperimentReport` in the append-only `experiment_reports` table:
   A/A's when recorded, else the running sd inflated to its chi² upper bound
   (`experiments.stats.sigma_upper_q`). Win = lower bound > 0 after
   `min_sessions` **and** Sortino non-inferior (paired bootstrap CI vs margin).
+- **Pre-registered SPY adjustment + HAC (E25.7, D119).** A spec may carry
+  `analysis: {covariates: [spy_ret], hac_lag: 5}` (hash-locked; `arc experiment
+  adopt` writes it into every new spec from `experiments.defaults.analysis`; an
+  owner-written spec may omit it). With it, the primary is the intercept `a` of
+  `d_t = a + b·SPY_ret_t` (OLS on the running data, n ≥ 3): **the daily edge on a
+  flat-market day**. A treatment whose only gain is extra market beta (b > 0) in an
+  up-tape is **not** a win; b̂ is in the report per pair (`primary.adjustment.beta`).
+  Its σ is the residual sd × sqrt(f) × sqrt(1 + n·x̄²/Sxx), f = the Bartlett
+  (Newey-West) long-run factor at lag L on the residual autocorrelations (bias-
+  corrected, floored at 1 and at the AR(1)-implied value, so it only widens the CI).
+  Below 2L+2 sessions f is the A/A's recorded f, else `experiments.stats.hac_max_factor`
+  (4). The chi² `sigma_upper_q` inflation still applies to the plug-in residual sd.
+  The mSPRT, Holm and MDE math run unchanged on (â, σ_LR). `primary_unadjusted` keeps
+  the old iid number for transparency. x_t = SPY close-to-close (D117 partial first
+  session: SPY at t0 → close), read from Alpaca daily bars on `data.alpaca_history_feed`
+  by the 16:40 routine and **stored on the report** (`series[].spy_ret`), so
+  `arc experiment report` reproduces it offline (`--spy alpaca` fetches days no
+  stored report has). A day without a SPY return is listed in `covariate_missing`
+  and **the verdict waits** (the daily Slack line says "Verdict on hold"); it never
+  falls back to the unadjusted CI. A spec without `analysis` (XP-1) keeps the D44
+  iid verdict; the report shows the adjusted + HAC numbers as descriptive fields and
+  the A/A stop records raw, adjusted (`sigma_adj`) and long-run (`hac_factor`) σ plus
+  the β spread, which an adjusted ab spec then uses (pre-D119 A/A stops: the running
+  σ). The Sortino secondary, Ti − P lines and breakdowns stay unadjusted. Changing the
+  method of a pre-registered spec is a PR + D# row, not a registry knob.
+- ΔVIX covariate check (D120, E25.9; descriptive, never a verdict). Each report also
+  persists `series[].vix_chg` = VIX close − the previous session's close (vol points,
+  Cboe's free `VIX_History.csv`, fetched once per 16:40 tick; the D117 partial first
+  session has none) and carries `covariate_check` per Ti − C pair and pooled in
+  `calibration`: residual σ of SPY-only vs SPY + ΔVIX on the same sessions, the
+  partial F of ΔVIX given SPY (divided by the primary's long-run factor f), b̂_vix ± SE,
+  and the always-valid CI half-width at n = 20 for each (chi² bound on its own df, so
+  the extra regressor's df loss is priced in). Read it with:
+
+      arc experiment covariate-check XP-1 --db <db> [--spy stored|alpaca] [--vix stored|cboe] [--json]
+
+  (read-only, stores nothing). It prints the pre-registered rule: add `vix_chg` to
+  `experiments.defaults.analysis.covariates` only if, pooled, (1) partial-F p < 0.05,
+  (2) the n = 20 half-width shrinks ≥ 10%, and (3) the 2-covariate type-I sim
+  (`tests/test_experiment_covariate_check.py`, slow) holds; the flip is a separate
+  owner-approved `D120:` PR. `vix_chg` is a legal `analysis.covariates` entry, so a
+  spec may pre-register it (a missing ΔVIX day then holds that spec's verdict).
 - No guardrail (harm) auto-stops (owner, 2026-10-03): only the primary and
   secondary metrics decide. Each arm's drawdown, worst day and order count are
   in the report for the owner, who stops an experiment by hand
@@ -1707,24 +1749,27 @@ stores one `ExperimentReport` in the append-only `experiment_reports` table:
 **Approve → register → owner start (E21.4, D86; D112).** After the owner approves a
 proposal, everything up to `registered` is automatic; the **start is manual**:
 
-    arc experiment adopt P-2 --proposal <P-2.yaml | xp_backlog.json> \
+    arc experiment adopt XP-4 --id XP-4 --proposal <XP-4.yaml | xp_backlog.json> \
         --owner-approval slack:<ts> --db <db> [--dry-run] [--no-pr] [--no-slack] [--json]
     arc experiment verdict XP-11 [--dry-run]     # retry / preview a verdict PR
 
-- **adopt** (the Analyst's `approve P-<n>` runs it on the live store): picks the next free
-  `XP-<n>` across the DB, the committed specs and `origin/main`, fills the defaults from
-  `config/experiments.yaml`, and validates the spec. It must be `ab` with exactly 3
+- **adopt** (the Analyst's `approve XP-<n>` runs it on the live store): with `--id XP-<n>`
+  (D121) it registers under the proposal's reserved id and refuses one already taken in the
+  DB, the committed specs or `origin/main` (the Analyst then re-reserves); without `--id`
+  it picks the next free `XP-<n>` across the same places. It fills the defaults from
+  `config/experiments.yaml` and validates the spec. It must be `ab` with exactly 3
   treatments (D108; any other count is refused, never trimmed), overlays that validate,
   and arms (control + 3) that fit `max_parallel_arms`. A v2- or v3-shaped proposal is
   always written as spec v3 (`spec_version: 3`, `arms.control: {overlay: {}}`), so control
   runs as the flat-start arm `XP-<n>:control`. Then it runs
-  `create` + `register` with `proposal_ref: P-<n>`, which leaves the experiment
+  `create` + `register` with `proposal_ref: XP-<n>`, which leaves the experiment
   `registered`, or `queued` with the reason. It commits
   `config/experiments/live/xp<n>_<slug>.yaml` on branch `xp/<n>` through a PR with
-  `gh pr merge --auto --squash`, and posts one #arc-investor line ("XP-11 registered
-  (P-2), control + 3 treatments, area entries, owner to start after the spec PR merges:
-  `arc experiment start XP-11`" or "… queued behind XP-9").
-  Re-running for the same P-id only retries what is missing, such as a failed PR.
+  `gh pr merge --auto --squash`, and posts one #arc-investor line ("XP-4 registered,
+  control + 3 treatments, area entries, owner to start after the spec PR merges:
+  `arc experiment start XP-4`" or "… queued behind XP-2"; the proposal is named in
+  brackets only when it differs from the registered id).
+  Re-running for the same proposal only retries what is missing, such as a failed PR.
 - **Owner start (D112; the 09:05 `experiments.autostart` routine and its
   `experiments.autostart.*` knobs are removed).** A `registered` experiment waits for
   the owner. The adopt Slack line, the spec PR body and the Analyst's `approve` reply
@@ -1948,7 +1993,7 @@ cards may use `Lane: fast — <reason>` instead. Cards never add files to
 `--owner-approval`), and never add a default-off flag just so an experiment can flip
 it. An idea worth testing goes in the `XP-advisory:` line; the weekly Analyst turns
 leads (those lines, plus `hermes/analyst/idea_seed.yaml`, which holds the retired
-dev drafts) into `P-<n>` proposals with 3 treatments (D108).
+dev drafts) into `XP-<n>` proposals with 3 treatments (D108).
 
 - `arc experiment report XP-<n>` lists the strategy-path commits that landed since the
   experiment's t0 under "Changes shipped to all arms during this run" (local
@@ -2014,16 +2059,22 @@ the tick spawns `arc experiment arms-tick` after every control loop chain.
 routine, the #arc-investor day thread gets one status per running experiment (also
 sent to the channel):
 
-    [XP-30] Day 14/40
+    *:microscope: [XP-30] Day 14/40*
+
     T2 leads control by +0.05%/day (p 1.00 Holm); T1 and T3 within noise after 14 sessions.
+
+The per-arm lines below are on the Tower's Experiments page (Slack shows only the
+title and headline, owner 2026-10-16):
+
     T1 − C • P&L ∆ +0.03%/day (p 1.00 Holm) • Sortino ∆ +1.62 (p 0.04)
     T2 − C • P&L ∆ +0.05%/day (p 1.00 Holm) • Sortino ∆ +2.91 (p 0.07)
     T3 − C • P&L ∆ +0.01%/day (p 1.00 Holm) • Sortino ∆ +0.48 (p 0.19)
 
 - `Day N/max`: paired sessions so far (every arm has an EOD snapshot) over the spec's
   max. A session an arm missed is skipped and listed under `missing` in the report.
-- The headline (bold italic in Slack) says where the treatments stand: decided arms
-  first, else the arm with the largest gap, then the rest.
+- The headline (bold italic in Slack, up to 300 chars like the Day Recap, D109) says
+  where the treatments stand: decided arms first, else the arm with the largest gap,
+  then the rest.
 - `Ti − C`: treatment minus the flat control arm (spec v3). `P&L ∆` is the mean of
   d_t, % of t0 equity per day, with its always-valid p, Holm-adjusted across the K
   treatments. On an A/A it should hover around 0 with a large p. A v1/v2 report
@@ -3124,3 +3175,66 @@ loop (back 12:20), CAKE / XOM again after 13:10 (back 15:00), MU after 14:00 (ba
 (0–20; 0 = off, prompt byte-identical) and `stale_pick_suppress_loops` (1–40). Shipped on
 (D86/D116). Rollback: `!arc config set stale_pick_after_loops 0`. Never a gate input.
 Check: `select subject, reason_text, at from decisions where reason_code='stale_pick_suppressed'`.
+
+## E7.13 option-history top-up + `theta_backfill` IV (D84)
+
+**After the paid month the cache stays current on the free tier, NBBO only.** ThetaData's
+free tier serves the EOD report (closing NBBO, sizes, last trade) one year back at about
+20 req/min, and **no open interest**. Every session fetched after the Value subscription
+ends has quotes but no OI: OI-based liquidity scores (`d9_atm_oi`, `oi_near_atm`,
+`liquidity_quarterly`) stop at the cancel date, and a backtest that needs OI after it falls
+back to its quoted/volume rules. Re-subscribing and setting `history_topup.theta_tier:
+value` fills OI from then on.
+
+**Nightly job: `history.topup`** (20:30 ET, trading days, background lane, `ttl: 3h`).
+Requires the Theta Terminal running on the Mac (`http://127.0.0.1:25503`).
+
+- Names: the `history_topup.universe` checkpoint (`c500`) of the latest E7.7 pull list.
+- Per name: the sessions after its last cached one, through the last completed session
+  (`completed_session`, 16:30 ET cutoff), never before the tier's first servable day. One
+  request covers a short run of sessions (E7.6 resumable download), so a normal night is
+  one request per name (the card's ~25 min for 500 names assumed 3 s per request).
+- Order: behind-first (the oldest cache end goes first), then pull-list priority. No new
+  name starts after `max_runtime_s` (2400 s); the rest are `deferred` and go first next
+  night. A missed night needs no catch-up logic: each name resumes from its own last
+  session. Measured on the free tier 2026-10-15: one 3-session request took 9 s (AAPL)
+  to 38 s (SPY), so a night may cover only part of the 500; since one request fetches
+  up to 7 missing sessions, a name updated every other night costs the same per run and
+  the cache still keeps up (check `deferred` in the run summary).
+- Then: raw daily close + volume for the fetched names (Alpaca SIP, batched), and the new
+  sessions' `theta_backfill` IV points for names whose series is already seeded.
+- Terminal not listening: run `skipped` with `terminal_down`, and one `[Routines]` notice
+  per day (`routine_state history_topup:terminal_down_notice`). Never a failure. Every
+  fetched name erroring is a failure (the usual `[Ops]` alert).
+
+Summary examples: `500 names current through 2026-10-15`, `498/500 behind names topped
+up through 2026-10-15, 498 sessions added · theta_backfill +498 IV rows`. Knobs: the
+`history_topup:` block in `config/routines.yaml` (change by PR; not registry-tunable).
+
+    .venv/bin/arc routines run history.topup --db <scratch> --no-slack   # rehearse
+
+**IV source `theta_backfill`.** IV30 per ticker-day from the cached ThetaData quoted chains
+(NBBO mids, 2020 → now), with the live cm30 method: the E7.16 `data/option_stats/daily`
+value as-is, and sessions newer than that file computed with the same `ticker_stats`
+code (method `theta_quoted_cm30` / `theta_quoted_cm30_topup`). A session with a close but
+no quoted expiry in 7–75 DTE gets an `iv_skips` row; one whose close isn't cached yet is
+retried. Rows are append-only and never rewritten.
+
+Our series takes, per day, the first source of `iv_series_sources` that has a row:
+
+    iv_series_sources: [alpaca_cm30, theta_backfill, alpaca_backfill]   # ArcSettings default
+
+`optionstrategist` is never part of it. Change the order by PR; it is not
+registry-tunable. The pre-market `iv.backfill` counts every series source, so a name
+seeded by `theta_backfill` is no longer short and costs no Alpaca requests.
+
+**Seed (owner-approved one-off on the live DB; rehearse on a copy first).** No network:
+
+    sqlite3 data/arc.db ".backup <scratch>/arc-theta.db"
+    .venv/bin/arc iv backfill --source theta --universe c125 --db <scratch>/arc-theta.db
+    .venv/bin/arc iv backfill --source theta --universe c500     # live, after approval
+
+Also `--tickers A,B|watch` or `--tickers-file F` (one per line, `#` comments), plus
+`--since/--until` and `--data-dir`. The report prints rows per source before → after.
+Run `arc history stats` (E7.16) first for any name whose `option_stats/daily` is missing;
+the seed computes those sessions itself otherwise, which is slower.

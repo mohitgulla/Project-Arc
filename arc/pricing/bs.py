@@ -426,6 +426,15 @@ def price_vectorized(
             return np.asarray(S * df_q * Nd1 - K * df_r * Nd2)
         return np.asarray(K * df_r * (1.0 - Nd2) - S * df_q * (1.0 - Nd1))
 
+    is_call = np.char.equal(flag, "c")
+    if is_call.ndim == 0:
+        # E7.14: one leg kind for every element (the exit model's 5000-path re-price).
+        # Same expressions as below, so the result is bit-identical; skips the other
+        # branch and the per-element select.
+        if bool(is_call):
+            return np.asarray(S * df_q * Nd1 - K * df_r * Nd2)
+        return np.asarray(K * df_r * (1.0 - Nd2) - S * df_q * (1.0 - Nd1))
+
     call_price = S * df_q * Nd1 - K * df_r * Nd2
     put_price = K * df_r * (1.0 - Nd2) - S * df_q * (1.0 - Nd1)
     return np.where(is_call, call_price, put_price)

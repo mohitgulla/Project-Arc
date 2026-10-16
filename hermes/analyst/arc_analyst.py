@@ -23,8 +23,8 @@ Cron pre-run gate (no args):
      ``ExperimentReport`` with arm / regime / structure breakdowns, queue per
      area), the newest ``docs/RESEARCH/*.md`` and the A-id ledger, and print the
      context (<= 30k chars; full text in ``RUN_DIR/context.md``).
-     E21.3 (D86) adds: the XP backlog (``P-<n>``, statuses synced against the
-     registry by ``proposal_ref``), ranked by value; arm capacity per area; the
+     E21.3 (D86) adds: the XP backlog (``XP-<n>`` reserved when proposed, D121; statuses
+     synced against the registry by ``proposal_ref``), ranked by value; arm capacity per area; the
      sessions-needed grid at K=3 (``arc experiment plan --k 3``, D108); the idea-seed leads
      not yet proposed or dropped; quick changes shipped since the last run (to
      review); and strategy PRs merged since the last run with their XP-advisory line.
@@ -35,19 +35,20 @@ Cron pre-run gate (no args):
 
 Agent subcommands:
   record RUN_DIR              validate RUN_DIR/findings.json, reconcile into the ledger
-                              (A-ids) and the XP backlog (P-ids, xp_backlog.json)
+                              (A-ids) and the XP backlog (XP-ids, xp_backlog.json)
   mark RUN_DIR                advance the watermark to this run (only after record)
   check-report FILE           the Slack report respects the size cap and sections
   check-seed [FILE]           validate the idea seed (default: the installed copy)
 Owner subcommands (run by an interactive Hermes session on the owner's thread reply):
   triage A-ID STATUS [NOTE]   STATUS in accepted|wontfix|fixed
   ship A-ID [NOTE]            a quick change shipped: prints how to apply it; next run reviews
-  approve P-ID [NOTE] --approval slack:<ts>
+  approve XP-ID [NOTE] --approval slack:<ts>
                               proposal approved: freezes the spec and runs
-                              `arc experiment adopt` on the live store (E21.4): XP id,
+                              `arc experiment adopt --id XP-ID` on the live store (E21.4):
                               spec PR (auto-merge), registered / queued
-  drop P-ID WHY               drop a proposal
-  reprioritise P-ID WHY [--score X]   pin to the top of the ranking (or override its score)
+  drop XP-ID WHY              drop a proposal (its number is never reused)
+  reprioritise XP-ID WHY [--score X]  pin to the top of the ranking (or override its score)
+                              (P-<n> ids are retired, D121: these reply with the XP id)
   backlog                     print the ranked backlog
   reset                       forget the watermark; next run reviews unconditionally
 
@@ -94,7 +95,7 @@ SECRET_PREFIXES = (
 )
 
 SEVERITIES = ("blocker", "high", "medium", "low", "info")
-# D86 (E21.3): `quick-change` (ship now, no XP) and `xp-proposal` (a P-<n> backlog entry)
+# D86 (E21.3): `quick-change` (ship now, no XP) and `xp-proposal` (an XP-<n> backlog entry)
 # replace the old `recommendation` + `forward_spec`.
 CATEGORIES = ("quick-change", "xp-proposal", "flaw", "theme", "data-gap")
 ACTIONS = ("new-card", "comment-on-card", "owner-decision", "no-action")
@@ -154,16 +155,25 @@ SPEC_KEYS = (
     "max_sessions",
     "proposed_by",
     "backtest_ref",
+    "analysis",  # D119: pre-registered SPY adjustment + HAC (adopt fills the default)
 )
 EXPERIMENT_ID_RE = re.compile(r"^XP-[1-9]\d*$")
 # Statuses the weekly report must cover (terminal promoted/rejected ones are history).
 REPORTABLE = ("draft", "queued", "registered", "running", "stopped")
 
-# ---- E21.3 (D86): XP proposals (P-<n>) in the Analyst-owned backlog ----
+# ---- E21.3 (D86): XP proposals in the Analyst-owned backlog ----
+# D121: a proposal reserves its XP-<n> when it is proposed (the next free number across the
+# registry DB, config/experiments/live/, open xp/<n> spec PRs and the backlog itself) and
+# registers under that same id. P-<n> (D86) is retired: kept only as `legacy_id` on
+# migrated entries and read in old `proposal_ref` / `owner_approval` rows.
 BACKLOG_FILE = "xp_backlog.json"
+BACKLOG_VERSION = 2  # v2 (D121): XP-<n> ids, `next_id` = the next free XP number
 PROPOSALS_DIR = "proposals"  # approved specs: the input of `arc experiment adopt` (E21.4)
-PROPOSAL_ID_RE = re.compile(r"^P-[1-9]\d*$")
+PROPOSAL_ID_RE = re.compile(r"^XP-[1-9]\d*$")
+LEGACY_PROPOSAL_ID_RE = re.compile(r"^P-[1-9]\d*$")
+PROPOSAL_REF_RE = re.compile(r"^(?:XP|P)-[1-9]\d*$")  # what old and new events may carry
 BACKTEST_ID_RE = re.compile(r"^BT-[1-9]\d*$")
+SPEC_PR_BRANCH_RE = re.compile(r"^xp/([1-9]\d*)(?:-|$)")  # adopt's xp/<n>, verdicts xp/<n>-…
 BACKLOG_STATUSES = ("proposed", "approved", "registered", "running", "concluded", "dropped")
 BACKLOG_OPEN = ("proposed", "approved", "registered", "running")
 BACKLOG_RANKED = ("proposed", "approved")  # not in the DB yet: what next_experiment picks from
@@ -178,7 +188,7 @@ PROPOSAL_SPEC_VERSION = 3
 # A proposal's spec: the live v2 format minus what approval fills (id, proposed_by) and what
 # `arc experiment create` fills from config/experiments.yaml (alpha, power, mde, sessions).
 PROPOSAL_SPEC_FORBIDDEN = {
-    "id": "the id is assigned when the owner approves (P-<n> -> XP-<n>); omit it",
+    "id": "the backlog reserves its XP-<n> when it records the proposal (D121); omit it",
     "proposed_by": "filled at adoption; omit it",
     "alpha": "filled from config/experiments.yaml; omit it",
     "power": "filled from config/experiments.yaml; omit it",
@@ -343,7 +353,7 @@ class Paths:
 
     @property
     def backlog(self) -> Path:
-        """E21.3 (D86): the Analyst-owned XP backlog (P-<n>); not the repo, not the DB."""
+        """E21.3 (D86): the Analyst-owned XP backlog (XP-<n>, D121); not the repo or DB."""
         return self.home / BACKLOG_FILE
 
     @classmethod
@@ -624,12 +634,12 @@ def _treatment_count(spec: dict) -> int:
 
 def _proposal_ref(detail) -> str | None:
     """The Analyst proposal an experiment event names (E21.4 ``proposal_ref``, or the D86
-    ``owner_approval`` ref when the owner approved a ``P-<n>``)."""
+    ``owner_approval`` ref naming a proposal: ``XP-<n>``, or a legacy ``P-<n>``)."""
     if not isinstance(detail, dict):
         return None
     for key in ("proposal_ref", "owner_approval"):
         ref = str(detail.get(key) or "")
-        if PROPOSAL_ID_RE.match(ref):
+        if PROPOSAL_REF_RE.match(ref):
             return ref
     return None
 
@@ -925,12 +935,12 @@ def _is_num(v) -> bool:
 
 
 def validate_proposal_spec(spec, where: str = "proposal.spec") -> list[str]:
-    """A ``P-<n>`` draft spec (D86, D108): the ``config/experiments/live/`` format, no ``id``.
+    """An XP proposal's draft spec (D86, D108): the ``config/experiments/live/`` format, no ``id``.
 
     Mirrors ``arc.experiments.models.ExperimentSpec`` (extra=forbid, ab, control empty), plus
     D108's shape: control + exactly 3 treatments ``t1..t3``, every overlay on the SAME leaf set
     (one variable at 3 levels, or 3 alternatives of one mechanism), no two arms alike. The
-    owner's ``approve P-<n>`` assigns the id and writes it as spec v3 (control runs as its
+    owner's ``approve XP-<n>`` writes it under its reserved id as spec v3 (control runs as its
     own flat arm); ``arc experiment adopt`` re-validates it in full.
     """
     if not isinstance(spec, dict):
@@ -1350,16 +1360,159 @@ def seed_lines(ideas: list[dict], errors: list[str], disposed: dict | None = Non
 
 
 def empty_backlog() -> dict:
-    return {"version": 1, "next_id": 1, "items": {}, "seed": {}}
+    return {"version": BACKLOG_VERSION, "next_id": 1, "items": {}, "seed": {}}
 
 
-def load_backlog(path: Path) -> dict:
+def _id_num(xid: str) -> int:
+    """The number of an ``XP-<n>`` / ``P-<n>`` id (sort key; 0 for anything else)."""
+    head, _, num = str(xid).partition("-")
+    return int(num) if head in ("XP", "P") and num.isdigit() else 0
+
+
+def backlog_numbers(backlog: dict) -> set[int]:
+    """Every XP number the backlog holds or ever held: entry ids (dropped ones too) and
+    ids an entry gave up on a re-reservation. A reserved number is never reused (D121)."""
+    out = set()
+    for e in backlog["items"].values():
+        for xid in [e.get("id"), *(e.get("previous_ids") or [])]:
+            if PROPOSAL_ID_RE.match(str(xid or "")):
+                out.add(_id_num(xid))
+    return out
+
+
+def reserve_proposal_id(backlog: dict, used=()) -> str:
+    """D121: the next free ``XP-<n>``: above every number in *used* (registry DB,
+    ``config/experiments/live/``, open ``xp/<n>`` spec PRs), the backlog's own ids and its
+    ``next_id`` high-water mark. Advances ``next_id``, so a dropped proposal leaves a gap."""
+    n = max({*used, *backlog_numbers(backlog), int(backlog.get("next_id") or 1) - 1}) + 1
+    backlog["next_id"] = n + 1
+    return f"XP-{n}"
+
+
+def migrate_backlog(backlog: dict, used=(), when: str = "") -> list[str]:
+    """v1 -> v2 (D121): every ``P-<n>`` entry gets an ``XP-<n>`` and keeps ``legacy_id``.
+    An entry already adopted keeps its registry id; the rest reserve the next free number
+    in ``P-<n>`` order. Seed and ``next_experiment`` references follow. Idempotent: a v2
+    backlog is left alone. Returns ``P-<n> -> XP-<m>`` lines."""
+    if int(backlog.get("version") or 1) >= BACKLOG_VERSION:
+        return []
+    items = sorted(backlog["items"].values(), key=lambda e: _id_num(e.get("id", "")))
+    mapping: dict[str, str] = {}
+    for e in items:  # adopted entries first: their number is fixed by the registry
+        old = str(e.get("id") or "")
+        if LEGACY_PROPOSAL_ID_RE.match(old) and PROPOSAL_ID_RE.match(
+            str(e.get("experiment_id") or "")
+        ):
+            mapping[old] = e["experiment_id"]
+    taken = {*used, *(_id_num(x) for x in mapping.values())}
+    backlog["next_id"] = max([*taken, 0]) + 1
+    for e in items:
+        old = str(e.get("id") or "")
+        if LEGACY_PROPOSAL_ID_RE.match(old) and old not in mapping:
+            mapping[old] = reserve_proposal_id(backlog, taken)
+    out = []
+    for e in items:
+        old = str(e.get("id") or "")
+        if old in mapping:
+            e["legacy_id"], e["id"] = old, mapping[old]
+            _hist(e, when, "migrated", legacy_id=old, id=e["id"], by="D121")
+            out.append(f"{old} -> {e['id']}")
+    for s in (backlog.get("seed") or {}).values():
+        if isinstance(s, dict) and s.get("proposal") in mapping:
+            s["proposal"] = mapping[s["proposal"]]
+    nxt = backlog.get("next_experiment")
+    if isinstance(nxt, dict) and str(nxt.get("value") or "") in mapping:
+        nxt["value"] = mapping[nxt["value"]]
+    backlog["version"] = BACKLOG_VERSION
+    return out
+
+
+def load_backlog(path: Path, used=(), when: str = "") -> dict:
+    """The backlog, migrated to v2 (D121) in memory; *used* = the XP numbers taken outside
+    it (:func:`used_xp_numbers`), so a migrated entry never takes a registered id."""
     data = load_json(path, None)
     if not isinstance(data, dict):
         return empty_backlog()
     for k, v in empty_backlog().items():
-        data.setdefault(k, v)
+        if k != "version":
+            data.setdefault(k, v)
+    data.setdefault("version", 1)
+    migrate_backlog(data, used, when)
     return data
+
+
+def spec_numbers(repo: Path) -> set[int]:
+    """XP numbers in ``config/experiments/live/`` (specs, verdicts, history): file names
+    (``xp<n>_….yaml``, ``XP-<n>.yaml``) and their ``id:`` / ``experiment_id:`` lines."""
+    out: set[int] = set()
+    base = repo / "config" / "experiments" / "live"
+    for d in (base, base / "verdicts", base / "history"):
+        for f in sorted(d.glob("*")) if d.is_dir() else ():
+            if not f.is_file() or f.suffix not in (".yaml", ".yml", ".json"):
+                continue
+            m = re.match(r"^(?:xp|XP-)([1-9]\d*)(?:[_.]|$)", f.name)
+            if m:
+                out.add(int(m.group(1)))
+            for m in re.finditer(
+                r'^\s*"?(?:id|experiment_id)"?\s*:\s*"?XP-([1-9]\d*)\b', f.read_text(), re.M
+            ):
+                out.add(int(m.group(1)))
+    return out
+
+
+def spec_pr_numbers(p: Paths) -> set[int]:
+    """XP numbers of open spec PRs (branch ``xp/<n>``, adopt's publisher). Best effort:
+    no ``gh``, no network or no JSON gives ``set()``."""
+    if not p.gh:
+        return set()
+    try:
+        r = subprocess.run(
+            [*p.gh, "pr", "list", "--state", "open", "--limit", "200", "--json", "headRefName"],
+            cwd=p.repo,
+            env=clean_env(),  # read-only `gh` (keychain auth), like merged_pr_lines
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        prs = json.loads(r.stdout) if r.returncode == 0 else []
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return set()
+    out = set()
+    for pr in prs if isinstance(prs, list) else []:
+        m = SPEC_PR_BRANCH_RE.match(str((pr or {}).get("headRefName") or ""))
+        if m:
+            out.add(int(m.group(1)))
+    return out
+
+
+def registry_numbers(db: Path) -> set[int]:
+    """XP numbers in the registry (``experiments``) of *db*, opened ``mode=ro``; ``set()``
+    for a missing store or one from before E10."""
+    if not db.is_file():
+        return set()
+    try:
+        conn = sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro", uri=True)
+        try:
+            if not _has_table(conn, "experiments"):
+                return set()
+            ids = [r[0] for r in conn.execute("SELECT DISTINCT experiment_id FROM experiments")]
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return set()
+    return {_id_num(x) for x in ids if EXPERIMENT_ID_RE.match(str(x))}
+
+
+def used_xp_numbers(p: Paths, registry_ids=None) -> set[int]:
+    """D121: the XP numbers taken outside the backlog: the registry (*registry_ids*, the
+    gate's snapshot; None = read the live store ``mode=ro``), the committed specs and the
+    open ``xp/<n>`` spec PRs."""
+    if registry_ids is None:
+        reg = registry_numbers(p.live_db)
+    else:
+        reg = {_id_num(x) for x in registry_ids if EXPERIMENT_ID_RE.match(str(x))}
+    return reg | spec_numbers(p.repo) | spec_pr_numbers(p)
 
 
 def _hist(entry: dict, when: str, event: str, **extra) -> None:
@@ -1368,6 +1521,47 @@ def _hist(entry: dict, when: str, event: str, **extra) -> None:
 
 def backlog_by_id(backlog: dict, pid: str) -> dict | None:
     return next((e for e in backlog["items"].values() if e.get("id") == pid), None)
+
+
+def backlog_by_ref(backlog: dict, ref: str) -> dict | None:
+    """The entry a registry ``proposal_ref`` names: its ``XP-<n>``, or the ``legacy_id``
+    ``P-<n>`` an old event row still carries (read alias, D121)."""
+    return backlog_by_id(backlog, ref) or next(
+        (e for e in backlog["items"].values() if ref and e.get("legacy_id") == ref), None
+    )
+
+
+def rereserve_collisions(backlog: dict, used, when: str) -> list[str]:
+    """D121: a proposed/approved entry whose reserved number got taken outside the backlog
+    (an owner-made spec, a hand ``create``) moves to the next free ``XP-<n>``; the old id
+    goes to ``previous_ids`` (never reused). An approval does not carry over: the owner
+    approved the old id. Returns ``XP-<a> -> XP-<b>`` lines."""
+    out = []
+    taken = set(used)
+    for e in sorted(backlog["items"].values(), key=lambda e: _id_num(e["id"])):
+        if e.get("status") not in BACKLOG_RANKED or e.get("experiment_id") == e["id"]:
+            continue
+        if _id_num(e["id"]) not in taken:
+            continue
+        old = e["id"]
+        e.setdefault("previous_ids", []).append(old)
+        e["id"] = reserve_proposal_id(backlog, taken)
+        if e["status"] == "approved":
+            e["status"] = "proposed"
+        _hist(e, when, "re-reserved", previous_id=old, id=e["id"], status=e["status"])
+        out.append(f"{old} -> {e['id']} (its number was taken outside the backlog)")
+    return out
+
+
+def legacy_redirect(backlog: dict, pid: str) -> str | None:
+    """``approve|drop|reprioritise P-<n>``: the reply naming the XP id to use (D121), or
+    None when *pid* is not a retired ``P-<n>``."""
+    if not LEGACY_PROPOSAL_ID_RE.match(pid or ""):
+        return None
+    entry = backlog_by_ref(backlog, pid)
+    if entry is None:
+        return f"P-ids are retired (D121): use XP-<n>; no proposal was {pid}"
+    return f"P-ids are retired (D121): use {entry['id']} ({pid} is now {entry['id']})"
 
 
 def ranked_backlog(backlog: dict, statuses: tuple = BACKLOG_RANKED) -> list[dict]:
@@ -1384,7 +1578,7 @@ def ranked_backlog(backlog: dict, statuses: tuple = BACKLOG_RANKED) -> list[dict
             0 if e.get("pinned") else 1,
             "" if not e.get("pinned") else _neg_text(e["pinned"].get("at", "")),
             -effective_score(e),
-            int(e["id"][2:]),
+            _id_num(e["id"]),
         ),
     )
 
@@ -1406,7 +1600,7 @@ def flag_needs_rewrite(backlog: dict, when: str) -> list[str]:
     the ranking, cannot be ``next_experiment`` or approved, and the Analyst re-proposes the
     same key with three treatments (which clears the flag). Returns change lines."""
     out = []
-    for e in sorted(backlog["items"].values(), key=lambda e: int(e["id"][2:])):
+    for e in sorted(backlog["items"].values(), key=lambda e: _id_num(e["id"])):
         if e.get("status") not in BACKLOG_RANKED or e.get("needs_rewrite"):
             continue
         got = _spec_treatments(e.get("spec"))
@@ -1424,8 +1618,9 @@ def flag_needs_rewrite(backlog: dict, when: str) -> list[str]:
 
 
 def sync_backlog(backlog: dict, overview: list[dict], when: str) -> list[str]:
-    """Statuses from the registry: the experiment whose events name ``proposal_ref`` P-<n>
-    (E21.4) moves its entry to registered / running / concluded. Returns change lines."""
+    """Statuses from the registry: the experiment whose events name ``proposal_ref`` (its
+    ``XP-<n>``, or a legacy ``P-<n>`` alias, D121) moves its entry to registered / running /
+    concluded (E21.4). Returns change lines."""
     status_map = {
         "draft": "approved",
         "queued": "registered",
@@ -1436,7 +1631,7 @@ def sync_backlog(backlog: dict, overview: list[dict], when: str) -> list[str]:
         "rejected": "concluded",
     }
     out = []
-    # several experiments can cite one P-<n> (a stopped run + its re-run): the most live wins
+    # several experiments can cite one proposal (a stopped run + its re-run): the most live wins
     live_rank = {"running": 0, "registered": 1, "queued": 2, "draft": 3}
     best: dict[str, tuple] = {}
     for i, e in enumerate(overview):
@@ -1447,7 +1642,7 @@ def sync_backlog(backlog: dict, overview: list[dict], when: str) -> list[str]:
         if ref not in best or key < best[ref][0]:
             best[ref] = (key, e)
     for ref, (_, e) in sorted(best.items()):
-        entry = backlog_by_id(backlog, ref)
+        entry = backlog_by_ref(backlog, ref)
         if entry is None or entry.get("status") == "dropped":
             continue
         new = status_map.get(e["status"], entry["status"])
@@ -1471,7 +1666,7 @@ def backlog_lines(backlog: dict, overview: list[dict], max_arms: int) -> list[st
         if e.get("status") in BACKLOG_RANKED and e.get("needs_rewrite")
     ]
     if not ranked and not live and not rewrite:
-        return ["- empty (no P-<n> yet: propose from the seed leads or live buckets n >= 20)"]
+        return ["- empty (no XP proposal yet: propose from the seed leads or live buckets n >= 20)"]
     out = []
     for rank, e in enumerate(ranked, 1):
         spec = e.get("spec") or {}
@@ -1488,7 +1683,7 @@ def backlog_lines(backlog: dict, overview: list[dict], max_arms: int) -> list[st
             out.append(f"  {name}: {json.dumps(ov, sort_keys=True)}")
     for e in live:
         out.append(f"- {e['id']} [{e['status']}] -> {e.get('experiment_id')} (in the registry)")
-    for e in sorted(rewrite, key=lambda e: int(e["id"][2:])):
+    for e in sorted(rewrite, key=lambda e: _id_num(e["id"])):
         spec = e.get("spec") or {}
         out.append(
             f"- {e['id']} [{e['status']}, NEEDS REWRITE, not ranked] {spec.get('area')}: "
@@ -1609,7 +1804,7 @@ def _validate_experiment_lines(
     ranked = ranked_backlog(backlog_after)
     if not nxt:
         errs.append(
-            "next_experiment is required: a P-<n> from the ranked backlog, or 'none: <why>'"
+            "next_experiment is required: an XP-<n> from the ranked backlog, or 'none: <why>'"
         )
         return errs
     if nxt.lower().startswith("none"):
@@ -1620,12 +1815,12 @@ def _validate_experiment_lines(
     if entry is not None and entry.get("needs_rewrite"):
         errs.append(
             f"next_experiment {nxt} needs a rewrite (D108: control + exactly {K_TREATMENTS} "
-            f"treatments); re-propose its key first, or name another P-<n>"
+            f"treatments); re-propose its key first, or name another XP-<n>"
         )
         return errs
     if entry is None or entry.get("status") not in BACKLOG_RANKED:
         errs.append(
-            f"next_experiment {nxt!r} must be a proposed/approved P-<n> in the backlog "
+            f"next_experiment {nxt!r} must be a proposed/approved XP-<n> in the backlog "
             "(after this run's proposals and drops), or 'none: <why>'"
         )
         return errs
@@ -1741,10 +1936,17 @@ def _validate_backlog_moves(
 
 
 def apply_backlog(
-    backlog: dict, doc: dict, run: str, when: str, finding_ids: dict | None = None
+    backlog: dict,
+    doc: dict,
+    run: str,
+    when: str,
+    finding_ids: dict | None = None,
+    used=(),
 ) -> dict:
-    """Append/update ``P-<n>`` entries from this run's xp-proposals, then drops. Idempotent:
-    re-applying the same doc adds no entry and no history line."""
+    """Append/update ``XP-<n>`` entries from this run's xp-proposals, then drops. Idempotent:
+    re-applying the same doc adds no entry and no history line. A new entry reserves the
+    next free XP number above *used* (registry, specs, open spec PRs) and the backlog's own
+    ids (D121, :func:`reserve_proposal_id`)."""
     finding_ids = finding_ids or {}
     items = backlog["items"]
     out: dict[str, list] = {"new": [], "updated": [], "dropped": [], "seed_dropped": []}
@@ -1771,10 +1973,8 @@ def apply_backlog(
             fields["finding_id"] = finding_ids[f["key"]]
         entry = items.get(f["key"])
         if entry is None:
-            n = backlog.get("next_id", 1)
-            backlog["next_id"] = n + 1
             entry = items[f["key"]] = {
-                "id": f"P-{n}",
+                "id": reserve_proposal_id(backlog, used),
                 "key": f["key"],
                 "status": "proposed",
                 "created": when,
@@ -1852,12 +2052,15 @@ def validate_findings(
     seed_ids: frozenset = frozenset(),
     max_arms: int = MAX_PARALLEL_ARMS_DEFAULT,
     studies: list | None = None,
+    used=(),
 ) -> list[str]:
     errs: list[str] = []
     studies = studies or []
     prev_themes = prev_themes or {}
     experiments = experiments or []
     backlog = backlog if backlog is not None else empty_backlog()
+    # D121: registry ids are taken; a new proposal reserves above them (as `record` does)
+    used = {*used, *(_id_num(str(e.get("id") or "")) for e in experiments)} - {0}
     if doc.get("verdict") not in ("quiet", "findings"):
         errs.append("verdict must be 'quiet' or 'findings'")
     findings, resolved = doc.get("findings", []), doc.get("resolved", [])
@@ -1925,7 +2128,7 @@ def validate_findings(
     after = None
     if not errs:
         after = json.loads(json.dumps(backlog))
-        apply_backlog(after, doc, "check", "")
+        apply_backlog(after, doc, "check", "", used=used)  # the XP ids `record` reserves
         n_open = sum(1 for e in after["items"].values() if e.get("status") in BACKLOG_OPEN)
         if n_open > BACKLOG_CAP:
             errs.append(
@@ -2577,11 +2780,12 @@ def write_study_spec(run_dir: Path, sid: str, spec: dict, f: dict, aid: str, now
 
 
 def write_proposal_spec(p: Paths, entry: dict) -> Path:
-    """An approved ``P-<n>``'s spec, the input of ``arc experiment adopt`` (E21.4). JSON is
-    valid YAML (stdlib only: no YAML writer). The id stays a placeholder: adopt takes the
-    next free ``XP-<n>``. D108: written as spec v3, control an empty overlay (its own arm)."""
+    """An approved ``XP-<n>``'s spec, the input of ``arc experiment adopt`` (E21.4). JSON is
+    valid YAML (stdlib only: no YAML writer). It carries the reserved id (D121): adopt
+    registers it under that same ``XP-<n>`` (``--id``). D108: written as spec v3, control
+    an empty overlay (its own arm)."""
     spec = {
-        "id": "XP-<next>",
+        "id": entry["id"],
         "kind": "ab",
         **entry["spec"],
         "spec_version": PROPOSAL_SPEC_VERSION,
@@ -2594,9 +2798,9 @@ def write_proposal_spec(p: Paths, entry: dict) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         f"# APPROVED Arc Analyst proposal {entry['id']} ({entry['key']}).\n"
-        "# `arc experiment adopt` (E21.4) assigns the XP id, registers it and commits the\n"
-        f"# spec: arc experiment adopt {entry['id']} --proposal <this file> "
-        "--owner-approval slack:<ts>  (D86)\n"
+        "# `arc experiment adopt` (E21.4) registers it under its reserved id (D121) and\n"
+        f"# commits the spec: arc experiment adopt {entry['id']} --id {entry['id']} "
+        "--proposal <this file> --owner-approval slack:<ts>  (D86)\n"
         + json.dumps(spec, indent=2, sort_keys=True)
         + "\n"
     )
@@ -2611,10 +2815,13 @@ def _seed_ids(p: Paths) -> frozenset:
 def cmd_record(p: Paths, run_dir: Path, now: dt.datetime) -> int:
     doc = json.loads((run_dir / "findings.json").read_text())
     ledger = load_json(p.ledger, {"next_id": 1, "items": {}})
-    backlog = load_backlog(p.backlog)
     state = load_json(p.state, {})
     meta = load_json(run_dir / "metrics.json", {})
     experiments = meta.get("experiments", [])
+    # D121: the numbers taken outside the backlog (the gate's registry snapshot, the specs,
+    # open xp/<n> PRs): a new proposal reserves above them
+    used = used_xp_numbers(p, [e["id"] for e in experiments])
+    backlog = load_backlog(p.backlog, used, iso(now))
     max_arms = int(meta.get("max_parallel_arms") or MAX_PARALLEL_ARMS_DEFAULT)
     bt_meta = meta.get("backtest") or {}
     studies = bt_meta.get("studies") or []
@@ -2623,6 +2830,7 @@ def cmd_record(p: Paths, run_dir: Path, now: dt.datetime) -> int:
         [{**e, "experiment_id": e["id"]} for e in experiments],
         iso(now),
     )
+    rereserve_collisions(backlog, used, iso(now))
     flag_needs_rewrite(backlog, iso(now))  # D108: K=4 drafts leave the ranking
     errs = validate_findings(
         doc,
@@ -2633,6 +2841,7 @@ def cmd_record(p: Paths, run_dir: Path, now: dt.datetime) -> int:
         seed_ids=_seed_ids(p),
         max_arms=max_arms,
         studies=studies,
+        used=used,
     )
     if errs:
         print("findings.json rejected (ledger and backlog unchanged):\n- " + "\n- ".join(errs))
@@ -2658,7 +2867,7 @@ def cmd_record(p: Paths, run_dir: Path, now: dt.datetime) -> int:
     reviews = apply_reviews(ledger, doc, run_dir.name, iso(now))
     save_json(p.ledger, ledger)
     finding_ids = {k: it["id"] for k, it in items.items()}
-    moves = apply_backlog(backlog, doc, run_dir.name, iso(now), finding_ids)
+    moves = apply_backlog(backlog, doc, run_dir.name, iso(now), finding_ids, used)
     backlog["next_experiment"] = {
         "value": doc.get("next_experiment"),
         "slot": doc.get("next_slot"),
@@ -2750,9 +2959,79 @@ def cmd_ship(p: Paths, aid: str, note: str, now: dt.datetime) -> int:
     return 0
 
 
-def _owner_entry(p: Paths, pid: str) -> tuple[dict, dict | None]:
-    backlog = load_backlog(p.backlog)
-    return backlog, backlog_by_id(backlog, pid)
+def owner_id_kind(oid: str) -> str | None:
+    """D121: the owner commands route on the id prefix: ``xp`` (``XP-<n>``), ``bt``
+    (``BT-<n>``, E26.2), ``legacy`` (a retired ``P-<n>``), or None."""
+    if PROPOSAL_ID_RE.match(oid or ""):
+        return "xp"
+    if BACKTEST_ID_RE.match(oid or ""):
+        return "bt"
+    if LEGACY_PROPOSAL_ID_RE.match(oid or ""):
+        return "legacy"
+    return None
+
+
+def registry_status(db: Path, xid: str) -> str | None:
+    """The latest registry status of *xid* in *db* (``mode=ro``), None if not registered."""
+    return registry_info(db, xid)[0]
+
+
+def registry_info(db: Path, xid: str) -> tuple[str | None, str | None]:
+    """``(latest status, proposal_ref)`` of *xid* in *db* (``mode=ro``); ``(None, None)``
+    when it is not registered."""
+    if not db.is_file():
+        return None, None
+    try:
+        conn = sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro", uri=True)
+        try:
+            if not _has_table(conn, "experiment_events"):
+                return None, None
+            rows = conn.execute(
+                "SELECT status, detail FROM experiment_events WHERE experiment_id = ? ORDER BY id",
+                (xid,),
+            ).fetchall()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return None, None
+    if not rows:
+        return None, None
+    ref = next((r for _, d in rows for r in [_proposal_ref(_loads(d, {}))] if r), None)
+    return rows[-1][0], ref
+
+
+def _owner_entry(
+    p: Paths, pid: str, verb: str, now: dt.datetime | None = None
+) -> tuple[dict, dict | None, str | None]:
+    """``(backlog, entry, refusal)`` for an owner command on *pid*. *refusal* is the reply
+    when there is nothing to act on: a retired ``P-<n>`` (names its XP id, D121), a
+    ``BT-<n>`` (E26.2), an id that is not a proposal, or an ``XP-<n>`` the registry holds
+    but the backlog does not (an owner-made spec: its status)."""
+    when = iso(now) if now else ""
+    kind = owner_id_kind(pid)
+    if kind is None:
+        backlog = load_backlog(p.backlog)
+        return backlog, None, f"{pid!r} is not a proposal id: use XP-<n> (D121)"
+    used = used_xp_numbers(p) if _needs_migration(p.backlog) else ()
+    backlog = load_backlog(p.backlog, used, when)
+    if used:
+        save_json(p.backlog, backlog)
+    if kind == "legacy":
+        return backlog, None, legacy_redirect(backlog, pid)
+    if kind == "bt":
+        return backlog, None, f"`{verb} {pid}`: backtest approvals are not wired yet (E26.2)"
+    entry = backlog_by_id(backlog, pid)
+    if entry is None:
+        status = registry_status(p.live_db, pid)
+        if status:
+            return backlog, None, f"{pid} is {status} in the registry (not a backlog proposal)"
+        return backlog, None, f"no proposal {pid}"
+    return backlog, entry, None
+
+
+def _needs_migration(path: Path) -> bool:
+    data = load_json(path, None)
+    return isinstance(data, dict) and int(data.get("version") or 1) < BACKLOG_VERSION
 
 
 APPROVAL_RE = re.compile(r"^slack:\d{9,11}\.\d{1,6}$")
@@ -2767,6 +3046,8 @@ def adopt_proposal(p: Paths, pid: str, spec_path: Path, approval: str) -> tuple[
         "experiment",
         "adopt",
         pid,
+        "--id",
+        pid,  # D121: register under the reserved id; adopt refuses if it is taken
         "--proposal",
         str(spec_path),
         "--owner-approval",
@@ -2792,22 +3073,36 @@ def adopt_proposal(p: Paths, pid: str, spec_path: Path, approval: str) -> tuple[
 
 
 def cmd_approve(p: Paths, pid: str, note: str, approval: str, now: dt.datetime) -> int:
-    """Owner ``approve P-<n>``: freeze the spec, write it, and adopt it (E21.4): next free
-    XP id, spec PR (auto-merge), ``registered`` (or ``queued``); the backlog entry moves
-    ``approved`` -> ``registered``. Re-running retries a failed adopt (idempotent per P-<n>)."""
+    """Owner ``approve XP-<n>``: freeze the spec, write it, and adopt it under that same id
+    (E21.4, D121 ``--id``): spec PR (auto-merge), ``registered`` (or ``queued``); the backlog
+    entry moves ``approved`` -> ``registered``. Re-running retries a failed adopt
+    (idempotent per XP-<n>). ``approve P-<n>`` replies with the XP id to use."""
     if not APPROVAL_RE.match(approval or ""):
         print(
             "approve needs --approval slack:<ts> (the owner's message ts in #arc-analyst, "
             "D86 owner-confirmed registry rule)"
         )
         return 2
-    backlog, entry = _owner_entry(p, pid)
+    backlog, entry, refusal = _owner_entry(p, pid, "approve", now)
     if entry is None:
-        print(f"no proposal {pid}")
+        print(refusal)
         return 2
     if entry["status"] not in ("proposed", "approved"):
         print(f"{pid} is {entry['status']} ({entry.get('experiment_id') or '-'}); nothing to do")
         return 2
+    # a retry after a failed adopt finds its own registry row under the reserved id: keep it
+    _, own_ref = registry_info(p.live_db, pid)
+    used = used_xp_numbers(p) - ({_id_num(pid)} if own_ref == pid else set())
+    moved = rereserve_collisions(backlog, used, iso(now))
+    if entry["id"] != pid:
+        save_json(p.backlog, backlog)
+        print(
+            f"{pid}'s number was taken outside the backlog since it was proposed; it is now "
+            f"{entry['id']}. Re-send `approve {entry['id']}` (D121)."
+        )
+        return 2
+    if moved:
+        save_json(p.backlog, backlog)
     flag_needs_rewrite(backlog, iso(now))
     if entry.get("needs_rewrite"):
         save_json(p.backlog, backlog)
@@ -2841,9 +3136,10 @@ def cmd_approve(p: Paths, pid: str, note: str, approval: str, now: dt.datetime) 
         when = f"queued: {res.get('queue_reason') or 'behind ' + ', '.join(res['queued_behind'])}"
     else:
         when = f"owner to start: `{res.get('start_cmd')}` (D112, manual)"
+    xid = res["experiment_id"]
     print(
-        f"{pid} -> {res['experiment_id']} [{res['status']}], area {res['area']}, "
-        f"{res['arms']} arms\n"
+        (f"{pid} [{res['status']}]" if xid == pid else f"{pid} -> {xid} [{res['status']}]")
+        + f", area {res['area']}, {res['arms']} arms\n"
         f"Spec PR: {res.get('pr_url') or res.get('pr_status') or '-'} "
         "(auto-merges when CI is green)\n"
         f"{when}. Start it once the spec PR is merged and the A/A calibration is committed."
@@ -2852,9 +3148,10 @@ def cmd_approve(p: Paths, pid: str, note: str, approval: str, now: dt.datetime) 
 
 
 def cmd_drop(p: Paths, pid: str, why: str, now: dt.datetime) -> int:
-    backlog, entry = _owner_entry(p, pid)
+    """Owner ``drop XP-<n> <why>``. The number stays reserved: a gap, never reused (D121)."""
+    backlog, entry, refusal = _owner_entry(p, pid, "drop", now)
     if entry is None:
-        print(f"no proposal {pid}")
+        print(refusal)
         return 2
     if not why.strip():
         print("drop needs a reason")
@@ -2870,11 +3167,11 @@ def cmd_drop(p: Paths, pid: str, why: str, now: dt.datetime) -> int:
 
 
 def cmd_reprioritise(p: Paths, pid: str, why: str, score: float | None, now: dt.datetime) -> int:
-    """Owner ``reprioritise P-<n> <why> [--score X]``: pin it to the top, or override its
+    """Owner ``reprioritise XP-<n> <why> [--score X]``: pin it to the top, or override its
     score. The Analyst keeps the pin until the owner reprioritises again."""
-    backlog, entry = _owner_entry(p, pid)
+    backlog, entry, refusal = _owner_entry(p, pid, "reprioritise", now)
     if entry is None:
-        print(f"no proposal {pid}")
+        print(refusal)
         return 2
     if not why.strip():
         print("reprioritise needs a reason")
@@ -2895,7 +3192,11 @@ def cmd_reprioritise(p: Paths, pid: str, why: str, score: float | None, now: dt.
 
 
 def cmd_backlog(p: Paths) -> int:
-    backlog = load_backlog(p.backlog)
+    used = used_xp_numbers(p)
+    migrate = _needs_migration(p.backlog)
+    backlog = load_backlog(p.backlog, used)
+    if migrate:
+        save_json(p.backlog, backlog)  # D121: the XP ids shown are the ones kept
     flag_needs_rewrite(backlog, "")  # in memory: show a K=4 draft as needing a rewrite
     ranked = ranked_backlog(backlog)
     if not ranked:
@@ -2909,9 +3210,11 @@ def cmd_backlog(p: Paths) -> int:
         for e in backlog["items"].values()
         if e.get("status") not in BACKLOG_RANKED or e.get("needs_rewrite")
     ]
-    for e in sorted(others, key=lambda e: int(e["id"][2:])):
+    for e in sorted(others, key=lambda e: _id_num(e["id"])):
         flag = " NEEDS REWRITE (D108: 3 treatments)" if e.get("needs_rewrite") else ""
         print(f"   {e['id']} [{e['status']}]{flag} {(e.get('spec') or {}).get('title')}")
+    # D121: what the next xp-proposal reserves (registry, specs, open xp/<n> PRs, backlog)
+    print(f"next proposal id: {reserve_proposal_id(dict(backlog), used)} (reserved at record)")
     return 0
 
 
@@ -3217,9 +3520,7 @@ def build_context(
         shutil.copy2(y, cfg_dir / y.name)
 
     # E22.5 (D97): the sleeve windows of the effective profile, from the arc view
-    sleeves_view = run_arc(
-        p, ["scorecard", "sleeves", "--json", *db], run_dir, "sleeves-all"
-    )
+    sleeves_view = run_arc(p, ["scorecard", "sleeves", "--json", *db], run_dir, "sleeves-all")
     windows = sleeve_windows(sleeves_view)
     conn = sqlite3.connect(f"{copy.resolve().as_uri()}?mode=ro", uri=True)
     try:
@@ -3315,10 +3616,13 @@ def build_context(
     ledger = load_json(p.ledger, {"next_id": 1, "items": {}})
     state = load_json(p.state, {})
     seed, seed_errs = load_seed(p.idea_seed)
-    backlog = load_backlog(p.backlog)
+    used = used_xp_numbers(p, [e["experiment_id"] for e in overview])
+    backlog = load_backlog(p.backlog, used, iso(now))  # D121: v1 P-<n> entries get XP ids
+    migrated = int((load_json(p.backlog, None) or {}).get("version") or 1) < BACKLOG_VERSION
     synced = sync_backlog(backlog, overview, iso(now))
+    synced += rereserve_collisions(backlog, used, iso(now))
     synced += flag_needs_rewrite(backlog, iso(now))  # D108: K=4 drafts are flagged, not trimmed
-    if synced:
+    if synced or (migrated and p.backlog.exists()):
         save_json(p.backlog, backlog)  # registry is the truth for registered/running/concluded
     merged = merged_pr_lines(p, state.get("last_run_at"), run_dir)
 
@@ -3362,7 +3666,8 @@ def build_context(
     ]
     out += [
         "",
-        f"## Forward experiments (D44; next free id {next_experiment_id(overview)}; "
+        f"## Forward experiments (D44; next free XP id {reserve_proposal_id(dict(backlog), used)} "
+        "(D121: a new xp-proposal reserves it when `record` runs); "
         f"full: sqlite3 'file:{copy}?mode=ro' or arc experiment report <id> --stored --db {copy})",
         *experiment_lines(overview),
         "",

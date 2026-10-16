@@ -191,6 +191,7 @@ class TestConfig:
             "finnhub.fundamentals",
             "finnhub.insider",
             "finnhub.recs",
+            "history.topup",  # E7.13: up to 40 min on the ThetaData free tier (20 req/min)
             "iv.backfill",  # E16.1: nightly IV top-up, up to 15 min on the Alpaca budget
             "iv.record",
             "levels",  # E23.0: one bars + one chain request per ticker, pre-market

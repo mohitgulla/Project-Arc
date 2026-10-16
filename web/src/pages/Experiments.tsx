@@ -10,6 +10,7 @@ import { KeyValueList } from "../components/KeyValueList";
 import { Money } from "../components/Money";
 import { Section } from "../components/Section";
 import {
+  adjustedPairs,
   armColor,
   armLabel,
   armPlanRows,
@@ -20,17 +21,21 @@ import {
   ciTone,
   controlPairs,
   dailyDiffView,
-  deltaText,
   detectableRows,
   duelRows,
   equityView,
+  estimateText,
   eventRows,
   forestDomain,
   groupExperiments,
   harnessRows,
+  headlineEstimate,
   kindLabel,
   leaderRows,
+  listPrimary,
   longDay,
+  MOSTLY_BETA,
+  otherLine,
   pct,
   productionGapRows,
   productionView,
@@ -47,7 +52,10 @@ import {
   statusPill,
   variantRows,
   verdictCounts,
+  verdictBasis,
+  verdictNote,
   verdictPill,
+  type AdjustedPairView,
   type ExperimentDetail,
   type ExperimentRow,
   type PillTone,
@@ -136,10 +144,12 @@ function ExperimentList() {
 function ExperimentListRow({ r }: { r: ExperimentRow }) {
   const navigate = useNavigate();
   const sv = sessionsView(r);
-  const tone = ciTone(r);
-  const domain = r.primary_ci_lo !== null && r.primary_ci_lo !== undefined && r.primary_mean !== null && r.primary_mean !== undefined
-    ? forestDomain([{ label: "", est: r.primary_mean * 100, lo: r.primary_ci_lo * 100, hi: (r.primary_ci_hi ?? 0) * 100, tone, right: "" }])
-    : 1;
+  // D120: the SPY-adjusted effect is the headline when fitted; pre-D119 rows are unchanged.
+  const h = headlineEstimate(listPrimary(r));
+  const hasRange = h.est !== null && h.lo !== null && h.hi !== null;
+  const tone = ciTone({ primary_ci_lo: h.lo, primary_ci_hi: h.hi });
+  const forestRow = hasRange ? { label: r.experiment_id, est: (h.est ?? 0) * 100, lo: (h.lo ?? 0) * 100, hi: (h.hi ?? 0) * 100, tone, right: "" } : null;
+  const domain = forestRow ? forestDomain([forestRow]) : 1;
   const counts = verdictCounts(r);
   const head = r.headline_arm ? armShort(r.headline_arm) : "T1";
   const ref = refName(r);
@@ -170,20 +180,15 @@ function ExperimentListRow({ r }: { r: ExperimentRow }) {
       <div className="min-w-0">
         <p className="text-caption text-muted">
           {r.variants > 1 ? `Best · ${head}` : head} vs {ref}
+          {h.basis === "adjusted" && <span data-testid="row-basis"> · SPY-adjusted</span>}
         </p>
         <div className="flex flex-wrap items-baseline gap-x-2">
-          <span className={`text-title font-semibold tabular-nums ${TONE_TEXT[tone]}`}>{deltaText(r)}</span>
-          <span className="text-micro text-muted tabular-nums">{ciText(r)}</span>
+          <span className={`text-title font-semibold tabular-nums ${TONE_TEXT[tone]}`} data-testid="row-delta">
+            {h.est === null ? "n/a" : `${pct(h.est)}/day`}
+          </span>
+          <span className="text-micro text-muted tabular-nums">{hasRange ? ciText({ primary_ci_lo: h.lo, primary_ci_hi: h.hi }) : "—"}</span>
         </div>
-        {r.primary_ci_lo !== null && r.primary_ci_lo !== undefined && r.primary_mean !== null && r.primary_mean !== undefined && (
-          <ForestPlot
-            compact
-            axis={false}
-            domain={domain}
-            rows={[{ label: r.experiment_id, est: r.primary_mean * 100, lo: r.primary_ci_lo * 100, hi: (r.primary_ci_hi ?? 0) * 100, tone, right: "" }]}
-            testid="row-forest"
-          />
-        )}
+        {forestRow && <ForestPlot compact axis={false} domain={domain} rows={[forestRow]} testid="row-forest" />}
       </div>
       <div className="flex flex-wrap items-center gap-1.5 max-tablet:col-span-2 tablet:justify-end">
         {counts.length === 0 ? (
@@ -331,7 +336,12 @@ function ResultCard({ d }: { d: ExperimentDetail }) {
   const multi = controlPairs(r).length > 0;
   const head = e.headline_arm ? armShort(e.headline_arm) : "T1";
   const ref = refName(r);
-  const tone = ciTone(e);
+  // D120: the headline pair's SPY-adjusted effect when fitted, else the unadjusted number.
+  const h = headlineEstimate(r.primary);
+  const tone = ciTone({ primary_ci_lo: h.lo, primary_ci_hi: h.hi });
+  const second = otherLine(h);
+  const note = verdictNote(h, verdictBasis(d.spec));
+  const blocks = adjustedPairs(r, d.spec);
   return (
     <Card
       title="Result"
@@ -342,28 +352,41 @@ function ResultCard({ d }: { d: ExperimentDetail }) {
           Paired daily net P&amp;L gap (arm minus {ref}) as a share of t0 equity, with an always-valid
           {e.ci_level ? ` ${Math.round(e.ci_level * 100)}%` : ""} range that stays valid however often it is checked.
           {multi ? " Each arm is Holm-adjusted across the variants." : ""}
+          {h.basis === "adjusted" ? " The headline strips out the part of the gap that SPY's daily move explains: the edge on a flat-market day." : ""}
         </Tip>
       }
     >
       <p className="text-caption text-muted">
-        {multi ? `Best · ${head}` : head} vs {ref} · paired daily P&amp;L
+        {multi ? `Best · ${head}` : head} vs {ref} · {h.basis === "adjusted" ? h.label : "paired daily P&L"}
       </p>
       <div className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <span className={`text-hero font-semibold tabular-nums ${TONE_TEXT[tone]}`} data-testid="result-hero">
-          {pct(e.primary_mean)}
+          {pct(h.est)}
           <span className="text-title font-medium text-secondary">/day</span>
         </span>
         <Pill v={verdictPill(multi ? (e.arm_verdicts?.[e.headline_arm ?? ""] ?? e.verdict) : e.verdict)} />
+        {h.chip && <Pill v={h.chip} testid="headline-chip" />}
       </div>
       <p className="mt-1 text-caption text-secondary tabular-nums">
         {e.ci_level ? `${Math.round(e.ci_level * 100)}% range ` : "Range "}
-        {ciText(e)} · p {pText(e.primary_p)}
+        {h.lo !== null && h.hi !== null ? ciText({ primary_ci_lo: h.lo, primary_ci_hi: h.hi }) : "—"} · p {pText(h.p)}
       </p>
+      {second && (
+        <p className="mt-0.5 text-micro text-muted tabular-nums" data-testid="result-second">
+          {second}
+        </p>
+      )}
+      {note && (
+        <p className="mt-0.5 text-micro text-muted" data-testid="verdict-note">
+          {note}
+        </p>
+      )}
       {rows.length > 0 && (
         <div className="mt-4">
           <ForestPlot rows={rows} domain={forestDomain(rows)} labelWidth={multi ? 40 : 40} testid="result-forest" />
         </div>
       )}
+      {blocks.length > 0 && <AdjustmentBlocks blocks={blocks} multi={multi} />}
       <div className="mt-4 grid gap-1.5 rounded-control bg-control px-3 py-2.5" data-testid="result-sentence">
         {resultSentences(d).map((s) => (
           <p key={s} className="text-body text-primary">
@@ -372,6 +395,49 @@ function ResultCard({ d }: { d: ExperimentDetail }) {
         ))}
       </div>
     </Card>
+  );
+}
+
+/** D120 (E25.8): per Ti − C pair, the headline basis, the other estimate, β̂/R²/HAC/σ_LR chips. */
+function AdjustmentBlocks({ blocks, multi }: { blocks: AdjustedPairView[]; multi: boolean }) {
+  return (
+    <div className="mt-4" data-testid="adjustment-blocks">
+      <Eyebrow>SPY Adjustment{multi ? " · Per Arm" : ""}</Eyebrow>
+      <ul className="grid gap-0">
+        {blocks.map((b) => (
+          <li key={b.arm} className="grid gap-1 border-t border-line py-2 first:border-t-0" data-testid="adjustment-pair">
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <span className="w-8 shrink-0 font-semibold text-title">{b.arm}</span>
+              <span className={`font-semibold tabular-nums ${TONE_TEXT[ciTone({ primary_ci_lo: b.headline.lo, primary_ci_hi: b.headline.hi })]}`} data-testid="pair-headline">
+                {estimateText(b.headline)}
+              </span>
+              <span className="text-caption text-muted">{b.headline.basis === "adjusted" ? "SPY-adjusted" : "Unadjusted"}</span>
+              <span className="flex flex-wrap items-center gap-1.5">
+                <Pill v={b.verdict} />
+                {b.verdictNote && <Pill v={{ label: b.verdictNote, tone: "neutral" }} testid="pair-verdict-note" />}
+                {b.headline.chip && <Pill v={b.headline.chip} testid="pair-chip" />}
+                {b.mostlyBeta && <Pill v={MOSTLY_BETA} testid="mostly-beta" />}
+              </span>
+            </div>
+            {b.other && (
+              <p className="pl-10 text-micro text-muted tabular-nums" data-testid="pair-second">
+                {b.other}
+              </p>
+            )}
+            {b.chips.length > 0 && (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pl-10" data-testid="pair-stats">
+                {b.chips.map((c) => (
+                  <span key={c.key} className="inline-flex items-center gap-1 text-caption tabular-nums text-secondary">
+                    {c.label}
+                    <Tip about={c.label}>{c.tip}</Tip>
+                  </span>
+                ))}
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

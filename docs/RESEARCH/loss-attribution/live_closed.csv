@@ -1,0 +1,15 @@
+store,ticker,kind,legs,opened,closed,exit_reason,pnl
+data,HOOD,long_put,1,2026-10-12,2026-10-13,research_review,-80.0
+data,NVDA,long_call,1,2026-10-12,2026-10-13,research_review,40.0
+data,IREN,vertical_debit,2,2026-10-12,2026-10-14,stop,-260.0
+data,INTC,vertical_debit,2,2026-10-14,2026-10-15,research_review,-372.0
+20261011-1315-pre-d80,IWM,vertical_debit,2,2026-10-01,2026-10-01,remaining_ev_floor,-20.0
+20261011-1315-pre-d80,SPY,vertical_debit,2,2026-10-01,2026-10-01,remaining_ev_floor,-23.0
+20261011-1315-pre-d80,NFLX,vertical_debit,2,2026-10-01,2026-10-01,remaining_ev_floor,-70.0
+20261011-1315-pre-d80,CRWD,long_call,1,2026-10-06,2026-10-08,research_review,-935.0
+20261011-1315-pre-d80,INTC,vertical_debit,2,2026-10-06,2026-10-09,research_review,-662.0
+20261011-1315-pre-d80,MRVL,vertical_debit,2,2026-10-06,2026-10-08,research_review,-410.0
+20261011-1315-pre-d80,VST,vertical_debit,2,2026-10-06,2026-10-07,research_review,160.0
+20261011-1315-pre-d80,META,long_call,1,2026-10-07,2026-10-08,research_review,-75.0
+20261011-1315-pre-d80,TSM,vertical_debit,2,2026-10-08,2026-10-08,research_review,-90.0
+20261011-1315-pre-d80,HOOD,vertical_debit,2,2026-10-08,2026-10-08,research_review,-30.0

@@ -11,6 +11,7 @@ import argparse
 import datetime as dt
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -114,7 +115,7 @@ def _proposal_spec(k: int = 3, area: str = "exits", **kw: Any) -> dict[str, Any]
     }
 
 
-def _proposal(pid: str = "P-1", **kw: Any) -> ad.Proposal:
+def _proposal(pid: str = "XP-1", **kw: Any) -> ad.Proposal:
     return ad.load_proposal(_proposal_spec(**kw), proposal_id=pid)
 
 
@@ -190,7 +191,7 @@ def _aa(store: ExperimentStore, eid: str = "XP-1", sigma: float | None = 0.35) -
     store.stop(eid, StopReason.FUTILITY, actor="local", detail=StopDetail(sigma=sigma))
 
 
-def _merged(st_spec: ExperimentSpec, *, proposal: str = "P-1") -> dict[str, str]:
+def _merged(st_spec: ExperimentSpec, *, proposal: str = "XP-1") -> dict[str, str]:
     return {
         ad.spec_path(st_spec): ad.spec_file_text(st_spec, proposal_id=proposal, approval=APPROVAL)
     }
@@ -290,7 +291,7 @@ def test_refuses_bad_specs(
     conn: sqlite3.Connection, tmp_path: Path, patch: dict[str, Any], match: str
 ) -> None:
     with pytest.raises(ad.AdoptError, match=match):
-        _adopt(conn, tmp_path, ad.load_proposal({**_proposal_spec(), **patch}, proposal_id="P-1"))
+        _adopt(conn, tmp_path, ad.load_proposal({**_proposal_spec(), **patch}, proposal_id="XP-1"))
 
 
 def test_refuses_more_arms_than_the_cap(conn: sqlite3.Connection, tmp_path: Path) -> None:
@@ -303,17 +304,50 @@ def test_refuses_more_arms_than_the_cap(conn: sqlite3.Connection, tmp_path: Path
 
 
 def test_load_proposal_shapes() -> None:
-    entry = {"id": "P-4", "status": "approved", "finding_id": "A-9", "spec": _proposal_spec()}
+    entry = {"id": "XP-4", "status": "approved", "finding_id": "A-9", "spec": _proposal_spec()}
     p = ad.load_proposal(entry)
-    assert p.proposal_id == "P-4" and p.proposed_by == "A-9" and "id" not in p.spec
+    assert p.proposal_id == "XP-4" and p.proposed_by == "A-9" and "id" not in p.spec
     with pytest.raises(ad.AdoptError, match="only an owner-approved"):
         ad.load_proposal({**entry, "status": "proposed"})
-    with pytest.raises(ad.AdoptError, match="not P-5"):
-        ad.load_proposal(entry, proposal_id="P-5")
-    with pytest.raises(ad.AdoptError, match="must look like P-<n>"):
+    with pytest.raises(ad.AdoptError, match="not XP-5"):
+        ad.load_proposal(entry, proposal_id="XP-5")
+    with pytest.raises(ad.AdoptError, match="must look like XP-<n>"):
         ad.load_proposal(_proposal_spec())
-    with pytest.raises(ad.AdoptError, match="adopt assigns it"):
-        ad.load_proposal(_proposal_spec(id="XP-4"), proposal_id="P-4")
+    # D121: the spec may carry its own reserved id, never another one
+    assert ad.load_proposal(_proposal_spec(id="XP-4"), proposal_id="XP-4").proposal_id == "XP-4"
+    with pytest.raises(ad.AdoptError, match="its own reserved id"):
+        ad.load_proposal(_proposal_spec(id="XP-5"), proposal_id="XP-4")
+    # D121: P-<n> is retired for adoption; the reply points at the backlog's XP id
+    with pytest.raises(ad.AdoptError, match="P-<n> ids are retired"):
+        ad.load_proposal(_proposal_spec(), proposal_id="P-4")
+    with pytest.raises(ad.AdoptError, match="P-<n> ids are retired"):
+        ad.load_proposal({**entry, "id": "P-4"})
+
+
+def test_adopt_registers_under_the_reserved_id(conn: sqlite3.Connection, tmp_path: Path) -> None:
+    """D121: ``--id XP-<n>`` registers the proposal under its own reserved number (a gap
+    below it is fine) and re-runs stay on it."""
+    res = _adopt(conn, tmp_path, _proposal("XP-7"), experiment_id="XP-7")
+    assert res.experiment_id == "XP-7" and res.created
+    st = _store(conn).require("XP-7")
+    assert proposal_ref_of(st) == "XP-7"
+    again = _adopt(conn, tmp_path, _proposal("XP-7"), experiment_id="XP-7")
+    assert again.experiment_id == "XP-7" and not again.created
+    with pytest.raises(ad.AdoptError, match="already adopted as XP-7, not --id XP-8"):
+        _adopt(conn, tmp_path, _proposal("XP-7"), experiment_id="XP-8")
+
+
+def test_adopt_refuses_a_taken_reserved_id(conn: sqlite3.Connection, tmp_path: Path) -> None:
+    """D121: a reserved id already in the DB or the committed specs is refused, never reused."""
+    _adopt(conn, tmp_path, _proposal("XP-1"), experiment_id="XP-1")
+    with pytest.raises(ad.AdoptError, match="XP-1 is taken in the registry .*XP-2 must re-reserve"):
+        _adopt(conn, tmp_path, _proposal("XP-2", area="ranking"), experiment_id="XP-1")
+    (_empty_repo(tmp_path) / EXPERIMENTS_DIR / "xp5_owner_made.yaml").write_text("id: XP-5\n")
+    with pytest.raises(ad.AdoptError, match="XP-5 is taken by a committed experiment spec"):
+        _adopt(conn, tmp_path, _proposal("XP-5", area="ranking"), experiment_id="XP-5")
+    with pytest.raises(ad.AdoptError, match="must look like XP-<n>"):
+        _adopt(conn, tmp_path, _proposal("XP-6", area="ranking"), experiment_id="P-6")
+    assert {s.experiment_id for s in _store(conn).all()} == {"XP-1"}
 
 
 # -- adopt: register / queue / idempotency ------------------------------------------------
@@ -327,17 +361,17 @@ def test_adopt_registers_with_proposal_ref_and_publishes(
     res = _adopt(conn, tmp_path, publisher=pub, post=posted.append)
     st = _store(conn).require(res.experiment_id)
     assert res.experiment_id == "XP-1" and res.status == "registered" and res.created
-    assert st.status is ExperimentStatus.REGISTERED and proposal_ref_of(st) == "P-1"
-    assert all(e.detail.get("proposal_ref") == "P-1" for e in st.events)
+    assert st.status is ExperimentStatus.REGISTERED and proposal_ref_of(st) == "XP-1"
+    assert all(e.detail.get("proposal_ref") == "XP-1" for e in st.events)
     assert res.start_cmd == "arc experiment start XP-1"  # D112: the owner starts it
     assert posted == [
-        "XP-1 registered (P-1), control + 3 treatments, area exits, "
+        "XP-1 registered, control + 3 treatments, area exits, "
         "owner to start after the spec PR merges: `arc experiment start XP-1`"
     ]
     (call,) = pub.calls
     assert call["branch"] == "xp/1"
     assert list(call["files"]) == ["config/experiments/live/xp1_take_profit_level_x3.yaml"]
-    assert call["body"].startswith("Lane: fast — register XP-1 (owner approved P-1, PLAN D86)\n")
+    assert call["body"].startswith("Lane: fast — register XP-1 (owner approved XP-1, PLAN D86)\n")
     # the committed file re-parses to the registered lock
     doc = yaml.safe_load(call["files"][res.path])
     assert spec_hash(ExperimentSpec.model_validate(doc)) == st.registered_hash
@@ -353,7 +387,7 @@ def test_adopt_is_idempotent_per_proposal(conn: sqlite3.Connection, tmp_path: Pa
     assert again.experiment_id == first.experiment_id and not again.created
     assert len(_store(conn).all()) == 1 and len(posted) == 1
     assert pub.calls[0]["files"] == pub.calls[1]["files"]  # the PR is found, not duplicated
-    other = _adopt(conn, tmp_path, _proposal("P-2", area="ranking"))
+    other = _adopt(conn, tmp_path, _proposal("XP-2", area="ranking"))
     assert other.experiment_id == "XP-2"
 
 
@@ -382,14 +416,10 @@ def test_adopt_queues_behind_a_busy_area_and_promotes_after_stop(
 ) -> None:
     posted: list[str] = []
     _adopt(conn, tmp_path)
-    second = _adopt(conn, tmp_path, _proposal("P-2"), post=posted.append)
+    second = _adopt(conn, tmp_path, _proposal("XP-2"), post=posted.append)
     assert second.status == "queued" and second.queued_behind == ["XP-1"]
     assert second.queue_reason == "area exits held by XP-1" and second.start_cmd is None
-    assert posted == [
-        "XP-1 registered (P-2), control + 3 treatments, area exits, queued behind XP-1".replace(
-            "XP-1 registered", "XP-2 registered"
-        )
-    ]
+    assert posted == ["XP-2 registered, control + 3 treatments, area exits, queued behind XP-1"]
     store = _store(conn)
     store.stop("XP-1", StopReason.FUTILITY, actor="arc.experiments")
     assert store.require("XP-2").status is ExperimentStatus.REGISTERED
@@ -397,8 +427,8 @@ def test_adopt_queues_behind_a_busy_area_and_promotes_after_stop(
 
 def test_adopt_queues_on_the_arm_cap(conn: sqlite3.Connection, tmp_path: Path) -> None:
     _adopt(conn, tmp_path)
-    _adopt(conn, tmp_path, _proposal("P-2", area="ranking"))  # 8 of 10 arms (control + 3 each)
-    third = _adopt(conn, tmp_path, _proposal("P-3", area="entries"))
+    _adopt(conn, tmp_path, _proposal("XP-2", area="ranking"))  # 8 of 10 arms (control + 3 each)
+    third = _adopt(conn, tmp_path, _proposal("XP-3", area="entries"))
     assert third.status == "queued" and "max_parallel_arms" in (third.queue_reason or "")
 
 
@@ -408,7 +438,7 @@ def test_dry_run_writes_nothing(conn: sqlite3.Connection, tmp_path: Path) -> Non
     res = _adopt(conn, tmp_path, publisher=pub, post=posted.append, dry_run=True)
     assert res.dry_run and res.experiment_id == "XP-1" and res.status == "registered"
     assert _store(conn).all() == [] and pub.calls == [] and posted == []
-    assert res.file_text.startswith("# XP-1: adopted from Arc Analyst proposal P-1")
+    assert res.file_text.startswith("# XP-1: adopted from Arc Analyst proposal XP-1")
 
 
 def test_no_autostart_routine_or_knobs() -> None:
@@ -516,7 +546,7 @@ def test_pending_verdicts_publish_once_and_skip_main(
     conn: sqlite3.Connection, tmp_path: Path
 ) -> None:
     _adopt(conn, tmp_path)
-    _adopt(conn, tmp_path, _proposal("P-2", area="ranking"))
+    _adopt(conn, tmp_path, _proposal("XP-2", area="ranking"))
     store = _store(conn)
     store.stop("XP-1", StopReason.FUTILITY, actor="arc.experiments")
     store.stop("XP-2", StopReason.OWNER, actor="local")
@@ -559,12 +589,12 @@ def test_cli_adopt_dry_run_and_real(
     c = connect(str(db))
     migrate(c)
     c.close()
-    prop = tmp_path / "P-7.yaml"
+    prop = tmp_path / "XP-7.yaml"
     prop.write_text(json.dumps(_proposal_spec()))
     common = ("--proposal", str(prop), "--db", str(db), "--no-fetch", "--now", NOW.isoformat())
     rc = run_experiment(_cli("adopt", *common, "--owner-approval", APPROVAL, "--dry-run"))
     out = capsys.readouterr().out
-    assert rc == 0 and "dry-run (nothing written): P-7 -> XP-" in out
+    assert rc == 0 and "dry-run (nothing written): XP-7 -> XP-" in out
     assert "Lane: fast — register XP-" in out and "spec file:" in out
     assert run_experiment(_cli("adopt", *common, "--dry-run")) == 2  # no approval
     assert "owner" in capsys.readouterr().err
@@ -573,9 +603,20 @@ def test_cli_adopt_dry_run_and_real(
     )
     out = capsys.readouterr().out
     res, _ = json.JSONDecoder().raw_decode(out, out.index('{\n  "experiment_id"'))
-    assert rc == 0 and res["status"] == "registered" and res["proposal_id"] == "P-7"
+    assert rc == 0 and res["status"] == "registered" and res["proposal_id"] == "XP-7"
     store = ExperimentStore(connect(str(db)))
-    assert proposal_ref_of(store.require(res["experiment_id"])) == "P-7"
+    assert proposal_ref_of(store.require(res["experiment_id"])) == "XP-7"
+    # D121 --id: the reserved id is used as is, and a taken one is refused
+    prop8 = tmp_path / "XP-8.yaml"
+    prop8.write_text(json.dumps(_proposal_spec(area="ranking")))
+    common8 = ("--proposal", str(prop8), "--db", str(db), "--no-fetch", "--now", NOW.isoformat())
+    taken = res["experiment_id"]
+    assert run_experiment(_cli("adopt", "--id", taken, *common8, "--owner-approval", APPROVAL)) == 2
+    assert f"{taken} is taken in the registry" in capsys.readouterr().err
+    assert run_experiment(_cli("adopt", "--id", "XP-8", *common8, "--owner-approval", APPROVAL,
+                               "--no-pr", "--no-slack")) == 0  # fmt: skip
+    assert "adopted: XP-8 [registered]" in capsys.readouterr().out
+    assert proposal_ref_of(ExperimentStore(connect(str(db))).require("XP-8")) == "XP-8"
 
 
 def test_cli_adopt_from_a_backlog_file(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -586,13 +627,15 @@ def test_cli_adopt_from_a_backlog_file(tmp_path: Path, capsys: pytest.CaptureFix
     backlog = {
         "next_id": 3,
         "items": {
-            "xp-proposal:a": {"id": "P-2", "status": "approved", "spec": _proposal_spec()},
+            "xp-proposal:a": {"id": "XP-2", "status": "approved", "spec": _proposal_spec()},
         },
     }
     f = tmp_path / "xp_backlog.json"
     f.write_text(json.dumps(backlog))
     args = ("--proposal", str(f), "--db", str(db), "--no-fetch", "--owner-approval", APPROVAL)
-    assert run_experiment(_cli("adopt", *args, "--dry-run")) == 2  # which P-<n>?
+    assert run_experiment(_cli("adopt", *args, "--dry-run")) == 2  # which XP-<n>?
     assert "name the proposal" in capsys.readouterr().err
-    assert run_experiment(_cli("adopt", "P-2", *args, "--dry-run")) == 0
-    assert "P-2 -> XP-" in capsys.readouterr().out
+    assert run_experiment(_cli("adopt", "XP-2", *args, "--dry-run")) == 0
+    # no --id: the next free id (the repo's committed xp1 spec takes XP-1); the backlog's
+    # XP-2 is printed once when the ids match (D121), "XP-2 -> XP-<m>" otherwise
+    assert re.search(r"dry-run \(nothing written\): XP-2( -> XP-\d+)? \[", capsys.readouterr().out)

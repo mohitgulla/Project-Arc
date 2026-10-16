@@ -178,6 +178,151 @@
         "title": "ActivityItem",
         "type": "object"
       },
+      "Adjustment": {
+        "additionalProperties": false,
+        "description": "D119 (E25.7): the SPY regression of one paired series, ``d_t = a + b x_t + e_t``.\n\n``pre_registered`` true: the spec's ``analysis`` block; the primary's ``mean`` /\n``ci`` / ``p_value`` / ``sigma`` / ``tau`` are these numbers and the verdict reads\nthem. False: descriptive only (a spec without ``analysis``, e.g. XP-1), computed\nwith ``covariates: [spy_ret]`` and ``experiments.stats.hac_lag``; the verdict stays\nthe D44 iid unadjusted one.",
+        "properties": {
+          "beta": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "SPY beta of the daily difference (b)",
+            "title": "Beta"
+          },
+          "beta_se": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Beta Se"
+          },
+          "ci": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Interval"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Always-valid (mSPRT) CI on estimate"
+          },
+          "covariate_missing": {
+            "description": "Paired sessions without a SPY return: left out of the fit; an adjusted pre-registered verdict waits on them",
+            "items": {
+              "format": "date",
+              "type": "string"
+            },
+            "title": "Covariate Missing",
+            "type": "array"
+          },
+          "covariates": {
+            "description": "[spy_ret] = adjusted; [] = plain mean",
+            "items": {
+              "type": "string"
+            },
+            "title": "Covariates",
+            "type": "array"
+          },
+          "estimate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Intercept a: the daily edge on a flat-market day (or the mean)",
+            "title": "Estimate"
+          },
+          "n": {
+            "description": "Sessions in the fit (those with a SPY return)",
+            "title": "N",
+            "type": "integer"
+          },
+          "p_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P Value"
+          },
+          "pre_registered": {
+            "title": "Pre Registered",
+            "type": "boolean"
+          },
+          "r2": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Share of the diff's variance SPY explains",
+            "title": "R2"
+          },
+          "sigma_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "aa",
+                  "running_corrected"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sigma Source"
+          },
+          "status": {
+            "description": "fitted = OLS on SPY; insufficient_n = fewer than 3 sessions with a SPY return or no SPY variance (plain mean); unadjusted = covariates []",
+            "enum": [
+              "fitted",
+              "insufficient_n",
+              "unadjusted"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tau": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tau"
+          }
+        },
+        "required": [
+          "pre_registered",
+          "status",
+          "covariates",
+          "n"
+        ],
+        "title": "Adjustment",
+        "type": "object"
+      },
       "AlertRow": {
         "additionalProperties": false,
         "properties": {
@@ -335,6 +480,44 @@
           "alerts"
         ],
         "title": "AlertsResponse",
+        "type": "object"
+      },
+      "Analysis": {
+        "additionalProperties": false,
+        "description": "D119 (E25.7): the pre-registered analysis of the primary (hash-locked with the spec).\n\n``covariates: [spy_ret]`` fits ``d_t = a + b * SPY_ret_t`` on the running data and\ntests the intercept ``a`` (the daily edge on a flat-market day); ``[]`` tests the\nplain mean. ``hac_lag`` scales the residual sigma by a Newey-West/Bartlett long-run\nfactor over that many sessions (floored at 1); ``None`` keeps the iid sigma.\nA spec without the block keeps the D44 method (iid, unadjusted).",
+        "properties": {
+          "covariates": {
+            "description": "[] = unadjusted; [spy_ret]; D120: vix_chg may be added",
+            "items": {
+              "enum": [
+                "spy_ret",
+                "vix_chg"
+              ],
+              "type": "string"
+            },
+            "title": "Covariates",
+            "type": "array"
+          },
+          "hac_lag": {
+            "anyOf": [
+              {
+                "maximum": 20.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Bartlett lag in sessions; null = iid",
+            "title": "Hac Lag"
+          }
+        },
+        "required": [
+          "covariates",
+          "hac_lag"
+        ],
+        "title": "Analysis",
         "type": "object"
       },
       "AppInfo": {
@@ -1507,6 +1690,29 @@
         "additionalProperties": false,
         "description": "What an A/A measures (reported for every experiment; decisive for none).",
         "properties": {
+          "beta_spread": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D119: max - min SPY beta across the pairs",
+            "title": "Beta Spread"
+          },
+          "covariate_check": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CovariateCheck"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D120: the \u0394VIX check pooled over the Ti - C pairs (descriptive)"
+          },
           "divergent_chains": {
             "default": 0,
             "title": "Divergent Chains",
@@ -1523,6 +1729,30 @@
             ],
             "description": "treatment - control fill rate",
             "title": "Fill Rate Gap"
+          },
+          "hac_factor": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D119: pooled long-run variance factor f",
+            "title": "Hac Factor"
+          },
+          "hac_lag": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D119: Bartlett lag",
+            "title": "Hac Lag"
           },
           "llm_divergence_rate": {
             "anyOf": [
@@ -1544,6 +1774,34 @@
             "title": "Mde Always Valid",
             "type": "object"
           },
+          "mde_always_valid_adj": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "number"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mde Always Valid Adj"
+          },
+          "mde_always_valid_lr": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "number"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mde Always Valid Lr"
+          },
           "mde_fixed": {
             "additionalProperties": {
               "type": "number"
@@ -1552,10 +1810,53 @@
             "title": "Mde Fixed",
             "type": "object"
           },
+          "mde_fixed_adj": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "number"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mde Fixed Adj"
+          },
+          "mde_fixed_lr": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "number"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mde Fixed Lr"
+          },
           "paired_chains": {
             "default": 0,
             "title": "Paired Chains",
             "type": "integer"
+          },
+          "rho": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D119: pooled rho_k",
+            "title": "Rho"
           },
           "sigma": {
             "anyOf": [
@@ -1568,6 +1869,30 @@
             ],
             "description": "Sample sd of d_t (fraction of t0 equity)",
             "title": "Sigma"
+          },
+          "sigma_adj": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D119: pooled SPY-adjusted residual sd",
+            "title": "Sigma Adj"
+          },
+          "sigma_lr": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D119: sigma_adj * sqrt(hac_factor)",
+            "title": "Sigma Lr"
           },
           "slippage_gap_bps": {
             "anyOf": [
@@ -3045,6 +3370,123 @@
           "empty"
         ],
         "title": "CostsCard",
+        "type": "object"
+      },
+      "CovariateCheck": {
+        "additionalProperties": false,
+        "description": "D120: SPY-only vs SPY + \u0394VIX on one pair (or pooled). Descriptive, never a verdict.",
+        "properties": {
+          "b_vix": {
+            "description": "\u0394VIX coefficient (fraction of t0 equity / vol pt)",
+            "title": "B Vix",
+            "type": "number"
+          },
+          "b_vix_se": {
+            "title": "B Vix Se",
+            "type": "number"
+          },
+          "ci_halfwidth_spy": {
+            "description": "Always-valid CI half-width at plan_n",
+            "title": "Ci Halfwidth Spy",
+            "type": "number"
+          },
+          "ci_halfwidth_spy_vix": {
+            "title": "Ci Halfwidth Spy Vix",
+            "type": "number"
+          },
+          "ci_shrink": {
+            "description": "1 - hw_spy_vix / hw_spy (> 0 = narrower)",
+            "title": "Ci Shrink",
+            "type": "number"
+          },
+          "hac_factor": {
+            "description": "Long-run factor f of the full model (>= 1)",
+            "title": "Hac Factor",
+            "type": "number"
+          },
+          "hac_source": {
+            "enum": [
+              "iid",
+              "running",
+              "aa",
+              "cap"
+            ],
+            "title": "Hac Source",
+            "type": "string"
+          },
+          "n": {
+            "description": "Sessions with both SPY and \u0394VIX (pooled: summed)",
+            "title": "N",
+            "type": "integer"
+          },
+          "pairs": {
+            "default": 1,
+            "description": "Pairs pooled (1 = one pair)",
+            "title": "Pairs",
+            "type": "integer"
+          },
+          "partial_df": {
+            "description": "(restrictions, residual df)",
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "title": "Partial Df",
+            "type": "array"
+          },
+          "partial_f": {
+            "description": "Partial F of \u0394VIX given SPY / long-run factor",
+            "title": "Partial F",
+            "type": "number"
+          },
+          "partial_f_iid": {
+            "description": "Partial F, iid (unscaled)",
+            "title": "Partial F Iid",
+            "type": "number"
+          },
+          "partial_p": {
+            "title": "Partial P",
+            "type": "number"
+          },
+          "plan_n": {
+            "default": 20,
+            "title": "Plan N",
+            "type": "integer"
+          },
+          "sigma_spy": {
+            "description": "Residual sd of d = a + b1 SPY",
+            "title": "Sigma Spy",
+            "type": "number"
+          },
+          "sigma_spy_vix": {
+            "description": "Residual sd of d = a + b1 SPY + b2 \u0394VIX",
+            "title": "Sigma Spy Vix",
+            "type": "number"
+          }
+        },
+        "required": [
+          "n",
+          "sigma_spy",
+          "sigma_spy_vix",
+          "partial_f",
+          "partial_f_iid",
+          "partial_df",
+          "partial_p",
+          "hac_factor",
+          "hac_source",
+          "b_vix",
+          "b_vix_se",
+          "ci_halfwidth_spy",
+          "ci_halfwidth_spy_vix",
+          "ci_shrink"
+        ],
+        "title": "CovariateCheck",
         "type": "object"
       },
       "CumulativePoint": {
@@ -4903,6 +5345,17 @@
         "additionalProperties": false,
         "description": "One row of the list: status, area, sessions n/min/max, primary diff + CI, secondary.",
         "properties": {
+          "adjustment": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Adjustment"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D119: the headline primary's SPY regression (null before D119)"
+          },
           "area": {
             "title": "Area",
             "type": "string"
@@ -5049,6 +5502,17 @@
             ],
             "description": "Always-valid mSPRT p of no difference",
             "title": "Primary P"
+          },
+          "primary_unadjusted": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Unadjusted"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D119: the D44 iid unadjusted primary (pre-registered specs only)"
           },
           "reason": {
             "anyOf": [
@@ -5205,6 +5669,17 @@
             "title": "Alpha",
             "type": "number"
           },
+          "analysis": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Analysis"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D119: the spec's pre-registered analysis"
+          },
           "area": {
             "title": "Area",
             "type": "string"
@@ -5251,6 +5726,22 @@
           "control_sha": {
             "title": "Control Sha",
             "type": "string"
+          },
+          "covariate_missing": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "date",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D119: paired sessions with no SPY return (an adjusted verdict waits)",
+            "title": "Covariate Missing"
           },
           "evaluated_at": {
             "format": "date-time",
@@ -5496,6 +5987,17 @@
               }
             ],
             "title": "Alpha"
+          },
+          "analysis": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Analysis"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D119: pre-registered SPY adjustment + HAC sigma of the primary; absent = the D44 iid unadjusted method (and the spec hashes exactly as before D119)"
           },
           "area": {
             "$ref": "#/components/schemas/Area"
@@ -6722,6 +7224,79 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "Hac": {
+        "additionalProperties": false,
+        "description": "D119: the Bartlett (Newey-West) long-run variance factor of the residuals.",
+        "properties": {
+          "factor": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "f used (>= 1; sigma_lr = ... sqrt(f))",
+            "title": "Factor"
+          },
+          "factor_running": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "f from the series itself",
+            "title": "Factor Running"
+          },
+          "lag": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Bartlett lag L (sessions); None = iid",
+            "title": "Lag"
+          },
+          "rho": {
+            "description": "Residual rho_1..rho_L (raw)",
+            "items": {
+              "type": "number"
+            },
+            "title": "Rho",
+            "type": "array"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "iid",
+                  "running",
+                  "aa",
+                  "cap"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "iid (no lag) | running (n >= 2L+2) | aa (the A/A's recorded f) | cap (n < 2L+2, no A/A f: hac_max_factor)",
+            "title": "Source"
+          }
+        },
+        "required": [
+          "lag"
+        ],
+        "title": "Hac",
         "type": "object"
       },
       "HaltRow": {
@@ -9711,6 +10286,17 @@
             "title": "A",
             "type": "string"
           },
+          "adjustment": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Adjustment"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D119: SPY regression (verdict iff pre_registered)"
+          },
           "arm_id": {
             "anyOf": [
               {
@@ -9739,6 +10325,17 @@
             ],
             "description": "Always-valid (mSPRT) CI, level 1-alpha"
           },
+          "covariate_check": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CovariateCheck"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D120: SPY-only vs SPY + \u0394VIX (descriptive; never a verdict)"
+          },
           "decided_day": {
             "anyOf": [
               {
@@ -9756,6 +10353,17 @@
             "description": "True = no verdict (Ti vs Tj)",
             "title": "Descriptive",
             "type": "boolean"
+          },
+          "hac": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Hac"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D119: long-run factor"
           },
           "holm_p": {
             "anyOf": [
@@ -9812,6 +10420,17 @@
             "description": "Always-valid mSPRT p (dual of ci)",
             "title": "P Value"
           },
+          "primary_unadjusted": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Unadjusted"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D119: the D44 iid unadjusted primary"
+          },
           "sample_sd": {
             "anyOf": [
               {
@@ -9853,6 +10472,42 @@
               }
             ],
             "title": "Sigma"
+          },
+          "sigma_adj": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D119: plug-in residual sd sqrt(SSE / df)",
+            "title": "Sigma Adj"
+          },
+          "sigma_lr": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D119: long-run sigma of the estimate: base * sqrt(f) * intercept factor",
+            "title": "Sigma Lr"
+          },
+          "sigma_raw": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D119: sample sd of d (unadjusted)",
+            "title": "Sigma Raw"
           },
           "sigma_source": {
             "anyOf": [
@@ -11408,6 +12063,17 @@
         "additionalProperties": false,
         "description": "Paired daily net P&L difference (fraction of t0 equity) and its always-valid CI.",
         "properties": {
+          "adjustment": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Adjustment"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D119: SPY regression (verdict iff pre_registered)"
+          },
           "ci": {
             "anyOf": [
               {
@@ -11418,6 +12084,28 @@
               }
             ],
             "description": "Always-valid (mSPRT) two-sided CI"
+          },
+          "covariate_check": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CovariateCheck"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D120: SPY-only vs SPY + \u0394VIX (descriptive; never a verdict)"
+          },
+          "hac": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Hac"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D119: long-run factor"
           },
           "lower_bound_positive": {
             "default": false,
@@ -11457,6 +12145,17 @@
             "description": "Always-valid mSPRT p of no difference (dual of ci: p < alpha iff ci excludes 0)",
             "title": "P Value"
           },
+          "primary_unadjusted": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Unadjusted"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D119: the D44 iid unadjusted primary"
+          },
           "sigma": {
             "anyOf": [
               {
@@ -11467,6 +12166,42 @@
               }
             ],
             "title": "Sigma"
+          },
+          "sigma_adj": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D119: plug-in residual sd sqrt(SSE / df)",
+            "title": "Sigma Adj"
+          },
+          "sigma_lr": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D119: long-run sigma of the estimate: base * sqrt(f) * intercept factor",
+            "title": "Sigma Lr"
+          },
+          "sigma_raw": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D119: sample sd of d (unadjusted)",
+            "title": "Sigma Raw"
           },
           "sigma_source": {
             "anyOf": [
@@ -13797,6 +14532,18 @@
             "title": "Legacy Pnl",
             "type": "number"
           },
+          "spy_ret": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D119: SPY's return that session (close to close; partial first session t0 to close). Persisted so a re-evaluation reproduces the adjusted primary offline",
+            "title": "Spy Ret"
+          },
           "treatment_equity": {
             "description": "Treatment arm's virtual equity ($)",
             "title": "Treatment Equity",
@@ -13805,6 +14552,18 @@
           "treatment_pnl": {
             "title": "Treatment Pnl",
             "type": "number"
+          },
+          "vix_chg": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D120: VIX close minus the previous session's close (vol points); absent on the D117 partial first session. Persisted like spy_ret",
+            "title": "Vix Chg"
           }
         },
         "required": [
@@ -15081,6 +15840,45 @@
       "StopDetail": {
         "additionalProperties": false,
         "properties": {
+          "beta_spread": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D119: max - min of the pairs' SPY beta",
+            "title": "Beta Spread"
+          },
+          "hac_factor": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D119: pooled Bartlett long-run variance factor f",
+            "title": "Hac Factor"
+          },
+          "hac_lag": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D119: lag f was measured at",
+            "title": "Hac Lag"
+          },
           "note": {
             "anyOf": [
               {
@@ -15116,6 +15914,19 @@
             ],
             "description": "Daily P&L-diff stdev (% equity); A/A records it",
             "title": "Sigma"
+          },
+          "sigma_adj": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D119: pooled SPY-adjusted residual sigma",
+            "title": "Sigma Adj"
           }
         },
         "title": "StopDetail",
@@ -16905,6 +17716,96 @@
           "probability"
         ],
         "title": "TriggerLevels",
+        "type": "object"
+      },
+      "Unadjusted": {
+        "additionalProperties": false,
+        "description": "D119: the D44 iid unadjusted primary, kept next to a pre-registered one.",
+        "properties": {
+          "ci": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Interval"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean"
+          },
+          "n": {
+            "title": "N",
+            "type": "integer"
+          },
+          "p_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P Value"
+          },
+          "sigma": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sigma"
+          },
+          "sigma_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "aa",
+                  "running_corrected"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sigma Source"
+          },
+          "tau": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tau"
+          }
+        },
+        "required": [
+          "n",
+          "mean",
+          "ci",
+          "sigma",
+          "sigma_source",
+          "tau",
+          "p_value"
+        ],
+        "title": "Unadjusted",
         "type": "object"
       },
       "UniverseActiveRow": {

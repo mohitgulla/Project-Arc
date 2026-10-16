@@ -220,6 +220,7 @@ NOT_EXPOSED: dict[str, str] = {
     "scanner_iv_lookback": "IV-rank statistics window",
     "scanner_iv_history_dir": "path",
     "iv_min_obs_rank": "IV-rank statistics guard (D55); change by PR",
+    "iv_series_sources": "IV series source precedence (E7.13, D84; data provenance); change by PR",
     "iv_crosscheck_max_pts": "data-quality alert threshold (context data only)",
     "iv_crosscheck_max_names": "data-quality alert plumbing",
     "iv_ext_max_age_days": "context freshness (never a gate input)",
@@ -287,6 +288,10 @@ NOT_EXPOSED_PATHS: dict[str, str] = {
     "options_fast.vix_flags.vix_gt_35": "tape label only (the gate's no_trade_vix_max rules)",
     # E16.1 (D76): no date value type; the backfill start is a data-range choice.
     "iv_backfill.since": "backfill start date (data range); change by PR",
+    # D119 (E25.7): the adopt-time pre-registered analysis block (a structured value
+    # hash-locked into each new spec); a method change goes through a PR + D# row.
+    "experiments.defaults.analysis.covariates": "pre-registered analysis; change by PR",
+    "experiments.defaults.analysis.hac_lag": "pre-registered analysis; change by PR",
 }
 
 # config/ranking.yaml ``backtest.*`` sections that are deliberately NOT runtime-tunable:
@@ -2808,6 +2813,32 @@ _EXPERIMENT_TUNABLES: tuple[Tunable, ...] = (
         min=200,
         max=20000,
         hard_ceiling=200,
+    ),
+    # D119 (E25.7): the HAC long-run sigma of the primary (a spec's own hac_lag wins).
+    Tunable(
+        key="experiments.stats.hac_lag",
+        group=Group.EXPERIMENTS,
+        type=_I,
+        description="D119 evaluation: Newey-West/Bartlett lag (sessions) of the long-run "
+        "sigma for specs without `analysis` (descriptive) and the 2L+2 small-n rule.",
+        target=Target.EXPERIMENTS,
+        risk=Risk.ANY,
+        path=("experiments", "stats", "hac_lag"),
+        min=1,
+        max=20,
+    ),
+    Tunable(
+        key="experiments.stats.hac_max_factor",
+        group=Group.EXPERIMENTS,
+        type=_F,
+        description="D119 evaluation: long-run variance factor used below 2L+2 sessions "
+        "when no A/A factor is on record (lower = narrower early CI).",
+        target=Target.EXPERIMENTS,
+        risk=Risk.DOWN,
+        path=("experiments", "stats", "hac_max_factor"),
+        min=1.0,
+        max=20.0,
+        hard_ceiling=1.0,
     ),
 )
 
