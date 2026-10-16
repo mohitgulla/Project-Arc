@@ -412,8 +412,10 @@ class Fit(BaseModel):
     adjusted: bool
     beta: float | None = None
     beta_se: float | None = None
+    betas: list[float] | None = Field(default=None, description="D120: every b (k > 1)")
+    betas_se: list[float] | None = Field(default=None)
     r2: float | None = None
-    df: int = Field(..., description="Residual degrees of freedom (n - 2 adjusted, n - 1)")
+    df: int = Field(..., description="Residual degrees of freedom (n - 1 - k adjusted, n - 1)")
     s_e: float = Field(..., description="Plug-in residual sd sqrt(SSE / df)")
     intercept_factor: float = Field(
         1.0, description="sqrt(1 + n mean(x)^2 / Sxx): the intercept's extra sd (1 = mean)"
@@ -424,12 +426,27 @@ class Fit(BaseModel):
 def ols_fit(d: ArrayLike, x: ArrayLike | None) -> Fit | None:
     """Fit ``d = a + b x`` (or the mean when *x* is None, ``n < 3`` or ``Sxx = 0``).
 
-    ``None`` below 2 sessions (no residual degree of freedom).
+    D120 (E25.9): *x* may be ``(n, k)`` for k covariates, ``d = a + b_1 x_1 + ... +
+    b_k x_k``. k = 1 (a 1-D *x* or one column) is the D119 closed form, unchanged;
+    k > 1 solves the normal equations and reads the intercept's variance from
+    ``(X'X)^-1`` (:func:`_ols_matrix`), falling back to the mean below ``k + 2``
+    sessions or on a rank-deficient design. ``None`` below 2 sessions (no residual
+    degree of freedom).
     """
     dd = np.asarray(d, dtype=float)
     n = dd.size
     if n < 2:
         return None
+    if x is not None:
+        x2 = np.asarray(x, dtype=float)
+        if x2.ndim == 2 and x2.shape[1] == 1:
+            x = x2[:, 0]
+        elif x2.ndim == 2:
+            if x2.shape[0] != n:
+                msg = f"d and x differ in length: {n} vs {x2.shape[0]}"
+                raise ValueError(msg)
+            fit = _ols_matrix(dd, x2)
+            return fit if fit is not None else ols_fit(dd, None)
     if x is not None and n >= 3:
         xx = np.asarray(x, dtype=float)
         if xx.size != n:
@@ -466,6 +483,45 @@ def ols_fit(d: ArrayLike, x: ArrayLike | None) -> Fit | None:
         df=n - 1,
         s_e=math.sqrt(float(np.sum(e**2)) / (n - 1)),
         intercept_factor=1.0,
+        resid=e.tolist(),
+    )
+
+
+def _ols_matrix(d: NDArray[np.float64], x: NDArray[np.float64]) -> Fit | None:
+    """OLS of *d* on ``[1, x]`` (``x``: ``(n, k)``); None below ``k + 2`` or rank-deficient.
+
+    ``intercept_factor = sqrt(n (X'X)^-1_00)``, so ``sigma * intercept_factor / sqrt(n)``
+    is the intercept's standard error (for k = 1 it equals ``sqrt(1 + n mean(x)^2 /
+    Sxx)``). ``beta`` / ``beta_se`` are the first covariate's; ``betas`` / ``betas_se``
+    all k.
+    """
+    n, k = x.shape
+    df = n - 1 - k
+    if df < 1:
+        return None
+    design = np.column_stack([np.ones(n), x])
+    xtx = design.T @ design
+    if np.linalg.matrix_rank(design) < k + 1:
+        return None
+    inv = np.linalg.inv(xtx)
+    coef = inv @ (design.T @ d)
+    e = d - design @ coef
+    sse = float(np.sum(e**2))
+    sst = float(np.sum((d - d.mean()) ** 2))
+    s_e = math.sqrt(sse / df)
+    se = [s_e * math.sqrt(max(float(inv[j, j]), 0.0)) for j in range(1, k + 1)]
+    return Fit(
+        n=n,
+        estimate=float(coef[0]),
+        adjusted=True,
+        beta=float(coef[1]),
+        beta_se=se[0],
+        betas=[float(c) for c in coef[1:]],
+        betas_se=se,
+        r2=1.0 - sse / sst if sst > 0.0 else 0.0,
+        df=df,
+        s_e=s_e,
+        intercept_factor=math.sqrt(max(n * float(inv[0, 0]), 0.0)),
         resid=e.tolist(),
     )
 

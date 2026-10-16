@@ -283,7 +283,10 @@ class Arms(BaseModel):
 
 
 #: D119 (E25.7): the covariates a spec may pre-register for the primary's adjustment.
-Covariate = Literal["spy_ret"]
+#: D120 (E25.9): ``vix_chg`` (ΔVIX, vol points) is legal so a future spec *can*
+#: pre-register it; no default names it (the D120 rule decides, in a separate PR).
+#: Only exogenous market series the treatment cannot affect may be added here.
+Covariate = Literal["spy_ret", "vix_chg"]
 #: D119: the largest Newey-West lag (sessions) a spec or the config may name.
 MAX_HAC_LAG = 20
 
@@ -300,7 +303,9 @@ class Analysis(BaseModel):
 
     model_config = _FORBID
 
-    covariates: list[Covariate] = Field(..., description="[] = unadjusted; [spy_ret]")
+    covariates: list[Covariate] = Field(
+        ..., description="[] = unadjusted; [spy_ret]; D120: vix_chg may be added"
+    )
     hac_lag: int | None = Field(
         ..., ge=1, le=MAX_HAC_LAG, description="Bartlett lag in sessions; null = iid"
     )

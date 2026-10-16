@@ -796,9 +796,9 @@ export interface components {
         Analysis: {
             /**
              * Covariates
-             * @description [] = unadjusted; [spy_ret]
+             * @description [] = unadjusted; [spy_ret]; D120: vix_chg may be added
              */
-            covariates: "spy_ret"[];
+            covariates: ("spy_ret" | "vix_chg")[];
             /**
              * Hac Lag
              * @description Bartlett lag in sessions; null = iid
@@ -1354,6 +1354,8 @@ export interface components {
              * @description D119: max - min SPY beta across the pairs
              */
             beta_spread?: number | null;
+            /** @description D120: the ΔVIX check pooled over the Ti - C pairs (descriptive) */
+            covariate_check?: components["schemas"]["CovariateCheck"] | null;
             /**
              * Divergent Chains
              * @default 0
@@ -2081,6 +2083,87 @@ export interface components {
              * @default 0
              */
             unmodelled: number;
+        };
+        /**
+         * CovariateCheck
+         * @description D120: SPY-only vs SPY + ΔVIX on one pair (or pooled). Descriptive, never a verdict.
+         */
+        CovariateCheck: {
+            /**
+             * B Vix
+             * @description ΔVIX coefficient (fraction of t0 equity / vol pt)
+             */
+            b_vix: number;
+            /** B Vix Se */
+            b_vix_se: number;
+            /**
+             * Ci Halfwidth Spy
+             * @description Always-valid CI half-width at plan_n
+             */
+            ci_halfwidth_spy: number;
+            /** Ci Halfwidth Spy Vix */
+            ci_halfwidth_spy_vix: number;
+            /**
+             * Ci Shrink
+             * @description 1 - hw_spy_vix / hw_spy (> 0 = narrower)
+             */
+            ci_shrink: number;
+            /**
+             * Hac Factor
+             * @description Long-run factor f of the full model (>= 1)
+             */
+            hac_factor: number;
+            /**
+             * Hac Source
+             * @enum {string}
+             */
+            hac_source: "iid" | "running" | "aa" | "cap";
+            /**
+             * N
+             * @description Sessions with both SPY and ΔVIX (pooled: summed)
+             */
+            n: number;
+            /**
+             * Pairs
+             * @description Pairs pooled (1 = one pair)
+             * @default 1
+             */
+            pairs: number;
+            /**
+             * Partial Df
+             * @description (restrictions, residual df)
+             */
+            partial_df: [
+                number,
+                number
+            ];
+            /**
+             * Partial F
+             * @description Partial F of ΔVIX given SPY / long-run factor
+             */
+            partial_f: number;
+            /**
+             * Partial F Iid
+             * @description Partial F, iid (unscaled)
+             */
+            partial_f_iid: number;
+            /** Partial P */
+            partial_p: number;
+            /**
+             * Plan N
+             * @default 20
+             */
+            plan_n: number;
+            /**
+             * Sigma Spy
+             * @description Residual sd of d = a + b1 SPY
+             */
+            sigma_spy: number;
+            /**
+             * Sigma Spy Vix
+             * @description Residual sd of d = a + b1 SPY + b2 ΔVIX
+             */
+            sigma_spy_vix: number;
         };
         /**
          * CumulativePoint
@@ -4676,6 +4759,8 @@ export interface components {
             b: string;
             /** @description Always-valid (mSPRT) CI, level 1-alpha */
             ci?: components["schemas"]["Interval"] | null;
+            /** @description D120: SPY-only vs SPY + ΔVIX (descriptive; never a verdict) */
+            covariate_check?: components["schemas"]["CovariateCheck"] | null;
             /**
              * Decided Day
              * @description Session the arm stopped on (its series ends there)
@@ -5234,6 +5319,8 @@ export interface components {
             adjustment?: components["schemas"]["Adjustment"] | null;
             /** @description Always-valid (mSPRT) two-sided CI */
             ci?: components["schemas"]["Interval"] | null;
+            /** @description D120: SPY-only vs SPY + ΔVIX (descriptive; never a verdict) */
+            covariate_check?: components["schemas"]["CovariateCheck"] | null;
             /** @description D119: long-run factor */
             hac?: components["schemas"]["Hac"] | null;
             /**
@@ -6163,6 +6250,11 @@ export interface components {
             treatment_equity: number;
             /** Treatment Pnl */
             treatment_pnl: number;
+            /**
+             * Vix Chg
+             * @description D120: VIX close minus the previous session's close (vol points); absent on the D117 partial first session. Persisted like spy_ret
+             */
+            vix_chg?: number | null;
         };
         /** SleeveExitView */
         SleeveExitView: {

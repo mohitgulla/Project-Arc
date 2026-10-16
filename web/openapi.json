@@ -487,9 +487,12 @@
         "description": "D119 (E25.7): the pre-registered analysis of the primary (hash-locked with the spec).\n\n``covariates: [spy_ret]`` fits ``d_t = a + b * SPY_ret_t`` on the running data and\ntests the intercept ``a`` (the daily edge on a flat-market day); ``[]`` tests the\nplain mean. ``hac_lag`` scales the residual sigma by a Newey-West/Bartlett long-run\nfactor over that many sessions (floored at 1); ``None`` keeps the iid sigma.\nA spec without the block keeps the D44 method (iid, unadjusted).",
         "properties": {
           "covariates": {
-            "description": "[] = unadjusted; [spy_ret]",
+            "description": "[] = unadjusted; [spy_ret]; D120: vix_chg may be added",
             "items": {
-              "const": "spy_ret",
+              "enum": [
+                "spy_ret",
+                "vix_chg"
+              ],
               "type": "string"
             },
             "title": "Covariates",
@@ -1698,6 +1701,17 @@
             ],
             "description": "D119: max - min SPY beta across the pairs",
             "title": "Beta Spread"
+          },
+          "covariate_check": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CovariateCheck"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D120: the \u0394VIX check pooled over the Ti - C pairs (descriptive)"
           },
           "divergent_chains": {
             "default": 0,
@@ -3356,6 +3370,123 @@
           "empty"
         ],
         "title": "CostsCard",
+        "type": "object"
+      },
+      "CovariateCheck": {
+        "additionalProperties": false,
+        "description": "D120: SPY-only vs SPY + \u0394VIX on one pair (or pooled). Descriptive, never a verdict.",
+        "properties": {
+          "b_vix": {
+            "description": "\u0394VIX coefficient (fraction of t0 equity / vol pt)",
+            "title": "B Vix",
+            "type": "number"
+          },
+          "b_vix_se": {
+            "title": "B Vix Se",
+            "type": "number"
+          },
+          "ci_halfwidth_spy": {
+            "description": "Always-valid CI half-width at plan_n",
+            "title": "Ci Halfwidth Spy",
+            "type": "number"
+          },
+          "ci_halfwidth_spy_vix": {
+            "title": "Ci Halfwidth Spy Vix",
+            "type": "number"
+          },
+          "ci_shrink": {
+            "description": "1 - hw_spy_vix / hw_spy (> 0 = narrower)",
+            "title": "Ci Shrink",
+            "type": "number"
+          },
+          "hac_factor": {
+            "description": "Long-run factor f of the full model (>= 1)",
+            "title": "Hac Factor",
+            "type": "number"
+          },
+          "hac_source": {
+            "enum": [
+              "iid",
+              "running",
+              "aa",
+              "cap"
+            ],
+            "title": "Hac Source",
+            "type": "string"
+          },
+          "n": {
+            "description": "Sessions with both SPY and \u0394VIX (pooled: summed)",
+            "title": "N",
+            "type": "integer"
+          },
+          "pairs": {
+            "default": 1,
+            "description": "Pairs pooled (1 = one pair)",
+            "title": "Pairs",
+            "type": "integer"
+          },
+          "partial_df": {
+            "description": "(restrictions, residual df)",
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "title": "Partial Df",
+            "type": "array"
+          },
+          "partial_f": {
+            "description": "Partial F of \u0394VIX given SPY / long-run factor",
+            "title": "Partial F",
+            "type": "number"
+          },
+          "partial_f_iid": {
+            "description": "Partial F, iid (unscaled)",
+            "title": "Partial F Iid",
+            "type": "number"
+          },
+          "partial_p": {
+            "title": "Partial P",
+            "type": "number"
+          },
+          "plan_n": {
+            "default": 20,
+            "title": "Plan N",
+            "type": "integer"
+          },
+          "sigma_spy": {
+            "description": "Residual sd of d = a + b1 SPY",
+            "title": "Sigma Spy",
+            "type": "number"
+          },
+          "sigma_spy_vix": {
+            "description": "Residual sd of d = a + b1 SPY + b2 \u0394VIX",
+            "title": "Sigma Spy Vix",
+            "type": "number"
+          }
+        },
+        "required": [
+          "n",
+          "sigma_spy",
+          "sigma_spy_vix",
+          "partial_f",
+          "partial_f_iid",
+          "partial_df",
+          "partial_p",
+          "hac_factor",
+          "hac_source",
+          "b_vix",
+          "b_vix_se",
+          "ci_halfwidth_spy",
+          "ci_halfwidth_spy_vix",
+          "ci_shrink"
+        ],
+        "title": "CovariateCheck",
         "type": "object"
       },
       "CumulativePoint": {
@@ -10194,6 +10325,17 @@
             ],
             "description": "Always-valid (mSPRT) CI, level 1-alpha"
           },
+          "covariate_check": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CovariateCheck"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D120: SPY-only vs SPY + \u0394VIX (descriptive; never a verdict)"
+          },
           "decided_day": {
             "anyOf": [
               {
@@ -11942,6 +12084,17 @@
               }
             ],
             "description": "Always-valid (mSPRT) two-sided CI"
+          },
+          "covariate_check": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CovariateCheck"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D120: SPY-only vs SPY + \u0394VIX (descriptive; never a verdict)"
           },
           "hac": {
             "anyOf": [
@@ -14399,6 +14552,18 @@
           "treatment_pnl": {
             "title": "Treatment Pnl",
             "type": "number"
+          },
+          "vix_chg": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D120: VIX close minus the previous session's close (vol points); absent on the D117 partial first session. Persisted like spy_ret",
+            "title": "Vix Chg"
           }
         },
         "required": [

@@ -100,6 +100,13 @@ def add_experiment_parser(sub: argparse._SubParsersAction[argparse.ArgumentParse
         help="D119 covariate: SPY returns the stored reports carry only (default, offline; "
         "new days stay missing), or alpaca: fetch SPY daily bars for the other days",
     )
+    rp.add_argument(
+        "--vix",
+        choices=["stored", "cboe"],
+        default="stored",
+        help="D120 descriptive ΔVIX: the stored reports' values only (default, offline), "
+        "or cboe: fetch Cboe's VIX history CSV for the other days",
+    )
     ev = common(esub.add_parser("evaluate", help="Evaluate running experiments; apply verdicts"))
     ev.add_argument("experiment_id", nargs="?", default=None)
     ev.add_argument("--now", default=None, help="Evaluate as of this ISO time (default: now)")
@@ -109,6 +116,35 @@ def add_experiment_parser(sub: argparse._SubParsersAction[argparse.ArgumentParse
         default="stored",
         help="D119 covariate: SPY returns the stored reports carry only (default, offline; "
         "new days stay missing), or alpaca: fetch SPY daily bars for the other days",
+    )
+    ev.add_argument(
+        "--vix",
+        choices=["stored", "cboe"],
+        default="stored",
+        help="D120 descriptive ΔVIX: the stored reports' values only (default, offline), "
+        "or cboe: fetch Cboe's VIX history CSV for the other days",
+    )
+    cc = common(
+        esub.add_parser(
+            "covariate-check",
+            help="D120 (E25.9): SPY-only vs SPY + ΔVIX per pair, pooled, and the "
+            "pre-registered add-or-not rule (descriptive, read-only)",
+        )
+    )
+    cc.add_argument("experiment_id")
+    cc.add_argument("--now", default=None, help="Evaluate as of this ISO time (default: now)")
+    cc.add_argument(
+        "--spy",
+        choices=["stored", "alpaca"],
+        default="stored",
+        help="SPY returns: stored only (default) or alpaca (fetch the other days)",
+    )
+    cc.add_argument(
+        "--vix",
+        choices=["stored", "cboe"],
+        default="stored",
+        help="D120 descriptive ΔVIX: the stored reports' values only (default, offline), "
+        "or cboe: fetch Cboe's VIX history CSV for the other days",
     )
     pl = common(
         esub.add_parser(
@@ -684,6 +720,135 @@ def _spy_market(args: argparse.Namespace, settings: Any) -> Any:
         return None
 
 
+def _vix_source(args: argparse.Namespace) -> Any:
+    """D120: the VIX closes provider for ``--vix cboe`` (None for ``stored``)."""
+    if getattr(args, "vix", "stored") != "cboe" or getattr(args, "stored", False):
+        return None
+    from arc.experiments.covariate import VIX_INDEX, CachedCloses
+    from arc.ingest.options_data import fetch_index_closes
+
+    return CachedCloses(lambda: fetch_index_closes(VIX_INDEX))
+
+
+def _check_row(label: str, c: Any) -> str:
+    return (
+        f"  {label:<12} n={c.n:<3} σ_spy {_pct(c.sigma_spy)}  σ_spy+vix {_pct(c.sigma_spy_vix)}  "
+        f"F {c.partial_f:.2f} (iid {c.partial_f_iid:.2f}, df {c.partial_df[0]},"
+        f"{c.partial_df[1]}, f {c.hac_factor:.2f} {c.hac_source}) p {c.partial_p:.4f}  "
+        f"b_vix {c.b_vix * 100:+.4f}%/pt ± {c.b_vix_se * 100:.4f}  "
+        f"hw@{c.plan_n} {_pct(c.ci_halfwidth_spy)} -> {_pct(c.ci_halfwidth_spy_vix)} "
+        f"({c.ci_shrink:+.1%} narrower)"
+    )
+
+
+def covariate_check_lines(r: Any) -> list[str]:
+    """D120: the ``arc experiment covariate-check`` table (per pair, pooled, rule)."""
+    from arc.experiments.covariate_check import MIN_CI_SHRINK, PARTIAL_P_MAX, rule_result
+
+    days = [s.day for s in r.series]
+    have = sum(1 for s in r.series if s.spy_ret is not None and s.vix_chg is not None)
+    out = [
+        f"{r.experiment_id} ΔVIX covariate check (D120, descriptive; never a verdict)",
+        f"  sessions {r.sessions} (with SPY + ΔVIX: {have})"
+        + (f"  {days[0]}..{days[-1]}" if days else ""),
+    ]
+    for s in r.series:
+        vix = "-" if s.vix_chg is None else f"{s.vix_chg:+.2f} pts"
+        out.append(f"    {s.day}  SPY {_pct(s.spy_ret)}  ΔVIX {vix}")
+    pairs = [p for p in (r.pairwise or []) if p.kind == "control_vs_treatment"]
+    if not pairs:
+        pairs_iter = [(f"{r.headline_arm or 'treatment'} - C", r.primary.covariate_check)]
+    else:
+        pairs_iter = [(f"{p.b} - {p.a}", p.covariate_check) for p in pairs]
+    for label, c in pairs_iter:
+        out.append(_check_row(label, c) if c is not None else f"  {label:<12} - (< 4 sessions)")
+    pooled = r.calibration.covariate_check
+    if pooled is None:
+        out.append("  pooled       - (no pair has 4 sessions with SPY + ΔVIX)")
+        return out
+    out.append(_check_row(f"pooled ({pooled.pairs})", pooled))
+    rule = rule_result(pooled)
+    out += [
+        "  pre-registered rule (PLAN D120), pooled Ti - C:",
+        f"    (1) partial F p < {PARTIAL_P_MAX}: {'yes' if rule.partial_p_ok else 'no'} "
+        f"(p {pooled.partial_p:.4f})",
+        f"    (2) CI half-width at n={pooled.plan_n} shrinks >= {MIN_CI_SHRINK:.0%}: "
+        f"{'yes' if rule.ci_shrink_ok else 'no'} ({pooled.ci_shrink:+.1%})",
+        "    (3) 2-covariate type-I sim <= alpha + 2 MC SE: tests/test_experiment_covariate_"
+        "check.py (slow)",
+        "  => "
+        + (
+            "recommend adding vix_chg (owner-approved D120 amendment PR)"
+            if rule.recommend_add
+            else "keep SPY-only; record these numbers in D120"
+        ),
+    ]
+    return out
+
+
+def _run_covariate_check(args: argparse.Namespace) -> int:
+    """``arc experiment covariate-check``: read-only (``mode=ro``); stores nothing."""
+    from arc.control.effective import effective_settings, experiments_config
+    from arc.experiments.evaluate import build_report
+    from arc.experiments.paired import paired_view
+    from arc.experiments.store import ExperimentError, ExperimentStore
+    from arc.store.db import connect_ro
+
+    try:
+        conn = connect_ro(args.db)
+    except FileNotFoundError as exc:
+        _err(f"arc experiment covariate-check: {exc}")
+        return 2
+    try:
+        settings = effective_settings(conn)
+        cfg = experiments_config(settings)
+        now = _parse_now(args.now)
+        store = ExperimentStore(conn, now=lambda: now)
+        try:
+            st = store.require(args.experiment_id)
+        except ExperimentError as exc:
+            _err(f"arc experiment covariate-check: {exc}")
+            return 2
+        with paired_view(conn) as view:
+            rep = build_report(
+                view, st, cfg, now=now, aa_sigma=store.aa_sigma(),
+                aa_cal=store.aa_calibration(), market=_spy_market(args, settings),
+                vix=_vix_source(args),
+            )  # fmt: skip
+    finally:
+        conn.close()
+    if args.json:
+        pairs = [p for p in (rep.pairwise or []) if p.kind == "control_vs_treatment"]
+        doc = {
+            "experiment_id": rep.experiment_id,
+            "sessions": rep.sessions,
+            "series": [
+                {"day": s.day.isoformat(), "spy_ret": s.spy_ret, "vix_chg": s.vix_chg}
+                for s in rep.series
+            ],
+            "pairs": {
+                p.b: None if p.covariate_check is None else p.covariate_check.model_dump()
+                for p in pairs
+            }
+            or {
+                "treatment": None
+                if rep.primary.covariate_check is None
+                else rep.primary.covariate_check.model_dump()
+            },
+            "pooled": None
+            if rep.calibration.covariate_check is None
+            else rep.calibration.covariate_check.model_dump(),
+        }
+        if rep.calibration.covariate_check is not None:
+            from arc.experiments.covariate_check import rule_result
+
+            doc["rule"] = rule_result(rep.calibration.covariate_check).model_dump()
+        _out(json.dumps(doc, indent=2))
+    else:
+        _out("\n".join(covariate_check_lines(rep)))
+    return 0
+
+
 def _run_eval(args: argparse.Namespace, store: Any, conn: sqlite3.Connection) -> int:
     from arc.control.effective import effective_settings, experiments_config
     from arc.experiments.evaluate import build_report, evaluate, evaluate_running, latest_report
@@ -693,6 +858,7 @@ def _run_eval(args: argparse.Namespace, store: Any, conn: sqlite3.Connection) ->
     settings = effective_settings(conn)
     cfg = experiments_config(settings)
     market = _spy_market(args, settings)
+    vix = _vix_source(args)
     if args.experiment_command == "report":
         if args.stored:
             rep = latest_report(conn, args.experiment_id)
@@ -711,6 +877,7 @@ def _run_eval(args: argparse.Namespace, store: Any, conn: sqlite3.Connection) ->
                     aa_sigma=store.aa_sigma(),
                     aa_cal=store.aa_calibration(),
                     market=market,
+                    vix=vix,
                 )
         reports = [rep]
         if args.format == "md":
@@ -725,9 +892,9 @@ def _run_eval(args: argparse.Namespace, store: Any, conn: sqlite3.Connection) ->
             if st.status is not ExperimentStatus.RUNNING:
                 _err(f"arc experiment evaluate: {args.experiment_id} is {st.status.value}")
                 return 2
-            reports = [evaluate(store, args.experiment_id, cfg, now=now, market=market)]
+            reports = [evaluate(store, args.experiment_id, cfg, now=now, market=market, vix=vix)]
         else:
-            reports = evaluate_running(store, cfg, now=now, market=market)
+            reports = evaluate_running(store, cfg, now=now, market=market, vix=vix)
     if args.json:
         payload = [r.model_dump(mode="json") for r in reports]
         _out(json.dumps(payload[0] if args.experiment_command == "report" else payload, indent=2))
@@ -888,6 +1055,8 @@ def run_experiment(args: argparse.Namespace) -> int:
         return run_arm_tick(args)
     if cmd == "regime-panel":  # E25.5: read-only view, never opens the store read-write
         return run_regime_panel(args)
+    if cmd == "covariate-check":  # E25.9: read-only view, stores nothing
+        return _run_covariate_check(args)
     conn = _open(args.db)
     try:
         from arc.control.effective import effective_settings, experiments_config

@@ -71,7 +71,7 @@ from arc.experiments.models import CONTROL_ARM, ExperimentKind
 if TYPE_CHECKING:
     import datetime as _dt
     import sqlite3
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
     from arc.experiments.config import ExperimentsConfig
     from arc.experiments.covariate import BarsProvider
@@ -142,6 +142,7 @@ def _between(a_rows: list[ev.SessionRow], b_rows: list[ev.SessionRow]) -> list[e
                 treatment_pnl=rb.treatment_pnl,
                 d=rb.d - ra.d,  # (Tj - C) - (Ti - C) = (Tj - Ti) / t0_equity
                 spy_ret=rb.spy_ret,  # D119: the same SPY day for every pair
+                vix_chg=rb.vix_chg,  # D120: the same ΔVIX day for every pair
             )
         )
     return out
@@ -156,12 +157,18 @@ def _primary_at(
     mde: float | None,
     min_s: int,
     method: ev.Method | None = None,
+    check: bool = False,
 ) -> ev.Primary:
-    """The primary of the pair's first sessions *rows* (D119: under *method*)."""
+    """The primary of the pair's first sessions *rows* (D119: under *method*).
+
+    *check*: also compute the D120 descriptive ΔVIX check (the reported numbers only;
+    the daily-look replay never needs it).
+    """
+    vs = [r.vix_chg for r in rows] if any(r.vix_chg is not None for r in rows) else None
     return ev._primary_from(  # noqa: SLF001
         [r.d for r in rows], alpha=alpha, known=known, sigma_upper_q=q, mde=mde,
         min_sessions=min_s, xs=[r.spy_ret for r in rows], days=[r.day for r in rows],
-        method=method,
+        method=method, vs=vs, check=check,
     )  # fmt: skip
 
 
@@ -224,11 +231,7 @@ def _replay(
             if p.decided_at is not None:
                 continue
             k = sum(1 for r in p.rows if r.day <= day)
-            blocked = (
-                method is not None
-                and method.waits_on_covariate
-                and any(r.spy_ret is None for r in p.rows[:k])
-            )
+            blocked = method is not None and any(ev.row_waits(r, method) for r in p.rows[:k])
             if blocked:
                 continue  # D119: no win/loss/futility until SPY's return is in
             if k >= min_s and a < alpha:
@@ -256,7 +259,15 @@ def _replay(
     return None
 
 
-_D119_FIELDS = ("adjustment", "hac", "sigma_raw", "sigma_adj", "sigma_lr", "primary_unadjusted")
+_D119_FIELDS = (
+    "adjustment",
+    "hac",
+    "sigma_raw",
+    "sigma_adj",
+    "sigma_lr",
+    "primary_unadjusted",
+    "covariate_check",  # D120
+)
 
 
 def _d119(p: ev.Primary | ev.PairReport) -> dict[str, Any]:
@@ -270,6 +281,7 @@ def _estimate(rows: list[ev.SessionRow], method: ev.Method | None) -> float:
         lr = ev._long_run(  # noqa: SLF001
             [r.d for r in rows], [r.spy_ret for r in rows], [r.day for r in rows], method,
             alpha=0.05, sigma_upper_q=0.05, mde=None, min_sessions=1,
+            vs=[r.vix_chg for r in rows],
         )  # fmt: skip
         if lr is not None and lr["adjustment"].estimate is not None:
             return float(lr["adjustment"].estimate)
@@ -286,6 +298,7 @@ def build_multi_report(
     arm_ids: dict[str, str],
     method: ev.Method | None = None,
     market: BarsProvider | None = None,
+    vix: Callable[[], Mapping[_dt.date, float]] | None = None,
 ) -> ev.ExperimentReport:
     """The v2 report of a K-treatment experiment (*arm_ids*: t1..tK -> arm_id). Read-only.
 
@@ -315,9 +328,10 @@ def build_multi_report(
     spy = ev.covariate_series(
         conn, st, [r.day for rows, _ in series.values() for r in rows], market=market
     )
+    dvix = ev.vix_series(conn, st, [r.day for rows, _ in series.values() for r in rows], vix=vix)
     for name, aid in arm_ids.items():
         rows, missing = series[aid]
-        rows = ev.with_spy(conn, st, rows, spy=spy)
+        rows = ev.with_spy(conn, st, rows, spy=spy, vix=dvix)
         ctrl_pairs.append(
             _Pair(
                 "control_vs_treatment", CONTROL_ARM, name, aid, rows, [r.d for r in rows], missing
@@ -365,7 +379,7 @@ def build_multi_report(
         n = p.decided_at if p.decided_at is not None else len(p.rows)
         prim = _primary_at(
             p.rows[:n], alpha=sp.alpha, known=known, q=q, mde=sp.mde,  # type: ignore[arg-type]
-            min_s=sp.min_sessions, method=method,  # type: ignore[arg-type]
+            min_s=sp.min_sessions, method=method, check=True,  # type: ignore[arg-type]
         )  # fmt: skip
         is_ctrl = p.kind == "control_vs_treatment"
         return ev.PairReport(
@@ -505,6 +519,12 @@ def build_multi_report(
         cal, [(p.d, [r.spy_ret for r in p.rows]) for p in ctrl_pairs],
         lag=method.analysis.hac_lag or cfg.stats.hac_lag, st=st, cfg=cfg,
     )  # fmt: skip
+    if dvix:
+        cal = ev.pooled_covariate_check(
+            cal, [(p.d, [r.spy_ret for r in p.rows], [r.vix_chg for r in p.rows])
+                  for p in ctrl_pairs],
+            method=method, st=st, cfg=cfg,
+        )  # fmt: skip
     cov_missing = sorted(
         {
             d

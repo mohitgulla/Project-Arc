@@ -1721,6 +1721,23 @@ stores one `ExperimentReport` in the append-only `experiment_reports` table:
   the β spread, which an adjusted ab spec then uses (pre-D119 A/A stops: the running
   σ). The Sortino secondary, Ti − P lines and breakdowns stay unadjusted. Changing the
   method of a pre-registered spec is a PR + D# row, not a registry knob.
+- ΔVIX covariate check (D120, E25.9; descriptive, never a verdict). Each report also
+  persists `series[].vix_chg` = VIX close − the previous session's close (vol points,
+  Cboe's free `VIX_History.csv`, fetched once per 16:40 tick; the D117 partial first
+  session has none) and carries `covariate_check` per Ti − C pair and pooled in
+  `calibration`: residual σ of SPY-only vs SPY + ΔVIX on the same sessions, the
+  partial F of ΔVIX given SPY (divided by the primary's long-run factor f), b̂_vix ± SE,
+  and the always-valid CI half-width at n = 20 for each (chi² bound on its own df, so
+  the extra regressor's df loss is priced in). Read it with:
+
+      arc experiment covariate-check XP-1 --db <db> [--spy stored|alpaca] [--vix stored|cboe] [--json]
+
+  (read-only, stores nothing). It prints the pre-registered rule: add `vix_chg` to
+  `experiments.defaults.analysis.covariates` only if, pooled, (1) partial-F p < 0.05,
+  (2) the n = 20 half-width shrinks ≥ 10%, and (3) the 2-covariate type-I sim
+  (`tests/test_experiment_covariate_check.py`, slow) holds; the flip is a separate
+  owner-approved `D120:` PR. `vix_chg` is a legal `analysis.covariates` entry, so a
+  spec may pre-register it (a missing ΔVIX day then holds that spec's verdict).
 - No guardrail (harm) auto-stops (owner, 2026-10-03): only the primary and
   secondary metrics decide. Each arm's drawdown, worst day and order count are
   in the report for the owner, who stops an experiment by hand
