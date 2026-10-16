@@ -166,6 +166,7 @@ SKIP_REASONS: tuple[str, ...] = (
     "capacity",
     "no_fill",
     "exit_delayed",
+    "new_risk_cap",
 )
 
 
@@ -214,6 +215,9 @@ class SimTicker(BaseModel):
 
     ticker: str
     closes: pd.Series
+    adj_closes: pd.Series | None = Field(
+        None, description="E7.17: split-adjusted closes (momentum); None = no split"
+    )
     days: dict[dt.date, DayInfo] = Field(default_factory=dict)
     trend: pd.Series
     vol: pd.Series
@@ -258,6 +262,101 @@ def _num(x: object) -> float | None:
     return v if math.isfinite(v) else None
 
 
+# ---------------------------------------------------------------------------
+# Exit marks and splits (E7.17)
+# ---------------------------------------------------------------------------
+
+#: A ratio within this relative distance of a whole number is that whole-number split.
+_SPLIT_TOL = 0.005
+
+
+def quote_marks(
+    raw: pd.DataFrame, closes: pd.Series, *, dte_max: int
+) -> dict[dt.date, pd.DataFrame]:
+    """Per session, ``symbol``/``mid``/``spread`` of every two-sided closing quote.
+
+    The exit book (E7.17): live marks a held position on its legs' quotes whatever their
+    width, so the sim must too. A quote counts when bid and ask are finite, ``ask > 0``
+    and ``bid <= ask`` (a zero bid is a valid mark for a long leg). Entry selection still
+    reads the stricter marked chain (:func:`arc.backtest.marks.quoted_marks`); only
+    sessions with an underlying close are kept, like the chains.
+    """
+    if raw.empty:
+        return {}
+    df = raw[["date", "symbol", "expiration", "bid", "ask"]]
+    dte = (pd.to_datetime(df["expiration"]) - pd.to_datetime(df["date"])).dt.days
+    bid = pd.to_numeric(df["bid"], errors="coerce")
+    ask = pd.to_numeric(df["ask"], errors="coerce")
+    ok = (dte >= 1) & (dte <= dte_max) & bid.notna() & ask.notna() & (ask > 0) & (bid >= 0)
+    ok &= bid <= ask
+    df = pd.DataFrame(
+        {
+            "date": df["date"][ok],
+            "symbol": df["symbol"][ok].astype(str),
+            "mid": ((bid + ask) / 2.0)[ok],
+            "spread": (ask - bid)[ok],
+        }
+    )
+    have = set(closes.index)
+    return {
+        d: g[["symbol", "mid", "spread"]].reset_index(drop=True)
+        for d, g in df.groupby("date", sort=True)
+        if d in have
+    }
+
+
+def split_ratios(closes: pd.Series, adj_closes: pd.Series) -> dict[dt.date, float]:
+    """Split events from raw vs split-adjusted closes: ``{first session after: ratio}``.
+
+    ``ratio`` = shares after / before (4.0 for a 4:1 split, 0.1 for a 1:10 reverse
+    split). A ratio within 0.5 % of a whole number is snapped to it; anything else (a
+    spin-off adjustment such as DELL 2021-11) is returned as measured.
+    """
+    j = pd.concat([closes.rename("raw"), adj_closes.rename("adj")], axis=1).dropna()
+    j = j[(j["raw"] > 0) & (j["adj"] > 0)]
+    if len(j) < 2:
+        return {}
+    f = j["raw"] / j["adj"]
+    r = (f.shift(1) / f).iloc[1:]
+    out: dict[dt.date, float] = {}
+    for d, v in r.items():
+        v = float(v)
+        if 0.87 < v < 1.15:
+            continue
+        snap = round(v) if v >= 1 else 1.0 / round(1.0 / v)
+        out[d] = float(snap) if abs(v / snap - 1.0) <= _SPLIT_TOL else v  # type: ignore[index]
+    return out
+
+
+def split_adjusted(closes: pd.Series, splits: Mapping[dt.date, float]) -> pd.Series:
+    """*closes* divided by every later split's ratio (continuous across splits)."""
+    if not splits:
+        return closes
+    idx = pd.Index(closes.index)
+    out = closes.astype(float).copy()
+    for d, r in splits.items():
+        out[idx < d] = out[idx < d] / r
+    return out
+
+
+def _standard_split(r: float) -> bool:
+    return r >= 2.0 and float(r).is_integer()
+
+
+def _restruck(o: Any, f: float) -> dict[str, str]:
+    """Leg symbol -> the contract it became after *f* x forward splits (strike / f)."""
+    if f == 1.0:
+        return {lg.symbol: lg.symbol for lg in o.legs}
+    from arc.structures import format_occ
+
+    return {
+        lg.symbol: format_occ(
+            o.underlying, o.expiration, lg.right, Decimal(str(round(lg.strike / f, 3)))
+        )
+        for lg in o.legs
+    }
+
+
 def sim_outcome(
     c: Candidate,
     *,
@@ -267,6 +366,9 @@ def sim_outcome(
     exits: ExitConfig,
     settings: ArcSettings,
     spread_rule: bool,
+    marks: Mapping[dt.date, pd.DataFrame] | None = None,
+    splits: Mapping[dt.date, float] | None = None,
+    fill_cost: CostModel | None = None,
 ) -> SimOutcome | None:
     """Play *c* forward: entry at mid ± x·spread, exits on EOD marks, retry on no fill.
 
@@ -275,10 +377,20 @@ def sim_outcome(
     the position: a fired exit waits for the next tradeable session. A position still
     waiting at expiry settles at intrinsic. With every leg quoted and *spread_rule*
     off this equals :func:`arc.backtest.ranking.simulate_outcome`.
+
+    E7.17: *marks* is the exit book (:func:`quote_marks`, every two-sided quote);
+    ``None`` marks on *chains* (the entry-filtered chain, E7.11). *splits*
+    (:func:`split_ratios`) follow a whole-number forward split inside the hold onto the
+    re-struck contract (strike / r, price × r) and settle on the adjusted close; any
+    other adjustment inside the hold returns ``None``. *fill_cost* (estimated-spread
+    counterfactual) re-prices every fill's spread as ``fill_cost.spread(mid)``.
     """
     spec_kind = StrategyKind(c.kind)
+    picks = c.picks
+    if fill_cost is not None:
+        picks = [p.model_copy(update={"spread": fill_cost.spread(p.mid)}) for p in picks]
     o = open_trade(
-        c.picks,
+        picks,
         spec=StrategySpec(kind=spec_kind),
         underlying=c.underlying,
         entry_date=c.day,
@@ -290,10 +402,14 @@ def sim_outcome(
     last_close = max(closes.index)
     if o.expiration > last_close:
         return None
+    inside = sorted((d, r) for d, r in (splits or {}).items() if c.day < d <= o.expiration)
+    if any(not _standard_split(r) for _, r in inside):
+        return None
+    total = math.prod(r for _, r in inside)
     past = closes[pd.Index(closes.index) <= o.expiration]
     if past.empty:
         return None
-    held = settle(o, float(past.iloc[-1]), cost)
+    held = settle(o, float(past.iloc[-1]) * total, cost)
     entry_chain = chains.get(c.day)
     leg_oi: list[float | None] = []
     leg_vol: list[float | None] = []
@@ -308,36 +424,43 @@ def sim_outcome(
     structure = analyze(_legs(c.picks, c.underlying), as_of=c.day)
     rules = resolve_rules(structure, exits.policy_for(STRUCTURE_KIND[spec_kind]))
     entry_fill = sum(lg.side * lg.fill for lg in o.legs)
-    symbols = [lg.symbol for lg in o.legs]
-    marks: dict[dt.date, float] = {}
+    book = chains if marks is None else marks
+    day_marks: dict[dt.date, float] = {}
     trade: Trade | None = None
     peak: float | None = None
     pending = None
     delays = 0
-    for day in sorted(chains):
+    for day in sorted(book):
         if day <= c.day:
             continue
         if day >= o.expiration:
             break
-        ch = chains[day]
-        rows = ch[ch["symbol"].isin(symbols)]
-        m = {str(x.symbol): (float(x.mid), float(x.spread)) for x in rows.itertuples()}
-        if len(m) != len(set(symbols)):
+        f = math.prod(r for d, r in inside if d <= day)
+        sym = _restruck(o, f)
+        ch = book[day]
+        rows = ch[ch["symbol"].isin(list(sym.values()))]
+        raw_m = {str(x.symbol): (float(x.mid), float(x.spread)) for x in rows.itertuples()}
+        if not all(s in raw_m for s in sym.values()):
             if pending is not None:
                 delays += 1
             continue
-        spot = float(closes[day]) if day in closes.index else float("nan")
+        # per original (pre-split) contract: price x f
+        m = {old: (raw_m[new][0] * f, raw_m[new][1] * f) for old, new in sym.items()}
+        spot = float(closes[day]) * f if day in closes.index else float("nan")
         value_mid = sum(lg.side * m[lg.symbol][0] for lg in o.legs)
-        marks[day] = (value_mid - entry_fill) * MULT - o.open_fees
+        day_marks[day] = (value_mid - entry_fill) * MULT - o.open_fees
         if pending is None:
             pnl = value_mid - rules.entry_net
             pending = check_rules(rules, pnl=pnl, dte=(o.expiration - day).days, peak_pnl=peak)
             peak = pnl if peak is None else max(peak, pnl)
         if pending is not None:
-            if spread_rule and not all(spread_ok(*m[s], settings) for s in symbols):
+            if spread_rule and not all(spread_ok(*raw_m[s], settings) for s in sym.values()):
                 delays += 1
                 continue
-            trade = close_early(o, day=day, marks=m, spot=spot, reason=pending, cost=cost)
+            fills = m
+            if fill_cost is not None:
+                fills = {k: (v[0], fill_cost.spread(v[0])) for k, v in m.items()}
+            trade = close_early(o, day=day, marks=fills, spot=spot, reason=pending, cost=cost)
             break
     if trade is None:
         trade = held
@@ -345,7 +468,7 @@ def sim_outcome(
     out = Outcome(
         trade=trade,
         exit_day=exit_day,
-        marks={d: v for d, v in marks.items() if d < exit_day},
+        marks={d: v for d, v in day_marks.items() if d < exit_day},
         hold_to_expiry_pnl=held.pnl,
         entry_debit=entry_fill,
         open_fees=o.open_fees,
@@ -397,18 +520,26 @@ def sim_ticker_from_chains(
     cache: MenuCache | None = None,
     cache_ctx: MenuCacheContext | None = None,
     provider: str | None = None,
+    quotes: Mapping[dt.date, pd.DataFrame] | None = None,
+    splits: Mapping[dt.date, float] | None = None,
 ) -> SimTicker:
     """Menus (cached), stance/filters and outcome paths for one ticker.
 
     *rate* maps a session to its risk-free rate (``RateCurve.rate``); ``None`` = the
     flat ``backtest.risk_free_rate``. Only each name's top ``per_name_depth``
     candidates per ranker get an outcome path; the walk pools exactly those.
+    E7.17: *quotes* is the exit book (:func:`quote_marks`; ``None`` = mark on
+    *chains*), *splits* the ticker's split events (:func:`split_ratios`): outcomes
+    follow them, and trend labels and momentum read split-adjusted closes.
     """
     closes = closes.sort_index()
     bt = cfg.backtest
     mc: ExitModelConfig = exits.model.model_copy(update={"n_paths": bt.n_paths})
     dd = [d for d in decision_days if d in chains and d in closes.index]
-    trend, vol = labels_for(closes if label_closes is None else label_closes, sim.regime_model)
+    adj = split_adjusted(closes, splits or {})
+    if label_closes is None:
+        label_closes = adj
+    trend, vol = labels_for(label_closes, sim.regime_model)
     day_stance = trend_stances(trend) if bt.direction_tilt > 0 else None
     stretched = None
     if bt.entry_filter != "none":
@@ -483,6 +614,9 @@ def sim_ticker_from_chains(
                     exits=exits,
                     settings=settings[profile],
                     spread_rule=spread_rule,
+                    marks=quotes,
+                    splits=splits,
+                    fill_cost=ck.get(c.kind, base) if sim.fill_spread == "estimated" else None,
                 )
                 kept.append(SimCandidate(candidate=c, result=res))
             per_day[d] = kept
@@ -490,6 +624,7 @@ def sim_ticker_from_chains(
     return SimTicker(
         ticker=ticker,
         closes=closes,
+        adj_closes=adj if splits else None,
         days=dict(days),
         trend=trend,
         vol=vol,
@@ -576,6 +711,13 @@ def sim_ticker_job(
             seed=exits.model.seed,
             provider=h.provider,
         )
+        live = sim.selection == "cross_name"  # per_ticker reproduces E7.5 unchanged
+        quotes = None
+        if live and sim.exit_marks == "all_quotes" and h.marks == "quoted":
+            quotes = quote_marks(h.raw, h.closes, dte_max=ds.chain_dte_max)
+        splits = None
+        if live and sim.splits == "adjust" and len(h.ohlc):
+            splits = split_ratios(h.closes, pd.Series(h.ohlc["close"])) or None
         out.append(
             sim_ticker_from_chains(
                 t,
@@ -596,6 +738,8 @@ def sim_ticker_job(
                 cache=cache,
                 cache_ctx=ctx,
                 provider=view.provider_for(t),
+                quotes=quotes,
+                splits=splits,
             )
         )
         view.evict(t)
@@ -800,7 +944,9 @@ def _monthly_momentum(
 ) -> dict[dt.date, list[str]]:
     """Momentum members per session: recomputed on the first session of each month
     (live: monthly refresh), from names eligible that day, carried in between."""
-    closes = {t: r.closes for t, r in tickers.items()}
+    closes = {
+        t: (r.adj_closes if r.adj_closes is not None else r.closes) for t, r in tickers.items()
+    }
     etfs = frozenset(t for t, r in tickers.items() if any(i.etf for i in r.days.values()))
     out: dict[dt.date, list[str]] = {}
     cur: list[str] = []
@@ -1011,6 +1157,8 @@ def _decide(
         liq = infos[t].liquidity if t in infos else 0.0
         keyed = []
         for sc in menu:
+            if sc.candidate.kind in sim.exclude_kinds:
+                continue
             if not passes_filters(sc.candidate.inputs, filters):
                 continue
             k = keyfn(sc.candidate.inputs)
@@ -1063,6 +1211,11 @@ def _decide(
             skip(day, t, "sizing", c.inputs.key, size.code)
             continue
         n = size.contracts
+        if not legacy and sim.size_scale < 1.0:
+            n = math.floor(n * sim.size_scale + 1e-9)
+            if n < 1:
+                skip(day, t, "sizing", c.inputs.key, f"size_scale {sim.size_scale}")
+                continue
         clipped = False
         if not legacy:
             if not sc.result.entry_ok:
@@ -1091,6 +1244,11 @@ def _decide(
         if cash_settled and cash_used > equity - sum(p.cash_used for p in held):
             skip(day, t, "cash", c.inputs.key)
             continue
+        if not legacy and sim.max_new_risk_pct_day is not None:
+            day_risk = sum((p.max_loss for p in new), Decimal(0)) + mlu * n
+            if float(day_risk) > sim.max_new_risk_pct_day * equity + 1e-9:
+                skip(day, t, "new_risk_cap", c.inputs.key)
+                continue
         new.append(
             _Pos(
                 underlying=t,
