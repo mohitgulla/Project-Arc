@@ -1,0 +1,6 @@
+kind,n,gross_at_mid,slippage_cost,fees,net,cost_share_of_gross,median_entry_spread_pct_of_premium
+all,585,4608.0,28911.0,578.0,-24880.0,6.4,9.5
+bear_put,122,-9922.0,9181.0,72.0,-19174.0,0.93,21.8
+bull_call,190,8971.0,12157.0,425.0,-3611.0,1.4,22.2
+long_call,257,19919.0,6917.0,77.0,12925.0,0.35,6.6
+long_put,16,-14360.0,656.0,4.0,-15020.0,0.05,4.5

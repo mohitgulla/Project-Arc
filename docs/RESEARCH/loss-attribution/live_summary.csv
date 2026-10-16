@@ -1,0 +1,6 @@
+kind,exit_reason,n,net,mean
+long_call,research_review,3,-970.0,-323.3
+long_put,research_review,1,-80.0,-80.0
+vertical_debit,remaining_ev_floor,3,-113.0,-37.7
+vertical_debit,research_review,6,-1404.0,-234.0
+vertical_debit,stop,1,-260.0,-260.0

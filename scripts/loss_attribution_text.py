@@ -157,5 +157,35 @@ def render(out_root: Path) -> None:
     lv = live_trades()
     if len(lv):
         _w(out, "live_closed", lv.drop(columns=["contracts"]), md, "Live closed trades")
+        summ = (
+            lv.groupby(["kind", "exit_reason"])["pnl"]
+            .agg(n="size", net="sum", mean="mean")
+            .round(1)
+            .reset_index()
+        )
+        _w(out, "live_summary", summ, md, "Live closed trades by kind x exit reason")
+
+    # 5/6. counterfactuals: one row per variant, deltas vs the fixed base book
+    cf = []
+    for (n, p), m in res["runs"].items():
+        base = res["runs"].get(("fixed", p))
+        if base is None:
+            continue
+        row = {"counterfactual": n, "profile": p}
+        for k in (
+            "trades",
+            "net_pnl",
+            "max_dd_pct",
+            "return_on_risk",
+            "mean_r",
+            "eq_2020_06_30",
+            "eq_2021_12_31",
+            "eq_2022_12_31",
+        ):
+            row[k] = m[k]
+        row["d_net_vs_fixed"] = round(m["net_pnl"] - base["net_pnl"], 0)
+        row["d_return_on_risk_vs_fixed"] = round(m["return_on_risk"] - base["return_on_risk"], 4)
+        cf.append(row)
+    _w(out, "counterfactuals", pd.DataFrame(cf), md, "Counterfactuals (one variable each)")
     (out / "tables.md").write_text("\n".join(md))
     (out / "meta.json").write_text(json.dumps({"runs": sorted({n for n, _ in res["runs"]})}))

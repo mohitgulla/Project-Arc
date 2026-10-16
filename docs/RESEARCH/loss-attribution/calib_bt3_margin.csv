@@ -1,0 +1,5 @@
+kind,n,pred_ev_per_trade,real_pnl_per_trade,pred_pop,real_win,brier,brier_base_rate,corr_ev_pnl_unit
+all,440,23.0,-39.3,0.775,0.732,0.191,0.1963,-0.02
+bear_call,53,24.5,45.0,0.77,0.774,0.1729,0.1752,0.019
+bull_put,207,15.9,-60.2,0.862,0.821,0.1573,0.1468,-0.211
+iron_condor,180,30.8,-40.1,0.676,0.617,0.2351,0.2364,0.053

@@ -91,8 +91,21 @@ def _period(d: dt.date) -> str:
 
 
 def metrics(t: pd.DataFrame, e: pd.Series) -> dict[str, Any]:
+    """Account metrics plus size-free ones.
+
+    A ruined book keeps trading at whatever size is left, so its end equity no longer
+    separates variants. ``return_on_risk`` (sum pnl_unit / sum max_loss_unit) and
+    ``mean_r`` (mean of pnl_unit / max_loss_unit per trade) score the trades the walk
+    took at one contract each; ``eq_*`` are checkpoints of the account path.
+    """
     peak = e.cummax()
     dd = ((peak - e) / peak).max() if len(e) else 0.0
+    r = t["pnl_unit"] / t["max_loss_unit"]
+
+    def at(day: str) -> float | None:
+        s = e[e.index <= dt.date.fromisoformat(day)]
+        return round(float(s.iloc[-1]), 0) if len(s) else None
+
     return {
         "trades": len(t),
         "net_pnl": round(float(t["pnl"].sum()), 2),
@@ -101,6 +114,13 @@ def metrics(t: pd.DataFrame, e: pd.Series) -> dict[str, Any]:
         "max_dd_pct": round(float(dd) * 100, 2),
         "win_rate": round(float(t["win"].mean()), 3) if len(t) else None,
         "pnl_per_risk": round(float(t["pnl"].sum() / t["risk"].sum()), 4) if len(t) else None,
+        "return_on_risk": round(float(t["pnl_unit"].sum() / t["max_loss_unit"].sum()), 4)
+        if len(t)
+        else None,
+        "mean_r": round(float(r.mean()), 4) if len(t) else None,
+        "eq_2020_06_30": at("2020-06-30"),
+        "eq_2021_12_31": at("2021-12-31"),
+        "eq_2022_12_31": at("2022-12-31"),
     }
 
 
@@ -126,7 +146,8 @@ def sanity(run: Path, arm: str | None = None) -> pd.DataFrame:
     for p in PROFILES:
         t, e = book(run, p, arm)
         s = sample(t)
-        r = reprice(s, DATA, e)
+        legacy = run == BT3 or run.name == "legacy"  # E7.14 walk sizes on realised equity
+        r = reprice(s, DATA, e, realised_book=t if legacy else None)
         out.append(r)
     return pd.concat(out, ignore_index=True)
 

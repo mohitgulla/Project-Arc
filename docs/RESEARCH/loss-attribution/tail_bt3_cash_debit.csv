@@ -1,0 +1,2 @@
+losers,gross_loss,top_1pct_trades_share_of_loss,top_5pct_trades_share_of_loss,top_10pct_trades_share_of_loss,gross_win,peak_day,peak_equity,trough_day,trough_equity,first_below_half,mean_open_risk_pct,p90_open_risk_pct,mean_same_direction_share
+290,191350.0,0.163,0.462,0.656,166470.0,2020-03-23,46065.0,2023-10-02,120.0,2020-06-11,54.4,87.5,0.88

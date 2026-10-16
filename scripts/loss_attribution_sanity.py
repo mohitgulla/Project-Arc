@@ -12,7 +12,8 @@ For each profile, the 15 worst trades plus 15 random ones (seed 17) of a run's
   intrinsic on the underlying's raw close (split-adjusted onto the original strikes
   when a split falls inside the hold);
 * fees: 0.0403 $/contract/leg each side (ORF + OCC + CAT), sell fees ignored like
-  the simulator; sizing: contracts x max_loss_unit vs max_alloc_pct x equity.
+  the simulator; sizing: contracts x max_loss_unit as % of the entry session's
+  marked equity (cap: max_alloc_pct, 15 % on both profiles).
 
 Output: one row per sampled trade (simulated vs re-priced), as CSV and markdown.
 """
@@ -64,7 +65,15 @@ class _Picks:
         self.mid = mid
 
 
-def reprice(trades: pd.DataFrame, data_dir: Path, equity: pd.Series) -> pd.DataFrame:
+def reprice(
+    trades: pd.DataFrame,
+    data_dir: Path,
+    equity: pd.Series,
+    realised_book: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Re-price *trades*; sizing is checked against *equity* (marked, the live-shaped
+    walk) or, with *realised_book* (the legacy E7.14 walk), 25,000 + realised P&L of
+    the book's trades closed by the entry session."""
     store = ParquetHistoryStore(data_dir)
     und = UnderlyingStore(data_dir)
     ohlc = OhlcStore(data_dir)
@@ -185,11 +194,11 @@ def reprice(trades: pd.DataFrame, data_dir: Path, equity: pd.Series) -> pd.DataF
             r["d_pnl_unit"] = round(pnl_unit - t.pnl_unit, 2)
             r["rp_fees_unit"] = round(fees, 4)
             r["sim_fees_unit"] = round(t.fees / t.contracts, 4)
-            eq = (
-                float(equity[equity.index < ed].iloc[-1])
-                if (equity.index < ed).any()
-                else float(equity.iloc[0])
-            )
+            if realised_book is None:  # marked equity of the entry session
+                eq = float(equity[equity.index <= ed].iloc[-1])
+            else:
+                done = [x <= ed for x in realised_book["exit_day"]]
+                eq = 25_000.0 + float(realised_book.loc[done, "pnl"].sum())
             r["risk_pct_equity"] = round(t.contracts * t.max_loss_unit / eq * 100, 2)
             r["splits_in_hold"] = ",".join(f"{d}:{v:g}" for d, v in inside)
             same = (r["rp_exit_reason"] == t.exit_reason) and (
