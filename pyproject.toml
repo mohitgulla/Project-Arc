@@ -35,6 +35,11 @@ dependencies = [
 [project.scripts]
 arc = "arc.cli:main"
 
+[project.optional-dependencies]
+research = [
+    "scikit-learn>=1.9.1",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

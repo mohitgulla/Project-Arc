@@ -1,0 +1,5 @@
+feature,use,n_true,true_mean_R,false_mean_R,diff_R,true_net,true_per_risk,false_per_risk
+fomc_in_window,live_context,393,-0.052,-0.05,-0.002,-18116.0,-0.053,-0.023
+cpi_in_window,live_context,632,-0.037,-0.258,0.22,-17690.0,-0.029,-0.356
+fomc_within_2s,live_context,33,0.05,-0.056,0.106,-297.0,-0.008,-0.041
+cpi_within_2s,live_context,65,-0.025,-0.054,0.028,-991.0,-0.013,-0.043

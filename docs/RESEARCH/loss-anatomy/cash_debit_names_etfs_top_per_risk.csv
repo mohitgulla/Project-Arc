@@ -1,0 +1,12 @@
+name,class,group,n,net,per_risk,win,kinds,spread_pct_premium,years,losing_years,worst_year_share_of_loss,pattern
+IWM,ETFs,etf:broad_equity,22,19591.0,0.778,0.64,"long_call,bear_put,bull_call",6.6,3,1,,episodic
+TLT,ETFs,etf:bond,6,892.0,0.724,1.0,"bull_call,long_call",10.6,2,0,,episodic
+EEM,ETFs,etf:international,5,2647.0,0.561,0.6,"long_call,bull_call",10.4,3,1,,episodic
+XLF,ETFs,etf:sector,8,1790.0,0.268,0.38,"long_call,bull_call,bear_put",12.4,4,3,,persistent
+GLD,ETFs,etf:commodity,43,3385.0,0.107,0.56,"bull_call,bear_put",14.5,3,2,,persistent
+GDX,ETFs,etf:commodity,8,191.0,0.052,0.5,"long_call,bull_call",4.9,3,1,,episodic
+DIA,ETFs,etf:sector,12,-326.0,-0.018,0.67,"long_call,long_put,bear_put",7.6,3,1,5.48,episodic
+SLV,ETFs,etf:commodity,51,-1084.0,-0.084,0.41,"bull_call,long_call,bear_put",25.0,4,3,0.92,persistent
+QQQ,ETFs,etf:broad_equity,36,-4539.0,-0.116,0.36,"long_call,bear_put,bull_call",5.5,3,2,1.7,persistent
+SPY,ETFs,etf:broad_equity,34,-7860.0,-0.178,0.38,"bear_put,long_call",4.3,3,2,1.19,persistent
+TQQQ,ETFs,etf:leveraged,5,-1390.0,-0.299,0.4,"long_put,long_call",6.1,2,2,0.62,persistent
