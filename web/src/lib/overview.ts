@@ -210,6 +210,38 @@ export function withBenchmarks(
   return { data, lines };
 }
 
+export type AccountSplit = Schemas["AccountSplit"];
+
+/** D129: the four tiles of the margin Buying Power panel plus the bar segments (equity =
+ * available + collateral + invested; a negative invested is clamped to 0 in the bar only). */
+export interface MarginSplitView {
+  available: number;
+  collateral: number;
+  invested: number;
+  cash: number;
+  equity: number;
+  stockBuyingPower: number | null;
+  bar: { available: number; collateral: number; invested: number };
+}
+
+export function marginSplitView(a: AccountSplit): MarginSplitView | null {
+  if (a.buying_power_kind !== "margin") return null;
+  const cash = num(a.cash) ?? 0;
+  const equity = num(a.equity) ?? 0;
+  const invested = num(a.in_positions) ?? equity - cash;
+  const available = num(a.available) ?? num(a.options_buying_power) ?? cash;
+  const collateral = num(a.collateral) ?? Math.max(cash - available, 0);
+  return {
+    available,
+    collateral,
+    invested,
+    cash,
+    equity,
+    stockBuyingPower: num(a.stock_buying_power),
+    bar: { available, collateral, invested: Math.max(invested, 0) },
+  };
+}
+
 /** Realized vs unrealized split for the ProportionBar (absolute magnitudes). */
 export function pnlSplit(realized: number | null, unrealized: number | null): { realized: number; unrealized: number } {
   return { realized: Math.abs(realized ?? 0), unrealized: Math.abs(unrealized ?? 0) };

@@ -1881,8 +1881,12 @@ The treatment arm is the same trading loop on its own paper account
   Analyst gets it as the `## Regime panel` context section (`regime-panel.log`).
 - The arm sizes and gates from its virtual account (`VirtualBroker`): equity
   moves only with its own fills/marks, buying power = min(broker, virtual −
-  legacy), and under a cash profile only settled cash (T+1) counts. Control's
-  account profile (D128: margin by default; day-trade limit, D32 budget) applies unchanged.
+  legacy), and under a cash profile only settled cash (T+1) counts. Under a margin
+  profile (D129) the arm's options buying power is that figure less the collateral
+  its own open structures hold (credit spreads: width × 100; debit spreads: 0, the
+  debit already left cash), logged as `collateral` on `experiments.virtual_account`.
+  Control's account profile (D128: margin by default; day-trade limit, D32 budget)
+  applies unchanged.
 - Shared inputs: Sweep/sources run once, in control. The arm reuses control's
   steps before the fork step (the first step its overlay changes; never later
   than `propose`) and replays control's market tape (`market_tape`). Every arm
@@ -2918,6 +2922,15 @@ Commands (rehearse on a scratch `--db`):
   gate's own count (worst band price × 100 + fees). Opens in one run share the cash
   in rank order. Journal `sizing:cash_capped` (fewer contracts) or `sizing:cash_zero`
   (not even one). The gate's settled-cash rule is unchanged and stays the final check.
+- **Margin (D129).** On `margin` profiles the same fit runs against Alpaca's
+  `options_buying_power` with the gate's `account_profile_buying_power` need per
+  contract (band-worst max loss + fees); the sizing journal payload carries
+  `fit_basis: options_buying_power`, and the free-slots line reads
+  `… · buying power $20,065 · per-name cap …`. The gate rule needs
+  `max loss + fees ≤ options buying power` and fails closed when the figure is
+  unknown. Example on the live numbers: a 5-wide bull put × 2 for a 0.85 credit
+  needs $415 × 2 + $0.20 = $830.20 of a $20,065 options buying power; a closed
+  structure frees it (`rejected_for = buying_power`).
 - **Loop.** See `loop.max_idle_with_free_slots` above (`loop_forced_free_slots`).
 
 

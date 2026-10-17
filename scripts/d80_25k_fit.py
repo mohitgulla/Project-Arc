@@ -200,7 +200,11 @@ def replay(
         cap_pct=settings.max_alloc_pct,
     )
     acct = AccountSnapshot(
-        equity=equity, last_equity=equity, settled_cash=equity, as_of=dt.datetime.now(dt.UTC)
+        equity=equity,
+        last_equity=equity,
+        settled_cash=equity,
+        options_buying_power=equity,  # D129: a fresh $25K margin account, nothing held
+        as_of=dt.datetime.now(dt.UTC),
     )
     mkt = MarketSnapshot(
         underlying_spot={ticker: Decimal(str(spot))} if spot else {},

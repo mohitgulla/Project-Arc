@@ -58,6 +58,14 @@ class AccountSnapshot(_Frozen):
             "None = unknown, which fails the cash_settled profile check closed."
         ),
     )
+    options_buying_power: Decimal | None = Field(
+        None,
+        description=(
+            "D129: Alpaca's `options_buying_power` as reported (margin profiles). Open "
+            "defined-risk spreads already reduce it by their max loss. None = unknown, "
+            "which fails the margin profile's buying-power check closed."
+        ),
+    )
     orders_used_today: int | None = Field(
         None,
         ge=0,

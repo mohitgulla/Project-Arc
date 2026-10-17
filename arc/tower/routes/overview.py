@@ -70,6 +70,7 @@ def overview(  # noqa: PLR0913 - one query parameter per control
         activity_hours=hours,
         greek_advisory=routines.tower.overview.greek_advisory,
         sleeves=named_sleeves(settings),
+        buying_power_kind=settings.profile.buying_power.value,
     )
     if scope.is_arm:
         tick = _latest_heartbeat(control, "tick")

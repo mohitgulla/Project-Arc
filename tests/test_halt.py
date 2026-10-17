@@ -66,7 +66,13 @@ def switch(db_path: Path) -> HaltSwitch:
 
 
 def _acct(equity: str = "100000", last: str = "100000", halted: bool = False) -> AccountSnapshot:
-    return AccountSnapshot(equity=D(equity), last_equity=D(last), halted=halted, as_of=NOW)
+    return AccountSnapshot(
+        equity=D(equity),
+        last_equity=D(last),
+        halted=halted,
+        options_buying_power=D(equity),
+        as_of=NOW,
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -100,6 +100,7 @@ def gate(s: Structure, config: ArcSettings, portfolio: Portfolio | None = None) 
         equity=D("100000"),
         last_equity=D("100000"),
         settled_cash=D("100000"),
+        options_buying_power=D("100000"),
         as_of=NOW - dt.timedelta(seconds=5),
     )
     return evaluate(
