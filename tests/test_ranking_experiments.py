@@ -147,8 +147,11 @@ def test_e75b_overlay_is_live_shaped_and_tilted() -> None:
     for prof, specs in cfg.backtest.menus.items():
         assert all(m.expiry_mode is ExpiryMode.ALL for m in specs), prof
         # same kinds and anchor deltas as the E7.5 menu: only the expiry shape changes
-        strip = [m.model_dump(exclude={"expiry_mode"}) for m in specs]
-        want = [m.model_dump(exclude={"expiry_mode"}) for m in base.backtest.menus[prof]]
+        # (D131: the base margin credit menu moved to the widest-fit 5% wing; this
+        # historical overlay keeps its own pre-D131 wing, so the wing fields are excluded)
+        wing = {"expiry_mode", "width_pct", "wing_fit", "wing_cap", "min_credit_width"}
+        strip = [m.model_dump(exclude=wing) for m in specs]
+        want = [m.model_dump(exclude=wing) for m in base.backtest.menus[prof]]
         if prof == "margin":  # D128 added cash_debit's debit kinds; the overlay pins credit
             want = want[:1]
         assert strip == want

@@ -153,9 +153,16 @@ backtest:
   # DTE window = the profile's entry window; one expiration nearest its middle.
   menus:
     margin:                                 # D128: credit + cash_debit's debit kinds
+      # D131 (E28.1): live scanner parity for credit kinds: the widest gap <= 5% of spot
+      # whose 1-lot max loss fits the per-underlying cap (15% x the sim's $25K equity =
+      # $3,750, an empty book's base tier), then credit/width >= 0.10. Pre-D131 sim:
+      # width_pct 0.02, wing_fit nearest, no wing_cap, min_credit_width 0.
       - kinds: [bull_put, bear_call, iron_condor]
         deltas: [0.16, 0.20, 0.25, 0.30]
-        width_pct: 0.02
+        width_pct: 0.05
+        wing_fit: widest
+        wing_cap: 3750
+        min_credit_width: 0.10
       - kinds: [bull_call, bear_put]
         deltas: [0.20, 0.25, 0.30, 0.35]
         width_pct: 0.02

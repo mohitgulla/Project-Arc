@@ -8,9 +8,15 @@ Pipeline for one underlying (:func:`scan`):
 3. ATM IV of the expiration nearest 30 DTE → IV rank / percentile against the
    stored history (:mod:`arc.scanner.iv`).
 4. For each expiration, pick short strikes whose |Δ| lies in the D4 band
-   (16–30Δ) closest to the target delta, pair each with a long wing about
-   ``wing_width`` further OTM, and build bull put / bear call credit verticals
-   and iron condors via :mod:`arc.structures` (every leg must pass the filters).
+   (16–30Δ) closest to the target delta, pair each with a long wing further OTM,
+   and build bull put / bear call credit verticals and iron condors via
+   :mod:`arc.structures` (every leg must pass the filters). The wing follows
+   ``wing_mode``: ``dollars`` = the strike nearest ``wing_width`` away (pre-D131);
+   ``pct_spot`` (D131, E28.1) = the widest listed gap <= ``wing_pct_spot`` x spot
+   whose 1-contract max loss + entry costs fits ``cap_dollars`` (the per-underlying
+   cap); a short with no fitting wing is skipped (``wing_cap_unfit``). Credit
+   structures with credit / width < ``min_credit_width`` are dropped
+   (``credit_width_floor``) before ranking.
 5. Debit strategies (D25, E3.4; for the no-margin ``cash_debit`` /
    ``cash_long_only`` account profiles): long legs whose |Δ| lies in the long
    band (default 0.40–0.70, target 0.55) become long calls / long puts; each is
@@ -50,7 +56,7 @@ import math
 from collections import Counter, defaultdict
 from decimal import Decimal
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import structlog
 from pydantic import (
@@ -162,6 +168,23 @@ class ScanParams(BaseModel):
     delta_min: float = Field(0.16, gt=0.0, lt=1.0)
     delta_max: float = Field(0.30, gt=0.0, lt=1.0)
     wing_width: float = Field(5.0, gt=0.0)
+    # D131 (E28.1): a bare ScanParams keeps the pre-D131 wing (dollars, no floor);
+    # from_settings fills the shipped defaults. Left out of dumps at the legacy values.
+    wing_mode: Literal["pct_spot", "dollars"] = Field(
+        "dollars",
+        description="Credit wing: dollars = nearest wing_width; pct_spot = widest gap <= "
+        "wing_pct_spot x spot whose 1-lot max loss + entry cost fits cap_dollars",
+    )
+    wing_pct_spot: float = Field(0.05, ge=0.01, le=0.10)
+    cap_dollars: float | None = Field(
+        None,
+        gt=0.0,
+        description="pct_spot: per-underlying cap in $ (the E3.7 tier x equity, from the "
+        "caller); None = no cap fit (the widest gap within wing_pct_spot)",
+    )
+    min_credit_width: float = Field(
+        0.0, ge=0.0, le=0.40, description="Drop credit structures with credit/width below (0 = off)"
+    )
     shorts_per_side: int = Field(3, ge=1, description="Short strikes tried per side/expiry")
     # Debit strategies (D25): long leg band / target, debit-vertical short band.
     long_target_delta: float = Field(0.55, gt=0.0, lt=1.0)
@@ -203,6 +226,12 @@ class ScanParams(BaseModel):
         out: dict[str, Any] = handler(self)
         if out.get("liquidity_rank") is None:
             out.pop("liquidity_rank", None)
+        # D131: the legacy wing / no floor dump exactly as before E28.1
+        if out.get("wing_mode") == "dollars":
+            for k in ("wing_mode", "wing_pct_spot", "cap_dollars"):
+                out.pop(k, None)
+        if out.get("min_credit_width") == 0.0:
+            out.pop("min_credit_width", None)
         return out
 
     @model_validator(mode="after")
@@ -265,6 +294,9 @@ class ScanParams(BaseModel):
             "delta_min": settings.scanner_short_delta_min,
             "delta_max": settings.scanner_short_delta_max,
             "wing_width": settings.scanner_wing_width,
+            "wing_mode": settings.scanner_wing_mode,
+            "wing_pct_spot": settings.scanner_wing_pct_spot,
+            "min_credit_width": settings.scanner_min_credit_width,
             "risk_free_rate": settings.scanner_risk_free_rate,
             "rules": LiquidityRules.from_settings(settings),
             "iv_lookback": settings.scanner_iv_lookback,
@@ -358,6 +390,13 @@ class ScanResult(BaseModel):
     filter_report: FilterReport
     candidates: list[ScanCandidate]
     inputs: ScanInputs = Field(default_factory=ScanInputs)
+    dropped: dict[str, int] | None = Field(
+        None,
+        description="D131 (E28.1): what the credit rules dropped: wing_cap_unfit (shorts "
+        "with gaps within wing_pct_spot but none fitting cap_dollars) and credit_width_floor "
+        "(structures with credit/width < min_credit_width). None = both rules off (dollars "
+        "wing, floor 0); left out of dumps when None.",
+    )
     expiry_volume: dict[str, int] | None = Field(
         None,
         description="E2.6 (D116): per expiry that produced candidates, the traded volume of "
@@ -370,6 +409,8 @@ class ScanResult(BaseModel):
         out: dict[str, Any] = handler(self)
         if out.get("expiry_volume") is None:
             out.pop("expiry_volume", None)
+        if out.get("dropped") is None:
+            out.pop("dropped", None)
         return out
 
 
@@ -474,15 +515,67 @@ def select_debit_short(
     return [x[3] for x in pool[:n]]
 
 
-def select_wing(
-    short: OptionContract, contracts: Sequence[OptionContract], width: float
-) -> OptionContract | None:
-    """Long wing further OTM than *short* whose distance is closest to *width*.
+_GAP_EPS = 1e-9
 
-    Puts look below the short strike, calls above. Ties go to the narrower wing.
-    Only strikes within ``[width / 2, 2 * width]`` of the short qualify.
+
+def _leg_entry_cost(c: OptionContract, *, short: bool, cm: CostModel) -> float:
+    """One leg's entry slippage from mid + entry fees ($ per contract), as :func:`_candidate`."""
+    assert c.bid is not None and c.ask is not None  # guaranteed by filters
+    side = -1 if short else 1
+    mid = (c.bid + c.ask) / 2
+    fill = cm.fill(mid, c.ask - c.bid, side)
+    return abs(fill - mid) * float(CONTRACT_MULTIPLIER) + cm.trade_fees(1, side, fill)
+
+
+def wing_max_loss(short: OptionContract, wing: OptionContract, cm: CostModel) -> float | None:
+    """D131: 1-contract max loss ($) of the credit vertical *short* / *wing* plus its
+    entry costs, ``(width - credit_mid) x 100 + slippage + fees``; None when the pair
+    does not price as a credit (the builder would refuse it)."""
+    assert short.mid is not None and wing.mid is not None  # guaranteed by filters
+    credit = round(short.mid, 4) - round(wing.mid, 4)
+    if credit <= 0:
+        return None
+    width = abs(wing.strike - short.strike)
+    loss = (width - credit) * float(CONTRACT_MULTIPLIER)
+    entry = _leg_entry_cost(short, short=True, cm=cm) + _leg_entry_cost(wing, short=False, cm=cm)
+    return loss + entry
+
+
+def select_wing(
+    short: OptionContract,
+    contracts: Sequence[OptionContract],
+    width: float,
+    *,
+    max_gap: float | None = None,
+    cap_dollars: float | None = None,
+    cost: CostModel | None = None,
+) -> OptionContract | None:
+    """Long wing further OTM than *short* (puts look below the short strike, calls above).
+
+    * ``max_gap`` None (``dollars`` mode): the strike whose distance is closest to
+      *width*; ties go to the narrower wing. Only ``[width / 2, 2 * width]`` qualifies.
+    * ``max_gap`` set (``pct_spot`` mode, D131): the **widest** gap ``<= max_gap``
+      whose :func:`wing_max_loss` fits *cap_dollars* (None = no cap fit: the widest
+      gap that prices as a credit). Narrower gaps are tried in turn, so a strike
+      missing from *contracts* (filtered out as illiquid) falls through to the
+      next-widest fitting one.
     """
     sign = -1.0 if short.option_type == "put" else 1.0
+    if max_gap is not None:
+        pool: list[tuple[float, OptionContract]] = []
+        for c in contracts:
+            if c.option_type != short.option_type or c.expiration != short.expiration:
+                continue
+            dist = sign * (c.strike - short.strike)
+            if 0 < dist <= max_gap + _GAP_EPS:
+                pool.append((dist, c))
+        pool.sort(key=lambda x: -x[0])
+        cm = cost or load_cost_model()
+        for _, c in pool:
+            loss = wing_max_loss(short, c, cm)
+            if loss is not None and (cap_dollars is None or loss <= cap_dollars):
+                return c
+        return None
     best: tuple[float, float, OptionContract] | None = None
     for c in contracts:
         if c.option_type != short.option_type or c.expiration != short.expiration:
@@ -494,6 +587,27 @@ def select_wing(
         if best is None or key < best[:2]:
             best = (*key, c)
     return None if best is None else best[2]
+
+
+def _wing_for(
+    short: OptionContract,
+    side: Sequence[OptionContract],
+    params: ScanParams,
+    spot: float,
+    *,
+    capped: bool = True,
+) -> OptionContract | None:
+    """:func:`select_wing` under ``params.wing_mode`` (*capped* False = ignore the cap)."""
+    if params.wing_mode == "dollars":
+        return select_wing(short, side, params.wing_width)
+    return select_wing(
+        short,
+        side,
+        params.wing_width,
+        max_gap=params.wing_pct_spot * spot,
+        cap_dollars=params.cap_dollars if capped else None,
+        cost=params.cost,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -696,11 +810,15 @@ def _verticals(
     as_of: dt.date,
     market: MarketInputs,
     scores: Mapping[str, float] | None = None,
+    dropped: Counter[str] | None = None,
 ) -> list[tuple[OptionContract, OptionContract, Structure]]:
     """(short, long, structure) credit verticals for one option type.
 
     E2.6: with *scores* each short is ranked by its vertical's thinner leg (the short
-    and the wing :func:`select_wing` pairs it with)."""
+    and the wing :func:`select_wing` pairs it with). D131: a ``pct_spot`` short with
+    gaps in range but none fitting ``cap_dollars`` is skipped and counted
+    ``wing_cap_unfit`` in *dropped*."""
+    spot = market.spot
     out: list[tuple[OptionContract, OptionContract, Structure]] = []
     pair: dict[str, float] | None = None
     if scores is not None:
@@ -708,7 +826,7 @@ def _verticals(
         for c in side:
             if not params.delta_min <= _abs_delta(c) <= params.delta_max:
                 continue  # select_shorts drops it anyway
-            w = select_wing(c, side, params.wing_width)
+            w = _wing_for(c, side, params, spot)
             own = scores[c.symbol]
             pair[c.symbol] = own if w is None else min(own, scores[w.symbol])
     lam = params.liquidity_rank.lam if params.liquidity_rank is not None else 0.0
@@ -722,8 +840,14 @@ def _verticals(
         lam=lam,
     )
     for s in shorts:
-        wing = select_wing(s, side, params.wing_width)
+        wing = _wing_for(s, side, params, spot)
         if wing is None:
+            if (
+                dropped is not None
+                and params.wing_mode == "pct_spot"
+                and _wing_for(s, side, params, spot, capped=False) is not None
+            ):
+                dropped["wing_cap_unfit"] += 1  # gaps in range, none fits the cap
             continue
         assert s.mid is not None and wing.mid is not None
         try:
@@ -889,6 +1013,7 @@ def scan(
     cands: list[ScanCandidate] = []
     exp_volume: dict[dt.date, int] | None = None
     lr = params.liquidity_rank
+    dropped: Counter[str] = Counter()
     for exp in expirations:
         exp_chain = [c for c in chain if c.expiration == exp]
         sigma = atm_iv(exp_chain, spot)
@@ -901,8 +1026,10 @@ def scan(
                 spread_max_pct=rules.spread_max_pct,
                 weights=lr.weights,
             )
-        puts = _verticals(ticker, exp, by_exp[(exp, "put")], params, as_of, market, scores)
-        calls = _verticals(ticker, exp, by_exp[(exp, "call")], params, as_of, market, scores)
+        puts = _verticals(ticker, exp, by_exp[(exp, "put")], params, as_of, market, scores, dropped)
+        calls = _verticals(
+            ticker, exp, by_exp[(exp, "call")], params, as_of, market, scores, dropped
+        )
 
         def add(
             strategy: ScanStrategy,
@@ -977,11 +1104,18 @@ def scan(
             for st in twos:
                 add(vert, st)
 
+    floor = params.min_credit_width
+    if floor > 0:  # D131: credit-quality floor, before ranking / the menu pool
+        kept = [c for c in cands if c.credit_width is None or c.credit_width >= floor]
+        dropped["credit_width_floor"] += len(cands) - len(kept)
+        cands = kept
+    rules_on = params.wing_mode == "pct_spot" or floor > 0
     if lr is not None and cands:
         cands, exp_volume = _with_expiry_bonus(cands, liquid, spot, params, as_of, lr)
     ranked = _rank(cands, params.rank_by)
     if params.top is not None:
         ranked = ranked[: params.top]
+    drops = {k: dropped[k] for k in ("wing_cap_unfit", "credit_width_floor")} if rules_on else None
     log.info(
         "scanner.scan",
         ticker=ticker,
@@ -993,6 +1127,7 @@ def scan(
         iv_rank=iv.iv_rank,
         **inputs.model_dump(),
         rejected=report.rejected,
+        **({} if drops is None else {"dropped": drops}),
     )
     return ScanResult(
         ticker=ticker,
@@ -1005,6 +1140,7 @@ def scan(
         filter_report=report,
         candidates=ranked,
         inputs=inputs,
+        dropped=drops,
         expiry_volume=None
         if exp_volume is None
         else {e.isoformat(): v for e, v in sorted(exp_volume.items())},

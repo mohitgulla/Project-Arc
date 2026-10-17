@@ -20,6 +20,11 @@ PRE_D85_ENV: dict[str, str] = {
     "ARC_AUTO_EXIT_DEFINED_RISK": "false",
     "ARC_AUTO_APPROVE_SCORECARD_GATE": "true",
     "ARC_MAX_ALLOC_PCT": "0.05",
+    # D131 (E28.1): the pre-D131 credit wing (fixed $ wing, no credit/width floor), so the
+    # fixture pipelines' canned Quant picks keep their menu keys. The shipped pct_spot
+    # wing + 0.10 floor are tested in tests/test_e281_credit_wings.py.
+    "ARC_SCANNER_WING_MODE": "dollars",
+    "ARC_SCANNER_MIN_CREDIT_WIDTH": "0.0",
 }
 
 
