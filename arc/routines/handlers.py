@@ -1040,7 +1040,8 @@ def history_topup_source(
 ) -> JobResult:
     """E7.13 (D84): nightly ThetaData free-tier top-up of the C500 option-history cache.
 
-    Fetches each behind name's sessions through the last completed one (behind-first,
+    Fetches each behind name's sessions through the last session before today ET
+    (``servable_session``: the Terminal refuses current-day ``expiration=*``; behind-first,
     capped by ``history_topup.max_runtime_s``; the rest resume next run), refreshes their
     raw daily closes, then appends the new sessions' ``theta_backfill`` IV points for
     names whose series is already seeded. A Terminal that isn't listening is a skip
@@ -1048,11 +1049,10 @@ def history_topup_source(
     """
     import time as _time
 
-    from arc.backtest.history_topup import run_topup, terminal_up
+    from arc.backtest.history_topup import run_topup, servable_session, terminal_up
     from arc.backtest.universe import checkpoint_symbols, load_universe
     from arc.data.history.thetadata import ThetaTier, tier_earliest_date
     from arc.routines.runs import RoutineStateRepo
-    from arc.utils.calendar import completed_session
 
     cfg = ctx.routines.history_topup
     data_dir = Path(cfg.data_dir)
@@ -1078,7 +1078,7 @@ def history_topup_source(
         msg = f"no E7.7 universe under {data_dir}/backtest_universe ({exc})"
         raise JobSkippedError(msg) from exc
     names = checkpoint_symbols(rows, cfg.universe)
-    end = completed_session(ctx.now)
+    end = servable_session(ctx.now)
     tier = ThetaTier(cfg.theta_tier)
     earliest = tier_earliest_date(tier, end)
     if provider_factory is None:  # pragma: no cover - live Terminal (integration)

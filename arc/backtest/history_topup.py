@@ -27,7 +27,7 @@ from urllib.parse import urlparse
 import pandas as pd
 import structlog
 
-from arc.utils.calendar import sessions_between
+from arc.utils.calendar import ET, previous_session, sessions_between
 
 if TYPE_CHECKING:
     import sqlite3
@@ -65,6 +65,17 @@ def terminal_up(url: str, *, timeout_s: float = 3.0) -> bool:
             return True
     except OSError:
         return False
+
+
+def servable_session(now: _dt.datetime) -> _dt.date:
+    """The last session the Terminal serves to an ``expiration=*`` EOD request at *now*.
+
+    ThetaData refuses current-day data without a named expiration (HTTP 400 "Cannot
+    fetch current-day data without specifying an expiration"), so today's session (ET)
+    is never requested, even after the close: the 20:30 ET run fetches through the
+    previous session and today's lands on the next run.
+    """
+    return previous_session(now.astimezone(ET).date())
 
 
 def plan(
