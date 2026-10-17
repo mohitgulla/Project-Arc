@@ -344,7 +344,7 @@ function ModelCard({ p }: { p: Performance }) {
           {
             label: "Σ hold-to-expiry shadow",
             value: money(m.sum_shadow),
-            hint: `${m.n_shadow} of ${m.n} known (D19)`,
+            hint: `${m.n_shadow} of ${m.n} known`,
           },
           {
             label: "PoP hit · managed",

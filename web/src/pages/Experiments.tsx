@@ -924,7 +924,7 @@ function MoreCard({ d }: { d: ExperimentDetail }) {
           </ol>
         </Section>
       )}
-      <Section title="Spec and Hashes" defaultOpen={false}>
+      <Section title="Spec" defaultOpen={false}>
         <KeyValueList
           items={[
             { label: "Spec Hash", value: <code className="text-micro">{d.spec_hash.slice(0, 16)}</code> },

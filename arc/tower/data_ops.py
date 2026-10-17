@@ -2300,7 +2300,7 @@ def load_config(
             settings = svc.settings()
         finally:
             mem.close()
-        note = "No override tables in this store (D26 not migrated): file/env values only."
+        note = "No override tables in this store (not migrated): file/env values only."
     keys = [_key_row(v) for v in views]
     return ConfigResponse(
         as_of=now,

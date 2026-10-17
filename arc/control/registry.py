@@ -142,6 +142,9 @@ class Tunable:
     env: str | None = None
     max_items: int | None = None
     aliases: tuple[str, ...] = ()
+    # D122 (E8.9): plan/card provenance for devs (e.g. "D116"). Never served or rendered:
+    # ``description`` is owner-facing text and carries no D#/card ids.
+    ref: str = ""
 
     @property
     def bounds(self) -> str:
@@ -360,11 +363,12 @@ _STATIC: tuple[Tunable, ...] = (
         "account_profile",
         Group.ACCOUNT,
         ValueType.CHOICE,
-        "Account profile (D25): which structures, net debit/credit and buying power the gate "
-        "allows; also sets the scanner strategies and entry DTE window.",
+        "Account profile: which structures, net debit/credit and buying power the gate allows; "
+        "also sets the scanner strategies and entry DTE window.",
         Risk.ORDER,
         choices=PROFILE_ORDER,
         aliases=("profile",),
+        ref="D25",
     ),
     # D34 (revised 2026-09-28): one switch per environment; both riskier-direction, so
     # turning either on always needs the confirm code. Only the key for the running
@@ -373,21 +377,23 @@ _STATIC: tuple[Tunable, ...] = (
         "auto_approve.paper",
         Group.ACCOUNT,
         _B,
-        "D34: auto-approve gate-passed proposals when ARC_ENV=paper (gate, budget, halts and "
+        "Auto-approve gate-passed proposals when ARC_ENV=paper (gate, budget, halts and "
         "token+approval still apply).",
         Risk.TRUE,
         field="auto_approve",
         env="paper",
+        ref="D34",
     ),
     _s(
         "auto_approve.live",
         Group.ACCOUNT,
         _B,
-        "D34: auto-approve gate-passed proposals when ARC_ENV=live; turning it on needs the "
-        "one-time confirm code.",
+        "Auto-approve gate-passed proposals when ARC_ENV=live; turning it on needs the one-time "
+        "confirm code.",
         Risk.TRUE,
         field="auto_approve",
         env="live",
+        ref="D34",
     ),
     # E7.5a: the scorecard gate in front of D34 auto-approve (opens only). D70: the
     # opt-out is paper-only; a live process forces the gate on (ArcSettings validator).
@@ -395,25 +401,27 @@ _STATIC: tuple[Tunable, ...] = (
         "auto_approve.scorecard_gate",
         Group.ACCOUNT,
         _B,
-        "E7.5a: auto-approve opens only when the scorecard shows enough closed trades, "
-        "realised net EV >= 0 and slippage within tolerance. Off = explicit opt-out "
-        "(paper only, D70: live always runs the gate).",
+        "Auto-approve opens only when the scorecard shows enough closed trades, realised net EV >= "
+        "0 and slippage within tolerance. Off = explicit opt-out (paper only; live always runs the "
+        "gate).",
         Risk.FALSE,
         field="auto_approve_scorecard_gate",
         aliases=("scorecard_gate",),
         env="paper",
+        ref="E7.5a/D70",
     ),
     _s(
         "auto_approve.min_closed_trades",
         Group.ACCOUNT,
         _I,
-        "E7.5a: closed trades the scorecard gate needs before auto-approving opens (paper; "
-        "live uses auto_approve.live_min_closed_trades).",
+        "Closed trades the scorecard gate needs before auto-approving opens (paper; live uses "
+        "auto_approve.live_min_closed_trades).",
         Risk.DOWN,
         field="auto_approve_min_closed_trades",
         min=10,
         max=500,
         hard_ceiling=10,
+        ref="E7.5a",
     ),
     # D70 (E11.3): the live collection phase. Live-only keys; the riskier direction
     # (a lower threshold / a higher cap) needs the confirm code.
@@ -421,21 +429,22 @@ _STATIC: tuple[Tunable, ...] = (
         "auto_approve.live_min_closed_trades",
         Group.ACCOUNT,
         _I,
-        "D70: LIVE closed trades (live store only) before live auto-approve is effective and "
-        "the live size cap lifts.",
+        "LIVE closed trades (live store only) before live auto-approve is effective and the live "
+        "size cap lifts.",
         Risk.DOWN,
         field="auto_approve_live_min_closed_trades",
         min=10,
         max=500,
         hard_ceiling=10,
         env="live",
+        ref="D70",
     ),
     _s(
         "live.max_contracts_until_gate",
         Group.ACCOUNT,
         _I,
-        "D70: contracts per live open until the live scorecard gate is met (sizing clamp + "
-        "gate rule live_size_cap). Lifts itself when the gate is met.",
+        "Contracts per live open until the live scorecard gate is met (sizing clamp + gate rule "
+        "live_size_cap). Lifts itself when the gate is met.",
         Risk.UP,
         field="live_max_contracts_until_gate",
         min=1,
@@ -443,28 +452,31 @@ _STATIC: tuple[Tunable, ...] = (
         hard_ceiling=5,
         unit="contracts",
         env="live",
+        ref="D70",
     ),
     _s(
         "live.gate_met",
         Group.ACCOUNT,
         _B,
-        "D70: the live scorecard gate was met (sticky). Turned on only by Arc (arc:live-gate) "
-        "the first sweep that finds it met; lifts the live size cap and lets auto_approve.live "
-        "take effect. The owner may turn it off (re-imposes the cap), never on.",
+        "The live scorecard gate was met (sticky). Turned on only by Arc (arc:live-gate) the first "
+        "sweep that finds it met; lifts the live size cap and lets auto_approve.live take effect. "
+        "The owner may turn it off (re-imposes the cap), never on.",
         Risk.TRUE,
         field="live_gate_met",
         env="live",
+        ref="D70",
     ),
     _s(
         "auto_approve.slippage_tolerance",
         Group.ACCOUNT,
         _F,
-        "E7.5a: realised entry slippage may be at most modelled half-spread x this.",
+        "Realised entry slippage may be at most modelled half-spread x this.",
         Risk.UP,
         field="auto_approve_slippage_tolerance",
         min=0.5,
         max=3.0,
         hard_ceiling=3.0,
+        ref="E7.5a",
     ),
     _s(
         "approver_ids",
@@ -481,31 +493,32 @@ _STATIC: tuple[Tunable, ...] = (
         "universe",
         Group.UNIVERSE,
         ValueType.TICKERS,
-        "Core tier (D56: 20 names, no ETFs): always scanned and accepted, no liquidity "
-        "screen. The active list adds momentum and discovery (cap "
-        "universe_active_max). '+NVDA,-TSLA' edits the list; added tickers must be "
-        "optionable.",
+        "Core tier (20 names, no ETFs): always scanned and accepted, no liquidity screen. The "
+        "active list adds momentum and discovery (cap universe_active_max). '+NVDA,-TSLA' edits "
+        "the list; added tickers must be optionable.",
         Risk.GROW,
         max_items=MAX_UNIVERSE,
+        ref="D56",
     ),
     Tunable(
         key="universe_active_max",
         group=Group.UNIVERSE,
         type=_I,
-        description="D56: the deduped active list (core > momentum > discovery) is capped "
-        "at this many names; the rest are journaled universe:over_active_cap.",
+        description="The deduped active list (core > momentum > discovery) is capped at this many "
+        "names; the rest are journaled universe:over_active_cap.",
         target=Target.UNIVERSE,  # E20.4 (D85): was ArcSettings.universe_active_max
         risk=Risk.UP,
         path=("active_max",),
         min=1,
         max=60,
         hard_ceiling=60,
+        ref="D56",
     ),
     Tunable(
         key="universe_momentum_size",
         group=Group.UNIVERSE,
         type=_I,
-        description="D56: momentum tier size (top N of the 25-row momentum feed).",
+        description="Momentum tier size (top N of the 25-row momentum feed).",
         target=Target.UNIVERSE,  # E20.4 (D85): was ArcSettings.universe_momentum_size
         risk=Risk.UP,
         path=("sizes", "momentum"),
@@ -513,36 +526,39 @@ _STATIC: tuple[Tunable, ...] = (
         max=50,
         hard_ceiling=50,
         aliases=("universe_momentum_size_d56",),  # E20.2 (D85): the pre-rename key
+        ref="D56",
     ),
     Tunable(
         key="universe_discovery_size",
         group=Group.UNIVERSE,
         type=_I,
-        description="D58: discovery tier size (the Scout's YouTube calls, ranked).",
+        description="Discovery tier size (the Scout's YouTube calls, ranked).",
         target=Target.UNIVERSE,  # E20.4 (D85): was ArcSettings.universe_discovery_size
         risk=Risk.UP,
         path=("sizes", "discovery"),
         min=0,
         max=25,
         hard_ceiling=25,
+        ref="D58",
     ),
     Tunable(
         key="universe_trending_size",
         group=Group.UNIVERSE,
         type=_I,
-        description="D58: trending tier size (the daily Reddit + Stocktwits ranking).",
+        description="Trending tier size (the daily Reddit + Stocktwits ranking).",
         target=Target.UNIVERSE,  # E20.4 (D85): was ArcSettings.universe_trending_size
         risk=Risk.UP,
         path=("sizes", "trending"),
         min=0,
         max=25,
         hard_ceiling=25,
+        ref="D58",
     ),
     Tunable(
         key="universe_floor_core",
         group=Group.UNIVERSE,
         type=_F,
-        description="D56: min Scalp confidence for a core name's candidate.",
+        description="Min Scalp confidence for a core name's candidate.",
         target=Target.UNIVERSE,  # E20.4 (D85): was ArcSettings.universe_floor_core
         risk=Risk.DOWN,
         path=("floors", "core"),
@@ -551,63 +567,69 @@ _STATIC: tuple[Tunable, ...] = (
         hard_ceiling=0.30,
         # E13.15: the single D51 Scalp floor (and its pre-rename keys) became per tier
         aliases=("scalp_min_confidence", "sweep_min_confidence", "scout_min_confidence"),
+        ref="D56",
     ),
     Tunable(
         key="universe_floor_momentum",
         group=Group.UNIVERSE,
         type=_F,
-        description="D56: min Scalp confidence for a momentum name's candidate.",
+        description="Min Scalp confidence for a momentum name's candidate.",
         target=Target.UNIVERSE,  # E20.4 (D85): was ArcSettings.universe_floor_momentum
         risk=Risk.DOWN,
         path=("floors", "momentum"),
         min=0.30,
         max=0.95,
         hard_ceiling=0.30,
+        ref="D56",
     ),
     Tunable(
         key="universe_floor_discovery",
         group=Group.UNIVERSE,
         type=_F,
-        description="D56: min Scalp confidence for a discovery name's candidate (owner: >= 0.6).",
+        description="Min Scalp confidence for a discovery name's candidate (owner: >= 0.6).",
         target=Target.UNIVERSE,  # E20.4 (D85): was ArcSettings.universe_floor_discovery
         risk=Risk.DOWN,
         path=("floors", "discovery"),
         min=0.30,
         max=0.95,
         hard_ceiling=0.30,
+        ref="D56",
     ),
     Tunable(
         key="universe_floor_trending",
         group=Group.UNIVERSE,
         type=_F,
-        description="D58: min Scalp confidence for a trending name's candidate.",
+        description="Min Scalp confidence for a trending name's candidate.",
         target=Target.UNIVERSE,  # E20.4 (D85): was ArcSettings.universe_floor_trending
         risk=Risk.DOWN,
         path=("floors", "trending"),
         min=0.30,
         max=0.95,
         hard_ceiling=0.30,
+        ref="D58",
     ),
     _s(
         "universe_mode",
         Group.UNIVERSE,
         ValueType.CHOICE,
-        "D28: strict = only the active list; seed = also any listed optionable name in a "
-        "tier (core / momentum / discovery) that passes its screen (config/universe.yaml).",
+        "strict = only the active list; seed = also any listed optionable name in a tier (core / "
+        "momentum / discovery) that passes its screen (config/universe.yaml).",
         Risk.ORDER,
         choices=("strict", "seed"),
+        ref="D28",
     ),
     _s(
         "scalp_doc_budget",
         Group.UNIVERSE,
         _I,
-        "D30: docs the Scalp reads per run, shared equally across sources (round-robin); "
-        "higher = more LLM tokens, never more trades.",
+        "Docs the Scalp reads per run, shared equally across sources (round-robin); higher = more "
+        "LLM tokens, never more trades.",
         Risk.NONE,
         min=20,
         max=400,
         hard_ceiling=400,
         aliases=("sweep_doc_budget", "scout_doc_budget"),  # D56: was sweep_*; D54: was scout_*
+        ref="D30",
     ),
     # D56 (E13.4): standard (momentum) + loose (discovery) liquidity screens. Lower
     # floors / a wider spread admit more names to be looked at; the gate's spread
@@ -616,7 +638,7 @@ _STATIC: tuple[Tunable, ...] = (
         key="universe_screen_standard_min_price",
         group=Group.UNIVERSE,
         type=_F,
-        description="D56 standard screen (momentum tier): min underlying price.",
+        description="Standard screen (momentum tier): min underlying price.",
         target=Target.UNIVERSE,
         risk=Risk.DOWN,
         path=("liquidity_screen", "standard", "min_price"),
@@ -624,37 +646,40 @@ _STATIC: tuple[Tunable, ...] = (
         min=1.0,
         max=100.0,
         hard_ceiling=1.0,
+        ref="D56",
     ),
     Tunable(
         key="universe_screen_standard_min_adv_shares",
         group=Group.UNIVERSE,
         type=_F,
-        description="D56 standard screen: min mean daily share volume (last adv_days sessions).",
+        description="Standard screen: min mean daily share volume (last adv_days sessions).",
         target=Target.UNIVERSE,
         risk=Risk.DOWN,
         path=("liquidity_screen", "standard", "min_adv_shares"),
         min=100_000,
         max=10_000_000,
         hard_ceiling=100_000,
+        ref="D56",
     ),
     Tunable(
         key="universe_screen_standard_min_atm_open_interest",
         group=Group.UNIVERSE,
         type=_I,
-        description="D56 standard screen: min call + put open interest over the 3 strikes "
-        "nearest spot (expiry nearest 30 DTE).",
+        description="Standard screen: min call + put open interest over the 3 strikes nearest spot "
+        "(expiry nearest 30 DTE).",
         target=Target.UNIVERSE,
         risk=Risk.DOWN,
         path=("liquidity_screen", "standard", "min_atm_open_interest"),
         min=25,
         max=5000,
         hard_ceiling=25,
+        ref="D56",
     ),
     Tunable(
         key="universe_screen_standard_max_atm_spread_pct",
         group=Group.UNIVERSE,
         type=_F,
-        description="D56 standard screen: max ATM (ask - bid) / mid, call and put averaged.",
+        description="Standard screen: max ATM (ask - bid) / mid, call and put averaged.",
         target=Target.UNIVERSE,
         risk=Risk.UP,
         path=("liquidity_screen", "standard", "max_atm_spread_pct"),
@@ -662,12 +687,13 @@ _STATIC: tuple[Tunable, ...] = (
         min=0.02,
         max=0.40,
         hard_ceiling=0.40,
+        ref="D56",
     ),
     Tunable(
         key="universe_screen_loose_min_price",
         group=Group.UNIVERSE,
         type=_F,
-        description="D56 loose screen (discovery tier): min underlying price.",
+        description="Loose screen (discovery tier): min underlying price.",
         target=Target.UNIVERSE,
         risk=Risk.DOWN,
         path=("liquidity_screen", "loose", "min_price"),
@@ -675,37 +701,40 @@ _STATIC: tuple[Tunable, ...] = (
         min=1.0,
         max=100.0,
         hard_ceiling=1.0,
+        ref="D56",
     ),
     Tunable(
         key="universe_screen_loose_min_adv_shares",
         group=Group.UNIVERSE,
         type=_F,
-        description="D56 loose screen: min mean daily share volume (last adv_days sessions).",
+        description="Loose screen: min mean daily share volume (last adv_days sessions).",
         target=Target.UNIVERSE,
         risk=Risk.DOWN,
         path=("liquidity_screen", "loose", "min_adv_shares"),
         min=100_000,
         max=10_000_000,
         hard_ceiling=100_000,
+        ref="D56",
     ),
     Tunable(
         key="universe_screen_loose_min_atm_open_interest",
         group=Group.UNIVERSE,
         type=_I,
-        description="D56 loose screen: min call + put open interest over the 3 strikes "
-        "nearest spot (expiry nearest 30 DTE).",
+        description="Loose screen: min call + put open interest over the 3 strikes nearest spot "
+        "(expiry nearest 30 DTE).",
         target=Target.UNIVERSE,
         risk=Risk.DOWN,
         path=("liquidity_screen", "loose", "min_atm_open_interest"),
         min=25,
         max=5000,
         hard_ceiling=25,
+        ref="D56",
     ),
     Tunable(
         key="universe_screen_loose_max_atm_spread_pct",
         group=Group.UNIVERSE,
         type=_F,
-        description="D56 loose screen: max ATM (ask - bid) / mid, call and put averaged.",
+        description="Loose screen: max ATM (ask - bid) / mid, call and put averaged.",
         target=Target.UNIVERSE,
         risk=Risk.UP,
         path=("liquidity_screen", "loose", "max_atm_spread_pct"),
@@ -713,6 +742,7 @@ _STATIC: tuple[Tunable, ...] = (
         min=0.02,
         max=0.40,
         hard_ceiling=0.40,
+        ref="D56",
     ),
     # D67 (E14.9): how discovery + trending share the active slots after core + momentum.
     # Owner decision, on by default (not an experiment); precedence = the D58 cut.
@@ -720,45 +750,48 @@ _STATIC: tuple[Tunable, ...] = (
         key="universe.active_fill",
         group=Group.UNIVERSE,
         type=ValueType.CHOICE,
-        description="D67: the active-list slots left after core + momentum go to discovery "
-        "and trending by round robin, discovery first, a tier that runs out spills to the "
-        "other (round_robin); or all of discovery before any trending (precedence, D58).",
+        description="The active-list slots left after core + momentum go to discovery and trending "
+        "by round robin, discovery first, a tier that runs out spills to the other (round_robin); "
+        "or all of discovery before any trending (precedence).",
         target=Target.UNIVERSE,
         risk=Risk.ANY,
         path=("active_fill",),
         choices=("round_robin", "precedence"),
         aliases=("universe_active_fill", "active_fill"),
+        ref="D67/D58",
     ),
     # E4.8 / D46: Finnhub per-ticker context (data only; the gate never reads it).
     _s(
         "finnhub_calls_per_minute",
         Group.UNIVERSE,
         _I,
-        "D46: Finnhub calls per minute shared by every Finnhub job across processes "
-        "(earnings calendar included). The free key allows 60; above that Finnhub 429s.",
+        "Finnhub calls per minute shared by every Finnhub job across processes (earnings calendar "
+        "included). The free key allows 60; above that Finnhub 429s.",
         Risk.UP,
         min=1,
         max=60,
         hard_ceiling=60,
+        ref="D46",
     ),
     _s(
         "finnhub_max_tickers",
         Group.UNIVERSE,
         _I,
-        "D46/D51: tickers per Finnhub context run (open-position underlyings first, then "
-        "today's candidates, core, momentum, discovery). Each ticker is one call per job, "
-        "against the per-minute budget.",
+        "Tickers per Finnhub context run (open-position underlyings first, then today's "
+        "candidates, core, momentum, discovery). Each ticker is one call per job, against the "
+        "per-minute budget.",
         Risk.NONE,
         min=1,
         max=200,
         hard_ceiling=200,
+        ref="D46/D51",
     ),
     # -- risk --------------------------------------------------------------------
     _s(
         "max_alloc_pct",
         Group.RISK,
         _F,
-        "D116 base tier of the D18 cap: max loss per underlying (existing + new) as a share "
+        "Base tier of the per-underlying cap: max loss per underlying (existing + new) as a share "
         "of equity while deployed max loss (open + in-flight opens) is below "
         "alloc_tier_threshold_pct; also the sizing cap. Gate rule per_underlying_limit.",
         Risk.UP,
@@ -767,12 +800,13 @@ _STATIC: tuple[Tunable, ...] = (
         max=0.20,
         hard_ceiling=0.20,
         aliases=("per_underlying_cap",),
+        ref="D116/D18",
     ),
     _s(
         "max_alloc_pct_reduced",
         Group.RISK,
         _F,
-        "D116 reduced tier: the per-underlying cap once deployed max loss is at or above "
+        "Reduced tier: the per-underlying cap once deployed max loss is at or above "
         "alloc_tier_threshold_pct of equity (never above max_alloc_pct).",
         Risk.UP,
         unit="pct",
@@ -780,18 +814,20 @@ _STATIC: tuple[Tunable, ...] = (
         max=0.20,
         hard_ceiling=0.20,
         aliases=("per_underlying_cap_reduced",),
+        ref="D116",
     ),
     _s(
         "alloc_tier_threshold_pct",
         Group.RISK,
         _F,
-        "D116: deployed max loss (open + in-flight opens, pre-trade) as a share of equity "
-        "at which the per-underlying cap drops from max_alloc_pct to max_alloc_pct_reduced.",
+        "Deployed max loss (open + in-flight opens, pre-trade) as a share of equity at which the "
+        "per-underlying cap drops from max_alloc_pct to max_alloc_pct_reduced.",
         Risk.UP,
         unit="pct",
         min=0.10,
         max=1.0,
         hard_ceiling=1.0,
+        ref="D116",
     ),
     _s(
         "daily_loss_halt_pct",
@@ -829,26 +865,28 @@ _STATIC: tuple[Tunable, ...] = (
         "portfolio_dollar_delta_cap_pct",
         Group.RISK,
         _F,
-        "D57/D62: |net dollar delta| (Σ Δ share-eq × spot; D116: debit verticals and long "
-        "options at sign(Δ) × max loss) cap as a share of equity (gate rule greek_caps).",
+        "|net dollar delta| (Σ Δ share-eq × spot; debit verticals and long options at sign(Δ) × "
+        "max loss) cap as a share of equity (gate rule greek_caps).",
         Risk.UP,
         unit="pct",
         min=0.10,
         max=2.00,
         hard_ceiling=2.00,
+        ref="D57/D62/D116",
     ),
     _s(
         "portfolio_beta_delta_cap_pct",
         Group.RISK,
         _F,
-        "D62: |beta-weighted net dollar delta| (Σ Δ share-eq × spot × max(β vs SPY, 1); "
-        "D116: debit verticals and long options at sign(Δ) × max loss × max(β, 1)) "
-        "cap as a share of equity (gate rule greek_caps).",
+        "|beta-weighted net dollar delta| (Σ Δ share-eq × spot × max(β vs SPY, 1); debit verticals "
+        "and long options at sign(Δ) × max loss × max(β, 1)) cap as a share of equity (gate rule "
+        "greek_caps).",
         Risk.UP,
         unit="pct",
         min=0.25,
         max=4.00,
         hard_ceiling=4.00,
+        ref="D62/D116",
     ),
     _s(
         "portfolio_vega_cap_pct",
@@ -873,13 +911,13 @@ _STATIC: tuple[Tunable, ...] = (
         "data.alpaca_history_feed",
         Group.ENTRIES,
         ValueType.CHOICE,
-        "E23.0a (D98): stock feed for volume-weighted history reads (regime technicals' "
-        "daily bars, the anti-chase session VWAP). sip = consolidated tape, delayed 16 min "
-        "intraday (free tier); iex = one exchange (~5% of volume), the rollback. Live quotes "
-        "always stay on IEX.",
+        "Stock feed for volume-weighted history reads (regime technicals' daily bars, the "
+        "anti-chase session VWAP). sip = consolidated tape, delayed 16 min intraday (free tier); "
+        "iex = one exchange (~5% of volume), the rollback. Live quotes always stay on IEX.",
         Risk.NONE,
         field="alpaca_history_feed",
         choices=("sip", "iex"),
+        ref="E23.0a/D98",
     ),
     _s(
         "dte_min",
@@ -968,21 +1006,23 @@ _STATIC: tuple[Tunable, ...] = (
         "debit_short_delta_min",
         Group.ENTRIES,
         _F,
-        "Debit-vertical short-leg |delta| band, lower bound (E3.4, cash_debit).",
+        "Debit-vertical short-leg |delta| band, lower bound (cash_debit).",
         Risk.NONE,
         field="scanner_debit_short_delta_min",
         min=0.05,
         max=0.60,
+        ref="E3.4",
     ),
     _s(
         "debit_short_delta_max",
         Group.ENTRIES,
         _F,
-        "Debit-vertical short-leg |delta| band, upper bound (E3.4, cash_debit).",
+        "Debit-vertical short-leg |delta| band, upper bound (cash_debit).",
         Risk.NONE,
         field="scanner_debit_short_delta_max",
         min=0.05,
         max=0.60,
+        ref="E3.4",
     ),
     _s(
         "debit_width",
@@ -1044,71 +1084,78 @@ liquidity; a leg passes if within this OR spread_max_abs).",
         "max_shortlist",
         Group.ENTRIES,
         _I,
-        "Quant/Risk budget: the first N Research-ranked tickers get a structure (D28).",
+        "Quant/Risk budget: the first N Research-ranked tickers get a structure.",
         Risk.UP,
         field="pipeline_max_shortlist",
         min=1,
         max=10,
         hard_ceiling=10,
+        ref="D28",
     ),
     _s(
         "research.min_ranked",
         Group.ENTRIES,
         _I,
-        "E22.3 (D97): Research is asked to rank at least min(N, free slots x 2, pool) names "
-        "while slots are free (0 = off, the pre-E22.3 prompt). Never forces a trade.",
+        "Research is asked to rank at least min(N, free slots x 2, pool) names while slots are "
+        "free (0 = off, the earlier prompt). Never forces a trade.",
         Risk.UP,
         field="research_min_ranked",
         min=0,
         max=10,
         hard_ceiling=10,
+        ref="E22.3/D97",
     ),
     Tunable(
         key="rank_by",
         group=Group.ENTRIES,
         type=ValueType.CHOICE,
-        description="Quant menu order (exits.yaml pipeline.rank_menu_by; E7.5 kept 'scanner').",
+        description="Quant menu order (exits.yaml pipeline.rank_menu_by; the backtest kept "
+        "'scanner').",
         target=Target.EXITS,
         risk=Risk.NONE,
         path=("pipeline", "rank_menu_by"),
         choices=RANK_MENU_BY,
+        ref="E7.5",
     ),
     # -- E7.5b (D79): one menu measure for credit + debit, ranked before the cut --------
     Tunable(
         key="menu_measure",
         group=Group.ENTRIES,
         type=ValueType.CHOICE,
-        description="E7.5b: control = scanner menu; managed_net_ev_full / rorc_day_full / "
-        "rorc_day_tilted rank up to menu_pool_max candidates (credit and debit on one key) "
-        "before the cut to pipeline_scan_top (exits.yaml pipeline.menu_measure).",
+        description="control = scanner menu; managed_net_ev_full / rorc_day_full / rorc_day_tilted "
+        "rank up to menu_pool_max candidates (credit and debit on one key) before the cut to "
+        "pipeline_scan_top (exits.yaml pipeline.menu_measure).",
         target=Target.EXITS,
         risk=Risk.NONE,
         path=("pipeline", "menu_measure"),
         choices=MENU_MEASURE,
+        ref="E7.5b",
     ),
     Tunable(
         key="menu_direction_tilt",
         group=Group.ENTRIES,
         type=ValueType.FLOAT,
-        description="E7.5b: rorc_day_tilted drift, a fraction of a 1-sigma move over the "
-        "expected hold in the stance's direction (0 = off). Ranking key only.",
+        description="rorc_day_tilted drift, a fraction of a 1-sigma move over the expected hold in "
+        "the stance's direction (0 = off). Ranking key only.",
         target=Target.EXITS,
         risk=Risk.ANY,
         path=("pipeline", "direction_tilt"),
         min=0.0,
         max=0.5,
+        ref="E7.5b",
     ),
     Tunable(
         key="menu_pool_max",
         group=Group.ENTRIES,
         type=ValueType.INT,
-        description="E7.5b: scanner candidates per ticker scored by the managed model before "
-        "the menu is cut (only under a *_full / *_tilted menu_measure).",
+        description="Scanner candidates per ticker scored by the managed model before the menu is "
+        "cut (only under a *_full / *_tilted menu_measure).",
         target=Target.EXITS,
         risk=Risk.ANY,
         path=("pipeline", "menu_pool_max"),
         min=5,
         max=40,
+        ref="E7.5b",
     ),
     # -- positions (E6.4, D19): early exits + close-to-reallocate -----------------
     Tunable(
@@ -1128,92 +1175,99 @@ liquidity; a leg passes if within this OR spread_max_abs).",
         key="positions.remaining_ev_floor_eval",
         group=Group.POSITIONS,
         type=ValueType.CHOICE,
-        description="E6.4a: evaluate the remaining-EV floor on end-of-day marks only (eod, "
-        "never on the fill day's intraday reviews) or on every review (intraday).",
+        description="Evaluate the remaining-EV floor on end-of-day marks only (eod, never on the "
+        "fill day's intraday reviews) or on every review (intraday).",
         target=Target.EXITS,
         risk=Risk.ORDER,
         path=("positions", "remaining_ev_floor_eod_only"),
         choices=("intraday", "eod"),  # eod (relaxed, like the D23 stop) is the riskier side
+        ref="E6.4a",
     ),
     Tunable(
         key="positions.fill_day_guard",
         group=Group.POSITIONS,
         type=ValueType.CHOICE,
-        description="E18.2 (D78): on = no discretionary close (Research review with the "
-        "thesis intact/weakened, swap close, remaining-EV floor) in the sessions after the "
-        "fill unless the thesis is broken; off = rollback (closes as before E18.2).",
+        description="On = no discretionary close (Research review with the thesis intact/weakened, "
+        "swap close, remaining-EV floor) in the sessions after the fill unless the thesis is "
+        "broken; off = rollback (closes as before the guard).",
         target=Target.EXITS,
         risk=Risk.ANY,
         path=("positions", "fill_day_guard"),
         choices=("on", "off"),
+        ref="E18.2/D78",
     ),
     Tunable(
         key="positions.fill_day_guard_sessions",
         group=Group.POSITIONS,
         type=ValueType.INT,
-        description="E18.2: trading sessions the fill-day guard covers, counting the fill "
-        "day (1 = the fill day only; 0 = off).",
+        description="Trading sessions the fill-day guard covers, counting the fill day (1 = the "
+        "fill day only; 0 = off).",
         target=Target.EXITS,
         risk=Risk.ANY,
         path=("positions", "fill_day_guard_sessions"),
         min=0,
         max=3,
+        ref="E18.2",
     ),
     # -- expiry guard (E11.4, D73) ------------------------------------------------
     Tunable(
         key="expiry_guard.flat_by_dte",
         group=Group.POSITIONS,
         type=ValueType.INT,
-        description="E11.4: every structure must be closed by the end of the session this many "
-        "calendar days before expiry (1 = the day before); lowering it is riskier.",
+        description="Every structure must be closed by the end of the session this many calendar "
+        "days before expiry (1 = the day before); lowering it is riskier.",
         target=Target.EXITS,
         risk=Risk.DOWN,
         path=("positions", "expiry_guard", "flat_by_dte"),
         unit="d",
         min=0,
         max=5,
+        ref="E11.4",
     ),
     Tunable(
         key="expiry_guard.attempts_per_day",
         group=Group.POSITIONS,
         type=ValueType.INT,
-        description="E11.4: close proposals per structure per ET day inside the closing window "
-        "(DTE <= flat_by_dte + 1); outside it, one a day.",
+        description="Close proposals per structure per ET day inside the closing window (DTE <= "
+        "flat_by_dte + 1); outside it, one a day.",
         target=Target.EXITS,
         risk=Risk.DOWN,
         path=("positions", "expiry_guard", "attempts_per_day"),
         min=1,
         max=8,
+        ref="E11.4",
     ),
     Tunable(
         key="expiry_guard.dne",
         group=Group.POSITIONS,
         type=ValueType.CHOICE,
-        description="E11.4: do-not-exercise at the expiry-day cutoff (paper only): never, "
-        "near_money (|spot - strike| <= pin_band) or all_longs.",
+        description="Do-not-exercise at the expiry-day cutoff (paper only): never, near_money "
+        "(|spot - strike| <= pin_band) or all_longs.",
         target=Target.EXITS,
         risk=Risk.ANY,
         path=("positions", "expiry_guard", "dne"),
         choices=("never", "near_money", "all_longs"),
+        ref="E11.4",
     ),
     Tunable(
         key="expiry_guard.pin_band",
         group=Group.POSITIONS,
         type=ValueType.FLOAT,
-        description="E11.4: near_money DNE band, $ per share around the strike.",
+        description="near_money DNE band, $ per share around the strike.",
         target=Target.EXITS,
         risk=Risk.ANY,
         path=("positions", "expiry_guard", "pin_band"),
         unit="$",
         min=0.0,
         max=5.0,
+        ref="E11.4",
     ),
     Tunable(
         key="entries.min_managed_net_ev",
         group=Group.ENTRIES,
         type=ValueType.FLOAT,
-        description="E6.4a: the live propose step rejects a structure whose managed Net EV "
-        "(E2.4 managed exits, after all costs, $ per unit) is <= this (lower = more trades).",
+        description="The live propose step rejects a structure whose managed Net EV (managed "
+        "exits, after all costs, $ per unit) is <= this (lower = more trades).",
         target=Target.RANKING,
         risk=Risk.DOWN,
         path=("ranking", "filters", "min_managed_net_ev"),
@@ -1221,16 +1275,18 @@ liquidity; a leg passes if within this OR spread_max_abs).",
         min=-50.0,
         max=500.0,
         hard_ceiling=-50.0,
+        ref="E6.4a/E2.4",
     ),
     Tunable(
         key="entries.net_ev_floor_live",
         group=Group.ENTRIES,
         type=ValueType.BOOL,
-        description="E6.4a: apply entries.min_managed_net_ev in the live propose step. Off = "
-        "the floor is backtest-only and a negative-EV structure can be proposed.",
+        description="Apply entries.min_managed_net_ev in the live propose step. Off = the floor is "
+        "backtest-only and a negative-EV structure can be proposed.",
         target=Target.RANKING,
         risk=Risk.FALSE,
         path=("ranking", "filters", "live"),
+        ref="E6.4a",
     ),
     # E16.5 (D76): the breakeven-realism filter. Strategy lane, ships off (none);
     # promotion only through an experiment verdict (D44). Higher / none = fewer drops.
@@ -1238,15 +1294,16 @@ liquidity; a leg passes if within this OR spread_max_abs).",
         key="scanner.max_be_atr",
         group=Group.ENTRIES,
         type=ValueType.FLOAT_OR_NONE,
-        description="E16.5: drop debit structures whose breakeven (in the trade's direction) "
-        "is more than this many ATR14 x sqrt(DTE) from spot, before Quant's menu is ranked "
-        "(journaled be_unrealistic). Credit structures untouched; 'none' = off (default).",
+        description="Drop debit structures whose breakeven (in the trade's direction) is more than "
+        "this many ATR14 x sqrt(DTE) from spot, before Quant's menu is ranked (journaled "
+        "be_unrealistic). Credit structures untouched; 'none' = off (default).",
         target=Target.RANKING,
         risk=Risk.UP,
         path=("scanner", "max_be_atr"),
         min=0.5,
         max=5.0,
         aliases=("max_be_atr",),
+        ref="E16.5",
     ),
     _s(
         "realloc_min_edge",
@@ -1341,8 +1398,8 @@ liquidity; a leg passes if within this OR spread_max_abs).",
         "max_quote_age",
         Group.EXECUTION,
         _I,
-        "D34: seconds between the proposal's pricing and the ladder's first attempt after "
-        "which the Broker re-prices at mid (a mid outside the gate band is not sent).",
+        "Seconds between the proposal's pricing and the ladder's first attempt after which the "
+        "Broker re-prices at mid (a mid outside the gate band is not sent).",
         Risk.UP,
         field="execution_max_quote_age_seconds",
         unit="s",
@@ -1350,27 +1407,29 @@ liquidity; a leg passes if within this OR spread_max_abs).",
         max=600,
         hard_ceiling=600,
         aliases=("execute.max_quote_age",),
+        ref="D34",
     ),
     # -- D101 (E24.1): re-gate on band move ------------------------------------------
     _s(
         "regate_max",
         Group.EXECUTION,
         _I,
-        "D101: re-gates per ladder when the market moves past its band (full gate at the "
-        "fresh mid, new band and token). 0 = no between-step check (rollback).",
+        "Re-gates per ladder when the market moves past its band (full gate at the fresh mid, new "
+        "band and token). 0 = no between-step check (rollback).",
         Risk.UP,
         field="execution_regate_max",
         min=0,
         max=3,
         hard_ceiling=3,
         aliases=("execution.regate_max",),
+        ref="D101",
     ),
     _s(
         "regate_max_move_pct",
         Group.EXECUTION,
         _F,
-        "D101: a re-gate is refused when the new band's worst price is more than this "
-        "share of the original mid above the original worst price.",
+        "A re-gate is refused when the new band's worst price is more than this share of the "
+        "original mid above the original worst price.",
         Risk.UP,
         field="execution_regate_max_move_pct",
         unit="pct",
@@ -1378,6 +1437,7 @@ liquidity; a leg passes if within this OR spread_max_abs).",
         max=0.20,
         hard_ceiling=0.20,
         aliases=("execution.regate_max_move_pct",),
+        ref="D101",
     ),
     # -- close quote check (E6.2a) -------------------------------------------------
     _s(
@@ -1560,240 +1620,262 @@ liquidity; a leg passes if within this OR spread_max_abs).",
         "order_budget.restrictive.dedupe_cooldown_multiplier",
         Group.EXECUTION,
         _F,
-        "Restrictive tier: E5.9 dedupe cooldown multiplier.",
+        "Restrictive tier: dedupe cooldown multiplier.",
         Risk.DOWN,
         field="order_budget_restrictive_dedupe_cooldown_multiplier",
         min=1.0,
         max=10.0,
         hard_ceiling=1.0,
+        ref="E5.9",
     ),
     # -- portfolio-aware Research, dedupe, no-trade guard (E5.9, D33) ----------
     _s(
         "dedupe.executed_cooldown",
         Group.ENTRIES,
         _I,
-        "D33: sessions an executed idea (open, or closed this recently) stays suppressed.",
+        "Sessions an executed idea (open, or closed this recently) stays suppressed.",
         Risk.DOWN,
         field="dedupe_executed_cooldown_sessions",
         unit="sessions",
         min=0,
         max=60,
         hard_ceiling=0,
+        ref="D33",
     ),
     _s(
         "dedupe.proposed_cooldown",
         Group.ENTRIES,
         _I,
-        "D33: sessions a proposed (pending / expired) idea stays suppressed.",
+        "Sessions a proposed (pending / expired) idea stays suppressed.",
         Risk.DOWN,
         field="dedupe_proposed_cooldown_sessions",
         unit="sessions",
         min=0,
         max=60,
         hard_ceiling=0,
+        ref="D33",
     ),
     _s(
         "dedupe.rejected_cooldown",
         Group.ENTRIES,
         _I,
-        "D33: sessions an owner-rejected idea stays suppressed.",
+        "Sessions an owner-rejected idea stays suppressed.",
         Risk.DOWN,
         field="dedupe_rejected_cooldown_sessions",
         unit="sessions",
         min=0,
         max=60,
         hard_ceiling=0,
+        ref="D33",
     ),
     _s(
         "dedupe.reprice_move_pct",
         Group.ENTRIES,
         _F,
-        "D33: spot move (fraction) since the last idea that re-admits a suppressed one.",
+        "Spot move (fraction) since the last idea that re-admits a suppressed one.",
         Risk.DOWN,
         field="dedupe_reprice_move_pct",
         min=0.0,
         max=1.0,
         hard_ceiling=0.0,
+        ref="D33",
     ),
     _s(
         "dedupe.missed_retry_after",
         Group.ENTRIES,
         _I,
-        "E24.2 (D101): minutes a missed open (no fill) waits before its same-day retry.",
+        "Minutes a missed open (no fill) waits before its same-day retry.",
         Risk.DOWN,
         field="dedupe_missed_retry_after_minutes",
         unit="m",
         min=5,
         max=240,
         hard_ceiling=5,
+        ref="E24.2/D101",
     ),
     _s(
         "dedupe.missed_retry_max",
         Group.ENTRIES,
         _I,
-        "E24.2 (D101): same-day retries of a missed open (0 = off, the pre-E24.2 behaviour).",
+        "Same-day retries of a missed open (0 = off, no retries).",
         Risk.UP,
         field="dedupe_missed_retry_max",
         min=0,
         max=3,
         hard_ceiling=3,
+        ref="E24.2/D101",
     ),
     _s(
         "portfolio.sector_max_pct",
         Group.RISK,
         _F,
-        "D33: sector share of open max loss that flags over_concentrated_sector.",
+        "Sector share of open max loss that flags over_concentrated_sector.",
         Risk.UP,
         field="portfolio_sector_max_pct",
         min=0.05,
         max=1.0,
         hard_ceiling=1.0,
+        ref="D33",
     ),
     _s(
         "portfolio.stance_max_pct",
         Group.RISK,
         _F,
-        "D33: stance share of open max loss that flags stance_skew.",
+        "Stance share of open max loss that flags stance_skew.",
         Risk.UP,
         field="portfolio_stance_max_pct",
         min=0.05,
         max=1.0,
         hard_ceiling=1.0,
+        ref="D33",
     ),
     _s(
         "portfolio.expiry_max_pct",
         Group.RISK,
         _F,
-        "D33: expiry-bucket share of open max loss that flags expiry_cluster.",
+        "Expiry-bucket share of open max loss that flags expiry_cluster.",
         Risk.UP,
         field="portfolio_expiry_max_pct",
         min=0.05,
         max=1.0,
         hard_ceiling=1.0,
+        ref="D33",
     ),
     _s(
         "portfolio.greek_near_cap_pct",
         Group.RISK,
         _F,
-        "D33: |$delta| / |beta $delta| / |vega| cap usage that flags *_near_cap (D62).",
+        "|$delta| / |beta $delta| / |vega| cap usage that flags *_near_cap.",
         Risk.UP,
         field="portfolio_greek_near_cap_pct",
         min=0.05,
         max=1.0,
         hard_ceiling=1.0,
+        ref="D33/D62",
     ),
     _s(
         "portfolio.context_max_positions",
         Group.ENTRIES,
         _I,
-        "D33: open positions rendered in full for Research (largest first).",
+        "Open positions rendered in full for Research (largest first).",
         Risk.NONE,
         field="portfolio_context_max_positions",
         min=1,
         max=50,
+        ref="D33",
     ),
     _s(
         "no_trade.vix_max",
         Group.ENTRIES,
         _F,
-        "D33: VIX at or above this blocks new opens (market_unclear); exits unaffected.",
+        "VIX at or above this blocks new opens (market_unclear); exits unaffected.",
         Risk.UP,
         field="no_trade_vix_max",
         min=5.0,
         max=200.0,
         hard_ceiling=200.0,
+        ref="D33",
     ),
     _s(
         "no_trade.on_backwardation",
         Group.ENTRIES,
         _B,
-        "D33: VIX term structure in backwardation blocks new opens.",
+        "VIX term structure in backwardation blocks new opens.",
         Risk.FALSE,
         field="no_trade_on_backwardation",
+        ref="D33",
     ),
     _s(
         "no_trade.transitional_min_confidence",
         Group.ENTRIES,
         _F,
-        "D33 legacy path (entries without run_length / margin_z): SPY regime stickiness "
-        "below this = transitional regime, no new opens.",
+        "Legacy path (entries without run_length / margin_z): SPY regime stickiness below this = "
+        "transitional regime, no new opens.",
         Risk.DOWN,
         field="no_trade_transitional_min_confidence",
         min=0.0,
         max=1.0,
         hard_ceiling=0.0,
+        ref="D33",
     ),
     _s(
         "no_trade.require_vix",
         Group.ENTRIES,
         _B,
-        "D33: no VIX reading = no new opens (market_data_missing, fail closed).",
+        "No VIX reading = no new opens (market_data_missing, fail closed).",
         Risk.FALSE,
         field="no_trade_require_vix",
+        ref="D33",
     ),
     # -- regime model (E17.1, D77): context + Research/backtest input, never a gate input
     _s(
         "regime.model",
         Group.ENTRIES,
         ValueType.CHOICE,
-        "D77: per-ticker regime model; v2 = vol-scaled trend z + vol state (default), "
-        "v1 = old +/-5% trailing return (rollback switch only).",
+        "Per-ticker regime model; v2 = vol-scaled trend z + vol state (default), v1 = old +/-5% "
+        "trailing return (rollback switch only).",
         Risk.ANY,
         field="regime_model",
         choices=("v1", "v2"),
+        ref="D77",
     ),
     _s(
         "regime.trend_z",
         Group.ENTRIES,
         _F,
-        "D77 v2: |z| (20-day return in 60-day sigma units) at or above this = bull / bear.",
+        "Regime v2: |z| (20-day return in 60-day sigma units) at or above this = bull / bear.",
         Risk.ANY,
         field="regime_trend_z",
         min=0.25,
         max=3.0,
+        ref="D77",
     ),
     _s(
         "regime.vol_scale_window",
         Group.ENTRIES,
         _I,
-        "D77 v2: sessions of daily returns behind sigma in the trend z.",
+        "Regime v2: sessions of daily returns behind sigma in the trend z.",
         Risk.ANY,
         field="regime_vol_scale_window",
         unit="d",
         min=20,
         max=250,
+        ref="D77",
     ),
     _s(
         "regime.vol_rank_window",
         Group.ENTRIES,
         _I,
-        "D77 v2: sessions of the ticker's own rv20 history behind the vol percentile.",
+        "Regime v2: sessions of the ticker's own rv20 history behind the vol percentile.",
         Risk.ANY,
         field="regime_vol_rank_window",
         unit="d",
         min=60,
         max=504,
+        ref="D77",
     ),
     _s(
         "regime.fit_window",
         Group.ENTRIES,
         _I,
-        "D77 v2: most recent labels the trend and vol transition matrices are fit on.",
+        "Regime v2: most recent labels the trend and vol transition matrices are fit on.",
         Risk.ANY,
         field="regime_fit_window",
         unit="d",
         min=20,
         max=1000,
+        ref="D77",
     ),
     _s(
         "regime.alpha",
         Group.ENTRIES,
         _F,
-        "D77 v2: Laplace pseudo-count per transition-matrix cell.",
+        "Regime v2: Laplace pseudo-count per transition-matrix cell.",
         Risk.ANY,
         field="regime_alpha",
         min=0.0,
         max=5.0,
+        ref="D77",
     ),
     # D77 (E17.2): the D33 transitional check on SPY confirmation; raising = safer.
     # Shipped off: the defaults (run 1 / margin z 0.0) never block; reference 3 / 0.10.
@@ -1801,26 +1883,28 @@ liquidity; a leg passes if within this OR spread_max_abs).",
         "regime.guard_min_run",
         Group.ENTRIES,
         _I,
-        "D77: SPY trend label held fewer sessions than this = transitional, no new opens. "
-        "Default 1 = off (never blocks); reference setting 3.",
+        "SPY trend label held fewer sessions than this = transitional, no new opens. Default 1 = "
+        "off (never blocks); reference setting 3.",
         Risk.DOWN,
         field="regime_guard_min_run",
         unit="d",
         min=1,
         max=10,
         hard_ceiling=1,
+        ref="D77",
     ),
     _s(
         "regime.guard_min_margin_z",
         Group.ENTRIES,
         _F,
-        "D77: SPY trend z closer than this to a bull/bear threshold = transitional, no new "
-        "opens. Default 0.0 = off (never blocks); reference setting 0.10.",
+        "SPY trend z closer than this to a bull/bear threshold = transitional, no new opens. "
+        "Default 0.0 = off (never blocks); reference setting 0.10.",
         Risk.DOWN,
         field="regime_guard_min_margin_z",
         min=0.0,
         max=1.0,
         hard_ceiling=0.0,
+        ref="D77",
     ),
     # -- costs (E6.1a); fees are read-only (broker schedule) --------------------
     Tunable(
@@ -1866,22 +1950,24 @@ liquidity; a leg passes if within this OR spread_max_abs).",
         "auto_exit_defined_risk.paper",
         Group.APPROVALS,
         _B,
-        "D24: fired exits on defined-risk positions skip the Slack approval when "
-        "ARC_ENV=paper (gate still applies). Off = every exit needs an approval.",
+        "Fired exits on defined-risk positions skip the Slack approval when ARC_ENV=paper (gate "
+        "still applies). Off = every exit needs an approval.",
         Risk.TRUE,
         field="auto_exit_defined_risk",
         env="paper",
         aliases=("auto_exit_defined_risk",),
+        ref="D24",
     ),
     _s(
         "auto_exit_defined_risk.live",
         Group.APPROVALS,
         _B,
-        "D24: fired exits on defined-risk positions skip the Slack approval when "
-        "ARC_ENV=live; turning it on needs the one-time confirm code.",
+        "Fired exits on defined-risk positions skip the Slack approval when ARC_ENV=live; turning "
+        "it on needs the one-time confirm code.",
         Risk.TRUE,
         field="auto_exit_defined_risk",
         env="live",
+        ref="D24",
     ),
 )
 
@@ -1912,13 +1998,14 @@ def _exit_tunables() -> tuple[Tunable, ...]:
                 key=f"exits.{kind}.profit_lock",
                 group=Group.EXITS,
                 type=ValueType.PROFIT_LOCK,
-                description=f"{kind}: profit lock (D78) '<arm>:<floor>[:eod]' as fractions "
+                description=f"{kind}: profit lock '<arm>:<floor>[:eod]' as fractions "
                 f"of the {'max gain' if credit else 'debit'}: once the peak P&L reaches "
                 "arm, close when P&L falls to floor; 'none' = off (rollback).",
                 target=Target.EXITS,
                 risk=Risk.ANY,
                 path=(*base, "profit_lock"),
                 aliases=(f"exits.kinds.{kind}.profit_lock",),
+                ref="D78",
             ),
             Tunable(
                 key=f"exits.{kind}.stop_value",
@@ -1969,12 +2056,12 @@ def _exit_tunables() -> tuple[Tunable, ...]:
                 key=f"exits.{kind}.time_targets",
                 group=Group.EXITS,
                 type=ValueType.TARGETS,
-                description=f"{kind}: time-adjusted take-profit '<dte>:<pct>,...' (D19); "
-                "'none' clears.",
+                description=f"{kind}: time-adjusted take-profit '<dte>:<pct>,...'; 'none' clears.",
                 target=Target.EXITS,
                 risk=Risk.ANY,
                 path=(*base, "time_adjusted_targets"),
                 max_items=6,
+                ref="D19",
             ),
         ]
     return tuple(out)
@@ -1988,8 +2075,8 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         key="loop.max_idle",
         group=Group.ROUTINES,
         type=_I,
-        description="D31: minutes of unchanged inputs after which the loop runs the LLM "
-        "steps again anyway (a higher value = fewer full runs).",
+        description="Minutes of unchanged inputs after which the loop runs the LLM steps again "
+        "anyway (a higher value = fewer full runs).",
         target=Target.ROUTINES,
         risk=Risk.UP,
         path=("loop", "max_idle"),
@@ -1997,13 +2084,14 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         min=5,
         max=240,
         hard_ceiling=240,
+        ref="D31",
     ),
     Tunable(
         key="loop.max_idle_with_free_slots",
         group=Group.ROUTINES,
         type=_I,
-        description="E22.3 (D97): with a free slot in any sleeve and a sleeve with no opens "
-        "today, an unchanged loop still runs in full after this many minutes (else max_idle).",
+        description="With a free slot in any sleeve and a sleeve with no opens today, an unchanged "
+        "loop still runs in full after this many minutes (else max_idle).",
         target=Target.ROUTINES,
         risk=Risk.UP,
         path=("loop", "max_idle_with_free_slots"),
@@ -2011,13 +2099,14 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         min=5,
         max=240,
         hard_ceiling=240,
+        ref="E22.3/D97",
     ),
     Tunable(
         key="loop.max_runtime",
         group=Group.ROUTINES,
         type=_I,
-        description="D31: minutes a loop chain may run before later steps are skipped "
-        "(must stay under the 10-min slot; D61: 7m, ceiling 8m).",
+        description="Minutes a loop chain may run before later steps are skipped (must stay under "
+        "the 10-min slot; default 7m, ceiling 8m).",
         target=Target.ROUTINES,
         risk=Risk.UP,
         path=("loop", "max_runtime"),
@@ -2025,13 +2114,13 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         min=1,
         max=8,
         hard_ceiling=8,
+        ref="D31/D61",
     ),
     Tunable(
         key="loop.pnl_bucket_pct",
         group=Group.ROUTINES,
         type=_F,
-        description="D31: day P&L step (% of equity) that counts as a change for the "
-        "no-change digest.",
+        description="Day P&L step (% of equity) that counts as a change for the no-change digest.",
         target=Target.ROUTINES,
         risk=Risk.UP,
         path=("loop", "pnl_bucket_pct"),
@@ -2039,26 +2128,29 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         min=0.05,
         max=10,
         hard_ceiling=10,
+        ref="D31",
     ),
     Tunable(
         key="loop.post_hold_roots",
         group=Group.ROUTINES,
         type=_B,
-        description="D36: post a HOLD root line for skipped loop slots too.",
+        description="Post a HOLD root line for skipped loop slots too.",
         target=Target.ROUTINES,
         risk=Risk.NONE,
         path=("loop", "post_hold_roots"),
+        ref="D36",
     ),
     Tunable(
         key="loop.slack_layout",
         group=Group.ROUTINES,
         type=ValueType.CHOICE,
-        description="D36: one root line per loop slot in #arc-investor (root_per_loop) or "
-        "everything in the day thread (day_thread, the rollback).",
+        description="One root line per loop slot in #arc-investor (root_per_loop) or everything in "
+        "the day thread (day_thread, the rollback).",
         target=Target.ROUTINES,
         risk=Risk.NONE,
         path=("loop", "slack_layout"),
         choices=("root_per_loop", "day_thread"),
+        ref="D36",
     ),
     # E4.8a (D46/D44): Finnhub facts in the Scalp/Research prompts. D85: shipped on
     # without an experiment (XP-2 draft retired); off = rollback.
@@ -2066,13 +2158,14 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         key="personas.finnhub_context",
         group=Group.ROUTINES,
         type=ValueType.CHOICE,
-        description="E4.8a: show the Finnhub per-ticker facts (earnings surprises, insider, "
-        "analyst recs, fundamentals) to the Scalp and Research. D85: default on; off = rollback.",
+        description="Show the Finnhub per-ticker facts (earnings surprises, insider, analyst recs, "
+        "fundamentals) to the Scalp and Research. Default on; off = rollback.",
         target=Target.STRATEGY,
         risk=Risk.ORDER,
         path=("finnhub_context", "enabled"),
         choices=("off", "on"),
         aliases=("routines.personas.finnhub_context", "finnhub_context"),
+        ref="E4.8a/D85",
     ),
     # E14.3 (D60/D44): Alpaca movers + most-actives as a "Tape movers" block in the
     # Scalp prompt. Context only; default off (D86: an Analyst idea-seed lead, not a draft XP).
@@ -2080,14 +2173,15 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         key="personas.scalp_movers_context",
         group=Group.ROUTINES,
         type=ValueType.CHOICE,
-        description="E14.3: show the Scalp a 'Tape movers' block (Alpaca movers + "
-        "most-actives, only active-list names and names a story mentions, at most 10 "
-        "lines). Context only, never a discovery input.",
+        description="Show the Scalp a 'Tape movers' block (Alpaca movers + most-actives, only "
+        "active-list names and names a story mentions, at most 10 lines). Context only, never a "
+        "discovery input.",
         target=Target.STRATEGY,
         risk=Risk.ORDER,
         path=("scalp_movers_context", "enabled"),
         choices=("off", "on"),
         aliases=("routines.personas.scalp_movers_context", "scalp_movers_context"),
+        ref="E14.3",
     ),
     # E12.5 (D51/D44): Research diversification. strict = the E5.9 behaviour; relaxed
     # lets two same-industry names rank and loosens the drops. D85: relaxed is the
@@ -2096,15 +2190,16 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         key="personas.director_diversification",
         group=Group.ROUTINES,
         type=ValueType.CHOICE,
-        description="E12.5: how strictly Research diversifies. strict = E5.9 drops; "
-        "relaxed = two names per industry may rank, adds_concentration drops only on a "
-        "flagged sector once the industry holds director_diversification."
-        "max_names_per_industry names, looser flag thresholds. D85: default relaxed.",
+        description="How strictly Research diversifies. strict = the original concentration drops; "
+        "relaxed = two names per industry may rank, adds_concentration drops only on a flagged "
+        "sector once the industry holds director_diversification.max_names_per_industry names, "
+        "looser flag thresholds. Default relaxed.",
         target=Target.STRATEGY,
         risk=Risk.ORDER,
         path=("director_diversification", "mode"),
         choices=("strict", "relaxed"),
         aliases=("routines.personas.director_diversification", "director_diversification"),
+        ref="E12.5/E5.9/D85",
     ),
     # E14.5 (D60/D44): Reddit mention velocity in the Scout's retail-buzz section.
     # Strategy lane (a Scout prompt change): default off.
@@ -2112,14 +2207,15 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         key="personas.scout_buzz_velocity",
         group=Group.ROUTINES,
         type=ValueType.CHOICE,
-        description="E14.5: show each Reddit name's code-computed mention velocity "
-        "((m + k) / (m24 + k)) and a 'Fastest risers' line in the Scout's retail-buzz "
-        "section. Context only; the trending tier is unchanged.",
+        description="Show each Reddit name's code-computed mention velocity ((m + k) / (m24 + k)) "
+        "and a 'Fastest risers' line in the Scout's retail-buzz section. Context only; the "
+        "trending tier is unchanged.",
         target=Target.STRATEGY,
         risk=Risk.ORDER,
         path=("scout_buzz_velocity", "enabled"),
         choices=("off", "on"),
         aliases=("routines.personas.scout_buzz_velocity", "scout_buzz_velocity"),
+        ref="E14.5",
     ),
     # E14.6 (D60/D44): Stocktwits per-ticker sentiment in the Scout and Research
     # prompts. Strategy (a prompt change): default off (D86: an Analyst idea-seed lead).
@@ -2127,14 +2223,15 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         key="personas.retail_sentiment_context",
         group=Group.ROUTINES,
         type=ValueType.CHOICE,
-        description="E14.6: add the code-computed Stocktwits bull/bear ratio (user-tagged "
-        "messages, min 5 tagged) as a 'Retail sentiment' block in the Scout prompt and one "
-        "fact per Research pool line. Context only; never a gate or ranking input.",
+        description="Add the code-computed Stocktwits bull/bear ratio (user-tagged messages, min 5 "
+        "tagged) as a 'Retail sentiment' block in the Scout prompt and one fact per Research pool "
+        "line. Context only; never a gate or ranking input.",
         target=Target.STRATEGY,
         risk=Risk.ORDER,
         path=("retail_sentiment_context", "enabled"),
         choices=("off", "on"),
         aliases=("routines.personas.retail_sentiment_context", "retail_sentiment_context"),
+        ref="E14.6",
     ),
     # E16.2 (D76/D78): the code-rendered `tech …` segment on Research's regime lines.
     # D78 ships it on without an experiment; `off` is the rollback switch only
@@ -2143,15 +2240,15 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         key="personas.research_technicals",
         group=Group.ROUTINES,
         type=ValueType.CHOICE,
-        description="E16.2: show Research one code-computed 'tech …' segment per regime "
-        "line (RSI14, ATR stretch vs SMA20, 50>200, 20-day high distance, RS vs SPY, "
-        "squeeze, prior-day range, implied/ATR move). Context only; never a gate input. "
-        "off = rollback (prompt as before E16.2).",
+        description="Show Research one code-computed 'tech …' segment per regime line (RSI14, ATR "
+        "stretch vs SMA20, 50>200, 20-day high distance, RS vs SPY, squeeze, prior-day range, "
+        "implied/ATR move). Context only; never a gate input. off = rollback (prompt without it).",
         target=Target.STRATEGY,
         risk=Risk.ORDER,
         path=("research_technicals", "enabled"),
         choices=("off", "on"),
         aliases=("routines.personas.research_technicals", "research_technicals"),
+        ref="E16.2",
     ),
     # E16.3 (D76/D78): the anti-chase entry filter. D78 ships it on without an
     # experiment; `off` is the rollback switch only (pipeline as before E16.3).
@@ -2160,14 +2257,15 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         key="personas.anti_chase",
         group=Group.ROUTINES,
         type=ValueType.CHOICE,
-        description="E16.3: drop a bullish/bearish long-premium idea before Quant when its "
-        "move is already stretched (anti_chase.* thresholds; journaled stretched_entry). "
-        "Deterministic, never a gate input. off = rollback (pipeline as before E16.3).",
+        description="Drop a bullish/bearish long-premium idea before Quant when its move is "
+        "already stretched (anti_chase.* thresholds; journaled stretched_entry). Deterministic, "
+        "never a gate input. off = rollback (pipeline without it).",
         target=Target.STRATEGY,
         risk=Risk.ORDER,
         path=("anti_chase", "enabled"),
         choices=("on", "off"),
         aliases=("routines.personas.anti_chase", "anti_chase"),
+        ref="E16.3",
     ),
     # E16.4 (D76/D44): the code-rendered `Market health (…)` line for Research.
     # D83: ships on without an experiment (owner); off = rollback, prompt byte-identical.
@@ -2175,14 +2273,15 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         key="personas.market_health_context",
         group=Group.ROUTINES,
         type=ValueType.CHOICE,
-        description="E16.4: add one code-rendered 'Market health' line to Research's market "
-        "block (VIX vs 50d + 1y percentile, VVIX, put/call 5d percentile, active-list "
-        "breadth). Context only; never a gate input. off = prompt unchanged.",
+        description="Add one code-rendered 'Market health' line to Research's market block (VIX vs "
+        "50d + 1y percentile, VVIX, put/call 5d percentile, active-list breadth). Context only; "
+        "never a gate input. off = prompt unchanged.",
         target=Target.STRATEGY,
         risk=Risk.ORDER,
         path=("market_health_context", "enabled"),
         choices=("off", "on"),
         aliases=("routines.personas.market_health_context", "market_health_context"),
+        ref="E16.4",
     ),
 )
 
@@ -2194,34 +2293,36 @@ _MONITORING_TUNABLES: tuple[Tunable, ...] = (
         key="monitoring.per_slot_min_interval",
         group=Group.ROUTINES,
         type=_I,
-        description="E8.2a: jobs whose slots are at least this many minutes apart get one "
-        "missed-window alert per slot; faster jobs get one slot-coverage alert per job "
-        "(5 = every job per slot, the pre-E8.2a behaviour).",
+        description="Jobs whose slots are at least this many minutes apart get one missed-window "
+        "alert per slot; faster jobs get one slot-coverage alert per job (5 = every job per slot, "
+        "the old behaviour).",
         target=Target.ROUTINES,
         risk=Risk.NONE,
         path=("monitoring", "per_slot_min_interval"),
         unit="m",
         min=5,
         max=1440,
+        ref="E8.2a",
     ),
     Tunable(
         key="monitoring.coverage_window",
         group=Group.ROUTINES,
         type=_I,
-        description="E8.2a: rolling window (minutes) for slot coverage and slow ticks.",
+        description="Rolling window (minutes) for slot coverage and slow ticks.",
         target=Target.ROUTINES,
         risk=Risk.NONE,
         path=("monitoring", "coverage_window"),
         unit="m",
         min=15,
         max=240,
+        ref="E8.2a",
     ),
     Tunable(
         key="monitoring.coverage_min",
         group=Group.ROUTINES,
         type=_F,
-        description="E8.2a: a fast job alerts when it ran fewer than this share of its "
-        "slots in the coverage window.",
+        description="A fast job alerts when it ran fewer than this share of its slots in the "
+        "coverage window.",
         target=Target.ROUTINES,
         risk=Risk.DOWN,
         path=("monitoring", "coverage_min"),
@@ -2229,24 +2330,26 @@ _MONITORING_TUNABLES: tuple[Tunable, ...] = (
         min=0.1,
         max=1.0,
         hard_ceiling=0.1,
+        ref="E8.2a",
     ),
     Tunable(
         key="monitoring.tick_slow_count",
         group=Group.ROUTINES,
         type=_I,
-        description="E8.2a: slow ticks in the coverage window that open a tick_slow alert.",
+        description="Slow ticks in the coverage window that open a tick_slow alert.",
         target=Target.ROUTINES,
         risk=Risk.UP,
         path=("monitoring", "tick_slow_count"),
         min=1,
         max=20,
         hard_ceiling=20,
+        ref="E8.2a",
     ),
     Tunable(
         key="monitoring.tick_slow_after",
         group=Group.ROUTINES,
         type=_I,
-        description="E8.2a: a tick taking longer than this many minutes counts as slow.",
+        description="A tick taking longer than this many minutes counts as slow.",
         target=Target.ROUTINES,
         risk=Risk.UP,
         path=("monitoring", "tick_slow_after"),
@@ -2254,13 +2357,14 @@ _MONITORING_TUNABLES: tuple[Tunable, ...] = (
         min=1,
         max=30,
         hard_ceiling=30,
+        ref="E8.2a",
     ),
     Tunable(
         key="monitoring.earnings_stale_after",
         group=Group.ROUTINES,
         type=_I,
-        description="E4.1d: coverage:earnings alerts when no earnings-calendar doc was "
-        "stored for this many days while the universe has a stock (blackout dates).",
+        description="coverage:earnings alerts when no earnings-calendar doc was stored for this "
+        "many days while the universe has a stock (blackout dates).",
         target=Target.ROUTINES,
         risk=Risk.UP,
         path=("monitoring", "earnings_stale_after"),
@@ -2268,6 +2372,7 @@ _MONITORING_TUNABLES: tuple[Tunable, ...] = (
         min=1,
         max=30,
         hard_ceiling=30,
+        ref="E4.1d",
     ),
 )
 
@@ -2278,67 +2383,66 @@ _TOWER_TUNABLES: tuple[Tunable, ...] = (
         key="tower.overview.activity_hours",
         group=Group.ROUTINES,
         type=_I,
-        description="E8.8b: the Overview's Recent Activity shows this many rolling hours.",
+        description="The Overview's Recent Activity shows this many rolling hours.",
         target=Target.ROUTINES,
         risk=Risk.NONE,
         path=("tower", "overview", "activity_hours"),
         unit="h",
         min=1,
         max=168,
+        ref="E8.8b",
     ),
     Tunable(
         key="tower.overview.greek_advisory.theta.med_pct",
         group=Group.ROUTINES,
         type=_F,
-        description=(
-            "D87: Tower-only Med band for Θ $/day, share of equity (info label, no gate)."
-        ),
+        description=("Tower-only Med band for Θ $/day, share of equity (info label, no gate)."),
         target=Target.ROUTINES,
         risk=Risk.NONE,
         path=("tower", "overview", "greek_advisory", "theta", "med_pct"),
         min=0.0001,
         max=1.0,
+        ref="D87",
     ),
     Tunable(
         key="tower.overview.greek_advisory.theta.high_pct",
         group=Group.ROUTINES,
         type=_F,
-        description=(
-            "D87: Tower-only High band for Θ $/day, share of equity (info label, no gate)."
-        ),
+        description=("Tower-only High band for Θ $/day, share of equity (info label, no gate)."),
         target=Target.ROUTINES,
         risk=Risk.NONE,
         path=("tower", "overview", "greek_advisory", "theta", "high_pct"),
         min=0.0001,
         max=1.0,
+        ref="D87",
     ),
     Tunable(
         key="tower.overview.greek_advisory.gamma.med_pct",
         group=Group.ROUTINES,
         type=_F,
         description=(
-            "D87: Tower-only Med band for dollar Γ per 1% move, "
-            "share of equity (info label, no gate)."
+            "Tower-only Med band for dollar Γ per 1% move, share of equity (info label, no gate)."
         ),
         target=Target.ROUTINES,
         risk=Risk.NONE,
         path=("tower", "overview", "greek_advisory", "gamma", "med_pct"),
         min=0.0001,
         max=1.0,
+        ref="D87",
     ),
     Tunable(
         key="tower.overview.greek_advisory.gamma.high_pct",
         group=Group.ROUTINES,
         type=_F,
         description=(
-            "D87: Tower-only High band for dollar Γ per 1% move, "
-            "share of equity (info label, no gate)."
+            "Tower-only High band for dollar Γ per 1% move, share of equity (info label, no gate)."
         ),
         target=Target.ROUTINES,
         risk=Risk.NONE,
         path=("tower", "overview", "greek_advisory", "gamma", "high_pct"),
         min=0.0001,
         max=1.0,
+        ref="D87",
     ),
 )
 
@@ -2357,11 +2461,12 @@ def _category_tunables() -> tuple[Tunable, ...]:
                 key=f"categories.{c.value}.weight",
                 group=Group.ROUTINES,
                 type=_F,
-                description=f"D49: {c.value} share relative to the other categories (all 1 = "
+                description=f"{c.value} share relative to the other categories (all 1 = "
                 "equal; 0 = never read). Sources (or YouTube channels) split it.",
                 target=Target.ROUTINES,
                 risk=Risk.ANY,
                 path=("categories", c.value, "weight"),
+                ref="D49",
                 min=0,
                 max=5,
                 hard_ceiling=5,
@@ -2372,11 +2477,12 @@ def _category_tunables() -> tuple[Tunable, ...]:
                 key=f"categories.{c.value}.max_age",
                 group=Group.ROUTINES,
                 type=_I,
-                description=f"D49: {c.value} freshness window (minutes). Older docs are "
+                description=f"{c.value} freshness window (minutes). Older docs are "
                 "never stored or read (skipped_stale); older typed context shows as stale.",
                 target=Target.ROUTINES,
                 risk=Risk.UP,
                 path=("categories", c.value, "max_age"),
+                ref="D49",
                 unit="m",
                 min=30,
                 max=10_080,
@@ -2393,37 +2499,40 @@ _FUNNEL_TUNABLES: tuple[Tunable, ...] = (
         key="funnel.scout.max_discovery",
         group=Group.ROUTINES,
         type=_I,
-        description="D56: most names the Scout may admit to the discovery tier per day.",
+        description="Most names the Scout may admit to the discovery tier per day.",
         target=Target.STRATEGY,
         risk=Risk.UP,
         path=("funnel", "scout", "max_discovery"),
         min=0,
         max=25,
         hard_ceiling=25,
+        ref="D56",
     ),
     Tunable(
         key="funnel.scout.min_discovery_alert",
         group=Group.ROUTINES,
         type=_I,
-        description="D56: the coverage:scout ops alert fires when the Scout admits fewer "
-        "discovery names than this.",
+        description="The coverage:scout ops alert fires when the Scout admits fewer discovery "
+        "names than this.",
         target=Target.STRATEGY,
         risk=Risk.NONE,
         path=("funnel", "scout", "min_discovery_alert"),
         min=0,
         max=20,
+        ref="D56",
     ),
     Tunable(
         key="funnel.research.max_scout_only_ideas",
         group=Group.ROUTINES,
         type=_I,
-        description="D56: most Scout-only ideas (no Scalp story) Research weighs per loop.",
+        description="Most Scout-only ideas (no Scalp story) Research weighs per loop.",
         target=Target.STRATEGY,
         risk=Risk.UP,
         path=("funnel", "research", "max_scout_only_ideas"),
         min=0,
         max=50,
         hard_ceiling=50,
+        ref="D56",
     ),
 )
 
@@ -2433,13 +2542,14 @@ _OPTIONS_SLOW_TUNABLES: tuple[Tunable, ...] = (
         key="options_slow.vx_flat_band",
         group=Group.ROUTINES,
         type=_F,
-        description="E13.5: the VX futures curve reads 'flat' when the month1 -> month2 "
-        "slope is within this many percent (context data only, never a gate input).",
+        description="The VX futures curve reads 'flat' when the month1 -> month2 slope is within "
+        "this many percent (context data only, never a gate input).",
         target=Target.ROUTINES,
         risk=Risk.NONE,
         path=("options_slow", "vx_flat_band"),
         min=0.0,
         max=10.0,
+        ref="E13.5",
     ),
 )
 
@@ -2449,21 +2559,22 @@ _IV_BACKFILL_TUNABLES: tuple[Tunable, ...] = (
         key="iv_backfill.max_tickers_per_run",
         group=Group.ROUTINES,
         type=_I,
-        description="E16.1: most names short of IV rank history that one pre-market "
-        "iv.backfill run fills (open underlyings first, then the active list).",
+        description="Most names short of IV rank history that one pre-market iv.backfill run fills "
+        "(open underlyings first, then the active list).",
         target=Target.ROUTINES,
         risk=Risk.NONE,
         path=("iv_backfill", "max_tickers_per_run"),
         min=1,
         max=60,
         hard_ceiling=60,
+        ref="E16.1",
     ),
     Tunable(
         key="iv_backfill.max_runtime_s",
         group=Group.ROUTINES,
         type=_I,
-        description="E16.1: seconds after which iv.backfill starts no new ticker (the "
-        "next run resumes); bounds its share of the Alpaca data budget.",
+        description="Seconds after which iv.backfill starts no new ticker (the next run resumes); "
+        "bounds its share of the Alpaca data budget.",
         target=Target.ROUTINES,
         risk=Risk.UP,
         path=("iv_backfill", "max_runtime_s"),
@@ -2471,6 +2582,7 @@ _IV_BACKFILL_TUNABLES: tuple[Tunable, ...] = (
         min=60,
         max=3600,
         hard_ceiling=3600,
+        ref="E16.1",
     ),
 )
 
@@ -2482,10 +2594,11 @@ _MARKET_HEALTH_TUNABLES: tuple[Tunable, ...] = tuple(
         key=f"market_health.{name}",
         group=Group.ROUTINES,
         type=typ,
-        description=f"E16.4: {desc}",
+        description=desc[0].upper() + desc[1:],
         target=Target.STRATEGY,
         risk=Risk.NONE,
         path=("market_health_context", "thresholds", name),
+        ref="E16.4",
         min=lo,
         max=hi,
     )
@@ -2557,19 +2670,20 @@ _ANTI_CHASE_TUNABLES: tuple[Tunable, ...] = (
         key="anti_chase.combine",
         group=Group.ROUTINES,
         type=ValueType.CHOICE,
-        description="E16.3: all = stretch AND RSI (D78); any = stretch OR (RSI and near "
-        "the 20-day extreme) (D76 card rule, drops more).",
+        description="all = stretch AND RSI; any = stretch OR (RSI and near the 20-day extreme) "
+        "(the original card rule, drops more).",
         target=Target.STRATEGY,
         risk=Risk.ORDER,
         path=("anti_chase", "combine"),
         choices=("any", "all"),
+        ref="E16.3/D78/D76",
     ),
     Tunable(
         key="anti_chase.max_stretch_atr",
         group=Group.ROUTINES,
         type=_F,
-        description="E16.3: (close - SMA20) / ATR14 at or above which a bullish idea is "
-        "stretched (bears mirror).",
+        description="(close - SMA20) / ATR14 at or above which a bullish idea is stretched (bears "
+        "mirror).",
         target=Target.STRATEGY,
         risk=Risk.UP,
         path=("anti_chase", "max_stretch_atr"),
@@ -2577,62 +2691,67 @@ _ANTI_CHASE_TUNABLES: tuple[Tunable, ...] = (
         min=1.0,
         max=5.0,
         hard_ceiling=5.0,
+        ref="E16.3",
     ),
     Tunable(
         key="anti_chase.rsi_overbought",
         group=Group.ROUTINES,
         type=_F,
-        description="E16.3: RSI14 at or above which a bullish idea counts as overbought.",
+        description="RSI14 at or above which a bullish idea counts as overbought.",
         target=Target.STRATEGY,
         risk=Risk.UP,
         path=("anti_chase", "rsi_overbought"),
         min=60.0,
         max=95.0,
         hard_ceiling=95.0,
+        ref="E16.3",
     ),
     Tunable(
         key="anti_chase.rsi_oversold",
         group=Group.ROUTINES,
         type=_F,
-        description="E16.3: RSI14 at or below which a bearish idea counts as oversold.",
+        description="RSI14 at or below which a bearish idea counts as oversold.",
         target=Target.STRATEGY,
         risk=Risk.DOWN,
         path=("anti_chase", "rsi_oversold"),
         min=5.0,
         max=40.0,
         hard_ceiling=5.0,
+        ref="E16.3",
     ),
     Tunable(
         key="anti_chase.max_dist_high20_atr",
         group=Group.ROUTINES,
         type=_F,
-        description="E16.3 (combine any): within this many ATR of the 20-day high (bears: "
-        "low) counts as near the extreme.",
+        description="With combine any: within this many ATR of the 20-day high (bears: low) counts "
+        "as near the extreme.",
         target=Target.STRATEGY,
         risk=Risk.DOWN,
         path=("anti_chase", "max_dist_high20_atr"),
         unit="ATR",
         min=0.0,
         max=2.0,
+        ref="E16.3",
     ),
     Tunable(
         key="anti_chase.vwap",
         group=Group.ROUTINES,
         type=ValueType.CHOICE,
-        description="E16.3: also drop when (spot - session VWAP) / ATR14 >= "
-        "anti_chase.max_vwap_stretch_atr (one 5-min bars request per directional idea, "
-        "shared Alpaca data budget). off = daily rule only.",
+        description="Also drop when (spot - session VWAP) / ATR14 >= "
+        "anti_chase.max_vwap_stretch_atr (one 5-min bars request per directional idea, shared "
+        "Alpaca data budget). off = daily rule only.",
         target=Target.STRATEGY,
         risk=Risk.ORDER,
         path=("anti_chase", "vwap"),
         choices=("on", "off"),
+        ref="E16.3",
     ),
     Tunable(
         key="anti_chase.max_vwap_stretch_atr",
         group=Group.ROUTINES,
         type=_F,
-        description="E16.3: VWAP stretch in ATR14 at or above which a bullish idea is "
-        "stretched (bears mirror); used only with anti_chase.vwap on.",
+        description="VWAP stretch in ATR14 at or above which a bullish idea is stretched (bears "
+        "mirror); used only with anti_chase.vwap on.",
         target=Target.STRATEGY,
         risk=Risk.UP,
         path=("anti_chase", "max_vwap_stretch_atr"),
@@ -2640,6 +2759,7 @@ _ANTI_CHASE_TUNABLES: tuple[Tunable, ...] = (
         min=0.25,
         max=3.0,
         hard_ceiling=3.0,
+        ref="E16.3",
     ),
 )
 
@@ -2655,14 +2775,15 @@ _OPTIONS_FAST_TUNABLES: tuple[Tunable, ...] = (
         key="sources.options_fast.max_tickers",
         group=Group.ROUTINES,
         type=_I,
-        description="E13.6: most tickers (active list, then open underlyings) whose Cboe "
-        "delayed chain the 30-min options tape snapshots (one request each).",
+        description="Most tickers (active list, then open underlyings) whose Cboe delayed chain "
+        "the 30-min options tape snapshots (one request each).",
         target=Target.ROUTINES,
         risk=Risk.NONE,
         path=("sources", "options_fast", "max_tickers"),
         min=1,
         max=60,
         hard_ceiling=60,
+        ref="E13.6",
     ),
     # E14.5 (D60/D44): the trending ranker's Reddit scoring. Strategy (a selection
     # change): rank_gain is the default (D86: velocity is an Analyst idea-seed lead).
@@ -2671,8 +2792,8 @@ _OPTIONS_FAST_TUNABLES: tuple[Tunable, ...] = (
         key="universe.trending.scoring",
         group=Group.ROUTINES,
         type=ValueType.CHOICE,
-        description="E14.5: how the trending tier scores Reddit: mentions plus the 24 h "
-        "rank gain (rank_gain) or plus the mention velocity (m + k) / (m24 + k) (velocity).",
+        description="How the trending tier scores Reddit: mentions plus the 24 h rank gain "
+        "(rank_gain) or plus the mention velocity (m + k) / (m24 + k) (velocity).",
         target=Target.UNIVERSE,
         risk=Risk.ORDER,
         path=("trending", "scoring"),
@@ -2682,6 +2803,7 @@ _OPTIONS_FAST_TUNABLES: tuple[Tunable, ...] = (
             "sources.universe.trending.scoring",
             "routines.sources.universe.trending.scoring",
         ),
+        ref="E14.5",
     ),
 )
 
@@ -2694,19 +2816,20 @@ _CARRYOVER_TUNABLES: tuple[Tunable, ...] = (
         key="universe.carryover.enabled",
         group=Group.UNIVERSE,
         type=_B,
-        description="D64: discovery + trending entries merge the previous run's names "
-        "(48 h, 0.6 x today + 0.4 x previous). Off = each run's list only.",
+        description="Discovery + trending entries merge the previous run's names (48 h, 0.6 x "
+        "today + 0.4 x previous). Off = each run's list only.",
         target=Target.UNIVERSE,
         risk=Risk.TRUE,
         path=("carryover", "enabled"),
         aliases=("routines.universe.carryover.enabled", "carryover.enabled"),
+        ref="D64",
     ),
     Tunable(
         key="universe.carryover.window_h",
         group=Group.UNIVERSE,
         type=_I,
-        description="D64: the previous run is merged only when written this many hours "
-        "before the new run (strict clock hours; Monday's run has no previous run at 48).",
+        description="The previous run is merged only when written this many hours before the new "
+        "run (strict clock hours; Monday's run has no previous run at 48).",
         target=Target.UNIVERSE,
         risk=Risk.UP,
         unit="h",
@@ -2715,13 +2838,14 @@ _CARRYOVER_TUNABLES: tuple[Tunable, ...] = (
         max=96,
         hard_ceiling=96,
         aliases=("routines.universe.carryover.window_h", "carryover.window_h"),
+        ref="D64",
     ),
     Tunable(
         key="universe.carryover.w_today",
         group=Group.UNIVERSE,
         type=_F,
-        description="D64: weight of this run's score in the combined score (the previous "
-        "run gets 1 - w_today).",
+        description="Weight of this run's score in the combined score (the previous run gets 1 - "
+        "w_today).",
         target=Target.UNIVERSE,
         risk=Risk.DOWN,
         path=("carryover", "w_today"),
@@ -2729,6 +2853,7 @@ _CARRYOVER_TUNABLES: tuple[Tunable, ...] = (
         max=1.0,
         hard_ceiling=0.5,
         aliases=("routines.universe.carryover.w_today", "carryover.w_today"),
+        ref="D64",
     ),
 )
 
@@ -2739,11 +2864,12 @@ def _exp(key: str, desc: str, risk: Risk, path: tuple[str, ...], **kw: Any) -> T
         key=f"experiments.{key}",
         group=Group.EXPERIMENTS,
         type=kw.pop("type", _F),
-        description=f"D44 forward experiments: {desc} Default for new specs; a registered "
+        description=f"Forward experiments: {desc} Default for new specs; a registered "
         "(hash-locked) experiment keeps the value it was registered with.",
         target=Target.EXPERIMENTS,
         risk=risk,
         path=("experiments", "defaults", *path),
+        ref="D44",
         **kw,
     )
 
@@ -2803,20 +2929,22 @@ _EXPERIMENT_TUNABLES: tuple[Tunable, ...] = (
         key="experiments.stats.sigma_upper_q",
         group=Group.EXPERIMENTS,
         type=_F,
-        description="D44 evaluation: with no A/A sigma on record, the running sd of the daily "
-        "difference is inflated to its (1 - q) upper chi-square bound (larger q = narrower CI).",
+        description="Experiment evaluation: with no A/A sigma on record, the running sd of the "
+        "daily difference is inflated to its (1 - q) upper chi-square bound (larger q = narrower "
+        "CI).",
         target=Target.EXPERIMENTS,
         risk=Risk.UP,
         path=("experiments", "stats", "sigma_upper_q"),
         min=0.01,
         max=0.25,
         hard_ceiling=0.25,
+        ref="D44",
     ),
     Tunable(
         key="experiments.stats.bootstrap_resamples",
         group=Group.EXPERIMENTS,
         type=_I,
-        description="D44 evaluation: paired bootstrap resamples for the Sortino "
+        description="Experiment evaluation: paired bootstrap resamples for the Sortino "
         "non-inferiority CI (seeded, deterministic).",
         target=Target.EXPERIMENTS,
         risk=Risk.DOWN,
@@ -2824,32 +2952,35 @@ _EXPERIMENT_TUNABLES: tuple[Tunable, ...] = (
         min=200,
         max=20000,
         hard_ceiling=200,
+        ref="D44",
     ),
     # D119 (E25.7): the HAC long-run sigma of the primary (a spec's own hac_lag wins).
     Tunable(
         key="experiments.stats.hac_lag",
         group=Group.EXPERIMENTS,
         type=_I,
-        description="D119 evaluation: Newey-West/Bartlett lag (sessions) of the long-run "
+        description="Experiment evaluation: Newey-West/Bartlett lag (sessions) of the long-run "
         "sigma for specs without `analysis` (descriptive) and the 2L+2 small-n rule.",
         target=Target.EXPERIMENTS,
         risk=Risk.ANY,
         path=("experiments", "stats", "hac_lag"),
         min=1,
         max=20,
+        ref="D119",
     ),
     Tunable(
         key="experiments.stats.hac_max_factor",
         group=Group.EXPERIMENTS,
         type=_F,
-        description="D119 evaluation: long-run variance factor used below 2L+2 sessions "
-        "when no A/A factor is on record (lower = narrower early CI).",
+        description="Experiment evaluation: long-run variance factor used below 2L+2 sessions when "
+        "no A/A factor is on record (lower = narrower early CI).",
         target=Target.EXPERIMENTS,
         risk=Risk.DOWN,
         path=("experiments", "stats", "hac_max_factor"),
         min=1.0,
         max=20.0,
         hard_ceiling=1.0,
+        ref="D119",
     ),
 )
 
@@ -2865,10 +2996,11 @@ def _runner(key: str, desc: str, risk: Risk, **kw: Any) -> Tunable:
         key=f"experiments.runner.{key}",
         group=Group.EXPERIMENTS,
         type=kw.pop("type", _I),
-        description=f"D44 experiment arm runner: {desc}",
+        description=f"Experiment arm runner: {desc}",
         target=Target.EXPERIMENTS,
         risk=risk,
         path=("experiments", "runner", key),
+        ref="D44",
         **kw,
     )
 
@@ -2927,91 +3059,99 @@ _LEVELS_TUNABLES: tuple[Tunable, ...] = (
         key="volume_profile.enabled",
         group=Group.ROUTINES,
         type=ValueType.CHOICE,
-        description="E23.0: the pre-market 20-session SIP volume profile (POC, value area, "
-        "HVNs, vp_pos) on regime technicals and Research's tech segment. Context only. "
-        "off = rollback (nothing computed, prompt as before).",
+        description="The pre-market 20-session SIP volume profile (POC, value area, HVNs, vp_pos) "
+        "on regime technicals and Research's tech segment. Context only. off = rollback (nothing "
+        "computed, prompt as before).",
         target=Target.STRATEGY,
         risk=Risk.NONE,
         path=("volume_profile", "enabled"),
         choices=("on", "off"),
+        ref="E23.0",
     ),
     Tunable(
         key="volume_profile.sessions",
         group=Group.ROUTINES,
         type=_I,
-        description="E23.0: completed sessions in the composite volume profile.",
+        description="Completed sessions in the composite volume profile.",
         target=Target.STRATEGY,
         risk=Risk.NONE,
         path=("volume_profile", "sessions"),
         min=5,
         max=60,
+        ref="E23.0",
     ),
     Tunable(
         key="volume_profile.bar",
         group=Group.ROUTINES,
         type=ValueType.CHOICE,
-        description="E23.0: intraday bar of the volume profile (regular hours only).",
+        description="Intraday bar of the volume profile (regular hours only).",
         target=Target.STRATEGY,
         risk=Risk.NONE,
         path=("volume_profile", "bar"),
         choices=("5Min", "15Min", "1Hour"),
+        ref="E23.0",
     ),
     Tunable(
         key="volume_profile.value_area",
         group=Group.ROUTINES,
         type=_F,
-        description="E23.0: share of the profile's volume inside the value area.",
+        description="Share of the profile's volume inside the value area.",
         target=Target.STRATEGY,
         risk=Risk.NONE,
         path=("volume_profile", "value_area"),
         min=0.5,
         max=0.95,
+        ref="E23.0",
     ),
     Tunable(
         key="volume_profile.bin_atr",
         group=Group.ROUTINES,
         type=_F,
-        description="E23.0: profile bin width in ATR14 units (floor $0.01).",
+        description="Profile bin width in ATR14 units (floor $0.01).",
         target=Target.STRATEGY,
         risk=Risk.NONE,
         path=("volume_profile", "bin_atr"),
         unit="ATR",
         min=0.01,
         max=1.0,
+        ref="E23.0",
     ),
     Tunable(
         key="volume_profile.hvn_min_share",
         group=Group.ROUTINES,
         type=_F,
-        description="E23.0: smallest smoothed volume share of a high-volume node.",
+        description="Smallest smoothed volume share of a high-volume node.",
         target=Target.STRATEGY,
         risk=Risk.NONE,
         path=("volume_profile", "hvn_min_share"),
         min=0.005,
         max=0.5,
+        ref="E23.0",
     ),
     Tunable(
         key="oi_walls.enabled",
         group=Group.ROUTINES,
         type=ValueType.CHOICE,
-        description="E23.0: options OI walls (max call OI above / put OI below spot, "
-        "swing-sleeve expiries) on regime technicals and Research's tech segment. Context "
-        "only. off = rollback (no chain call, prompt as before).",
+        description="Options OI walls (max call OI above / put OI below spot, swing-sleeve "
+        "expiries) on regime technicals and Research's tech segment. Context only. off = rollback "
+        "(no chain call, prompt as before).",
         target=Target.STRATEGY,
         risk=Risk.NONE,
         path=("oi_walls", "enabled"),
         choices=("on", "off"),
+        ref="E23.0",
     ),
     Tunable(
         key="oi_walls.min_oi",
         group=Group.ROUTINES,
         type=_I,
-        description="E23.0: a strike whose summed open interest is below this is never a wall.",
+        description="A strike whose summed open interest is below this is never a wall.",
         target=Target.STRATEGY,
         risk=Risk.NONE,
         path=("oi_walls", "min_oi"),
         min=0,
         max=100_000,
+        ref="E23.0",
     ),
 )
 
@@ -3023,60 +3163,64 @@ _RANGE_EDGES_TUNABLES: tuple[Tunable, ...] = (
         key="personas.range_edges",
         group=Group.ROUTINES,
         type=ValueType.CHOICE,
-        description="E23.1: in a sideways regime, drop a bullish/bearish long-premium idea "
-        "that starts mid-range (bullish kept near the range bottom, bearish near the top; "
-        "range_edges.* thresholds; journaled mid_range_entry). Deterministic, never a gate "
-        "input. off = rollback (pipeline as before E23.1).",
+        description="In a sideways regime, drop a bullish/bearish long-premium idea that starts "
+        "mid-range (bullish kept near the range bottom, bearish near the top; range_edges.* "
+        "thresholds; journaled mid_range_entry). Deterministic, never a gate input. off = rollback "
+        "(pipeline without it).",
         target=Target.STRATEGY,
         risk=Risk.ORDER,
         path=("range_edges", "enabled"),
         choices=("on", "off"),
         aliases=("range_edges",),
+        ref="E23.1",
     ),
     Tunable(
         key="range_edges.levels",
         group=Group.ROUTINES,
         type=ValueType.CHOICE,
-        description="E23.1: the range the position is read in: value_area = E23.0 volume "
-        "profile VAL..VAH (vp_pos; falls back to high_low when missing), high_low = the "
-        "20-session low..high (range_pos_20d).",
+        description="The range the position is read in: value_area = the volume profile VAL..VAH "
+        "(vp_pos; falls back to high_low when missing), high_low = the 20-session low..high "
+        "(range_pos_20d).",
         target=Target.STRATEGY,
         risk=Risk.ANY,
         path=("range_edges", "levels"),
         choices=("value_area", "high_low"),
+        ref="E23.1/E23.0",
     ),
     Tunable(
         key="range_edges.bull_max_pos",
         group=Group.ROUTINES,
         type=_F,
-        description="E23.1: a bullish idea is kept only at or below this position in its "
-        "range (0 = the low edge).",
+        description="A bullish idea is kept only at or below this position in its range (0 = the "
+        "low edge).",
         target=Target.STRATEGY,
         risk=Risk.UP,
         path=("range_edges", "bull_max_pos"),
         min=0.1,
         max=0.5,
         hard_ceiling=0.5,
+        ref="E23.1",
     ),
     Tunable(
         key="range_edges.bear_min_pos",
         group=Group.ROUTINES,
         type=_F,
-        description="E23.1: a bearish idea is kept only at or above this position in its "
-        "range (1 = the high edge).",
+        description="A bearish idea is kept only at or above this position in its range (1 = the "
+        "high edge).",
         target=Target.STRATEGY,
         risk=Risk.DOWN,
         path=("range_edges", "bear_min_pos"),
         min=0.5,
         max=0.9,
         hard_ceiling=0.5,
+        ref="E23.1",
     ),
     Tunable(
         key="range_edges.min_range_atr",
         group=Group.ROUTINES,
         type=_F,
-        description="E23.1: a range narrower than this many ATR14 is noise: the rule is "
-        "skipped and the idea kept.",
+        description="A range narrower than this many ATR14 is noise: the rule is skipped and the "
+        "idea kept.",
         target=Target.STRATEGY,
         risk=Risk.UP,
         path=("range_edges", "min_range_atr"),
@@ -3084,6 +3228,7 @@ _RANGE_EDGES_TUNABLES: tuple[Tunable, ...] = (
         min=0.5,
         max=5.0,
         hard_ceiling=5.0,
+        ref="E23.1",
     ),
 )
 
@@ -3095,33 +3240,35 @@ _PULLBACK_TUNABLES: tuple[Tunable, ...] = (
         key="personas.pullback_watch",
         group=Group.ROUTINES,
         type=ValueType.CHOICE,
-        description="E23.2: keep each stretched_entry drop on watch and re-surface it to "
-        "Research (one code-built line) once price pulls back to its level "
-        "(pullback_watch.* thresholds); anti-chase and range edges still apply. "
-        "Deterministic, never a gate input. off = rollback (no writes, prompt as before).",
+        description="Keep each stretched_entry drop on watch and re-surface it to Research (one "
+        "code-built line) once price pulls back to its level (pullback_watch.* thresholds); "
+        "anti-chase and range edges still apply. Deterministic, never a gate input. off = rollback "
+        "(no writes, prompt as before).",
         target=Target.STRATEGY,
         risk=Risk.ORDER,
         path=("pullback_watch", "enabled"),
         choices=("on", "off"),
         aliases=("pullback_watch",),
+        ref="E23.2",
     ),
     Tunable(
         key="pullback_watch.target",
         group=Group.ROUTINES,
         type=ValueType.CHOICE,
-        description="E23.2: what 'pulled back' means: value = within rearm_level_atr of the "
-        "nearest volume-profile support (POC/VAH/HVN; bears mirror; SMA20 when missing), "
-        "sma20 = SMA20 stretch <= rearm_stretch_atr.",
+        description="What 'pulled back' means: value = within rearm_level_atr of the nearest "
+        "volume-profile support (POC/VAH/HVN; bears mirror; SMA20 when missing), sma20 = SMA20 "
+        "stretch <= rearm_stretch_atr.",
         target=Target.STRATEGY,
         risk=Risk.ANY,
         path=("pullback_watch", "target"),
         choices=("value", "sma20"),
+        ref="E23.2",
     ),
     Tunable(
         key="pullback_watch.ttl_sessions",
         group=Group.ROUTINES,
         type=_I,
-        description="E23.2: trading sessions after the drop session a dropped idea is watched.",
+        description="Trading sessions after the drop session a dropped idea is watched.",
         target=Target.STRATEGY,
         risk=Risk.UP,
         path=("pullback_watch", "ttl_sessions"),
@@ -3129,13 +3276,14 @@ _PULLBACK_TUNABLES: tuple[Tunable, ...] = (
         min=1,
         max=5,
         hard_ceiling=5,
+        ref="E23.2",
     ),
     Tunable(
         key="pullback_watch.rearm_stretch_atr",
         group=Group.ROUTINES,
         type=_F,
-        description="E23.2 (target sma20): ready when the stance-signed (spot - SMA20) / "
-        "ATR14 is at or below this.",
+        description="With target sma20: ready when the stance-signed (spot - SMA20) / ATR14 is at "
+        "or below this.",
         target=Target.STRATEGY,
         risk=Risk.UP,
         path=("pullback_watch", "rearm_stretch_atr"),
@@ -3143,13 +3291,14 @@ _PULLBACK_TUNABLES: tuple[Tunable, ...] = (
         min=0.0,
         max=2.5,
         hard_ceiling=2.5,
+        ref="E23.2",
     ),
     Tunable(
         key="pullback_watch.rearm_level_atr",
         group=Group.ROUTINES,
         type=_F,
-        description="E23.2 (target value): ready when spot is within this many ATR14 of "
-        "the nearest support level (or past it).",
+        description="With target value: ready when spot is within this many ATR14 of the nearest "
+        "support level (or past it).",
         target=Target.STRATEGY,
         risk=Risk.UP,
         path=("pullback_watch", "rearm_level_atr"),
@@ -3157,13 +3306,14 @@ _PULLBACK_TUNABLES: tuple[Tunable, ...] = (
         min=0.0,
         max=2.0,
         hard_ceiling=2.0,
+        ref="E23.2",
     ),
     Tunable(
         key="pullback_watch.rearm_vwap_atr",
         group=Group.ROUTINES,
         type=_F,
-        description="E23.2 (anti_chase.vwap on): also need the stance-signed session VWAP "
-        "stretch at or below this.",
+        description="With anti_chase.vwap on: also need the stance-signed session VWAP stretch at "
+        "or below this.",
         target=Target.STRATEGY,
         risk=Risk.UP,
         path=("pullback_watch", "rearm_vwap_atr"),
@@ -3171,13 +3321,14 @@ _PULLBACK_TUNABLES: tuple[Tunable, ...] = (
         min=0.0,
         max=1.0,
         hard_ceiling=1.0,
+        ref="E23.2",
     ),
     Tunable(
         key="pullback_watch.invalidate_below_sma20_atr",
         group=Group.ROUTINES,
         type=_F,
-        description="E23.2: the stance-signed (spot - SMA20) / ATR14 below this ends the "
-        "watch (a pullback that became a reversal is not bought).",
+        description="The stance-signed (spot - SMA20) / ATR14 below this ends the watch (a "
+        "pullback that became a reversal is not bought).",
         target=Target.STRATEGY,
         risk=Risk.DOWN,
         path=("pullback_watch", "invalidate_below_sma20_atr"),
@@ -3185,18 +3336,20 @@ _PULLBACK_TUNABLES: tuple[Tunable, ...] = (
         min=-5.0,
         max=0.0,
         hard_ceiling=-5.0,
+        ref="E23.2",
     ),
     Tunable(
         key="pullback_watch.max_ready_in_prompt",
         group=Group.ROUTINES,
         type=_I,
-        description="E23.2: ready pullback lines shown to Research (highest confidence first).",
+        description="Ready pullback lines shown to Research (highest confidence first).",
         target=Target.STRATEGY,
         risk=Risk.UP,
         path=("pullback_watch", "max_ready_in_prompt"),
         min=0,
         max=10,
         hard_ceiling=10,
+        ref="E23.2",
     ),
 )
 
@@ -3207,14 +3360,15 @@ _STRIKE_LEVELS_TUNABLES: tuple[Tunable, ...] = (
         key="strike_levels.enabled",
         group=Group.ROUTINES,
         type=ValueType.CHOICE,
-        description="E23.3: say on each Quant menu item and trade card whether the short "
-        "strike / breakeven sits before, at or beyond the first volume-profile / OI-wall "
-        "level toward it. Context only. off = rollback (menu and card as before).",
+        description="Say on each Quant menu item and trade card whether the short strike / "
+        "breakeven sits before, at or beyond the first volume-profile / OI-wall level toward it. "
+        "Context only. off = rollback (menu and card as before).",
         target=Target.STRATEGY,
         risk=Risk.NONE,
         path=("strike_levels", "enabled"),
         choices=("on", "off"),
         aliases=("strike_levels",),
+        ref="E23.3",
     ),
 )
 
@@ -3226,26 +3380,28 @@ _LIQUIDITY_RANK_TUNABLES: tuple[Tunable, ...] = (
         key="scanner.liquidity_rank.enabled",
         group=Group.ENTRIES,
         type=ValueType.CHOICE,
-        description="E2.6: pick strikes inside the delta bands by delta fit minus lambda x a "
-        "liquidity score (OI, volume, spread; a vertical by its thinner leg) and give the "
-        "expiry with most near-spot volume in a sleeve a rank bonus. off = rollback "
-        "(selection and menus as before).",
+        description="Pick strikes inside the delta bands by delta fit minus lambda x a liquidity "
+        "score (OI, volume, spread; a vertical by its thinner leg) and give the expiry with most "
+        "near-spot volume in a sleeve a rank bonus. off = rollback (selection and menus as "
+        "before).",
         target=Target.STRATEGY,
         risk=Risk.NONE,
         path=("scanner", "liquidity_rank", "enabled"),
         choices=("on", "off"),
         aliases=("liquidity_rank",),
+        ref="E2.6",
     ),
     *(
         Tunable(
             key=f"scanner.liquidity_rank.weights.{term}",
             group=Group.ENTRIES,
             type=_F,
-            description=f"E2.6: weight of the {label} term in the liquidity score "
+            description=f"Weight of the {label} term in the liquidity score "
             "(the three weights are normalised by their sum).",
             target=Target.STRATEGY,
             risk=Risk.NONE,
             path=("scanner", "liquidity_rank", "weights", term),
+            ref="E2.6",
             min=0.0,
             max=1.0,
         )
@@ -3259,25 +3415,27 @@ _LIQUIDITY_RANK_TUNABLES: tuple[Tunable, ...] = (
         key="scanner.liquidity_rank.lambda",
         group=Group.ENTRIES,
         type=_F,
-        description="E2.6: how much liquidity score offsets delta fit (fit is in band "
-        "half-widths); 0 = delta fit only.",
+        description="How much liquidity score offsets delta fit (fit is in band half-widths); 0 = "
+        "delta fit only.",
         target=Target.STRATEGY,
         risk=Risk.NONE,
         path=("scanner", "liquidity_rank", "lambda"),
         min=0.0,
         max=2.0,
+        ref="E2.6",
     ),
     Tunable(
         key="scanner.liquidity_rank.expiry_mu",
         group=Group.ENTRIES,
         type=_F,
-        description="E2.6: scanner rank bonus per unit of an expiry's share of its sleeve's "
-        "near-spot volume (reorders only).",
+        description="Scanner rank bonus per unit of an expiry's share of its sleeve's near-spot "
+        "volume (reorders only).",
         target=Target.STRATEGY,
         risk=Risk.NONE,
         path=("scanner", "liquidity_rank", "expiry_mu"),
         min=0.0,
         max=1.0,
+        ref="E2.6",
     ),
 )
 
@@ -3288,9 +3446,8 @@ _STALE_PICK_TUNABLES: tuple[Tunable, ...] = (
         key="stale_pick_after_loops",
         group=Group.ENTRIES,
         type=_I,
-        description="E5.16: a ticker|stance Research ranked in this many consecutive full "
-        "loops without a tradeable structure (sized >= 1 and gate pass) is suppressed "
-        "(0 = off, prompt as before E5.16).",
+        description="A ticker|stance Research ranked in this many consecutive full loops without a "
+        "tradeable structure (sized >= 1 and gate pass) is suppressed (0 = off, prompt unchanged).",
         target=Target.STRATEGY,
         risk=Risk.NONE,
         path=("research", "stale_pick", "after_loops"),
@@ -3299,13 +3456,14 @@ _STALE_PICK_TUNABLES: tuple[Tunable, ...] = (
         max=20,
         hard_ceiling=20,
         aliases=("research.stale_pick.after_loops",),
+        ref="E5.16",
     ),
     Tunable(
         key="stale_pick_suppress_loops",
         group=Group.ENTRIES,
         type=_I,
-        description="E5.16: research runs a stale pick stays out of the idea pool before it "
-        "is eligible again (streak reset).",
+        description="Research runs a stale pick stays out of the idea pool before it is eligible "
+        "again (streak reset).",
         target=Target.STRATEGY,
         risk=Risk.NONE,
         path=("research", "stale_pick", "suppress_loops"),
@@ -3314,6 +3472,7 @@ _STALE_PICK_TUNABLES: tuple[Tunable, ...] = (
         max=40,
         hard_ceiling=40,
         aliases=("research.stale_pick.suppress_loops",),
+        ref="E5.16",
     ),
 )
 
@@ -3427,7 +3586,7 @@ def lookup(key: str) -> Tunable:
         or lowered in NEVER_TUNABLE_PATHS
         or lowered.startswith(("arc_", "gate", "secret"))
     ):
-        msg = f"{k!r} is never tunable (ARC_ENV, gate code and secrets are fixed; D26)"
+        msg = f"{k!r} is never tunable (ARC_ENV, gate code and secrets are fixed)"
         raise TunableError(msg)
     k = _ALIASES.get(lowered, lowered)
     if k in REGISTRY:

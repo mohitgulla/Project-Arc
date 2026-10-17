@@ -670,7 +670,7 @@ export function Position({ d }: { d: TradeDetail }) {
               { label: "Floor", value: n4(p.floor_exit.floor) },
               { label: "Entry managed Net EV per $ BP", value: <>{n4(p.floor_exit.entry_managed_net_ev_per_bp)} (<M v={p.floor_exit.entry_managed_net_ev} sign /> per unit)</> },
               { label: "Minutes since fill", value: n0(p.floor_exit.minutes_since_fill) },
-              { label: "Fired on", value: p.floor_exit.window ? humanize(p.floor_exit.window) + " marks" : "Not recorded (before E6.4a)" },
+              { label: "Fired on", value: p.floor_exit.window ? humanize(p.floor_exit.window) + " marks" : "Not recorded (older trade)" },
             ]}
           />
         </div>
@@ -692,7 +692,7 @@ export function Outcome({ d }: { d: TradeDetail }) {
             { label: "Modelled EV", value: <M v={o.ev_total} sign />, hint: "net, for the whole position" },
             { label: "P&L vs EV", value: <M v={o.pnl_vs_ev} sign /> },
             { label: "Max adverse excursion", value: <M v={o.max_adverse_excursion} sign /> },
-            { label: "Hold-to-expiry shadow P&L", value: <M v={o.hold_to_expiry_shadow_pnl} sign />, hint: "D19" },
+            { label: "Hold-to-expiry shadow P&L", value: <M v={o.hold_to_expiry_shadow_pnl} sign /> },
             { label: "Entry / exit fill", value: <><M v={o.entry_fill} kind="fill" /> / <M v={o.exit_fill} kind="fill" /></> },
             { label: "Slippage", value: o.slippage_bps == null ? DASH : `${formatNumber(o.slippage_bps, 1)} bps`, hint: o.cost_bps != null ? `cost ${formatNumber(o.cost_bps, 1)} bps` : undefined },
             { label: "Days held", value: n0(o.days_held), hint: humanize(o.exit_reason) },

@@ -175,7 +175,7 @@ export const CORE_MAX = 30;
 export function coreOverrideWarning(value: unknown): string | null {
   const n = Array.isArray(value) ? new Set(value.map((x) => String(x).trim().replace(/^\$/, "").toUpperCase()).filter(Boolean)).size : 0;
   return n > CORE_MAX
-    ? `${n} names > ${CORE_MAX}: a pre-D51 flat list, so the resolver uses config/universe.yaml core instead.`
+    ? `${n} names > ${CORE_MAX}: an older flat list, so the resolver uses config/universe.yaml core instead.`
     : null;
 }
 

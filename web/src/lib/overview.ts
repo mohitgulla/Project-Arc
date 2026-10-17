@@ -344,7 +344,7 @@ export function statusRow(o: Pick<Overview, "status"> & Partial<Pick<Overview, "
       label: "Orders",
       value: `${b.used}/${b.limit}${tier}`,
       tone: tier ? "warn" : "ok",
-      title: `D32 order budget: ${b.used} of ${b.limit} today${tier}${b.as_of ? ` · as of ${formatEt(b.as_of)} ET` : ""}`,
+      title: `Order budget: ${b.used} of ${b.limit} today${tier}${b.as_of ? ` · as of ${formatEt(b.as_of)} ET` : ""}`,
     });
   } else {
     slots.push({ key: "orders", label: "Orders", value: "—", tone: "none", title: "No order budget in the monitor heartbeat yet" });
