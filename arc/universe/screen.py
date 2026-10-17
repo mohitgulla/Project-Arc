@@ -16,11 +16,14 @@ spread are measured on the in-window expiry with the most near-ATM OI
 from __future__ import annotations
 
 import datetime as _dt
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from arc.universe.config import LiquidityThresholds
+
+#: Where the screen's near-ATM OI came from (E2.5b).
+ScreenOiSource = Literal["cboe", "alpaca", "mixed"]
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -31,11 +34,13 @@ __all__ = [
     "ATM_TARGET_DTE",
     "LiquidityMetrics",
     "LiquidityThresholds",
+    "ScreenOiSource",
     "ScreenResult",
     "measure_liquidity",
     "pick_expiry_by_atm_oi",
     "pick_liquidity_expiry",
     "screen_liquidity",
+    "screen_oi_source",
 ]
 
 ATM_TARGET_DTE = 30  # tie-break / no-OI fallback for the liquidity expiry (E12.4a)
@@ -56,6 +61,10 @@ class LiquidityMetrics(BaseModel):
     atm_expiry: _dt.date | None = None
     atm_strike: float | None = None
     atm_open_interest: int | None = None
+    #: Source of the near-ATM OI (E2.5b): ``cboe`` / ``alpaca`` when every counted
+    #: contract agrees, ``mixed`` otherwise, ``None`` when no counted contract carries
+    #: a source (OI unknown, or a market without the E2.5 merge).
+    oi_source: ScreenOiSource | None = None
     atm_spread_pct: float | None = None
     error: str | None = None
 
@@ -175,6 +184,16 @@ def pick_liquidity_expiry(
     )
 
 
+def screen_oi_source(sources: Iterable[str | None]) -> ScreenOiSource | None:
+    """Pure: one label for the OI sources of the counted near-ATM contracts."""
+    seen = {s for s in sources if s is not None}
+    if not seen:
+        return None
+    if len(seen) > 1:
+        return "mixed"
+    return cast("ScreenOiSource", seen.pop())
+
+
 def measure_liquidity(
     market: MarketDataProvider,
     ticker: str,
@@ -222,16 +241,14 @@ def measure_liquidity(
             strike = by_distance[0]
             atm = [c for c in near if c.strike == strike]
             near_atm = set(by_distance[: thresholds.atm_strikes])
-            ois = [
-                c.open_interest
-                for c in near
-                if c.strike in near_atm and c.open_interest is not None
-            ]
+            counted = [c for c in near if c.strike in near_atm and c.open_interest is not None]
+            ois = [c.open_interest for c in counted if c.open_interest is not None]
             spreads = [s for c in atm if (s := _spread_pct(c)) is not None]
             out |= {
                 "atm_expiry": exp,
                 "atm_strike": strike,
                 "atm_open_interest": sum(ois) if ois else None,
+                "oi_source": screen_oi_source(c.oi_source for c in counted),
                 "atm_spread_pct": sum(spreads) / len(spreads) if spreads else None,
             }
     except Exception as exc:  # noqa: BLE001 - any data failure fails the screen closed

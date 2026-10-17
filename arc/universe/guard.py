@@ -205,11 +205,21 @@ class UniverseGuard:
     # -- admission (screen) --------------------------------------------------
 
     def _markets(self) -> tuple[MarketDataProvider, MarketDataProvider]:
+        """``(chain/quote market, ADV market)``, built once per run.
+
+        Production (no *market_factory*): the chain market is
+        :class:`~arc.data.oi.CboeOpenInterestMarket` over Alpaca, the scanner's E2.5
+        (D116) wiring, so near-ATM OI is Cboe's delayed OI with Alpaca as the fallback
+        (a Cboe failure never fails the screen). An injected factory is used as given
+        (never re-wrapped). The ADV market stays the bare SIP adapter (E23.0a).
+        """
         if self._market is None:
             if self.market_factory is None:
                 from arc.data.alpaca import AlpacaMarketData
+                from arc.data.oi import CboeOpenInterestMarket
 
-                self._market = AlpacaMarketData()
+                today = self.today
+                self._market = CboeOpenInterestMarket(AlpacaMarketData(), today=lambda: today)
             else:
                 self._market = self.market_factory()
         if self._adv_market is None:
@@ -258,6 +268,7 @@ class UniverseGuard:
                 price=metrics.price,
                 adv=metrics.adv_shares,
                 atm_oi=metrics.atm_open_interest,
+                oi_source=metrics.oi_source,
                 atm_spread=metrics.atm_spread_pct,
             )
         self.screens[sym] = self._screen_cache[key]

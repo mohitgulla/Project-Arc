@@ -3098,7 +3098,12 @@ The scanner's `low_open_interest` / `low_volume` filters (`scanner_min_open_inte
   as `options_fast`, `arc/ingest/cboe_fast.py`), one GET per scanned ticker per run with
   the D114 read retry, cached for the run (`arc/data/oi.py`, `CboeOpenInterestMarket`
   wraps the live provider in `PipelineEnv.live` and `arc chains`; it sits inside the
-  experiment tape, so paired arms replay the merged chain). A contract missing from
+  experiment tape, so paired arms replay the merged chain). The universe liquidity
+  screen (`UniverseGuard`, so the Scout/Trending screens and `arc universe check`)
+  wraps its default chain market the same way (E2.5b); its ADV read stays the bare SIP
+  adapter, and an injected market is used as given. `LiquidityMetrics.oi_source`
+  (`cboe` | `alpaca` | `mixed` | null over the counted near-ATM contracts) is logged
+  on `universe.screen` and printed by `arc universe check`. A contract missing from
   Cboe falls back to Alpaca's contracts OI only when its `open_interest_date` is on or
   after the previous session; otherwise OI is unknown and the filter fails it. A Cboe
   failure (HTTP, non-chain body, empty chain) logs `scanner.oi_source
