@@ -29,7 +29,8 @@ no ``client_order_id``, so attribution is Arc's own:
 
 :func:`check_book` ties the arms back to the broker: per contract the arms' net
 qty (plus smoke) equals ``/v2/positions``; the arms' cash flows equal the broker
-cash less the cash at the account's first t0 (tolerance $0.01 per fee row); every
+cash less the cash at the account's first t0 (tolerance $0.01 per fee row, widened
+by pending fees below and the latest posted fee day above, see :func:`check_book`); every
 order in the window carries a known arm tag or a smoke id. An untagged
 leg/order/fill and any cash drift halt **every** arm on the account; a qty drift on
 a contract only one arm holds halts that arm only (:func:`halt_violations`).
@@ -289,6 +290,13 @@ class Attribution(BaseModel):
     unfeed_contracts: Decimal = Field(
         Decimal(0), description="contracts filled on ET days with no FEE activity posted yet"
     )
+    latest_fee_day_total: Decimal = Field(
+        Decimal(0),
+        description=(
+            "absolute sum of FEE net_amount on the most recent ET day with FEE rows (0 when "
+            "none): fees Alpaca may have posted before /v2/account cash reflects them"
+        ),
+    )
     untagged: list[str] = Field(default_factory=list, description="activities no arm owns")
     by_type: dict[str, int] = Field(default_factory=dict)
 
@@ -485,6 +493,15 @@ def attribute(
                 )
     out.rows = {k: v for k, v in rows.items()}
     fee_days = {a.day for a in acts if a.activity_type == "FEE"}
+    if fee_days:
+        last = max(fee_days)
+        out.latest_fee_day_total = abs(
+            sum(
+                (a.net_amount or Decimal(0) for a in acts
+                 if a.activity_type == "FEE" and a.day == last),
+                Decimal(0),
+            )
+        )  # fmt: skip
     out.unfeed_contracts = sum(
         (sum(per.values(), Decimal(0)) for d, per in filled_by_day.items() if d not in fee_days),
         Decimal(0),
@@ -533,7 +550,11 @@ def check_book(
     Cash: Alpaca accrues fees intraday and posts the ``FEE`` activity at EOD, so the
     broker's cash may run below the arms' flows by the fees of contracts filled on
     days with no FEE row yet (probed 2026-10-12: 13 contracts, $0.33 pending). The
-    residual must lie in ``[-(pending + tol), +tol]``; ``tol`` = $0.01 x fee rows.
+    opposite lag happens too: Alpaca can post a day's ``FEE`` rows (booked to the arms)
+    before ``/v2/account`` cash includes them (2026-10-15 03:10 ET: +$0.57 against
+    $1.27 of 10-14 fees, 0.00 by 07:37), so the upper bound adds the latest fee day's
+    total. The residual must lie in ``[-(pending + tol), +(tol + latest_fee_day)]``;
+    ``tol`` = $0.01 x fee rows.
     """
     out: list[BookViolation] = [
         BookViolation(scope="account", kind="untagged", subject="activity", detail=u)
@@ -563,8 +584,9 @@ def check_book(
         want = broker_cash - cash_baseline
         tol = _CENT * max(attr.fee_rows, 1)
         pending = (pending_fee_per_contract * attr.unfeed_contracts).quantize(_CENT)
+        posted = attr.latest_fee_day_total
         residual = want - flows  # negative = the broker charged more than the arms booked
-        if not (-(pending + tol) <= residual <= tol):
+        if not (-(pending + tol) <= residual <= tol + posted):
             out.append(
                 BookViolation(
                     scope="account",
@@ -573,7 +595,8 @@ def check_book(
                     detail=(
                         f"arms' cash flows {flows} vs broker cash {broker_cash} - t0 cash "
                         f"{cash_baseline} = {want} (residual {residual}, allowed "
-                        f"[-{pending + tol}, +{tol}])"
+                        f"[-{pending + tol}, +{tol + posted}]: pending {pending} + tol "
+                        f"{tol} below, tol {tol} + latest fee day {posted} above)"
                     ),
                 )
             )
