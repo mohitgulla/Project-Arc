@@ -3356,3 +3356,47 @@ marks the rung `stopped`. To work the queue by hand (e.g. after a pause), with t
 ending N minutes from now and the event lines printed instead of posted:
 
     .venv/bin/arc backtest study night --minutes 60 [--slack]
+
+
+## E27.1 ML feature store (D126)
+
+One point-in-time feature library for the ML programme. `arc/ml/features/compute.py` holds
+every formula (pure, no I/O); two adapters build the same inputs:
+
+- `adapters/history.py`: `data/underlying_ohlc`, `data/option_stats/daily`,
+  `option_stats/earnings_events.parquet`, the PIT universe membership and
+  `config/backtest/macro_calendar_2020_2026.yaml`.
+- `adapters/live.py`: `data/arc.db` read-only. Daily bars from `market_tape` (the loop's
+  recorded `history_bars` 1Day payloads), IV30 from `iv_daily` (`IvStore.series`), ATM
+  spread and session volume from the last `chain_snapshot` of each ET session, the Finnhub
+  calendar from `raw_docs` (`earn_src = 2`; reaction day = report day for bmo, next session
+  otherwise), open structures for the portfolio group.
+
+The registry (`registry.py`) lists every feature with its group, window, sources,
+`available_live` and null policy. `FEATURE_SCHEMA_VERSION` hashes the registry and the bytes
+of `compute.py`, so any formula or spec edit changes it; `require_schema()` refuses a
+mismatch. Features with `available_live = False` (IV60, front IV, term slope, 25-delta skew
+and wings, two-sided %, OI, PIT-universe breadth/dispersion/correlation) stay in research
+panels but are dropped by `default_model_features()`. Free-tier OI days carry
+`oi_missing = 1` and NaN OI, never a stale value. Credit/rates is not in v1: nothing live
+stores HYG/TLT daily bars.
+
+Every window is window-local (ATR14 = 14-session mean true range, drawdown vs the rolling
+252-session high, flip age capped at 120), so a ~300-session live read and a 2019→ history
+read give the same number.
+
+    .venv/bin/arc ml features list [--json]
+    .venv/bin/arc ml features build --universe c500 --from 2020-01-02 --to 2026-10-09
+    .venv/bin/arc ml features parity --day 2026-10-09 --sessions 5 --tickers AAPL,MU,NVDA,SPY
+
+`build` writes `data/ml/features/v<schema>/date=<d>.parquet` (one panel per session) plus
+`manifest.json`; it is resumable (existing dates are skipped, writes are atomic) and a schema
+change starts a new `v<schema>` directory. Run it outside 21:30–08:30 ET or with no
+`data/backtest/queue.json`, under `nice -n 10`. `parity` exits 1 when a feature is over its
+tolerance (`arc/ml/features/parity.py`: price/market/calendar features exact to 1e-9; IV
+and chain-liquidity features carry a documented vendor tolerance).
+
+`scripts/loss_anatomy_features.py` (E7.18) now imports its formulas from `compute.py`
+("promote, don't copy"); `tests/test_ml_anatomy_golden.py` pins its output, regenerate only
+for an intended formula change with `ARC_REGEN_GOLDEN=1`. ML deps: `uv sync --extra ml`
+(scikit-learn, lightgbm; imported lazily).
