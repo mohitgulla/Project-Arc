@@ -126,6 +126,11 @@ def sessions_between(start: _dt.date, end: _dt.date) -> list[_dt.date]:
     return [ts.date() for ts in sessions]
 
 
+def last_known_session() -> _dt.date:
+    """The last session the exchange calendar covers (callers clamp forward ranges)."""
+    return _cal().last_session.date()
+
+
 #: E13.5: end-of-day statistics for a session exist from this ET time (after the close).
 EOD_STATS_CUTOFF = _dt.time(16, 30)
 

@@ -372,6 +372,10 @@ def _make_parser() -> argparse.ArgumentParser:
 
     add_betas_parser(sub)
 
+    from arc.ml.cli import add_ml_parser
+
+    add_ml_parser(sub)
+
     from arc.ingest.market_health_cli import add_market_health_parser
 
     add_market_health_parser(sub)
@@ -1193,6 +1197,11 @@ def main(argv: list[str] | None = None) -> int:
 
         _log_to_stderr()
         return run_betas(args)
+    if args.command == "ml":
+        from arc.ml.cli import run_ml
+
+        _log_to_stderr()
+        return run_ml(args)
     if args.command == "market-health":
         from arc.ingest.market_health_cli import run_market_health
 

@@ -39,6 +39,12 @@ arc = "arc.cli:main"
 research = [
     "scikit-learn>=1.9.1",
 ]
+# E27.1 (D126): the ML outcome-model programme. `arc/ml` imports these lazily; the live
+# scorer (E27.4) needs only lightgbm + numpy at runtime. `uv sync --extra ml`.
+ml = [
+    "scikit-learn>=1.9.1",
+    "lightgbm>=4.5",
+]
 
 [build-system]
 requires = ["hatchling"]

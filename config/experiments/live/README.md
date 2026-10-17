@@ -38,7 +38,9 @@ draft XP specs here; a strategy PR's only XP touchpoint is its `XP-advisory:` li
 
 Registry reset (owner, 2026-10-13, PLAN D111): every earlier spec, verdict and history
 file was removed and the live registry cleared; XP-1 is the K=3 calibration A/A
-(`xp1_aa_k3.yaml`, card E15.9), and ids are never reused after this.
+(`xp1_aa_k3.yaml`, card E15.9), and ids are never reused after this. XP-1 was stopped by
+the owner on 2026-10-17 after D128 switched the default profile to margin mid-run; XP-2
+(`xp2_aa_margin.yaml`, PLAN D130) is the same K=3 A/A restarted on the margin profile.
 
 Fork at any persona (E13.12, D56): `arc experiment start` computes each arm's plan
 (`arc.experiments.runner.arm_plan`) and stores it on the arm's identity and in the

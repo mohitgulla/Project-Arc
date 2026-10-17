@@ -1,0 +1,11 @@
+# XP-1: stopped (K=3 A/A calibration, control arm plus three identical treatments).
+# Written by arc.experiments.verdicts (E21.4, PLAN D86) when the experiment stopped at 2026-10-17T16:01:02.727985-04:00 by U0C5KUMH28G.
+# Owner 2026-10-17 (#project-arc 1792259619.964319): D128 switched the default profile to margin + managed_net_ev_full mid-run (3 sessions on cash_debit); restart clean as XP-2 after D129 (margin buying power + arm collateral) merges.
+# Not a promotion: this file only unlocks the spec's leaves (E21.1).
+experiment_id: XP-1
+verdict: stopped
+report_hash: d7d2844a351d2cd27429e16a40efe5ca2114b9b0d06b114d91ba45341372352f
+kind: aa
+area: other
+spec_hash: 7e73456196a92c197d1abce80daa9a6aa0b8e115c5ae49734576937b4a746919
+reference: control
