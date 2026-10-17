@@ -3236,8 +3236,11 @@ value` fills OI from then on.
 Requires the Theta Terminal running on the Mac (`http://127.0.0.1:25503`).
 
 - Names: the `history_topup.universe` checkpoint (`c500`) of the latest E7.7 pull list.
-- Per name: the sessions after its last cached one, through the last completed session
-  (`completed_session`, 16:30 ET cutoff), never before the tier's first servable day. One
+- Per name: the sessions after its last cached one, through the last session **before
+  today (ET)** (`servable_session`), never before the tier's first servable day. The
+  Terminal refuses current-day `expiration=*` requests (HTTP 400 "Cannot fetch
+  current-day data without specifying an expiration", seen 2026-10-16 20:30 ET), so the
+  20:30 run fetches through the previous session and today's lands the next night. One
   request covers a short run of sessions (E7.6 resumable download), so a normal night is
   one request per name (the card's ~25 min for 500 names assumed 3 s per request).
 - Order: behind-first (the oldest cache end goes first), then pull-list priority. No new
@@ -3253,7 +3256,7 @@ Requires the Theta Terminal running on the Mac (`http://127.0.0.1:25503`).
   per day (`routine_state history_topup:terminal_down_notice`). Never a failure. Every
   fetched name erroring is a failure (the usual `[Ops]` alert).
 
-Summary examples: `500 names current through 2026-10-15`, `498/500 behind names topped
+Summary examples (a 2026-10-16 20:30 run): `500 names current through 2026-10-15`, `498/500 behind names topped
 up through 2026-10-15, 498 sessions added · theta_backfill +498 IV rows`. Knobs: the
 `history_topup:` block in `config/routines.yaml` (change by PR; not registry-tunable).
 

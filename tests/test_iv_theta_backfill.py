@@ -14,7 +14,13 @@ from typing import TYPE_CHECKING, Any
 import pandas as pd
 import pytest
 
-from arc.backtest.history_topup import plan, refresh_closes, run_topup, seeded_names
+from arc.backtest.history_topup import (
+    plan,
+    refresh_closes,
+    run_topup,
+    seeded_names,
+    servable_session,
+)
 from arc.backtest.option_stats import StatsRunner, daily_path, read_daily
 from arc.backtest.theta_iv import METHOD_STATS, METHOD_TOPUP, seed, seed_ticker, stats_config
 from arc.backtest.underlying import UnderlyingStore
@@ -43,7 +49,7 @@ from arc.routines.handlers import (
 from arc.routines.runs import RoutineStateRepo
 from arc.store.db import connect
 from arc.store.migrate import MIGRATIONS_DIR, migrate
-from arc.utils.calendar import ET, sessions_between
+from arc.utils.calendar import ET, previous_session, sessions_between
 from tests.backtest_data_fixtures import (
     sessions,
     spot_path,
@@ -588,7 +594,8 @@ def test_handler_runs_the_topup_on_the_checkpoint(conn: sqlite3.Connection, data
     seed(conn, data_dir, ["AAA"], now=NOW)
     end = sessions(START, N)[-1]
     ctx = _ctx(conn, data_dir)
-    later = dt.datetime.combine(end, dt.time(20, 30), tzinfo=ET)
+    # the run the evening after *end*: *end*'s own 20:30 run can't ask for *end* yet
+    later = dt.datetime.combine(end + dt.timedelta(days=1), dt.time(20, 30), tzinfo=ET)
     ctx = JobContext(**{**ctx.__dict__, "now": later, "scheduled_for": later})
     res = history_topup_source(
         ctx, provider_factory=lambda: theta, bars=bars, terminal_check=lambda url: True
@@ -600,6 +607,36 @@ def test_handler_runs_the_topup_on_the_checkpoint(conn: sqlite3.Connection, data
     assert [c[0] for c in theta.calls][:1] == ["CCC"]
     assert res.metrics["iv"]["rows"] == 5
     assert f"behind names topped up through {end}" in res.summary
+
+
+def test_servable_session_never_asks_for_today() -> None:
+    # the Terminal 400s on current-day `expiration=*` ("Cannot fetch current-day data
+    # without specifying an expiration"), so the 20:30 ET run ends on the prior session
+    fri = dt.date(2026, 10, 16)
+    at = lambda d, h, m: dt.datetime.combine(d, dt.time(h, m), tzinfo=ET)  # noqa: E731
+    assert servable_session(at(fri, 20, 30)) == dt.date(2026, 10, 15)
+    assert servable_session(at(fri, 9, 0)) == dt.date(2026, 10, 15)
+    # after midnight ET Friday is servable; over the weekend too
+    assert servable_session(at(dt.date(2026, 10, 17), 0, 54)) == fri
+    assert servable_session(at(dt.date(2026, 10, 19), 20, 30)) == fri
+    # a UTC timestamp past midnight UTC is still Friday evening in ET
+    utc = dt.datetime(2026, 10, 17, 0, 30, tzinfo=dt.UTC)
+    assert servable_session(utc) == dt.date(2026, 10, 15)
+
+
+def test_handler_never_requests_the_current_session(
+    conn: sqlite3.Connection, data_dir: Path
+) -> None:
+    theta, bars = _topup_fixture(data_dir)
+    end = sessions(START, N)[-1]
+    ctx = _ctx(conn, data_dir, iv_append=False)
+    same_day = dt.datetime.combine(end, dt.time(20, 30), tzinfo=ET)
+    ctx = JobContext(**{**ctx.__dict__, "now": same_day, "scheduled_for": same_day})
+    res = history_topup_source(
+        ctx, provider_factory=lambda: theta, bars=bars, terminal_check=lambda url: True
+    )
+    assert theta.calls and all(e < end for _, _, e in theta.calls)
+    assert f"through {previous_session(end)}" in res.summary
 
 
 def test_handler_every_name_failing_is_a_failure(conn: sqlite3.Connection, data_dir: Path) -> None:
