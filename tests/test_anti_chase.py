@@ -412,13 +412,39 @@ def test_flag_off_is_the_pre_e163_pipeline() -> None:
     assert _shape(off) == _shape(on_default)
 
 
-def test_neutral_and_credit_capable_ideas_are_never_filtered() -> None:
-    # margin profile: bullish maps to credit spreads too -> not long-premium only
-    conn, _ = _pipeline_run(True, IDEAS, profile="margin", rule=LOW_RSI)
-    assert "PLTR" in _tickers(conn)
+def test_margin_keeps_a_stretched_idea_for_its_credit_structures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D128: margin also maps bullish to a bull put, so a stretched PLTR is kept, journaled
+    stretched_debit_only, put on the pullback watch, and scanned for credit only."""
+    import arc.scanner
+    from tests.test_e59_research_portfolio import _outcome, _shortlist
+
+    scanned: dict[str, list[str]] = {}
+    real_scan = arc.scanner.scan
+
+    def spy(provider: Any, ticker: str, params: Any, **kw: Any) -> Any:
+        scanned[ticker] = sorted(s.value for s in params.strategies)
+        return real_scan(provider, ticker, params, **kw)
+
+    monkeypatch.setattr(arc.scanner, "scan", spy)
+    conn, report = _pipeline_run(True, IDEAS, profile="margin", rule=LOW_RSI)
+    assert _tickers(conn) == ["PLTR", "NVDA", "XOM"]
+    assert _shortlist(conn)["credit_only"] == ["PLTR"]
     assert _decisions(conn, "stretched_entry") == []
+    (row,) = _decisions(conn, "stretched_debit_only")
+    assert row["subject"] == "PLTR" and row["choice"] == "noted"
+    assert row["reason_text"].endswith("; debit skipped, credit kept")
+    assert _outcome(report, "research").metrics.get("stretched_debit_only") == 1
+    assert len(_decisions(conn, "pullback_watch_added")) == 1
+    assert scanned["PLTR"] == ["bull_put"]  # debit structures never scanned
+    assert scanned["NVDA"] == ["bull_call_debit", "bull_put", "long_call"]  # untouched
+
+
+def test_neutral_ideas_are_never_filtered() -> None:
     conn, _ = _pipeline_run(True, {"PLTR": "neutral"}, profile="margin", rule=LOW_RSI)
     assert _decisions(conn, "stretched_entry") == []
+    assert _decisions(conn, "stretched_debit_only") == []
 
 
 # ---------------------------------------------------------------------------

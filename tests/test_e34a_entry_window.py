@@ -56,6 +56,11 @@ SLEEVE_RANGES = [("10", "35"), ("36", "60")]
 
 
 def _settings(profile: str) -> ArcSettings:
+    """``margin_legacy`` = the pre-D128 single-window, credit-only margin profile."""
+    if profile == "margin_legacy":
+        from tests.legacy_profiles import legacy_margin_settings
+
+        return legacy_margin_settings()
     return ArcSettings(_env_file=None, account_profile=profile)  # type: ignore[call-arg]
 
 
@@ -113,9 +118,18 @@ class TestEntryTerms:
         assert t.bands_text() == "debit-vertical short legs 20-35 delta; long legs 40-70 delta"
 
     def test_margin_window_and_bands(self) -> None:
-        t = entry_terms(_settings("margin"))
+        t = entry_terms(_settings("margin_legacy"))
         assert (t.dte_min, t.dte_max) == (30, 45)
         assert t.bands_text() == "short strikes 16-30 delta"
+
+    def test_d128_margin_has_the_sleeves_and_every_band(self) -> None:
+        t = entry_terms(_settings("margin"))
+        assert (t.dte_min, t.dte_max) == (10, 60)
+        assert t.window == SLEEVES_WINDOW
+        assert t.bands_text() == (
+            "short strikes 16-30 delta; debit-vertical short legs 20-35 delta; "
+            "long legs 40-70 delta"
+        )
 
     def test_cash_long_only_has_long_band_only(self) -> None:
         t = entry_terms(_settings("cash_long_only"))
@@ -123,7 +137,7 @@ class TestEntryTerms:
         assert t.bands_text() == "long legs 40-70 delta"
 
     def test_window_follows_config_not_text(self) -> None:
-        s = _settings("margin").model_copy(
+        s = _settings("margin_legacy").model_copy(
             update={"dte_min": 21, "dte_max": 35, "scanner_short_delta_min": 0.10}
         )
         t = entry_terms(s)
@@ -156,7 +170,7 @@ class TestPrompts:
 
     @pytest.mark.parametrize("persona", ["research", "quant", "risk"])
     def test_margin_one_range_30_45(self, persona: str) -> None:
-        p = _prompts(entry_terms(_settings("margin")))[persona]
+        p = _prompts(entry_terms(_settings("margin_legacy")))[persona]
         assert DTE_RANGE.findall(p) == [("30", "45")]
         if persona != "research":
             assert "short strikes 16-30 delta" in p
@@ -334,7 +348,7 @@ def _run(settings: ArcSettings, env: PipelineEnv):  # noqa: ANN202
 
 class TestPipeline:
     def test_margin_chain_prompts_and_recorded_inputs(self) -> None:
-        settings = _settings("margin")
+        settings = _settings("margin_legacy")
         env = PipelineEnv.fixtures()
         conn, report = _run(settings, env)
         assert {o.job: o.status for o in report.outcomes}["risk.open"] == "ok"
@@ -415,7 +429,7 @@ class TestPipeline:
         env = PipelineEnv.fixtures()
         env.llms["quant"] = FixtureScalpLLM([json.dumps(quant)])
         with structlog.testing.capture_logs() as logs:
-            conn, _ = _run(_settings("margin"), env)
+            conn, _ = _run(_settings("margin_legacy"), env)
         hits = [e for e in logs if e["event"] == "quant.dte_rule_outside_config"]
         assert [h["ticker"] for h in hits] == ["NVDA"]
         assert hits[0]["dte_window"] == "30-45" and hits[0]["menu_dtes"]

@@ -26,6 +26,8 @@ from typing import TYPE_CHECKING, Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from arc.account_profiles import DEFAULT_ACCOUNT_PROFILE
+
 if TYPE_CHECKING:
     import sqlite3
 
@@ -510,7 +512,7 @@ def _item(
 
 
 def _account_profile(settings: Any) -> str:
-    return str(getattr(settings, "account_profile", None) or "cash_debit")
+    return str(getattr(settings, "account_profile", None) or DEFAULT_ACCOUNT_PROFILE)
 
 
 def _collect(

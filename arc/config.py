@@ -332,7 +332,7 @@ class ArcSettings(BaseSettings):
         min_length=1,
         description=(
             "ARC_ACCOUNT_PROFILE: a profile in config/account_profiles.yaml "
-            "(margin | cash_debit | cash_long_only). Paper default cash_debit (D25)."
+            "(margin | cash_debit | cash_long_only). Default margin (D128; was cash_debit, D25)."
         ),
     )
     account_profiles_file: Path | None = Field(

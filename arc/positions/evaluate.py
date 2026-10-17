@@ -17,7 +17,7 @@ thresholds live here) and adds what the position manager needs:
 - the profit lock's state: the peak P&L since entry over the stored marks
   (``peak_pnl``, supplied by the caller) and whether the lock is armed.
 
-Works for credit and debit structures alike (D25: paper defaults to cash_debit).
+Works for credit and debit structures alike (D128: the default margin profile trades both).
 """
 
 from __future__ import annotations

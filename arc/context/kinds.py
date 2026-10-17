@@ -138,6 +138,12 @@ class ShortlistPayload(ResearchOutput):
     exit_watchlist_counts: dict[Literal["hold", "review"], int] | None = Field(
         None, description="Research's exit watchlist: positions to hold / to review"
     )
+    # D128, schema v7 (additive): ideas the anti-chase / range-edge filters kept for
+    # their credit structures only (the debit ones leave the Quant menu); [] = none.
+    credit_only: list[str] = Field(
+        default_factory=list,
+        description="Tickers whose Quant menu holds credit structures only (D128)",
+    )
 
     def budgeted(self) -> list[ResearchRankedItem]:
         """The ranked items inside the Quant/Risk budget (all of them when unset)."""
@@ -1009,7 +1015,7 @@ KINDS: Mapping[str, KindSpec] = _registry(
     KindSpec("channel_brief", ChannelBriefPayload),
     KindSpec("candidate", CandidatePayload, schema_version=4),  # E23.2: origin
     KindSpec("regime", RegimePayload, schema_version=6),  # E23.1 (D98): range_pos_20d
-    KindSpec("shortlist", ShortlistPayload, schema_version=6),  # E17.2: market_guard run/margin z
+    KindSpec("shortlist", ShortlistPayload, schema_version=7),  # D128: credit_only
     KindSpec("structures", StructuresPayload, schema_version=4),  # E18.1: profit_lock
     KindSpec("risk_review", RiskReviewPayload, schema_version=2),  # E13.9: verdicts
     KindSpec("proposal", ProposalPayload, schema_version=7),  # E2.6: liquidity.score

@@ -16,8 +16,9 @@ What each step does:
 ``quant`` (LLM, frontier tier)
     Runs the deterministic chain scanner (E2.3) for each shortlisted ticker with
     the strategies the account profile (D25, ``config/account_profiles.yaml``)
-    maps the stance to: ``margin`` bullish → bull put, bearish → bear call,
-    neutral → iron condor; ``cash_debit`` bullish → bull call debit + long call,
+    maps the stance to: ``margin`` (the D128 default) bullish → bull put + bull call
+    debit + long call, bearish → bear call + bear put debit + long put, neutral →
+    iron condor; ``cash_debit`` bullish → bull call debit + long call,
     bearish → bear put debit + long put, neutral → no trade (journaled
     ``profile:no_neutral_structure``). It offers
     the Quant a menu of priced structures. The Quant may only pick from the
@@ -190,7 +191,7 @@ from arc.structures import parse_occ
 from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Collection, Mapping, Sequence
 
     import pandas as pd
 
@@ -1326,8 +1327,8 @@ def _portfolio_filter(
     return out, dropped, rejected
 
 
-#: Scanner strategies that collect premium: a stance the profile maps to any of them is
-#: not "long premium only", so the anti-chase filter leaves it alone (E16.3).
+#: Scanner strategies that collect premium. D128: a stretched / mid-range idea whose
+#: stance maps to any of them keeps only these on its Quant menu.
 _CREDIT_STRATEGY_NAMES = frozenset({"bull_put", "bear_call", "iron_condor"})
 
 
@@ -1337,6 +1338,9 @@ class _AntiChase:
 
     kept: list[ResearchRankedItem]
     dropped: Counter[str] = dataclasses.field(default_factory=Counter)
+    # D128: stretched ideas the profile can also trade as a credit spread: kept, with
+    # their debit structures removed from the Quant menu (``ShortlistPayload.credit_only``)
+    credit_only: list[ResearchRankedItem] = dataclasses.field(default_factory=list)
     rejected: list[tuple[ResearchRankedItem, str]] = dataclasses.field(default_factory=list)
     # ticker -> the verdict (every directional long-premium idea checked)
     verdicts: dict[str, Any] = dataclasses.field(default_factory=dict)
@@ -1349,6 +1353,16 @@ def _long_premium_only(stance: str, settings: ArcSettings) -> bool:
     """The profile maps *stance* to debit structures only (long calls/puts, debit verticals)."""
     names = settings.profile.strategies_for(stance)
     return bool(names) and not (set(names) & _CREDIT_STRATEGY_NAMES)
+
+
+def _has_long_premium(stance: str, settings: ArcSettings) -> bool:
+    """D128: the profile maps *stance* to at least one debit structure."""
+    return bool(set(settings.profile.strategies_for(stance)) - _CREDIT_STRATEGY_NAMES)
+
+
+def _has_credit(stance: str, settings: ArcSettings) -> bool:
+    """D128: the profile maps *stance* to at least one credit structure."""
+    return bool(set(settings.profile.strategies_for(stance)) & _CREDIT_STRATEGY_NAMES)
 
 
 def _vwap_feed_plan(
@@ -1445,8 +1459,10 @@ def _anti_chase_filter(
     """E16.3 (D76/D78): drop directional long-premium ideas whose move is stretched.
 
     Runs after Research ranks (and after the E5.9 portfolio drops), before Quant.
-    Only a bullish/bearish idea the account profile can structure as long premium
-    only is checked (a credit-capable stance and neutral ideas pass untouched). The
+    Every bullish/bearish idea the account profile can structure as long premium is
+    checked; neutral ideas pass untouched. D128: when the profile can also trade the
+    stance as a credit spread (``margin``), a stretched idea is kept and only its debit
+    structures leave the menu (``credit_only``); otherwise the idea is dropped. The
     rule is :func:`arc.features.technicals.is_stretched` on the ``regime`` entry's
     technicals. Missing technicals keep the idea (journaled ``technicals_missing``).
     With ``anti_chase.vwap`` on, each checked idea also costs one 5-min bars request
@@ -1461,7 +1477,7 @@ def _anti_chase_filter(
     take = _alpaca_take(ctx, env) if cfg.vwap else None
     for item in kept:
         stance = item.stance.strip().lower()
-        if stance not in ("bullish", "bearish") or not _long_premium_only(stance, ctx.settings):
+        if stance not in ("bullish", "bearish") or not _has_long_premium(stance, ctx.settings):
             res.kept.append(item.model_copy(update={"rank": len(res.kept) + 1}))
             continue
         entry = snap.latest("regime", item.ticker)
@@ -1479,7 +1495,11 @@ def _anti_chase_filter(
         if vwap_feed is not None and verdict.status != "not_directional":
             verdict = verdict.model_copy(update={"vwap_feed": vwap_feed})
         res.verdicts[item.ticker] = verdict
-        if verdict.stretched:
+        if verdict.stretched and _has_credit(stance, ctx.settings):
+            # D128: only the debit structures chase; the credit spread stays on the menu
+            res.dropped[ReasonCode.STRETCHED_DEBIT_ONLY.value] += 1
+            res.credit_only.append(item)
+        elif verdict.stretched:
             res.dropped[ReasonCode.STRETCHED_ENTRY.value] += 1
             res.rejected.append((item, ReasonCode.STRETCHED_ENTRY.value))
             continue
@@ -1500,6 +1520,19 @@ def _journal_anti_chase(j: Recorder, chase: _AntiChase, call_id: str | None) -> 
             Choice.REJECTED,
             ReasonCode.STRETCHED_ENTRY,
             reason_text=f"{item.stance}: {v.text()}",
+            confidence=item.confidence,
+            persona_call_id=call_id,
+            payload={"idea": item.model_dump(mode="json"), "anti_chase": v.model_dump(mode="json")},
+        )
+    for item in chase.credit_only:  # D128: kept; its debit structures leave the menu
+        v = chase.verdicts[item.ticker]
+        j.add(
+            JournalPersona.RESEARCH,
+            Stage.SHORTLIST,
+            item.ticker,
+            Choice.NOTED,
+            ReasonCode.STRETCHED_DEBIT_ONLY,
+            reason_text=f"{item.stance}: {v.text()}; debit skipped, credit kept",
             confidence=item.confidence,
             persona_call_id=call_id,
             payload={"idea": item.model_dump(mode="json"), "anti_chase": v.model_dump(mode="json")},
@@ -1532,6 +1565,8 @@ class _RangeEdges:
 
     kept: list[ResearchRankedItem]
     dropped: Counter[str] = dataclasses.field(default_factory=Counter)
+    # D128: mid-range ideas kept for their credit structures only (see _AntiChase)
+    credit_only: list[ResearchRankedItem] = dataclasses.field(default_factory=list)
     rejected: list[tuple[ResearchRankedItem, str]] = dataclasses.field(default_factory=list)
     # ticker -> the verdict (every directional long-premium idea in a ranged regime)
     verdicts: dict[str, Any] = dataclasses.field(default_factory=dict)
@@ -1548,9 +1583,11 @@ def _range_edge_filter(
 ) -> _RangeEdges:
     """E23.1 (D98): drop directional long-premium ideas from the middle of a sideways range.
 
-    Runs after the anti-chase filter (an idea it dropped never reaches here). Only a
-    bullish/bearish idea the account profile structures as long premium only, whose
-    ``regime`` entry's ``regime.current`` is in ``range_edges.regimes``, is checked; the
+    Runs after the anti-chase filter (an idea it dropped never reaches here). A
+    bullish/bearish idea the account profile can structure as long premium, whose
+    ``regime`` entry's ``regime.current`` is in ``range_edges.regimes``, is checked
+    (D128: on a profile with a credit spread for the stance, a mid-range idea is kept
+    and only its debit structures leave the menu, ``credit_only``); the
     rule is :func:`arc.features.technicals.is_mid_range` on that entry's technicals.
     Missing data or a too-narrow range keeps the idea (a filter, not a gate).
     Survivors are re-ranked 1..n. Deterministic: no LLM, no network, never a gate input.
@@ -1565,7 +1602,7 @@ def _range_edge_filter(
         label = ((entry.payload.get("regime") or {}).get("current")) if entry else None
         if (
             stance not in ("bullish", "bearish")
-            or not _long_premium_only(stance, ctx.settings)
+            or not _has_long_premium(stance, ctx.settings)
             or not isinstance(label, str)
             or label.strip().lower() not in rule.regimes
         ):
@@ -1575,7 +1612,11 @@ def _range_edge_filter(
         tech = TechnicalFeatures.model_validate(raw) if raw is not None else None
         verdict = is_mid_range(tech, label, stance, rule)
         res.verdicts[item.ticker] = verdict
-        if verdict.mid_range:
+        if verdict.mid_range and _has_credit(stance, ctx.settings):
+            # D128: a mid-range directional debit has no edge; a credit spread sells the range
+            res.dropped[ReasonCode.MID_RANGE_DEBIT_ONLY.value] += 1
+            res.credit_only.append(item)
+        elif verdict.mid_range:
             res.dropped[ReasonCode.MID_RANGE_ENTRY.value] += 1
             res.rejected.append((item, ReasonCode.MID_RANGE_ENTRY.value))
             continue
@@ -1606,6 +1647,22 @@ def _journal_range_edges(
             Choice.REJECTED,
             ReasonCode.MID_RANGE_ENTRY,
             reason_text=f"{item.stance} in {v.regime}: {v.text()}",
+            confidence=item.confidence,
+            persona_call_id=call_id,
+            payload={
+                "idea": item.model_dump(mode="json"),
+                "range_edges": v.model_dump(mode="json"),
+            },
+        )
+    for item in edges.credit_only:  # D128: kept; its debit structures leave the menu
+        v = edges.verdicts[item.ticker]
+        j.add(
+            JournalPersona.RESEARCH,
+            Stage.SHORTLIST,
+            item.ticker,
+            Choice.NOTED,
+            ReasonCode.MID_RANGE_DEBIT_ONLY,
+            reason_text=f"{item.stance} in {v.regime}: {v.text()}; debit skipped, credit kept",
             confidence=item.confidence,
             persona_call_id=call_id,
             payload={
@@ -1901,7 +1958,9 @@ def _pullback_add(
     cfg = ctx.routines.pullback_watch
     drop_session = add_sessions(_today(ctx), 0)
     added = 0
-    for item, _ in chase.rejected:
+    # D128: a credit-only idea goes on watch too, so its debit structures return
+    # once the stretch resets
+    for item in [*(i for i, _ in chase.rejected), *chase.credit_only]:
         stance = item.stance.strip().lower()
         if stance not in ("bullish", "bearish") or (item.ticker, stance) in live:
             continue
@@ -2938,6 +2997,10 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
             *(s.card_line() for s in stale),
         ],
         pool_counts=IdeaPool([i for i in pool.items if i.ticker in cands], pool.capped).counts(),
+        credit_only=sorted(
+            {i.ticker for i in (chase.credit_only if chase is not None else [])}
+            | {i.ticker for i in (edges.credit_only if edges is not None else [])}
+        ),
         exit_watchlist_counts=(
             {
                 "hold": len(pctx.positions) - sum(w.action == "review" for w in watch_items),
@@ -3139,8 +3202,8 @@ def _menu_entry(
     extra: dict[str, Any] = {}
     if sleeve is not None:
         extra["sleeve"] = sleeve
-    if rank_key is not None:
-        extra = {
+    if rank_key is not None:  # D128: update, not replace (kept the sleeve tag dropped)
+        extra |= {
             "rank_measure": rank_key.measure,
             "rank_key": rank_key.value,
         }
@@ -3402,7 +3465,12 @@ def _menu_levels(
     return out
 
 
-def _quant_menus(ctx: JobContext, env: PipelineEnv, items: list[ResearchRankedItem]) -> _QuantMenus:
+def _quant_menus(
+    ctx: JobContext,
+    env: PipelineEnv,
+    items: list[ResearchRankedItem],
+    credit_only: Collection[str] = (),
+) -> _QuantMenus:
     """Scan each item's chain into a menu (with the E2.4 exit model per structure).
 
     E22.2 (D97): a profile with DTE sleeves gets one menu per (ticker, open sleeve):
@@ -3487,6 +3555,8 @@ def _quant_menus(ctx: JobContext, env: PipelineEnv, items: list[ResearchRankedIt
 
     for item in items:
         strategies = _strategies(item.stance, settings)
+        if item.ticker in credit_only:  # D128: anti-chase / range edges kept credit only
+            strategies = [s for s in strategies if s.value in _CREDIT_STRATEGY_NAMES]
         if not strategies:
             no_profile.append((item.ticker, item.stance))
             log.info(
@@ -3662,7 +3732,7 @@ def quant_open(ctx: JobContext, env: PipelineEnv) -> JobResult:
         return JobResult(summary="empty shortlist; no structures", metrics={"structures": 0})
 
     today = _today(ctx)
-    m = _quant_menus(ctx, env, shortlist.budgeted())
+    m = _quant_menus(ctx, env, shortlist.budgeted(), shortlist.credit_only)
     summaries, menus, chains, spots = m.summaries, m.menus, m.chains, m.spots
     no_chain, no_chain_why, no_profile = m.no_chain, m.no_chain_why, m.no_profile
     _journal_be_filter(j, m)  # E16.5: nothing unless scanner.max_be_atr is set
@@ -3977,7 +4047,7 @@ def quant_revise(ctx: JobContext, env: PipelineEnv) -> JobResult:
     passthrough = [q for q in first.structures if verdict.get(q.ticker, "accept") == "accept"]
     rejected_t = sorted(t for t, v in verdict.items() if v == "reject")
     items = [i for i in shortlist.budgeted() if i.ticker in revise_set]
-    m = _quant_menus(ctx, env, items)
+    m = _quant_menus(ctx, env, items, shortlist.credit_only)
     menus, summaries = m.menus, m.summaries
     today = _today(ctx)
     inputs = {

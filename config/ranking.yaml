@@ -152,10 +152,15 @@ backtest:
   # strike for verticals / condors, the bought strike for single long options.
   # DTE window = the profile's entry window; one expiration nearest its middle.
   menus:
-    margin:
+    margin:                                 # D128: credit + cash_debit's debit kinds
       - kinds: [bull_put, bear_call, iron_condor]
         deltas: [0.16, 0.20, 0.25, 0.30]
         width_pct: 0.02
+      - kinds: [bull_call, bear_put]
+        deltas: [0.20, 0.25, 0.30, 0.35]
+        width_pct: 0.02
+      - kinds: [long_call, long_put]
+        deltas: [0.40, 0.55, 0.70]
     cash_debit:
       - kinds: [bull_call, bear_put]        # short leg at 20-35 delta (scanner debit_short band)
         deltas: [0.20, 0.25, 0.30, 0.35]

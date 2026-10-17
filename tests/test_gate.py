@@ -21,7 +21,6 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from arc.config import ArcSettings
 from arc.gate import (
     AccountSnapshot,
     ClosedLot,
@@ -52,6 +51,8 @@ from arc.utils.calendar import ET
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from arc.config import ArcSettings
+
 EXP = dt.date(2026, 11, 20)
 AS_OF = dt.date(2026, 10, 9)
 NOW = dt.datetime(2026, 10, 9, 10, 0, tzinfo=ET)
@@ -67,7 +68,10 @@ MARKET = MarketInputs(spot=580.0, r=0.04, ivs={LP: 0.20, SP: 0.19})
 
 
 def cfg(**kw: object) -> ArcSettings:
-    return ArcSettings(_env_file=None, account_profile="margin", **kw)  # type: ignore[call-arg]
+    """The pre-D128 single-window (global 30-45) margin profile these rules were pinned on."""
+    from tests.legacy_profiles import legacy_margin_settings
+
+    return legacy_margin_settings(**kw)
 
 
 def bull_put() -> Structure:
