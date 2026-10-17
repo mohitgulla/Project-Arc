@@ -387,7 +387,7 @@ export function otherLine(h: HeadlineView): string | null {
 export interface VerdictBasisView {
   basis: Basis;
   /** the spec carries no `analysis` block (registered before D119, e.g. XP-1) */
-  preD119: boolean;
+  preAdjustment: boolean;
   /** the owner amended the analysis mid-run: the session count at the amendment (else absent) */
   amendedAt?: number;
 }
@@ -403,8 +403,8 @@ export function verdictBasis(
 ): VerdictBasisView {
   const an = x?.analysis;
   const am = amended ? { amendedAt: amended.sessions_at_amend } : {};
-  if (!an) return { basis: "unadjusted", preD119: !amended, ...am };
-  return { basis: (an.covariates ?? []).includes("spy_ret") ? "adjusted" : "unadjusted", preD119: false, ...am };
+  if (!an) return { basis: "unadjusted", preAdjustment: !amended, ...am };
+  return { basis: (an.covariates ?? []).includes("spy_ret") ? "adjusted" : "unadjusted", preAdjustment: false, ...am };
 }
 
 /**
@@ -419,7 +419,7 @@ export function verdictNote(h: HeadlineView, v: VerdictBasisView): string | null
     return `verdict on ${on} (amended at session ${v.amendedAt})`;
   }
   if (h.basis !== "adjusted" || v.basis !== "unadjusted") return null;
-  return v.preD119 ? "verdict on unadjusted — spec pre-dates D119" : "verdict on unadjusted (pre-registered)";
+  return v.preAdjustment ? "verdict on unadjusted — spec pre-dates the SPY adjustment" : "verdict on unadjusted (pre-registered)";
 }
 
 const HAC_SOURCE: Record<string, string> = { running: "running", aa: "A/A", cap: "cap", iid: "iid" };

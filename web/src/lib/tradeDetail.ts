@@ -269,7 +269,7 @@ export const SOURCES: ReadonlyArray<{ block: string; tables: string }> = [
   { block: "Position & exits", tables: "open_structures, proposals (kind=close), swaps" },
   { block: "Outcome & review", tables: "outcomes, decision_reviews" },
   { block: "Market context", tables: "market_contexts, context_snapshots, context_entries, candidates" },
-  { block: "Run manifest", tables: "run_manifests (D27)" },
+  { block: "Run manifest", tables: "run_manifests" },
 ];
 
 /** E16.5: each breakeven's distance in ATR14·√DTE ("1.1 / 1.1 ATR√t"); undefined without ATR. */

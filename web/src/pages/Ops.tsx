@@ -571,7 +571,7 @@ function ContextCard({ c, now }: { c?: ContextStore; now: number }) {
       freshness={{ at: c?.as_of, label: "loaded" }}
       headerExtra={
         <InfoTip label="About the context store">
-          Typed entries the jobs hand to each other (D16). Each kind sits under the Timeline band of the job that writes it; From / Read by come from
+          Typed entries the jobs hand to each other. Each kind sits under the Timeline band of the job that writes it; From / Read by come from
           the writes: and reads: lists in routines.yaml. Active = not yet expired.
         </InfoTip>
       }
@@ -688,7 +688,7 @@ function SourcesCard({ s, now }: { s?: Sources; now: number }) {
       freshness={{ at: s?.as_of, label: "loaded" }}
       headerExtra={
         <InfoTip label="About sources">
-          One block per D56 category (Scalp: market news, company data, options fast; Scout: options slow, YouTube macro and micro), each an equal share of its feed&apos;s budget, then Reference data (no share). A row&apos;s share is inside its category.
+          One block per source category (Scalp: market news, company data, options fast; Scout: options slow, YouTube macro and micro), each an equal share of its feed&apos;s budget, then Reference data (no share). A row&apos;s share is inside its category.
         </InfoTip>
       }
     >

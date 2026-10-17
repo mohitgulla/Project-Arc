@@ -136,13 +136,13 @@ describe("headlineEstimate: every branch (D120)", () => {
 describe("verdict basis (D120: verdicts are unchanged)", () => {
   it("a spec without analysis (XP-1) decides on unadjusted; an adjusted headline says so", () => {
     const vb = verdictBasis({ analysis: null });
-    expect(vb).toEqual({ basis: "unadjusted", preD119: true });
-    expect(verdictNote(headlineEstimate(descriptive(adj())), vb)).toBe("verdict on unadjusted — spec pre-dates D119");
+    expect(vb).toEqual({ basis: "unadjusted", preAdjustment: true });
+    expect(verdictNote(headlineEstimate(descriptive(adj())), vb)).toBe("verdict on unadjusted — spec pre-dates the SPY adjustment");
   });
 
   it("a pre-registered [spy_ret] spec: headline and verdict match, no note", () => {
     const vb = verdictBasis({ analysis: { covariates: ["spy_ret"], hac_lag: 5 } });
-    expect(vb).toEqual({ basis: "adjusted", preD119: false });
+    expect(vb).toEqual({ basis: "adjusted", preAdjustment: false });
     expect(verdictNote(headlineEstimate(descriptive(adj({ pre_registered: true }))), vb)).toBeNull();
   });
 
@@ -157,7 +157,7 @@ describe("owner-amended analysis (D122)", () => {
 
   it("the verdict chip says SPY-adjusted (amended at session n), not pre-registered", () => {
     const vb = verdictBasis({ analysis: { covariates: ["spy_ret"], hac_lag: 5 } }, AMENDED);
-    expect(vb).toEqual({ basis: "adjusted", preD119: false, amendedAt: 3 });
+    expect(vb).toEqual({ basis: "adjusted", preAdjustment: false, amendedAt: 3 });
     const note = verdictNote(headlineEstimate(descriptive(adj({ pre_registered: true }))), vb);
     expect(note).toBe("verdict on SPY-adjusted (amended at session 3)");
     expect(note).not.toMatch(/pre-registered|D1\d\d/);
@@ -171,7 +171,7 @@ describe("owner-amended analysis (D122)", () => {
 
   it("amended back to none reads unadjusted (amended), never 'pre-dates D119'", () => {
     const vb = verdictBasis({ analysis: null }, { ...AMENDED, sessions_at_amend: 5 });
-    expect(vb.preD119).toBe(false);
+    expect(vb.preAdjustment).toBe(false);
     expect(verdictNote(headlineEstimate(descriptive(adj())), vb)).toBe("verdict on unadjusted (amended at session 5)");
   });
 

@@ -665,7 +665,7 @@ def load_universe(
         override = CoreOverrideIgnored(
             count=ignored,
             note=(
-                f"The universe override has {ignored} names (> {MAX_CORE}): it is a pre-D51 "
+                f"The universe override has {ignored} names (> {MAX_CORE}): it is an older "
                 f"flat list and is ignored. The core list in use is config/universe.yaml core "
                 f"({len(core)} names)."
             ),

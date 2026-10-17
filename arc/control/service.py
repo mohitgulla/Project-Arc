@@ -566,7 +566,7 @@ class ControlService:
             return Result(
                 "refused",
                 key=t.key,
-                message=f"{t.key} is turned on by {SYSTEM_ON_KEYS[t.key]} only (D70)",
+                message=f"{t.key} is turned on by {SYSTEM_ON_KEYS[t.key]} only",
             )
         return self._apply(
             t,
@@ -663,7 +663,7 @@ class ControlService:
                 new=new,
                 direction=d.value,
                 message=(
-                    f"{t.key} is turned on by {SYSTEM_ON_KEYS[t.key]} only (D70); "
+                    f"{t.key} is turned on by {SYSTEM_ON_KEYS[t.key]} only; "
                     "it can be turned off, never on by hand"
                 ),
             )
