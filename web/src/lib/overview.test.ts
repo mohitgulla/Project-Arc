@@ -16,6 +16,7 @@ import {
   equityView,
   exitStatus,
   parseOverviewRange,
+  marginSplitView,
   pnlSplit,
   proposalStage,
   greekRiskLabel,
@@ -199,6 +200,56 @@ describe("strip, movers, split", () => {
   it("realized/unrealized split uses magnitudes", () => {
     expect(pnlSplit(150, -228)).toEqual({ realized: 150, unrealized: 228 });
     expect(pnlSplit(null, null)).toEqual({ realized: 0, unrealized: 0 });
+  });
+});
+
+describe("marginSplitView (D129)", () => {
+  const base = {
+    at: "2026-10-16T15:55:00-04:00",
+    equity: "23540.75",
+    cash: "20065.75",
+    in_positions: "3475.00",
+    cash_pct: 0.852,
+    options_buying_power: "18000.00",
+    buying_power_kind: "margin" as const,
+    stock_buying_power: "80263.0",
+    collateral: "2065.75",
+    available: "18000.00",
+  };
+
+  it("is null for a cash-settled or unknown profile", () => {
+    expect(marginSplitView({ ...base, buying_power_kind: "cash_settled" })).toBeNull();
+    expect(marginSplitView({ ...base, buying_power_kind: null })).toBeNull();
+  });
+
+  it("reads the backend fields on margin", () => {
+    const v = marginSplitView(base);
+    expect(v).not.toBeNull();
+    expect(v?.available).toBe(18000);
+    expect(v?.collateral).toBe(2065.75);
+    expect(v?.invested).toBe(3475);
+    expect(v?.cash).toBe(20065.75);
+    expect(v?.stockBuyingPower).toBe(80263);
+    expect(v?.bar).toEqual({ available: 18000, collateral: 2065.75, invested: 3475 });
+  });
+
+  it("clamps a negative invested to 0 in the bar only", () => {
+    const v = marginSplitView({ ...base, in_positions: "-1200.00" });
+    expect(v?.invested).toBe(-1200);
+    expect(v?.bar.invested).toBe(0);
+  });
+
+  it("falls back to cash when options buying power is unknown", () => {
+    const v = marginSplitView({
+      ...base,
+      options_buying_power: null,
+      collateral: null,
+      available: "20065.75",
+      stock_buying_power: null,
+    });
+    expect(v?.available).toBe(20065.75);
+    expect(v?.collateral).toBe(0);
+    expect(v?.stockBuyingPower).toBeNull();
   });
 });
 
