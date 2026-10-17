@@ -294,6 +294,9 @@ they are never dropped.
   `Stock ±x%` (the stock's own day change), pill = the position's change today.
 - **Equity (D87):** dashed SPY / QQQ lines rebased to the range-start equity, legend with each
   benchmark's % and the gap in points; a Cash vs Invested split (stat pair + bar) below.
+  On a margin profile (D129) that split is a Buying Power panel: Available to trade (options
+  buying power) · Collateral held (cash − options buying power) · Invested (equity − cash, may be
+  negative) · Cash, a bar of the first three, and a caption for the 4× stock-only buying power.
 - **Order** at ≤ 1279 px (one column, D87): status → Equity → P&L Today → Movers → Positions →
   Greeks vs Caps → Today's Proposals → Today's Pick → Recent Activity. Desktop keeps two
   columns (Movers under P&L Today on the right).

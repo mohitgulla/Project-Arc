@@ -35,6 +35,7 @@ import {
   directionView,
   equityView,
   greekRiskLabel,
+  marginSplitView,
   parseOverviewRange,
   pnlSplit,
   proposalStage,
@@ -46,7 +47,9 @@ import {
   violationCode,
   withBenchmarks,
   type StatusSlot,
+  type AccountSplit,
   type ActivityItem,
+  type MarginSplitView,
   type Overview,
   type OverviewRange,
 } from "../lib/overview";
@@ -313,10 +316,13 @@ function EquityCard({ o, range, cad }: { o: Overview; range: OverviewRange; cad:
   );
 }
 
-/** D87: cash available to trade vs equity held in open positions (latest monitor mark). */
+/** D87: cash available to trade vs equity held in open positions (latest monitor mark).
+ *  D129: on a margin profile the panel becomes Buying Power (available / collateral / invested / cash). */
 function AccountSplitRow({ o, cad }: { o: Overview; cad: ReturnType<typeof useCadences> }) {
   const a = o.account;
   if (!a) return null;
+  const margin = marginSplitView(a);
+  if (margin) return <MarginSplitRow a={a} v={margin} cad={cad} />;
   const cash = num(a.cash) ?? 0;
   const held = num(a.in_positions) ?? 0;
   const equity = num(a.equity) ?? 0;
@@ -358,6 +364,61 @@ function AccountSplitRow({ o, cad }: { o: Overview; cad: ReturnType<typeof useCa
           ]}
         />
       </div>
+    </div>
+  );
+}
+
+/** D129: margin profile — what new trades can open with is options buying power, not cash. */
+function MarginSplitRow({ a, v, cad }: { a: AccountSplit; v: MarginSplitView; cad: ReturnType<typeof useCadences> }) {
+  const share = (x: number) => (v.equity ? formatPercent(x / v.equity) : "—");
+  const tiles = [
+    ["Available to trade", v.available, "var(--accent-bar)"],
+    ["Collateral held", v.collateral, "var(--series-2)"],
+    ["Invested", v.invested, "var(--series-1)"],
+    ["Cash", v.cash, null],
+  ] as const;
+  return (
+    <div className="mt-4 border-t border-line pt-3" data-testid="account-split">
+      <div className="mb-2 flex items-center gap-2 text-caption text-secondary" data-testid="account-split-margin">
+        Buying Power
+        <Freshness at={a.at} cadenceS={cad.monitor} label="monitor mark" />
+        <InfoTip
+          label="About buying power"
+          testid="account-split-info"
+          formula="Available = options buying power · Collateral = cash − options buying power · Invested = equity − cash"
+        >
+          Available is what new options trades can open with on this margin account. Collateral is what the broker holds
+          against open spreads; Invested is the net mark of the open structures (negative when short premium dominates).
+        </InfoTip>
+      </div>
+      <dl className="grid grid-cols-2 gap-3">
+        {tiles.map(([label, value, color]) => (
+          <div key={label} className="min-w-0">
+            <dt className="flex items-center gap-2 text-caption text-secondary">
+              {color && <span className="h-2 w-2 rounded-full" style={{ background: color }} aria-hidden="true" />}
+              {label}
+            </dt>
+            <dd className="text-title font-semibold tabular-nums">
+              <Money value={value} kind="equity" /> <span className="text-caption font-normal text-secondary">{share(value)}</span>
+            </dd>
+          </div>
+        ))}
+      </dl>
+      <div className="mt-2">
+        <ProportionBar
+          legend={false}
+          segments={[
+            { label: "Available to trade", value: v.bar.available, color: "var(--accent-bar)" },
+            { label: "Collateral held", value: v.bar.collateral, color: "var(--series-2)" },
+            { label: "Invested", value: v.bar.invested, color: "var(--series-1)" },
+          ]}
+        />
+      </div>
+      {v.stockBuyingPower !== null && (
+        <p className="mt-2 text-caption text-secondary" data-testid="account-split-stock-bp">
+          Stock buying power {formatMoney(v.stockBuyingPower, "equity")} (4×) — not usable for options.
+        </p>
+      )}
     </div>
   );
 }
