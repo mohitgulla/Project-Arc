@@ -38,10 +38,15 @@ from arc.backtest.queue import (
     update_queue,
 )
 from arc.backtest.study import (
+    RETIRED_FILE,
     STUDIES_DIR,
+    RetiredStudy,
     StudySpec,
     load_ledger,
+    load_retired,
     load_study,
+    retired_from_text,
+    retired_message,
     study_hash,
 )
 
@@ -57,6 +62,7 @@ __all__ = [
     "AdoptStudyError",
     "AdoptStudyResult",
     "adopt_study",
+    "check_not_retired",
     "spec_file_text",
     "study_pr_body",
 ]
@@ -172,6 +178,32 @@ def _committed(study_id: str, studies_dir: Path, main: MainView | None) -> list[
     return out
 
 
+def _retired(studies_dir: Path, main: MainView | None) -> dict[str, RetiredStudy]:
+    """E26.5 (D127): retired studies of the local spec dir and ``origin/main`` (union)."""
+    out = dict(load_retired(studies_dir))
+    if main is not None:
+        path = f"{SPECS_DIR}/{RETIRED_FILE}"
+        text = main.files(SPECS_DIR).get(path)
+        out = {**retired_from_text(text, f"origin/main:{path}"), **out}
+    return out
+
+
+def check_not_retired(study_id: str, retired: Mapping[str, RetiredStudy], *, queued: bool) -> None:
+    """Refuse a retired id, and (ids are never reused) a new id at or below the highest
+    retired one unless it is already queued (a retry of an earlier adoption)."""
+    r = retired.get(study_id)
+    if r is not None:
+        msg = f"{retired_message(r)}; a new study takes a new BT id"
+        raise AdoptStudyError(msg)
+    top = max((int(k.split("-", 1)[1]) for k in retired), default=0)
+    if not queued and int(study_id.split("-", 1)[1]) <= top:
+        msg = (
+            f"{study_id} is at or below the highest retired id BT-{top} (D127: ids are "
+            f"never reused); the Analyst re-drafts under BT-{top + 1} or above"
+        )
+        raise AdoptStudyError(msg)
+
+
 def adopt_study(  # noqa: PLR0913
     study_id: str,
     spec_path: Path,
@@ -221,6 +253,12 @@ def adopt_study(  # noqa: PLR0913
         raise AdoptStudyError(msg)
 
     queued = load_queue(queue_path).get(study_id)
+    try:
+        retired = _retired(studies_dir or STUDIES_DIR, main)
+    except ValueError as exc:
+        msg = f"cannot read the retired-study list: {exc}"
+        raise AdoptStudyError(msg) from exc
+    check_not_retired(study_id, retired, queued=queued is not None)
     if queued is not None and queued.spec_hash != h:
         msg = (
             f"{study_id}: hash mismatch: queued with spec {queued.spec_hash[:12]} "

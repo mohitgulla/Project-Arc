@@ -1226,6 +1226,8 @@ export interface components {
              * @description Account profiles the study ran on
              */
             profiles: string[];
+            /** @description Set when the study is retired: history, not current evidence */
+            retired?: components["schemas"]["RetiredInfo"] | null;
             /**
              * Runs
              * @description Ledger rows (runs) for the study
@@ -6212,6 +6214,22 @@ export interface components {
             vol_state?: string | null;
             /** Z */
             z?: number | null;
+        };
+        /**
+         * RetiredInfo
+         * @description A retired study (history only; the strategy and harness moved on since).
+         */
+        RetiredInfo: {
+            /**
+             * At
+             * Format: date
+             */
+            at: string;
+            /**
+             * Reason
+             * @description Why it was retired, plan/card ids removed
+             */
+            reason: string;
         };
         /** ReviewView */
         ReviewView: {

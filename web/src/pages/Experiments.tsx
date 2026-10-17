@@ -60,7 +60,7 @@ import {
   type ExperimentRow,
 } from "../lib/experiments";
 import { formatEt, titleCase } from "../lib/format";
-import { isBacktestId, parseFilter, summaryStrip, FILTERS, type ListFilter } from "../lib/backtests";
+import { isBacktestId, parseFilter, splitRetired, summaryStrip, FILTERS, type ListFilter } from "../lib/backtests";
 import { useBacktests, useExperiment, useExperiments } from "../lib/useApi";
 import { BacktestDetailView, BacktestListRow } from "./Backtests";
 
@@ -83,12 +83,13 @@ function ExperimentList() {
   const [params] = useSearchParams();
   const filter: ListFilter = parseFilter(params.get("show"));
   const rows = q.data?.items ?? [];
-  const bts = bq.data?.items ?? [];
+  const allBts = bq.data?.items ?? [];
+  const { current: bts, retired } = splitRetired(allBts);
   const groups = groupExperiments(rows);
   const latest = rows.map((r) => r.evaluated_at).filter(Boolean).sort().at(-1);
   const showLive = filter !== "backtest";
   const showBt = filter !== "live";
-  const total = (showLive ? rows.length : 0) + (showBt ? bts.length : 0);
+  const total = (showLive ? rows.length : 0) + (showBt ? allBts.length : 0);
   const loading = q.isLoading || bq.isLoading;
   return (
     <div className="grid gap-4" data-testid="experiments-page">
@@ -132,6 +133,19 @@ function ExperimentList() {
                   ))}
                 </div>
               </section>
+            )}
+            {showBt && retired.length > 0 && (
+              <details data-testid="backtest-retired-group">
+                <summary className="flex min-h-[32px] cursor-pointer items-center text-caption font-semibold text-secondary max-tablet:min-h-[44px]">
+                  Retired backtests · {retired.length}
+                </summary>
+                <p className="pb-2 text-caption text-muted">History only: the strategy and backtest harness have moved on since these ran.</p>
+                <div className="divide-y divide-line border-y border-line opacity-80">
+                  {retired.map((r) => (
+                    <BacktestListRow key={r.study_id} r={r} />
+                  ))}
+                </div>
+              </details>
             )}
           </div>
         )}

@@ -128,12 +128,22 @@ interface LiveLike {
   arm_verdicts?: Record<string, string>;
 }
 
+/** Current studies vs retired ones (history only; listed in a collapsed group). */
+export function splitRetired<T extends { retired?: unknown }>(items: readonly T[]): { current: T[]; retired: T[] } {
+  return { current: items.filter((i) => !i.retired), retired: items.filter((i) => !!i.retired) };
+}
+
+/** The retired banner / row note: "Retired 2026-10-17: <reason>". */
+export function retiredText(r: { retired?: { at: string; reason: string } | null }): string | null {
+  return r.retired ? `Retired ${r.retired.at}: ${r.retired.reason}` : null;
+}
+
 /** The six summary slots: live running / decided, backtests done / switches, queue, tonight. */
 export function summaryStrip(live: readonly LiveLike[], bt: BacktestsList | undefined): StripItem[] {
   const running = live.filter((x) => x.status === "running");
   const decided = live.filter((x) => x.verdict === "win" || x.verdict === "futility" || x.status === "promoted" || x.status === "rejected");
   const wins = live.filter((x) => x.verdict === "win" || x.status === "promoted").length;
-  const items = bt?.items ?? [];
+  const items = splitRetired(bt?.items ?? []).current;
   const done = items.filter((i) => i.stage_phase === "holdout");
   const switches = done.filter((i) => i.headline?.switch).length;
   const first = running[0];

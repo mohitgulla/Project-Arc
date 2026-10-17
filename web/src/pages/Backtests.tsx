@@ -31,6 +31,7 @@ import {
   profileOrder,
   rangeText,
   resultFor,
+  retiredText,
   rowDomain,
   runsCaption,
   skipRows,
@@ -60,11 +61,12 @@ export function BacktestListRow({ r }: { r: BacktestRow }) {
       pills={
         <>
           <Pill v={backtestStatusPill(r)} testid="status-pill" />
+          {r.retired && <Pill v={{ label: "Retired", tone: "neutral" }} testid="retired-pill" />}
           <Pill v={{ label: variantsLabel(r.variants), tone: "neutral" }} />
         </>
       }
       right={<Pill v={callPill(h)} testid="call-pill" />}
-      summary={r.hypothesis}
+      summary={r.retired ? `${r.hypothesis} · ${retiredText(r)}` : r.hypothesis}
       left={{
         caption: (
           <span className="flex items-baseline justify-between gap-2">
@@ -154,6 +156,11 @@ export function BacktestBody({ d }: { d: BacktestDetail }) {
           </span>
         </div>
         <p className="mt-1.5 text-secondary">{s.hypothesis}</p>
+        {s.retired && (
+          <p className="mt-2 rounded border border-line px-3 py-2 text-caption text-secondary" role="note" data-testid="retired-banner">
+            {retiredText(s)}. History only: these results do not describe the current strategy.
+          </p>
+        )}
       </header>
       <Strip
         items={[

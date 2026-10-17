@@ -64,9 +64,12 @@ from arc.backtest.queue import (
     update_queue,
 )
 from arc.backtest.study import (
+    RETIRED_FILE,
     LedgerEntry,
+    RetiredStudy,
     StudySpec,
     load_ledger,
+    retired_from_text,
     study_hash,
     verdict_lines,
 )
@@ -386,6 +389,15 @@ class _Night:
     def _committed_spec(self, study_id: str) -> str | None:
         return self.main.files(SPECS_DIR).get(f"{SPECS_DIR}/{study_id}.yaml")
 
+    def _retired(self) -> dict[str, RetiredStudy]:
+        """E26.5 (D127): the retired studies committed on ``origin/main``."""
+        path = f"{SPECS_DIR}/{RETIRED_FILE}"
+        try:
+            return retired_from_text(self.main.files(SPECS_DIR).get(path), f"main:{path}")
+        except ValueError as exc:  # a typo must not un-retire: run nothing tonight
+            msg = f"cannot read the retired-study list: {exc}"
+            raise SkipNightError(msg) from exc
+
     # -- the loop -----------------------------------------------------------
 
     def run(self) -> NightResult:
@@ -421,8 +433,22 @@ class _Night:
         return self.res
 
     def _pick(self, unmerged: set[str]) -> tuple[QueueEntry, str] | None:
+        retired = self._retired()
         for e in load_queue(self.paths.queue).active():
             if e.id in unmerged:
+                continue
+            if e.id in retired:  # history only (D127): never run, the queue is left as is
+                line = f"{e.id} skipped: retired"
+                if line not in self.res.lines:
+                    self.res.lines.append(line)
+                    skipped = self.res.metrics.setdefault("retired_skipped", [])
+                    skipped.append(e.id)
+                    log.info(
+                        "backtest.runner.skipped",
+                        study=e.id,
+                        why="retired",
+                        reason=retired[e.id].reason,
+                    )
                 continue
             text = self._committed_spec(e.id)
             if text is None:

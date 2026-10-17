@@ -176,6 +176,11 @@ line under "Obvious flaws" as `→ Sentinel` and do not draft a card for it.
    `owner`, `created`, `universe_ladder` and `decision_rule`: `record` assigns `BT-<next>`, sets
    the ladder `[c125, c500]` and keeps the D25 rule, and writes `RUN_DIR/study-specs/BT-<n>.yaml`
    for the owner. You never edit `config/`. The next run reads the verdict from the ledger.
+   - **Retired studies (D127, `config/backtest_studies/retired.yaml`).** The context lists them
+     on one `RETIRED` line with the reason; they are history, not evidence. Never cite one as
+     BT-REF or in `next_*` (the validator refuses it), and never propose re-running, extending
+     or building on one: draft fresh studies from current main under the next free id (ids
+     are never reused).
    - **Every `study_spec` needs `study_value`** (D121), the BT ranking inputs:
      `{"pct_per_day", "source", "affected_share", "p_success", "nights_needed"}`. Value =
      `pct_per_day × affected_share × p_success ÷ nights_needed`: the same formula as an XP, with
