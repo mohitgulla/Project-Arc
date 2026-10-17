@@ -186,7 +186,9 @@ def evaluate_position(
             dte=dte,
             cost=cost,
             cfg=cfg,
-            path_vol=marks.realized_vol if cfg.path_vol == "realized_forecast" else None,
+            # E27.2: an open position has no M1 params here, so "m1" falls back to
+            # the realised-vol forecast (the same fallback as model_exits).
+            path_vol=marks.realized_vol if cfg.path_vol in ("realized_forecast", "m1") else None,
             peak_pnl=peak,
         )
         # E6.4a parity: "now" is the close at the MARKET marks (the fill closing now
