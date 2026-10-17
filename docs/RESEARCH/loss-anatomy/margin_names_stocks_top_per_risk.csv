@@ -1,0 +1,9 @@
+name,class,group,n,net,per_risk,win,kinds,spread_pct_premium,years,losing_years,worst_year_share_of_loss,pattern
+BA,Stocks,industrials,5,2882.0,0.361,1.0,"iron_condor,bull_put,bear_call",23.9,2,0,,episodic
+AMD,Stocks,technology,8,2353.0,0.216,1.0,bull_put,19.4,2,0,,episodic
+UNH,Stocks,financials_realestate,5,1604.0,0.176,1.0,"bull_put,iron_condor",28.6,3,0,,episodic
+DIS,Stocks,communication,7,47.0,0.011,0.71,iron_condor,26.9,3,1,,episodic
+WMT,Stocks,consumer,5,-17.0,-0.009,0.8,"bull_put,iron_condor",31.9,2,1,7.22,episodic
+AAPL,Stocks,technology,9,-826.0,-0.057,0.67,"iron_condor,bull_put,bear_call",10.9,3,2,0.83,persistent
+VXX,Stocks,financials_realestate,8,-613.0,-0.331,0.62,iron_condor,51.3,2,1,1.1,episodic
+BAC,Stocks,financials_realestate,6,-1754.0,-0.617,0.5,"iron_condor,bear_call,bull_put",31.3,2,1,1.01,episodic

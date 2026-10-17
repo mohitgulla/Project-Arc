@@ -1,0 +1,15 @@
+name,class,group,n,net,per_risk,win,kinds,spread_pct_premium,years,losing_years,worst_year_share_of_loss,pattern
+QQQ,ETFs,etf:broad_equity,92,1881.0,0.023,0.76,"iron_condor,bull_put,bear_call",9.5,4,2,,episodic
+TLT,ETFs,etf:bond,7,1501.0,0.179,1.0,"bull_put,iron_condor",15.7,3,0,,episodic
+HYG,ETFs,etf:bond,4,372.0,0.053,0.75,"bull_put,iron_condor",37.6,2,0,,episodic
+TQQQ,ETFs,etf:leveraged,1,73.0,0.097,1.0,bull_put,22.2,1,0,,episodic
+XLK,ETFs,etf:sector,1,68.0,0.03,1.0,bull_put,25.5,1,0,,episodic
+XLF,ETFs,etf:sector,4,-13.0,-0.005,0.75,"bull_put,iron_condor,bear_call",38.9,1,1,1.0,episodic
+SLV,ETFs,etf:commodity,36,-187.0,-0.008,0.72,"bull_put,iron_condor",20.9,4,1,16.28,episodic
+SQQQ,ETFs,etf:leveraged,2,-275.0,-0.663,0.5,"iron_condor,bull_put",34.9,1,1,1.0,episodic
+DIA,ETFs,etf:sector,20,-811.0,-0.049,0.75,"bull_put,bear_call,iron_condor",11.3,3,2,1.42,persistent
+GDX,ETFs,etf:commodity,3,-1900.0,-0.562,0.33,"iron_condor,bull_put",23.0,2,1,1.11,episodic
+EWZ,ETFs,etf:international,7,-2533.0,-0.262,0.57,"bull_put,iron_condor",29.5,4,2,1.08,episodic
+SPY,ETFs,etf:broad_equity,89,-4423.0,-0.044,0.71,"bull_put,iron_condor,bear_call",5.9,4,2,1.02,episodic
+GLD,ETFs,etf:commodity,35,-4748.0,-0.161,0.57,"bull_put,iron_condor,bear_call",9.5,4,4,0.57,persistent
+IWM,ETFs,etf:broad_equity,73,-5340.0,-0.096,0.63,"iron_condor,bear_call,bull_put",10.9,4,4,0.49,persistent

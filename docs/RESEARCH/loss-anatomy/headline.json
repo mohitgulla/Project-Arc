@@ -1,0 +1,755 @@
+{
+ "margin": {
+  "reconcile": {
+   "c500": {
+    "sum_pnl": -17739.26,
+    "delta_equity": -17739.26,
+    "diff": -0.0,
+    "min_equity": 6270.25,
+    "min_equity_day": "2023-04-13",
+    "open_at_end": 0
+   },
+   "c125": {
+    "sum_pnl": -22894.85,
+    "delta_equity": -22894.85,
+    "diff": -0.0,
+    "min_equity": 2011.23,
+    "min_equity_day": "2023-11-16",
+    "open_at_end": 0
+   }
+  },
+  "episode_cards": [
+   {
+    "peak": "2020-02-18",
+    "trough": "2020-03-09",
+    "recovered": null,
+    "peak_equity": 29411.0,
+    "trough_equity": 20024.0,
+    "depth_pct": 31.9,
+    "loss_usd": 9386.0,
+    "slide_sessions": 14,
+    "length_sessions": 1035,
+    "move": -9386.0,
+    "open_at_peak": 8,
+    "risk_at_peak_pct": 69.0,
+    "dir_at_peak": {
+     "bullish": 5,
+     "neutral": 3
+    },
+    "opened_in_slide": 4,
+    "regime_peak": {
+     "spy_trend": "up",
+     "vix_proxy": 0.123,
+     "spy_dd": -0.003,
+     "breadth": 0.68
+    },
+    "regime_trough": {
+     "spy_trend": "down",
+     "vix_proxy": 0.487,
+     "spy_dd": -0.183,
+     "breadth": 0.12
+    },
+    "by": {
+     "kind": {
+      "bull_put": -4921.0,
+      "iron_condor": -4552.0,
+      "bear_call": 87.0
+     },
+     "underlying": {
+      "QQQ": -3142.0,
+      "SPY": -2297.0,
+      "GLD": -2156.0,
+      "ROKU": -2012.0,
+      "IWM": -69.0,
+      "MSFT": 4.0
+     },
+     "group": {
+      "etf:broad_equity": -5508.0,
+      "etf:commodity": -2156.0,
+      "communication": -2012.0,
+      "technology": 4.0,
+      "etf:bond": 286.0
+     },
+     "direction": {
+      "bullish": -4921.0,
+      "neutral": -4552.0,
+      "bearish": 87.0
+     },
+     "when": {
+      "held_through": -9488.0,
+      "opened_in_slide": 102.0
+     },
+     "class": {
+      "ETFs": -7378.0,
+      "Stocks": -2009.0
+     }
+    }
+   },
+   {
+    "peak": "2020-07-31",
+    "trough": "2020-10-12",
+    "recovered": "2021-09-22",
+    "peak_equity": 24229.0,
+    "trough_equity": 15562.0,
+    "depth_pct": 35.8,
+    "loss_usd": 8667.0,
+    "slide_sessions": 50,
+    "length_sessions": 288,
+    "move": -8667.0,
+    "open_at_peak": 9,
+    "risk_at_peak_pct": 40.0,
+    "dir_at_peak": {
+     "bullish": 5,
+     "neutral": 4
+    },
+    "opened_in_slide": 27,
+    "regime_peak": {
+     "spy_trend": "up",
+     "vix_proxy": 0.197,
+     "spy_dd": -0.035,
+     "breadth": 0.72
+    },
+    "regime_trough": {
+     "spy_trend": "up",
+     "vix_proxy": 0.216,
+     "spy_dd": -0.015,
+     "breadth": 0.77
+    },
+    "by": {
+     "kind": {
+      "iron_condor": -5799.0,
+      "bear_call": -1522.0,
+      "bull_put": -1345.0
+     },
+     "underlying": {
+      "IWM": -4533.0,
+      "SPY": -3296.0,
+      "QQQ": -1981.0,
+      "VXX": 9.0,
+      "GLD": 107.0,
+      "SLV": 330.0
+     },
+     "group": {
+      "etf:broad_equity": -9810.0,
+      "financials_realestate": 9.0,
+      "etf:commodity": 437.0,
+      "etf:bond": 696.0
+     },
+     "direction": {
+      "neutral": -5799.0,
+      "bearish": -1522.0,
+      "bullish": -1345.0
+     },
+     "when": {
+      "opened_in_slide": -4580.0,
+      "held_through": -4087.0
+     },
+     "class": {
+      "ETFs": -8676.0,
+      "Stocks": 9.0
+     }
+    }
+   },
+   {
+    "peak": "2022-05-24",
+    "trough": "2022-09-06",
+    "recovered": null,
+    "peak_equity": 19636.0,
+    "trough_equity": 11454.0,
+    "depth_pct": 41.7,
+    "loss_usd": 8182.0,
+    "slide_sessions": 71,
+    "length_sessions": 463,
+    "move": -8182.0,
+    "open_at_peak": 1,
+    "risk_at_peak_pct": 12.0,
+    "dir_at_peak": {
+     "bearish": 1
+    },
+    "opened_in_slide": 19,
+    "regime_peak": {
+     "spy_trend": "down",
+     "vix_proxy": 0.271,
+     "spy_dd": -0.175,
+     "breadth": 0.17
+    },
+    "regime_trough": {
+     "spy_trend": "down",
+     "vix_proxy": 0.243,
+     "spy_dd": -0.182,
+     "breadth": 0.29
+    },
+    "by": {
+     "kind": {
+      "bull_put": -8465.0,
+      "bear_call": -116.0,
+      "iron_condor": 399.0
+     },
+     "underlying": {
+      "EWZ": -2391.0,
+      "CVX": -2315.0,
+      "DIA": -964.0,
+      "SPY": -789.0,
+      "MPC": -768.0,
+      "IWM": -511.0
+     },
+     "group": {
+      "energy_materials": -3083.0,
+      "etf:international": -2391.0,
+      "etf:broad_equity": -1285.0,
+      "etf:sector": -964.0,
+      "etf:bond": -460.0
+     },
+     "direction": {
+      "bullish": -8465.0,
+      "bearish": -116.0,
+      "neutral": 399.0
+     },
+     "when": {
+      "opened_in_slide": -8066.0,
+      "held_through": -116.0
+     },
+     "class": {
+      "ETFs": -5099.0,
+      "Stocks": -3083.0
+     }
+    }
+   },
+   {
+    "peak": "2022-04-20",
+    "trough": "2022-05-17",
+    "recovered": null,
+    "peak_equity": 24821.0,
+    "trough_equity": 16956.0,
+    "depth_pct": 31.7,
+    "loss_usd": 7865.0,
+    "slide_sessions": 19,
+    "length_sessions": 487,
+    "move": -7865.0,
+    "open_at_peak": 10,
+    "risk_at_peak_pct": 34.0,
+    "dir_at_peak": {
+     "neutral": 8,
+     "bullish": 2
+    },
+    "opened_in_slide": 7,
+    "regime_peak": {
+     "spy_trend": "mixed",
+     "vix_proxy": 0.179,
+     "spy_dd": -0.069,
+     "breadth": 0.51
+    },
+    "regime_trough": {
+     "spy_trend": "down",
+     "vix_proxy": 0.247,
+     "spy_dd": -0.145,
+     "breadth": 0.23
+    },
+    "by": {
+     "kind": {
+      "iron_condor": -6064.0,
+      "bear_call": -986.0,
+      "bull_put": -815.0
+     },
+     "underlying": {
+      "SLV": -3377.0,
+      "GLD": -2687.0,
+      "IWM": -911.0,
+      "SPY": -560.0,
+      "EWZ": -365.0,
+      "QQQ": 36.0
+     },
+     "group": {
+      "etf:commodity": -6064.0,
+      "etf:broad_equity": -1435.0,
+      "etf:international": -365.0
+     },
+     "direction": {
+      "neutral": -6064.0,
+      "bearish": -986.0,
+      "bullish": -815.0
+     },
+     "when": {
+      "held_through": -6879.0,
+      "opened_in_slide": -986.0
+     },
+     "class": {
+      "ETFs": -7865.0
+     }
+    }
+   },
+   {
+    "peak": "2021-11-19",
+    "trough": "2021-12-27",
+    "recovered": "2022-03-14",
+    "peak_equity": 24248.0,
+    "trough_equity": 17048.0,
+    "depth_pct": 29.7,
+    "loss_usd": 7200.0,
+    "slide_sessions": 24,
+    "length_sessions": 77,
+    "move": -7200.0,
+    "open_at_peak": 10,
+    "risk_at_peak_pct": 66.0,
+    "dir_at_peak": {
+     "neutral": 5,
+     "bullish": 5
+    },
+    "opened_in_slide": 8,
+    "regime_peak": {
+     "spy_trend": "up",
+     "vix_proxy": 0.134,
+     "spy_dd": -0.002,
+     "breadth": 0.6
+    },
+    "regime_trough": {
+     "spy_trend": "up",
+     "vix_proxy": 0.129,
+     "spy_dd": 0.0,
+     "breadth": 0.56
+    },
+    "by": {
+     "kind": {
+      "iron_condor": -4418.0,
+      "bull_put": -1570.0,
+      "bear_call": -1213.0
+     },
+     "underlying": {
+      "IWM": -2807.0,
+      "GDX": -2139.0,
+      "SPY": -1247.0,
+      "AAPL": -1181.0,
+      "QQQ": -488.0,
+      "GILD": -13.0
+     },
+     "group": {
+      "etf:broad_equity": -4542.0,
+      "etf:commodity": -2136.0,
+      "technology": -1021.0,
+      "health": -13.0,
+      "consumer": 140.0,
+      "financials_realestate": 182.0
+     },
+     "direction": {
+      "neutral": -4418.0,
+      "bullish": -1570.0,
+      "bearish": -1213.0
+     },
+     "when": {
+      "held_through": -4893.0,
+      "opened_in_slide": -2307.0
+     },
+     "class": {
+      "ETFs": -6488.0,
+      "Stocks": -712.0
+     }
+    }
+   }
+  ],
+  "auc": [
+   {
+    "test_year": 2021,
+    "train_n": 120.0,
+    "test_n": 136,
+    "test_loser_rate": 0.162,
+    "auc": 0.592
+   },
+   {
+    "test_year": 2022,
+    "train_n": 260.0,
+    "test_n": 87,
+    "test_loser_rate": 0.391,
+    "auc": 0.424
+   },
+   {
+    "test_year": 2023,
+    "train_n": 352.0,
+    "test_n": 127,
+    "test_loser_rate": 0.205,
+    "auc": 0.699
+   },
+   {
+    "test_year": "pooled",
+    "train_n": NaN,
+    "test_n": 350,
+    "test_loser_rate": 0.234,
+    "auc": 0.586
+   }
+  ],
+  "cost": {
+   "net": -17739.0,
+   "at_mid": -547.0,
+   "fees": 569.0,
+   "slippage": 16624.0
+  },
+  "share_stocks": -1404.0,
+  "share_etfs": -16335.0
+ },
+ "cash_debit": {
+  "reconcile": {
+   "c500": {
+    "sum_pnl": -24926.14,
+    "delta_equity": -24926.14,
+    "diff": -0.0,
+    "min_equity": 73.86,
+    "min_equity_day": "2023-12-04",
+    "open_at_end": 0
+   },
+   "c125": {
+    "sum_pnl": -24892.09,
+    "delta_equity": -24892.09,
+    "diff": -0.0,
+    "min_equity": 107.91,
+    "min_equity_day": "2023-10-02",
+    "open_at_end": 0
+   }
+  },
+  "episode_cards": [
+   {
+    "peak": "2020-09-21",
+    "trough": "2020-11-02",
+    "recovered": "2020-11-24",
+    "peak_equity": 32386.0,
+    "trough_equity": 9278.0,
+    "depth_pct": 71.4,
+    "loss_usd": 23107.0,
+    "slide_sessions": 30,
+    "length_sessions": 46,
+    "move": -23107.0,
+    "open_at_peak": 6,
+    "risk_at_peak_pct": 65.0,
+    "dir_at_peak": {
+     "bullish": 6
+    },
+    "opened_in_slide": 14,
+    "regime_peak": {
+     "spy_trend": "mixed",
+     "vix_proxy": 0.243,
+     "spy_dd": -0.086,
+     "breadth": 0.34
+    },
+    "regime_trough": {
+     "spy_trend": "mixed",
+     "vix_proxy": 0.315,
+     "spy_dd": -0.077,
+     "breadth": 0.36
+    },
+    "by": {
+     "kind": {
+      "long_call": -18468.0,
+      "long_put": -2683.0,
+      "bear_put": -1956.0
+     },
+     "underlying": {
+      "TSLA": -4000.0,
+      "QQQ": -3225.0,
+      "SPY": -3109.0,
+      "DOCU": -2843.0,
+      "AAPL": -2683.0,
+      "ZM": -2353.0
+     },
+     "group": {
+      "etf:broad_equity": -8672.0,
+      "technology": -7788.0,
+      "consumer": -4000.0,
+      "etf:leveraged": -1945.0,
+      "communication": -489.0,
+      "health": -208.0
+     },
+     "direction": {
+      "bullish": -18468.0,
+      "bearish": -4639.0
+     },
+     "when": {
+      "opened_in_slide": -20506.0,
+      "held_through": -2601.0
+     },
+     "class": {
+      "Stocks": -12491.0,
+      "ETFs": -10617.0
+     }
+    }
+   },
+   {
+    "peak": "2021-02-09",
+    "trough": "2021-03-02",
+    "recovered": null,
+    "peak_equity": 54203.0,
+    "trough_equity": 31493.0,
+    "depth_pct": 41.9,
+    "loss_usd": 22710.0,
+    "slide_sessions": 14,
+    "length_sessions": 788,
+    "move": -22710.0,
+    "open_at_peak": 10,
+    "risk_at_peak_pct": 35.0,
+    "dir_at_peak": {
+     "bullish": 10
+    },
+    "opened_in_slide": 12,
+    "regime_peak": {
+     "spy_trend": "up",
+     "vix_proxy": 0.169,
+     "spy_dd": -0.001,
+     "breadth": 0.75
+    },
+    "regime_trough": {
+     "spy_trend": "up",
+     "vix_proxy": 0.185,
+     "spy_dd": -0.016,
+     "breadth": 0.55
+    },
+    "by": {
+     "kind": {
+      "long_call": -18718.0,
+      "bull_call": -3992.0
+     },
+     "underlying": {
+      "PLTR": -6764.0,
+      "MSFT": -4295.0,
+      "PYPL": -4083.0,
+      "DIS": -2128.0,
+      "PLUG": -1870.0,
+      "QQQ": -1851.0
+     },
+     "group": {
+      "technology": -11644.0,
+      "business_services": -4083.0,
+      "etf:broad_equity": -2907.0,
+      "communication": -2128.0,
+      "industrials": -1870.0,
+      "financials_realestate": -639.0
+     },
+     "direction": {
+      "bullish": -22710.0
+     },
+     "when": {
+      "held_through": -14031.0,
+      "opened_in_slide": -8679.0
+     },
+     "class": {
+      "Stocks": -19469.0,
+      "ETFs": -3242.0
+     }
+    }
+   },
+   {
+    "peak": "2020-03-23",
+    "trough": "2020-03-26",
+    "recovered": "2020-11-27",
+    "peak_equity": 43691.0,
+    "trough_equity": 22843.0,
+    "depth_pct": 47.7,
+    "loss_usd": 20848.0,
+    "slide_sessions": 3,
+    "length_sessions": 174,
+    "move": -20848.0,
+    "open_at_peak": 10,
+    "risk_at_peak_pct": 75.0,
+    "dir_at_peak": {
+     "bearish": 10
+    },
+    "opened_in_slide": 0,
+    "regime_peak": {
+     "spy_trend": "down",
+     "vix_proxy": 0.562,
+     "spy_dd": -0.342,
+     "breadth": 0.07
+    },
+    "regime_trough": {
+     "spy_trend": "down",
+     "vix_proxy": 0.538,
+     "spy_dd": -0.229,
+     "breadth": 0.11
+    },
+    "by": {
+     "kind": {
+      "long_put": -16168.0,
+      "bear_put": -4679.0
+     },
+     "underlying": {
+      "BAC": -4913.0,
+      "SPY": -4114.0,
+      "AAPL": -3005.0,
+      "BABA": -2490.0,
+      "DIA": -2120.0,
+      "DIS": -1950.0
+     },
+     "group": {
+      "etf:broad_equity": -5804.0,
+      "financials_realestate": -4913.0,
+      "technology": -3005.0,
+      "business_services": -2490.0,
+      "etf:sector": -2120.0,
+      "communication": -1950.0
+     },
+     "direction": {
+      "bearish": -20848.0
+     },
+     "when": {
+      "held_through": -20848.0
+     },
+     "class": {
+      "Stocks": -12358.0,
+      "ETFs": -8490.0
+     }
+    }
+   },
+   {
+    "peak": "2020-09-02",
+    "trough": "2020-09-11",
+    "recovered": "2020-11-27",
+    "peak_equity": 43678.0,
+    "trough_equity": 24996.0,
+    "depth_pct": 42.8,
+    "loss_usd": 18682.0,
+    "slide_sessions": 6,
+    "length_sessions": 60,
+    "move": -18682.0,
+    "open_at_peak": 8,
+    "risk_at_peak_pct": 54.0,
+    "dir_at_peak": {
+     "bullish": 8
+    },
+    "opened_in_slide": 1,
+    "regime_peak": {
+     "spy_trend": "up",
+     "vix_proxy": 0.2,
+     "spy_dd": 0.0,
+     "breadth": 0.82
+    },
+    "regime_trough": {
+     "spy_trend": "up",
+     "vix_proxy": 0.224,
+     "spy_dd": -0.066,
+     "breadth": 0.51
+    },
+    "by": {
+     "kind": {
+      "long_call": -18549.0,
+      "bull_call": -132.0
+     },
+     "underlying": {
+      "AAPL": -5126.0,
+      "TSLA": -4586.0,
+      "ZM": -4050.0,
+      "HD": -1903.0,
+      "DIS": -1812.0,
+      "NVDA": -1071.0
+     },
+     "group": {
+      "technology": -10247.0,
+      "consumer": -6490.0,
+      "communication": -1812.0,
+      "etf:commodity": -132.0
+     },
+     "direction": {
+      "bullish": -18682.0
+     },
+     "when": {
+      "held_through": -17610.0,
+      "opened_in_slide": -1071.0
+     },
+     "class": {
+      "Stocks": -18549.0,
+      "ETFs": -132.0
+     }
+    }
+   },
+   {
+    "peak": "2021-01-14",
+    "trough": "2021-01-29",
+    "recovered": null,
+    "peak_equity": 55603.0,
+    "trough_equity": 37088.0,
+    "depth_pct": 33.3,
+    "loss_usd": 18515.0,
+    "slide_sessions": 10,
+    "length_sessions": 805,
+    "move": -18515.0,
+    "open_at_peak": 10,
+    "risk_at_peak_pct": 39.0,
+    "dir_at_peak": {
+     "bullish": 10
+    },
+    "opened_in_slide": 8,
+    "regime_peak": {
+     "spy_trend": "up",
+     "vix_proxy": 0.182,
+     "spy_dd": -0.007,
+     "breadth": 0.74
+    },
+    "regime_trough": {
+     "spy_trend": "mixed",
+     "vix_proxy": 0.264,
+     "spy_dd": -0.037,
+     "breadth": 0.47
+    },
+    "by": {
+     "kind": {
+      "long_call": -18440.0,
+      "bull_call": -75.0
+     },
+     "underlying": {
+      "IWM": -5365.0,
+      "BAC": -3460.0,
+      "QQQ": -2132.0,
+      "MS": -2033.0,
+      "PTON": -1143.0,
+      "DIS": -1016.0
+     },
+     "group": {
+      "etf:broad_equity": -7496.0,
+      "financials_realestate": -7155.0,
+      "other": -1143.0,
+      "communication": -1016.0,
+      "technology": -957.0,
+      "etf:international": -381.0
+     },
+     "direction": {
+      "bullish": -18515.0
+     },
+     "when": {
+      "held_through": -12130.0,
+      "opened_in_slide": -6385.0
+     },
+     "class": {
+      "Stocks": -10270.0,
+      "ETFs": -8245.0
+     }
+    }
+   }
+  ],
+  "auc": [
+   {
+    "test_year": 2021,
+    "train_n": 212.0,
+    "test_n": 224,
+    "test_loser_rate": 0.496,
+    "auc": 0.495
+   },
+   {
+    "test_year": 2022,
+    "train_n": 436.0,
+    "test_n": 196,
+    "test_loser_rate": 0.429,
+    "auc": 0.554
+   },
+   {
+    "test_year": "pooled",
+    "train_n": NaN,
+    "test_n": 420,
+    "test_loser_rate": 0.464,
+    "auc": 0.494
+   }
+  ],
+  "cost": {
+   "net": -24926.0,
+   "at_mid": 9956.0,
+   "fees": 775.0,
+   "slippage": 34107.0
+  },
+  "share_stocks": -32286.0,
+  "share_etfs": 7360.0
+ }
+}
