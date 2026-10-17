@@ -2616,10 +2616,13 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
         )
 
     # E3.9 (D122): an opens-only halt stops the open branch here, before any LLM spend.
+    # (A scope-all halt keeps the old path: the dispatcher skips the job, and a manual
+    # drill run still records proposals that the gate refuses.)
     from arc.gate.halt import HaltSwitch
     from arc.store.repos import HaltRepo
 
-    if HaltSwitch(HaltRepo(ctx.conn)).opens_blocked():
+    halt_state = HaltSwitch(HaltRepo(ctx.conn)).state()
+    if halt_state.opens_only and not halt_state.halted:
         return _research_halted(ctx, budget, notice, len(cands))
 
     # D51: the market reference (SPY, QQQ) always gets a fresh regime entry, so the
