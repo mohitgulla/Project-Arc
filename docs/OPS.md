@@ -1590,11 +1590,25 @@ versioned in `hermes/analyst/` and copied into its own Hermes profile
 |---|---|
 | `hermes/analyst/skills/arc-analyst/SKILL.md` | `~/.hermes/profiles/arc-analyst/skills/arc-analyst/SKILL.md` |
 | `hermes/analyst/arc_analyst.py` | `~/.hermes/profiles/arc-analyst/scripts/arc_analyst.py` (cron pre-run gate) |
-| `hermes/analyst/prompt.md` | the cron prompt |
+| `hermes/analyst/prompt.md` | the weekly cron prompt |
+| `hermes/analyst/arc_analyst_verdict.py` | `~/.hermes/profiles/arc-analyst/scripts/arc_analyst_verdict.py` (verdict cron gate = `arc_analyst.py gate --mode verdict`) |
+| `hermes/analyst/prompt_verdict.md` | the verdict cron prompt |
 
 The cron `arc-analyst-weekly-audit` runs Sunday 14:00 PT (after the weekly scorecard)
 on `anthropic/claude-fable-5.1` at `max` effort and delivers to #arc-analyst.
-`install.sh` creates it **paused**; `install.sh --dry-run` prints every step.
+`install.sh` creates it **paused**; `install.sh --dry-run` prints every step. After a
+re-install, resume it (`hermes -p arc-analyst cron resume <id>`): E9.4's start
+condition is met.
+
+E26.4 (D121): the cron `arc-analyst-verdict-check` runs daily 09:30 PT (same model and
+delivery) and is created **active**. Its gate stays silent unless a BT holdout verdict
+(research ledger) or an XP verdict file (`config/experiments/live/verdicts/XP-<n>.yaml`)
+landed that no run has read; it runs at most once per ET day and never when the weekly
+run is due within 24 h. The short run reads only those verdicts, posts ≤ 1,200 chars
+top-level in #arc-analyst (the runner's message ts is not stored, so it can't thread),
+and may add ≤ 1 XP + ≤ 1 BT proposal citing a verdict (`record RUN_DIR --mode verdict`).
+`mark` on a verdict run marks only those verdicts as read; the weekly watermark is
+untouched, and the weekly context shows the proposals with their age.
 
 The pre-run gate needs no secret (no Alpaca key, no `ARC_GATE_SECRET`, no Slack
 token; they are stripped from every command it runs). It:
