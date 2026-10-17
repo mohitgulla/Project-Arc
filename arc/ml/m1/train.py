@@ -29,8 +29,11 @@ Protocol (pre-registered in this file; changing it changes the artefact version)
   h − 1 lags) **and** its post-CQR coverage error (max |empirical − nominal| over the 7
   levels, all rows) is ≤ 3 points; else ship the baseline.
 
-Determinism: fixed seeds, ``deterministic=True``, a fixed thread count; the same inputs
-give byte-identical LightGBM text dumps (sha256 in the manifest).
+Determinism: fixed seeds, ``deterministic=True``, one thread per booster (the 7 levels
+run on a ≤ 6-process pool); the same inputs give byte-identical LightGBM text dumps
+(sha256 in the manifest). One thread per booster is also the fastest on a shared host:
+LightGBM's OpenMP threads spin badly under contention (100k × 90 bench: 1 thread
+4.7 s, 6 threads 38.6 s with the host busy).
 """
 
 from __future__ import annotations
@@ -98,10 +101,12 @@ LGB_PARAMS: dict[str, Any] = {
     "seed": 20261017,
     "deterministic": True,
     "force_row_wise": True,
-    "num_threads": 6,
+    "num_threads": 1,
     "verbose": -1,
 }
 NUM_ROUNDS = 300
+#: Process pool for the 7 quantile fits of one target (resource etiquette: ≤ 6).
+MAX_WORKERS = 6
 _ID = ("date", "ticker", "pit_member", "is_etf")
 
 
@@ -213,6 +218,14 @@ class FitSet:
     seconds: float = 0.0
 
 
+def _fit_one(args: tuple[np.ndarray, np.ndarray, list[str], dict[str, Any], int]) -> str:
+    """One quantile booster (process-pool worker): returns its text dump."""
+    x, y, names, prm, rounds = args
+    lgb = _lgb()
+    ds = lgb.Dataset(x, y, feature_name=names, free_raw_data=True)
+    return str(lgb.train(prm, ds, num_boost_round=rounds).model_to_string())
+
+
 def fit_target(
     tr: pd.DataFrame,
     kind: str,
@@ -223,15 +236,25 @@ def fit_target(
     params: dict[str, Any] | None = None,
     rounds: int = NUM_ROUNDS,
 ) -> dict[float, Any]:
+    """One booster per level. Each is single-threaded and deterministic; the levels run
+    on up to :data:`MAX_WORKERS` processes (a fixed thread count per booster keeps the
+    dumps byte-identical regardless of the pool size)."""
     lgb = _lgb()
     x = feature_matrix(tr, features)
     y = std_target(tr, kind, h)
-    out: dict[float, Any] = {}
-    for p in levels:
-        prm = {**(params or LGB_PARAMS), "alpha": float(p)}
-        ds = lgb.Dataset(x, y, feature_name=list(features), free_raw_data=True)
-        out[float(p)] = lgb.train(prm, ds, num_boost_round=rounds)
-    return out
+    base = dict(params or LGB_PARAMS)
+    jobs = [(x, y, list(features), {**base, "alpha": float(p)}, rounds) for p in levels]
+    workers = min(MAX_WORKERS, len(jobs))
+    if workers <= 1 or len(y) < 50_000:  # noqa: PLR2004 - small fits: no pool overhead
+        texts = [_fit_one(j) for j in jobs]
+    else:
+        import multiprocessing as mp
+        from concurrent.futures import ProcessPoolExecutor
+
+        ctx = mp.get_context("spawn")
+        with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as ex:
+            texts = list(ex.map(_fit_one, jobs))
+    return {float(p): lgb.Booster(model_str=t) for p, t in zip(levels, texts, strict=True)}
 
 
 def fit_set(

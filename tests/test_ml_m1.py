@@ -371,3 +371,61 @@ def test_targets_short_series() -> None:
     t = ticker_targets(_px(n=8), horizons=(5, 21))
     assert t["log_ret_h21"].isna().all() and t["log_ret_h5"].notna().sum() == 3
     assert ticker_targets(_px(n=1), horizons=(5,))["rv_h5"].isna().all()
+
+
+def _synthetic_panel(n_days: int = 160, n_tick: int = 12) -> pd.DataFrame:
+    rng = np.random.default_rng(5)
+    days = [d for d in pd.bdate_range("2020-07-01", periods=n_days).date]
+    recs = []
+    for k in range(n_tick):
+        for d in days:
+            recs.append({"date": d, "ticker": f"T{k}", "is_etf": k % 4 == 0, "pit_member": True})
+    df = pd.DataFrame(recs)
+    n = len(df)
+    df["iv30"] = rng.uniform(0.15, 0.6, n)
+    df["rv20"] = df["iv30"] * rng.uniform(0.7, 1.1, n)
+    df["f_mom"] = rng.normal(size=n)
+    df["har_rv_h5"] = df["rv20"]
+    df["log_ret_h5"] = 0.002 * df["f_mom"] + rng.normal(0, 1, n) * df["rv20"] * math.sqrt(5 / 252)
+    df["rv_h5"] = df["rv20"] * np.exp(rng.normal(0, 0.2, n))
+    return df
+
+
+def test_model_artefacts_roundtrip_and_byte_identical(tmp_path: Path) -> None:
+    pytest.importorskip("lightgbm")
+    from arc.ml.m1 import train
+
+    df = _synthetic_panel()
+    feats = ["f_mom", "iv30", "rv20", "har_rv_h5"]
+    params = {**train.LGB_PARAMS, "min_data_in_leaf": 50}
+
+    def build(out: Path) -> tuple[train.M1Manifest, train.FitSet]:
+        fs = train.fit_set(df, lambda _h: np.ones(len(df), bool), feats, horizons=(5,),
+                           params=params, rounds=20)  # fmt: skip
+        zero = {qtag(p): 0.01 for p in LV}
+        targets = [
+            TargetModel(kind="log_ret", h=5, source="lgbm", offsets=zero),
+            TargetModel(kind="rv", h=5, source="lgbm", offsets=zero, har_iv=fs.har_iv[5]),
+        ]
+        man = train.write_model(
+            out, fs, targets, features=feats, digest=train.data_digest(df, feats),
+            params=params, rounds=20, code_sha="x", feature_manifest_sha="y",
+            train_window={}, calibration_window={},
+        )  # fmt: skip
+        return man, fs
+
+    m1, _ = build(tmp_path / "a")
+    m2, _ = build(tmp_path / "b")
+    a, b = tmp_path / "a" / m1.version, tmp_path / "b" / m2.version
+    assert m1.version == m2.version
+    for f in sorted(p.relative_to(a) for p in a.rglob("*") if p.is_file()):
+        assert (a / f).read_bytes() == (b / f).read_bytes(), f
+    model = train.load_model(a, check_schema=False)
+    q = __import__("arc.ml.m1.predict", fromlist=["x"]).predict_quantiles(model, df.head(50))
+    assert (np.diff(q[("log_ret", 5)], axis=1) >= 0).all()
+    assert (q[("rv", 5)] > 0).all()
+    # a tampered dump is refused
+    dump = next((a / "lgbm").glob("*.txt"))
+    dump.write_text(dump.read_text() + " ")
+    with pytest.raises(ValueError, match="sha256"):
+        train.load_model(a, check_schema=False)
