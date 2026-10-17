@@ -367,6 +367,9 @@ def test_never_touches_live_db(
     assert argvs, "the gate ran no arc views"
     for argv in argvs:
         assert str(db) not in " ".join(argv)
+        if " backtest study queue " in f" {' '.join(argv)} ":  # E26.2: files only, no store
+            assert "--db" not in argv
+            continue
         assert argv[argv.index("--db") + 1] == copy
     # no secret reaches the arc views
     monkeypatch.setenv("ALPACA_API_KEY", "k")
@@ -402,7 +405,8 @@ def _write_valid_findings(run_dir: Path, findings: list[dict[str, Any]] | None =
     doc = {"verdict": "findings" if findings else "quiet", "themes": _themes(),
            "findings": findings or [], "resolved": [], "experiments": [],
            "quick_changes_none": "no bucket has n >= 20",
-           "next_experiment": "none: no bucket has n >= 20"}  # fmt: skip
+           "next_experiment": "none: no bucket has n >= 20",
+           "next_study": "none: no study_spec draft"}  # fmt: skip
     (run_dir / "findings.json").write_text(json.dumps(doc))
 
 
@@ -578,7 +582,9 @@ def _errs(findings: list[dict[str, Any]], **kw: Any) -> list[str]:
            "experiments": kw.pop("lines", []),
            "quick_changes_none": kw.pop("qc_none", "no bucket has n >= 20"),
            "next_experiment": kw.pop("next_experiment", "none: n < 20"),
-           "next_slot": kw.pop("next_slot", "free now"), **kw.pop("extra", {})}  # fmt: skip
+           "next_slot": kw.pop("next_slot", "free now"),
+           "next_study": kw.pop("next_study", "none: no study_spec draft"),
+           **kw.pop("extra", {})}  # fmt: skip
     return aa.validate_findings(
         doc, kw.pop("ledger", {"items": {}}), kw.pop("prev", None), kw.pop("registry", []),
         backlog=kw.pop("backlog", None), seed_ids=kw.pop("seed_ids", frozenset()),
@@ -1000,7 +1006,8 @@ def test_context_has_backlog_and_record_reserves_xp_ids(
     # the registry's XP-1..3 and the committed xp1 spec)
     doc = {"verdict": "findings", "themes": _themes(), "findings": [_prop()], "resolved": [],
            "experiments": LINES, "quick_changes_none": "n < 20 in every bucket",
-           "next_experiment": "XP-4", "next_slot": "after XP-2, then XP-3 (queued)"}  # fmt: skip
+           "next_experiment": "XP-4", "next_slot": "after XP-2, then XP-3 (queued)",
+           "next_study": "none: no study_spec draft"}  # fmt: skip
     (run_dir / "findings.json").write_text(json.dumps({**doc, "experiments": LINES[:1]}))
     assert aa.main(["record", str(run_dir)], p, NOW) == 2
     assert "XP-2 (running) has no line" in capsys.readouterr().out
@@ -1124,7 +1131,8 @@ def test_owner_approve_drop_reprioritise_backlog(
 def test_owner_commands_route_on_the_id_prefix(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """D121: ``XP-`` acts, a retired ``P-<n>`` replies with the XP id, ``BT-`` is E26.2."""
+    """D121: ``XP-`` acts, a retired ``P-<n>`` replies with the XP id, ``BT-`` goes to the
+    E26.2 study commands."""
     p = _paths(tmp_path, tmp_path / "unused.db")
     b = aa.empty_backlog()
     aa.apply_backlog(b, {"findings": [_prop()]}, "r", "t", used={1})
@@ -1138,7 +1146,9 @@ def test_owner_commands_route_on_the_id_prefix(
     assert aa.main(["approve", "P-7", *approval], p, NOW) == 2
     assert "P-ids are retired (D121): use XP-<n>; no proposal was P-7" in capsys.readouterr().out
     assert aa.main(["approve", "BT-3", *approval], p, NOW) == 2
-    assert "backtest approvals are not wired yet (E26.2)" in capsys.readouterr().out
+    assert "no study proposal BT-3 in the backlog" in capsys.readouterr().out
+    assert aa.main(["stop", "XP-2", "x"], p, NOW) == 2
+    assert "`stop` is for backtest studies (BT-<n>)" in capsys.readouterr().out
     assert aa.main(["drop", "A-3", "x"], p, NOW) == 2
     assert "is not a proposal id: use XP-<n>" in capsys.readouterr().out
     assert [aa.owner_id_kind(x) for x in ("XP-2", "BT-1", "P-1", "S-1", "XP-0")] == [
@@ -1594,8 +1604,14 @@ def _theme_finding(**over: Any) -> dict[str, Any]:
         "key": "theme:tp-level", "title": "take-profit level untested", "severity": "info",
         "category": "theme", "bucket": "kind=iron_condor", "n": 6, "theme": "exit-policy",
         "evidence": "n=6 condors", "recommendation": "test it in a study",
-        "action": "no-action", "study_spec": _draft(), **over,
+        "action": "no-action", "study_spec": _draft(), "study_value": _sv(), **over,
     }  # fmt: skip
+
+
+def _sv(**over: Any) -> dict[str, Any]:
+    """E26.2 (D121): a study_spec's ranking inputs (cost = compute nights)."""
+    return {"pct_per_day": 0.04, "source": "BT-3 dev diff", "affected_share": 0.5,
+            "p_success": 0.3, "nights_needed": 2, **over}  # fmt: skip
 
 
 @pytest.mark.parametrize(
@@ -1650,7 +1666,8 @@ def test_study_spec_only_on_untested_hypotheses() -> None:
     tested = {**_prop(), "study_spec": _draft()}
     assert any("with backtest evidence: it is tested" in e for e in _errs([tested]))
     live = {**_prop(evidence_kind="live", evidence_ref=None, n=25,
-                    spec=_spec(backtest_ref="none")), "study_spec": _draft()}  # fmt: skip
+                    spec=_spec(backtest_ref="none")), "study_spec": _draft(),
+            "study_value": _sv()}  # fmt: skip
     assert _errs([live]) == []
 
 
@@ -1794,7 +1811,7 @@ def test_skill_documents_the_backtest_study_evidence() -> None:
     for rule in (
         "**Cite C500 holdout verdicts; a C125-only or dev-only result is a hypothesis, not\n"
         "   evidence.**",
-        "BACKTEST STUDIES (D84, E7.12 study framework; you never run one)",
+        "BACKTEST STUDIES (D84, E7.12 study framework, E26.2/D121; you never run one)",
         "`study_spec`",
         "RUN_DIR/study-specs/BT-<n>.yaml",
         "## Backtest <-> live drift",
@@ -1912,3 +1929,286 @@ def test_gate_parses_under_python39() -> None:
             raise AssertionError(f"datetime.UTC needs 3.11 (line {node.lineno})")
         if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "zip":
             assert not node.keywords, f"zip(strict=) needs 3.10 (line {node.lineno})"
+
+
+# ---------------------------------------------------------------------------
+# E26.2 (D121): BT study proposals: backlog, approve / drop / stop, weekly cap
+# ---------------------------------------------------------------------------
+
+BT_APPROVAL = ["--approval", "slack:1791669727.601139"]
+
+
+def _record_study(p: Any, tmp_path: Path, *findings: dict[str, Any], run: str = "r1",
+                  next_study: str = "none: owner picks") -> dict[str, Any]:  # fmt: skip
+    run_dir = p.runs / run
+    run_dir.mkdir(parents=True)
+    aa.save_json(run_dir / "metrics.json", {"now": aa.iso(NOW), "closed_max_rowid": 7,
+        "backtest": {"studies": BT3, "next_study_id": "BT-4"}})  # fmt: skip
+    _write_valid_findings(run_dir, list(findings))
+    doc = json.loads((run_dir / "findings.json").read_text())
+    doc["next_study"] = next_study
+    (run_dir / "findings.json").write_text(json.dumps(doc))
+    return {"run_dir": run_dir, "code": aa.main(["record", str(run_dir)], p, NOW)}
+
+
+def _bt_paths(tmp_path: Path) -> Any:
+    """Analyst paths whose backtest root holds a real (copied) config/ for adopt's
+    overlay check, plus an empty ledger."""
+    p = _paths(tmp_path, tmp_path / "unused.db")
+    (p.bt_root / "data" / "backtest").mkdir(parents=True)
+    return p
+
+
+def test_record_puts_study_specs_in_the_backlog_as_kind_bt(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    p = _bt_paths(tmp_path)
+    two = _theme_finding(key="data-gap:x", category="data-gap",
+                         study_value=_sv(p_success=0.6))  # fmt: skip
+    r = _record_study(p, tmp_path, _theme_finding(), two, next_study="BT-5")
+    assert r["code"] == 0, capsys.readouterr().out
+    b = aa.load_backlog(p.backlog)
+    e4, e5 = aa.bt_by_id(b, "BT-4"), aa.bt_by_id(b, "BT-5")
+    assert e4["kind"] == "bt" and e4["key"] == "bt:theme:tp-level" and e4["status"] == "proposed"
+    assert e4["draft_path"].endswith("study-specs/BT-4.yaml")
+    assert e4["value_score"] == pytest.approx(0.04 * 0.5 * 0.3 / 2)
+    assert b["next_study"]["value"] == "BT-5"
+    # ranking: BT-5 (p 0.6) above BT-4; next_experiment stays XP-only
+    assert [e["id"] for e in aa.ranked_backlog(b, kind="bt")] == ["BT-5", "BT-4"]
+    assert aa.ranked_backlog(b) == []
+    assert "/ 2 compute nights" in aa.value_formula(e5)
+    # a re-listed draft keeps its BT id (no BT-6), an edit updates it
+    capsys.readouterr()
+    r2 = _record_study(p, tmp_path, _theme_finding(study_value=_sv(p_success=0.9)), two,
+                       run="r2", next_study="BT-4")  # fmt: skip
+    assert r2["code"] == 0, capsys.readouterr().out
+    b = aa.load_backlog(p.backlog)
+    assert sorted(e["id"] for e in b["items"].values()) == ["BT-4", "BT-5"]
+    assert aa.bt_by_id(b, "BT-4")["p_success"] == 0.9
+
+
+def test_study_value_and_next_study_rules() -> None:
+    assert any("study_value is required" in e for e in _errs([_theme_finding(study_value=None)]))
+    bad = _theme_finding(study_value=_sv(p_success=2, nights_needed=0, extra=1))
+    errs = _errs([bad])
+    assert any("p_success must be in (0, 1]" in e for e in errs)
+    assert any("nights_needed must be > 0" in e for e in errs)
+    assert any("unknown keys ['extra']" in e for e in errs)
+    assert any(
+        "only allowed with a study_spec" in e for e in _errs([{**_flaw(), "study_value": _sv()}])
+    )
+    assert any("next_study is required" in e for e in _errs([], next_study=""))
+    assert any("needs a reason" in e for e in _errs([], next_study="none"))
+    # the draft reserves BT-4 (BT3 snapshot holds BT-3)
+    assert _errs([_theme_finding()], next_study="BT-4") == []
+    assert any(
+        "must be a proposed BT-<n>" in e for e in _errs([_theme_finding()], next_study="BT-9")
+    )
+    two = [_theme_finding(), _theme_finding(key="data-gap:x", category="data-gap",
+                                            study_value=_sv(p_success=0.9))]  # fmt: skip
+    assert any("not the top-ranked study (BT-5)" in e for e in _errs(two, next_study="BT-4"))
+    assert _errs(two, next_study="BT-4", extra={"next_study_reason": "cheaper"}) == []
+
+
+def test_ranking_mixes_xp_and_bt_by_value() -> None:
+    b = aa.empty_backlog()
+    aa.apply_backlog(b, {"findings": [_prop(p_success=0.3)]}, "r", "t")  # 0.05*0.6*0.3/40
+    aa.apply_study_backlog(b, {"findings": [_theme_finding(study_value=_sv())]}, "r", "t", 4)
+    xp, bt = aa.backlog_by_id(b, "XP-1"), aa.bt_by_id(b, "BT-4")
+    assert bt["value_score"] > xp["value_score"]  # 2 nights beat 40 sessions here
+    assert [e["id"] for e in aa.ranked_backlog(b, kind=None)] == ["BT-4", "XP-1"]
+    assert [e["id"] for e in aa.ranked_backlog(b)] == ["XP-1"]  # next_experiment: XP-only
+    assert aa.backlog_by_id(b, "BT-4") is None  # XP lookups never see a study
+    lines = aa.backlog_lines(b, [], 10)
+    assert any(ln.startswith("- one ranking, XP + BT (D121): #1 BT-4") for ln in lines)
+    assert any(ln.startswith("- BT #1 BT-4 [proposed]") for ln in lines)
+    # a BT id is never reused: dropped numbers stay taken
+    bt["status"] = "dropped"
+    assert aa.reserve_study_id(b, 4) == "BT-5"
+
+
+def _proposed_bt(p: Any, tmp_path: Path, sid: str = "BT-4", key: str = "theme:tp-level") -> dict:
+    """A recorded draft in the backlog (what `record` leaves), written to disk."""
+    b = aa.load_backlog(p.backlog)
+    f = _theme_finding(key=key)
+    ((_, entry),) = aa.apply_study_backlog(
+        b, {"findings": [f]}, "r", aa.iso(NOW), aa._study_num(sid)
+    )
+    run_dir = p.runs / "r"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    entry["draft_path"] = str(
+        aa.write_study_spec(run_dir, entry["id"], f["study_spec"], f, "A-1", NOW)
+    )
+    aa.save_json(p.backlog, b)
+    return entry
+
+
+def _fake_adopt(calls: list[tuple], code: int = 0) -> Any:
+    def fake(p: Any, sid: str, path: Path, approval: str, now: Any, expect: str = "") -> Any:
+        calls.append((sid, approval, now, expect))
+        if code:
+            return code, "gh pr create failed: network"
+        return 0, {"id": sid, "status": "queued", "spec_hash": "e" * 64,
+                   "pr_url": f"https://github.com/x/y/pull/{len(calls)}", "pr_status": "opened",
+                   "queue_position": 1, "eta_nights": 2,
+                   "entry": {"ladder_state": "c125_dev"}}  # fmt: skip
+
+    return fake
+
+
+def test_approve_bt_routes_by_prefix_and_queues(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    p = _bt_paths(tmp_path)
+    _proposed_bt(p, tmp_path)
+    calls: list[tuple] = []
+    monkeypatch.setattr(aa, "adopt_study", _fake_adopt(calls))
+    monkeypatch.setattr(aa, "adopt_proposal", lambda *a: pytest.fail("XP adopt for a BT id"))
+    assert aa.main(["approve", "BT-4"], p, NOW) == 2
+    assert "approve needs --approval slack:<ts>" in capsys.readouterr().out
+    assert aa.main(["approve", "BT-4", "go", *BT_APPROVAL], p, NOW) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("BT-4 [queued]")
+    assert "Spec PR: https://github.com/x/y/pull/1" in out and "ETA 2 night(s)" in out
+    e = aa.bt_by_id(aa.load_backlog(p.backlog), "BT-4")
+    assert (e["status"], e["approval"], e["spec_hash"]) == ("queued", BT_APPROVAL[1], "e" * 64)
+    assert [h["event"] for h in e["history"]] == ["proposed", "approved", "adopted"]
+    assert aa.main(["approve", "BT-4", *BT_APPROVAL], p, NOW) == 2
+    assert "already committed and queued" in capsys.readouterr().out
+
+
+def test_approve_bt_retries_a_failed_adopt_without_a_second_cap_slot(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    p = _bt_paths(tmp_path)
+    _proposed_bt(p, tmp_path)
+    calls: list[tuple] = []
+    monkeypatch.setattr(aa, "adopt_study", _fake_adopt(calls, code=3))
+    assert aa.main(["approve", "BT-4", *BT_APPROVAL], p, NOW) == 1
+    assert "Re-send `approve BT-4` to retry" in capsys.readouterr().out
+    e = aa.bt_by_id(aa.load_backlog(p.backlog), "BT-4")
+    assert e["status"] == "approved" and e["approved_at"] == aa.iso(NOW)
+    monkeypatch.setattr(aa, "adopt_study", _fake_adopt(calls))
+    later = NOW + _dt.timedelta(days=1)  # Monday: a new ISO week, the approval keeps its own
+    assert aa.main(["approve", "BT-4", *BT_APPROVAL], p, later) == 0
+    e = aa.bt_by_id(aa.load_backlog(p.backlog), "BT-4")
+    assert e["status"] == "queued" and e["approved_at"] == aa.iso(NOW)
+
+
+def test_weekly_cap_two_pass_third_refused_resets_monday_et(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    p = _bt_paths(tmp_path)
+    for i, key in enumerate(("theme:a", "theme:b", "theme:c", "theme:d"), 4):
+        _proposed_bt(p, tmp_path, f"BT-{i}", key)
+    monkeypatch.setattr(aa, "adopt_study", _fake_adopt([]))
+    mon = _dt.datetime(2026, 10, 12, 9, tzinfo=ET)  # Monday (ISO week 42)
+    assert aa.main(["approve", "BT-4", *BT_APPROVAL], p, mon) == 0
+    assert aa.main(["approve", "BT-5", *BT_APPROVAL], p, mon + _dt.timedelta(days=2)) == 0
+    # a stopped study still counts in its week (the cap counts approvals, not runs)
+    b = aa.load_backlog(p.backlog)
+    aa.bt_by_id(b, "BT-4")["status"] = "stopped"
+    aa.save_json(p.backlog, b)
+    capsys.readouterr()
+    sun_late = _dt.datetime(2026, 10, 18, 23, 59, tzinfo=ET)  # still week 42 in ET
+    assert aa.main(["approve", "BT-6", *BT_APPROVAL], p, sun_late) == 2
+    out = capsys.readouterr().out
+    assert "BT-6 refused: the weekly cap is 2 BT approvals per ISO week (D121)" in out
+    assert "week 2026-W42 already has BT-4 (2026-10-12, stopped), BT-5 (2026-10-14, queued)" in out
+    assert "It resets Mon 2026-10-19 00:00 ET" in out
+    assert aa.bt_by_id(aa.load_backlog(p.backlog), "BT-6")["status"] == "proposed"
+    # Monday 00:00 ET is already UTC Monday 04:00; Sunday 23:59 ET is UTC Monday 03:59
+    assert aa.iso_week(sun_late) == (2026, 42)
+    assert aa.main(["approve", "BT-6", *BT_APPROVAL], p, _dt.datetime(2026, 10, 19, tzinfo=ET)) == 0
+
+
+def test_drop_vs_stop_for_bt(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    p = _bt_paths(tmp_path)
+    _proposed_bt(p, tmp_path, "BT-4", "theme:a")
+    _proposed_bt(p, tmp_path, "BT-5", "theme:b")
+    stops: list[tuple] = []
+
+    def fake_stop(p: Any, sid: str, why: str) -> Any:
+        stops.append((sid, why))
+        return 0, {"id": sid, "status": "stopped", "stop_reason": f"owner: {why}"}
+
+    monkeypatch.setattr(aa, "stop_study", fake_stop)
+    monkeypatch.setattr(aa, "adopt_study", _fake_adopt([]))
+    # a draft: stop refused (not committed), drop works
+    assert aa.main(["stop", "BT-4", "x"], p, NOW) == 2
+    assert "not committed): use `drop BT-4 <why>`" in capsys.readouterr().out
+    assert aa.main(["drop", "BT-4", "covered by BT-3"], p, NOW) == 0
+    assert "BT-4 -> dropped (covered by BT-3)" in capsys.readouterr().out
+    # queued: drop refused, stop marks it stopped through the queue
+    assert aa.main(["approve", "BT-5", *BT_APPROVAL], p, NOW) == 0
+    capsys.readouterr()
+    assert aa.main(["drop", "BT-5", "x"], p, NOW) == 2
+    assert "committed and queued): use `stop BT-5 <why>`" in capsys.readouterr().out
+    assert aa.main(["stop", "BT-5", "  "], p, NOW) == 2
+    assert aa.main(["stop", "BT-5", "superseded"], p, NOW) == 0
+    assert stops == [("BT-5", "superseded")]
+    e = aa.bt_by_id(aa.load_backlog(p.backlog), "BT-5")
+    assert (e["status"], e["stop_reason"]) == ("stopped", "owner: superseded")
+    # a dropped key's study_spec is refused (frozen) next run
+    b = aa.load_backlog(p.backlog)
+    assert any(
+        "was dropped by the owner" in x for x in _errs([_theme_finding(key="theme:a")], backlog=b)
+    )
+    assert any("is stopped (owner-approved, the spec is frozen)" in x
+               for x in _errs([_theme_finding(key="theme:b")], backlog=b))  # fmt: skip
+
+
+def test_sync_bt_queue_follows_the_runner() -> None:
+    b = aa.empty_backlog()
+    aa.apply_study_backlog(b, {"findings": [_theme_finding()]}, "r", "t", 4)
+    e = aa.bt_by_id(b, "BT-4")
+    e.update(status="queued", spec_hash="e" * 64)
+    q = {"entries": [{"id": "BT-4", "spec_hash": "e" * 64, "status": "running",
+                      "ladder_state": "c500_dev"}]}  # fmt: skip
+    assert aa.sync_bt_queue(b, q, "t2") == ["BT-4: queued -> running"]
+    assert e["ladder_state"] == "c500_dev"
+    assert aa.sync_bt_queue(b, q, "t3") == []  # idempotent
+    other = {"entries": [{**q["entries"][0], "spec_hash": "f" * 64, "status": "failed"}]}
+    assert aa.sync_bt_queue(b, other, "t4") == [] and e["status"] == "running"
+
+
+def test_backtest_queue_context_block(tmp_path: Path) -> None:
+    from arc.backtest.queue import QueueEntry, StudyQueue, save_queue
+
+    p = _bt_paths(tmp_path)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    view, err = aa.bt_queue_view(p, run_dir)
+    assert err == "" and aa.bt_queue_lines(view)[0] == "- empty (no approved BT study yet)"
+    save_queue(p.bt_root / aa.BT_QUEUE, StudyQueue(entries=[
+        QueueEntry(id="BT-4", spec_hash="e" * 64, approved_at=NOW, approval=BT_APPROVAL[1],
+                   pr_url="https://github.com/x/y/pull/1"),
+        QueueEntry(id="BT-2", spec_hash="d" * 64, approved_at=NOW, approval=BT_APPROVAL[1],
+                   status="stopped", ladder_state=None, stop_reason="owner: dev fail"),
+    ]))  # fmt: skip
+    view, _ = aa.bt_queue_view(p, run_dir)
+    lines = aa.bt_queue_lines(view)
+    assert lines[0] == (
+        "- BT-4 [queued] next rung c125_dev | nights so far 0 | ETA ? | queue #1 "
+        "| PR https://github.com/x/y/pull/1"
+    )
+    assert lines[1] == "- BT-2 [stopped] next rung - | nights so far 0 | done | owner: dev fail"
+    assert lines[2].startswith(
+        "- compute per rung (median of recent ledger runs x 1.2): c125_dev ?"
+    )
+    assert aa.bt_queue_lines(None, "boom") == ["- unavailable: boom"]
+
+
+def test_skill_documents_bt_approvals() -> None:
+    text = _skill()
+    for rule in (
+        "`approve BT-<n>` · `drop BT-<n> <why>` · `stop BT-<n> <why>`",
+        "at most **2 BT approvals per ISO week**",
+        "`study_value`",
+        "`next_study`",
+        "## Backtest queue",
+        "nights_needed",
+    ):
+        assert rule in text, rule

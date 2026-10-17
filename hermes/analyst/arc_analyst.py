@@ -49,7 +49,12 @@ Owner subcommands (run by an interactive Hermes session on the owner's thread re
   drop XP-ID WHY              drop a proposal (its number is never reused)
   reprioritise XP-ID WHY [--score X]  pin to the top of the ranking (or override its score)
                               (P-<n> ids are retired, D121: these reply with the XP id)
-  backlog                     print the ranked backlog
+  approve BT-ID [NOTE] --approval slack:<ts>
+                              E26.2 (D121): weekly cap 2 per ISO week (ET), then
+                              `arc backtest study adopt`: spec PR (auto-merge) + queued
+  drop BT-ID WHY              drop a study draft that was never committed
+  stop BT-ID WHY              stop a queued/running study (`arc backtest study stop`)
+  backlog                     print the ranked backlog (XP and BT proposals)
   reset                       forget the watermark; next run reviews unconditionally
 
 Environment (all optional): ARC_REPO (default ~/GitHub/Project-Arc),
@@ -179,6 +184,18 @@ BACKLOG_OPEN = ("proposed", "approved", "registered", "running")
 BACKLOG_RANKED = ("proposed", "approved")  # not in the DB yet: what next_experiment picks from
 BACKLOG_CAP = 12  # open entries; the Analyst drops the weakest with a reason
 MAX_NEW_PROPOSALS = 2  # per run
+# ---- E26.2 (D121): BT study proposals in the same backlog (`kind: bt`) ----
+# A `study_spec` draft becomes a `kind: bt` entry keyed `bt:<finding key>` with its BT-<n>
+# (kept across runs while the draft is re-listed). Value = pct_per_day x affected_share x
+# p_success / nights_needed (cost = estimated compute nights instead of sessions). Owner:
+# `approve BT-<n>` -> `arc backtest study adopt` (spec PR + data/backtest/queue.json),
+# `drop BT-<n>` (draft not committed), `stop BT-<n>` (queued/running).
+BT_KEY_PREFIX = "bt:"
+BT_STATUSES = ("proposed", "approved", "queued", "running", "concluded", "stopped", "failed")
+BT_QUEUED = ("queued", "running", "concluded", "stopped", "failed")  # in queue.json
+BT_WEEKLY_CAP = 2  # D121: owner approvals per ISO week (America/New_York)
+BT_QUEUE = Path("data") / "backtest" / "queue.json"
+STUDY_VALUE_KEYS = ("pct_per_day", "source", "affected_share", "p_success", "nights_needed")
 K_TREATMENTS = 3  # D108 (revises D86's 4): control + exactly 3 treatments
 TREATMENT_NAMES = tuple(f"t{i}" for i in range(1, K_TREATMENTS + 1))
 #: D108: an XP runs control as its own arm on the experiment account: C + K runner arms.
@@ -1039,7 +1056,11 @@ def value_formula(entry: dict) -> str:
     line = (
         f"value {_num(entry.get('value_score'), '.6f')} = {_num(eff, '+.3f')}%/day x share "
         f"{_num(entry.get('affected_share'), '.2f')} x p {_num(entry.get('p_success'), '.2f')} "
-        f"/ {entry.get('sessions_needed')} sessions"
+        + (
+            f"/ {entry.get('nights_needed')} compute nights"
+            if is_bt(entry)
+            else f"/ {entry.get('sessions_needed')} sessions"
+        )
     )
     o = entry.get("score_override") or {}
     if _is_num(o.get("value")):
@@ -1520,7 +1541,15 @@ def _hist(entry: dict, when: str, event: str, **extra) -> None:
 
 
 def backlog_by_id(backlog: dict, pid: str) -> dict | None:
-    return next((e for e in backlog["items"].values() if e.get("id") == pid), None)
+    """The XP entry holding *pid* (``kind: bt`` studies: :func:`bt_by_id`)."""
+    return next(
+        (e for e in backlog["items"].values() if e.get("id") == pid and not is_bt(e)), None
+    )
+
+
+def bt_by_id(backlog: dict, sid: str) -> dict | None:
+    """The ``kind: bt`` entry holding *sid* (E26.2)."""
+    return next((e for e in backlog["items"].values() if is_bt(e) and e.get("id") == sid), None)
 
 
 def backlog_by_ref(backlog: dict, ref: str) -> dict | None:
@@ -1539,7 +1568,7 @@ def rereserve_collisions(backlog: dict, used, when: str) -> list[str]:
     out = []
     taken = set(used)
     for e in sorted(backlog["items"].values(), key=lambda e: _id_num(e["id"])):
-        if e.get("status") not in BACKLOG_RANKED or e.get("experiment_id") == e["id"]:
+        if e.get("status") not in BACKLOG_RANKED or e.get("experiment_id") == e["id"] or is_bt(e):
             continue
         if _id_num(e["id"]) not in taken:
             continue
@@ -1564,13 +1593,19 @@ def legacy_redirect(backlog: dict, pid: str) -> str | None:
     return f"P-ids are retired (D121): use {entry['id']} ({pid} is now {entry['id']})"
 
 
-def ranked_backlog(backlog: dict, statuses: tuple = BACKLOG_RANKED) -> list[dict]:
+def ranked_backlog(
+    backlog: dict, statuses: tuple = BACKLOG_RANKED, kind: str | None = "xp"
+) -> list[dict]:
     """Open proposals in order: owner pins first (newest pin first), then effective score.
-    An entry flagged ``needs_rewrite`` (D108: a K=4 spec) is not ranked until rewritten."""
+    An entry flagged ``needs_rewrite`` (D108: a K=4 spec) is not ranked until rewritten.
+    *kind*: ``xp`` (default: what next_experiment / slots read), ``bt`` (E26.2 studies,
+    what next_study reads) or None (the one mixed ranking, D121)."""
     items = [
         e
         for e in backlog["items"].values()
-        if e.get("status") in statuses and not e.get("needs_rewrite")
+        if e.get("status") in statuses
+        and not e.get("needs_rewrite")
+        and (kind is None or ("bt" if is_bt(e) else "xp") == kind)
     ]
     return sorted(
         items,
@@ -1601,7 +1636,7 @@ def flag_needs_rewrite(backlog: dict, when: str) -> list[str]:
     same key with three treatments (which clears the flag). Returns change lines."""
     out = []
     for e in sorted(backlog["items"].values(), key=lambda e: _id_num(e["id"])):
-        if e.get("status") not in BACKLOG_RANKED or e.get("needs_rewrite"):
+        if e.get("status") not in BACKLOG_RANKED or e.get("needs_rewrite") or is_bt(e):
             continue
         got = _spec_treatments(e.get("spec"))
         if got == sorted(TREATMENT_NAMES):
@@ -1665,9 +1700,13 @@ def backlog_lines(backlog: dict, overview: list[dict], max_arms: int) -> list[st
         for e in backlog["items"].values()
         if e.get("status") in BACKLOG_RANKED and e.get("needs_rewrite")
     ]
+    out = study_backlog_lines(backlog)
     if not ranked and not live and not rewrite:
-        return ["- empty (no XP proposal yet: propose from the seed leads or live buckets n >= 20)"]
-    out = []
+        return [
+            "- empty (no XP proposal yet: propose from the seed leads or live buckets n >= 20)",
+            *out,
+        ]
+    out = [*mixed_rank_lines(backlog), *out]
     for rank, e in enumerate(ranked, 1):
         spec = e.get("spec") or {}
         why = slot_check(spec.get("area", "other"), overview, max_arms)
@@ -1682,12 +1721,50 @@ def backlog_lines(backlog: dict, overview: list[dict], max_arms: int) -> list[st
             ov = (((spec.get("arms") or {}).get("treatments") or {}).get(name) or {}).get("overlay")
             out.append(f"  {name}: {json.dumps(ov, sort_keys=True)}")
     for e in live:
+        if is_bt(e):
+            continue
         out.append(f"- {e['id']} [{e['status']}] -> {e.get('experiment_id')} (in the registry)")
     for e in sorted(rewrite, key=lambda e: _id_num(e["id"])):
         spec = e.get("spec") or {}
         out.append(
             f"- {e['id']} [{e['status']}, NEEDS REWRITE, not ranked] {spec.get('area')}: "
             f"{spec.get('title')} (key {e['key']}): {e['needs_rewrite'].get('reason')}"
+        )
+    return out
+
+
+def mixed_rank_lines(backlog: dict) -> list[str]:
+    """D121: XP and BT proposals in ONE ranking by value (cost = sessions for XP, compute
+    nights for BT). next_experiment reads the XP order, next_study the BT order."""
+    mixed = ranked_backlog(backlog, kind=None)
+    if not any(is_bt(e) for e in mixed):
+        return []
+    return [
+        "- one ranking, XP + BT (D121): "
+        + ", ".join(f"#{i} {e['id']} ({effective_score(e):.6f})" for i, e in enumerate(mixed, 1))
+    ]
+
+
+def study_backlog_lines(backlog: dict) -> list[str]:
+    """The ``kind: bt`` entries (E26.2): ranked proposals with their formula, then the ones
+    the owner approved (queue status), stopped or dropped this far."""
+    ranked = ranked_backlog(backlog, kind="bt")
+    out = []
+    for rank, e in enumerate(ranked, 1):
+        out.append(
+            f"- BT #{rank} {e['id']} [{e['status']}] {e.get('title')} (key {e['key']}) | "
+            f"draft {e.get('draft_path') or '-'}"
+        )
+        out.append(f"  {value_formula(e)}")
+    done = sorted(
+        (e for e in backlog["items"].values() if is_bt(e) and e["status"] not in BACKLOG_RANKED),
+        key=lambda e: _study_num(e["id"]),
+    )
+    for e in done:
+        out.append(
+            f"- {e['id']} [{e['status']}] {e.get('title')}"
+            + (f" (approved {e['approved_at'][:10]})" if e.get("approved_at") else "")
+            + (f": {e['stop_reason']}" if e.get("stop_reason") else "")
         )
     return out
 
@@ -2019,6 +2096,265 @@ def apply_backlog(
     return out
 
 
+# ---------- BT study proposals in the backlog (E26.2, D121) ----------
+
+
+def is_bt(entry: dict) -> bool:
+    return (entry or {}).get("kind") == "bt"
+
+
+def bt_numbers(backlog: dict) -> set[int]:
+    """Every BT number a ``kind: bt`` entry holds (dropped ones too: never reused)."""
+    return {
+        _study_num(e["id"])
+        for e in backlog["items"].values()
+        if is_bt(e) and BACKTEST_ID_RE.match(str(e.get("id") or ""))
+    }
+
+
+def study_value(v: dict) -> float | None:
+    """``pct_per_day x affected_share x p_success / nights_needed`` (D121), or None."""
+    vals = [v.get(k) for k in ("pct_per_day", "affected_share", "p_success", "nights_needed")]
+    if not all(_is_num(x) for x in vals) or vals[3] <= 0:
+        return None
+    return vals[0] * vals[1] * vals[2] / vals[3]
+
+
+def validate_study_value(v, where: str) -> list[str]:
+    """A ``study_spec`` finding's ``study_value``: the D121 ranking inputs of the study."""
+    if not isinstance(v, dict):
+        return [
+            f"{where} is required with a study_spec: {{pct_per_day, source, affected_share, "
+            "p_success, nights_needed}} (D121: BT studies rank with XPs; cost = compute nights "
+            "from the ## Backtest queue estimates)"
+        ]
+    errs = []
+    extra = sorted(set(v) - set(STUDY_VALUE_KEYS))
+    if extra:
+        errs.append(f"{where} has unknown keys {extra}")
+    if not _is_num(v.get("pct_per_day")):
+        errs.append(f"{where}.pct_per_day must be a number (%/day net if the study wins)")
+    if not str(v.get("source", "")).strip():
+        errs.append(f"{where}.source is required (where the effect size comes from)")
+    for k in ("affected_share", "p_success"):
+        x = v.get(k)
+        if not _is_num(x) or not 0 < x <= 1:
+            errs.append(f"{where}.{k} must be in (0, 1]")
+    nights = v.get("nights_needed")
+    if not _is_num(nights) or nights <= 0:
+        errs.append(f"{where}.nights_needed must be > 0 (compute nights, the queue's estimate)")
+    return errs
+
+
+def reserve_study_id(backlog: dict, floor: int) -> str:
+    """The next free ``BT-<n>``: above *floor* - 1 (the gate's ``next_study_id``: ledger,
+    specs, reports) and every BT number the backlog holds."""
+    return f"BT-{max([floor - 1, *bt_numbers(backlog)]) + 1}"
+
+
+def apply_study_backlog(
+    backlog: dict, doc: dict, run: str, when: str, floor: int, finding_ids: dict | None = None
+) -> list[tuple[dict, dict]]:
+    """Every ``study_spec`` finding as a ``kind: bt`` entry (key ``bt:<finding key>``).
+    A re-listed draft keeps its BT id while proposed (an edit updates it). Validation
+    refuses a study_spec on an approved / queued / dropped key (frozen), so only new or
+    proposed entries arrive here. Returns ``(finding, entry)`` in finding order: the drafts
+    ``record`` writes."""
+    finding_ids = finding_ids or {}
+    items = backlog["items"]
+    out = []
+    for f in doc.get("findings", []):
+        if "study_spec" not in f:
+            continue
+        key = BT_KEY_PREFIX + f["key"]
+        v = f.get("study_value") or {}
+        fields = {
+            "study_spec": f["study_spec"],
+            "title": f.get("title"),
+            "hypothesis": f["study_spec"].get("hypothesis"),
+            "expected_effect": {"pct_per_day": v.get("pct_per_day"), "source": v.get("source")},
+            "affected_share": v.get("affected_share"),
+            "p_success": v.get("p_success"),
+            "nights_needed": v.get("nights_needed"),
+            "value_score": study_value(v),
+            "n": f.get("n"),
+        }
+        if f["key"] in finding_ids:
+            fields["finding_id"] = finding_ids[f["key"]]
+        entry = items.get(key)
+        if entry is None:
+            entry = items[key] = {
+                "id": reserve_study_id(backlog, floor),
+                "kind": "bt",
+                "key": key,
+                "finding_key": f["key"],
+                "status": "proposed",
+                "created": when,
+                "created_run": run,
+                "history": [],
+                **fields,
+            }
+            _hist(entry, when, "proposed", run=run)
+        elif entry["status"] == "proposed":
+            changed = sorted(k for k, val in fields.items() if entry.get(k) != val)
+            if changed:
+                entry.update(fields)
+                _hist(entry, when, "edit", run=run, fields=changed)
+        else:
+            continue  # approved (an adopt to retry): frozen, no new draft
+        out.append((f, entry))
+    return out
+
+
+def validate_study_backlog(f: dict, i: int, backlog: dict) -> list[str]:
+    """A ``study_spec`` on a key whose BT entry the owner already acted on is frozen."""
+    entry = backlog["items"].get(BT_KEY_PREFIX + str(f.get("key")))
+    if entry is None or entry.get("status") == "proposed":
+        return []
+    sid, st = entry["id"], entry["status"]
+    if st == "dropped":
+        return [
+            f"findings[{i}] study_spec: {sid} (key {f.get('key')}) was dropped by the owner; "
+            "re-propose only a new design under a new finding key"
+        ]
+    if st == "approved" and f.get("study_spec") == entry.get("study_spec"):
+        return []
+    return [
+        f"findings[{i}] study_spec: {sid} is {st} (owner-approved, the spec is frozen); "
+        "remove the study_spec from this finding (its progress is in ## Backtest queue)"
+    ]
+
+
+def study_floor(studies: list, next_id: str | None = None) -> int:
+    """The lowest BT number a new draft may take: above every study in the gate's snapshot
+    (ledger, committed specs, reports) and its ``next_study_id``."""
+    nums = [_study_num(s["id"]) for s in studies or [] if BACKTEST_ID_RE.match(str(s.get("id")))]
+    nxt = _study_num(next_id) if next_id and BACKTEST_ID_RE.match(next_id) else 1
+    return max([nxt, *(n + 1 for n in nums)])
+
+
+def _validate_next_study(doc: dict, backlog_after: dict) -> list[str]:
+    """E26.2 (D121): ``next_study`` names the BT study the owner should approve next (the
+    top-ranked proposed ``kind: bt`` entry, or another with ``next_study_reason``), or
+    ``none: <why>``. ``next_experiment`` stays XP-only."""
+    nxt = str(doc.get("next_study", "")).strip()
+    if not nxt:
+        return ["next_study is required: a BT-<n> from the ranked backlog, or 'none: <why>' (D121)"]
+    if nxt.lower().startswith("none"):
+        if not nxt.partition(":")[2].strip():
+            return ["next_study 'none' needs a reason ('none: <why>')"]
+        return []
+    ranked = ranked_backlog(backlog_after, kind="bt")
+    entry = next((e for e in ranked if e["id"] == nxt), None)
+    if entry is None:
+        return [
+            f"next_study {nxt!r} must be a proposed BT-<n> in the backlog (a study_spec draft "
+            "after this run), or 'none: <why>'"
+        ]
+    if ranked[0]["id"] != nxt and not str(doc.get("next_study_reason", "")).strip():
+        return [
+            f"next_study {nxt} is not the top-ranked study ({ranked[0]['id']}); say why in "
+            "next_study_reason"
+        ]
+    return []
+
+
+def load_bt_queue(path: Path) -> dict:
+    """``data/backtest/queue.json`` (E26.2), read-only; empty when missing or unreadable."""
+    try:
+        data = json.loads(path.read_text()) if path.exists() else None
+    except (OSError, ValueError):
+        data = None
+    return data if isinstance(data, dict) else {"entries": []}
+
+
+def sync_bt_queue(backlog: dict, queue: dict, when: str) -> list[str]:
+    """``kind: bt`` statuses from the study queue (the runner moves queued -> running ->
+    concluded / stopped / failed, E26.3). Returns change lines."""
+    out = []
+    by_id = {
+        e.get("id"): e for e in backlog["items"].values() if is_bt(e) and e.get("status") != "dropped"
+    }
+    for q in queue.get("entries") or []:
+        entry = by_id.get(q.get("id"))
+        if entry is None or q.get("status") not in BT_QUEUED:
+            continue
+        if entry.get("spec_hash") and q.get("spec_hash") != entry["spec_hash"]:
+            continue  # not the study this entry approved
+        new = {"status": q["status"], "ladder_state": q.get("ladder_state")}
+        if q.get("stop_reason"):
+            new["stop_reason"] = q["stop_reason"]
+        if q.get("pr_url"):
+            new["pr_url"] = q["pr_url"]
+        if all(entry.get(k) == v for k, v in new.items()):
+            continue
+        old = entry["status"]
+        entry.update(new)
+        _hist(entry, when, "queue-sync", **new)
+        if old != new["status"]:
+            out.append(f"{entry['id']}: {old} -> {new['status']}")
+    return out
+
+
+def iso_week(when: dt.datetime) -> tuple[int, int]:
+    """The ISO (year, week) of *when* in America/New_York (the D121 cap's week)."""
+    y, w, _ = when.astimezone(ET).isocalendar()
+    return y, w
+
+
+def week_reset(when: dt.datetime) -> dt.datetime:
+    """Monday 00:00 ET after *when*: when the BT cap resets."""
+    d = when.astimezone(ET).date()
+    monday = d + dt.timedelta(days=7 - d.weekday())
+    return dt.datetime.combine(monday, dt.time(0, 0), tzinfo=ET)
+
+
+def bt_approvals_in_week(backlog: dict, now: dt.datetime, exclude: str = "") -> list[dict]:
+    """``kind: bt`` entries the owner approved in *now*'s ISO week (ET), any status after
+    (a stopped study still counts in its week; D121 counts approvals, not runs)."""
+    week = iso_week(now)
+    out = []
+    for e in backlog["items"].values():
+        at = e.get("approved_at")
+        if not is_bt(e) or not at or e.get("id") == exclude:
+            continue
+        if iso_week(dt.datetime.fromisoformat(at)) == week:
+            out.append(e)
+    return sorted(out, key=lambda e: e["approved_at"])
+
+
+def bt_queue_lines(queue_view: dict | None, errors: str = "") -> list[str]:
+    """Context ``## Backtest queue`` (E26.2): every entry with status, next rung, nights so
+    far and ETA, plus the per-rung compute estimates the Analyst reads nights_needed off."""
+    if not isinstance(queue_view, dict):
+        return [f"- unavailable: {errors or '`arc backtest study queue --json` failed'}"]
+    out = []
+    for r in queue_view.get("entries") or []:
+        eta = r.get("eta_nights")
+        eta_s = f"ETA {eta} night(s)" if eta is not None else "ETA ?"
+        if r.get("status") not in ("queued", "running"):
+            eta_s = "done"
+        out.append(
+            f"- {r['id']} [{r['status']}] next rung {r.get('ladder_state') or '-'} | nights so "
+            f"far {r.get('nights', 0)} | {eta_s}"
+            + (f" | queue #{r['queue_position']}" if r.get("queue_position") else "")
+            + (f" | {r['stop_reason']}" if r.get("stop_reason") else "")
+            + (f" | PR {r['pr_url']}" if r.get("pr_url") else "")
+        )
+    if not out:
+        out.append("- empty (no approved BT study yet)")
+    est = queue_view.get("rung_estimates") or {}
+    parts = []
+    for rung in ("c125_dev", "c500_dev", "holdout"):
+        s = (est.get(rung) or {}).get("seconds")
+        parts.append(f"{rung} {s / 3600:.1f} h" if _is_num(s) else f"{rung} ?")
+    out.append(
+        "- compute per rung (median of recent ledger runs x 1.2): " + ", ".join(parts)
+        + "; one night = 11 h (21:30-08:30 ET). nights_needed = the ladder's sum / 11 h"
+    )
+    return out
+
+
 def apply_reviews(ledger: dict, doc: dict, run: str, when: str) -> list[str]:
     out = []
     for r in doc.get("quick_change_reviews", []) or []:
@@ -2116,6 +2452,10 @@ def validate_findings(
             ):
                 errs.append(f"findings[{i}] `study_spec` with backtest evidence: it is tested")
             errs += validate_study_spec(f["study_spec"], f"findings[{i}] study_spec")
+            errs += validate_study_value(f.get("study_value"), f"findings[{i}] study_value")
+            errs += validate_study_backlog(f, i, backlog)
+        elif "study_value" in f:
+            errs.append(f"findings[{i}] `study_value` is only allowed with a study_spec")
         if cat == "quick-change":
             qcs += 1
             errs += validate_quick_change(f, i)
@@ -2129,13 +2469,17 @@ def validate_findings(
     if not errs:
         after = json.loads(json.dumps(backlog))
         apply_backlog(after, doc, "check", "", used=used)  # the XP ids `record` reserves
-        n_open = sum(1 for e in after["items"].values() if e.get("status") in BACKLOG_OPEN)
+        apply_study_backlog(after, doc, "check", "", study_floor(studies))  # E26.2 BT ids
+        n_open = sum(
+            1 for e in after["items"].values() if e.get("status") in BACKLOG_OPEN and not is_bt(e)
+        )
         if n_open > BACKLOG_CAP:
             errs.append(
                 f"backlog would hold {n_open} open proposals; cap is {BACKLOG_CAP}: drop the "
                 "weakest in backlog_drops with a reason"
             )
     errs += _validate_experiment_lines(doc, after or backlog, experiments, max_arms)
+    errs += _validate_next_study(doc, after or backlog)
     themes = {t.get("theme"): t for t in doc.get("themes", [])}
     for tid in THEMES:
         t = themes.get(tid)
@@ -2573,6 +2917,23 @@ def backtest_snapshot(p: Paths, run_dir: Path) -> dict:
     }
 
 
+def bt_queue_view(p: Paths, run_dir: Path) -> tuple[dict | None, str]:
+    """``arc backtest study queue --json`` (read-only) for the context: ``(view, error)``."""
+    text = run_arc(
+        p,
+        ["backtest", "study", "queue", "--json", "--queue", str(p.bt_root / BT_QUEUE),
+         "--ledger", str(p.bt_root / BT_LEDGER)],
+        run_dir,
+        "backtest-queue",
+        timeout=60,
+    )  # fmt: skip
+    lines = text.strip().splitlines()
+    view = _loads(lines[-1] if lines else "", None)
+    if not isinstance(view, dict):
+        return None, f"`arc backtest study queue --json` failed ({run_dir}/backtest-queue.log)"
+    return view, ""
+
+
 def capped_section(lines: list[str], cap: int, full: Path) -> list[str]:
     """*lines* up to about *cap* chars; the full list is written to *full*."""
     full.write_text("\n".join(lines) + "\n")
@@ -2766,10 +3127,11 @@ def write_study_spec(run_dir: Path, sid: str, spec: dict, f: dict, aid: str, now
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         f"# DRAFT study spec by the Arc Analyst ({aid}, {f['key']}). Not committed, not run:\n"
-        "# the Analyst never runs a backtest. Owner (or a card): copy to\n"
-        f"# config/backtest_studies/{sid}.yaml (file name = id; take the next free BT-<n> if\n"
-        f"# {sid} is taken), check `arc backtest study show {sid}`, commit, run dev on c125,\n"
-        f"# then `arc backtest study run {sid} --holdout` (c500). The D25 rule is the default.\n"
+        "# the Analyst never runs a backtest. The owner's `approve "
+        f"{sid}` in #arc-analyst commits it to\n"
+        f"# config/backtest_studies/{sid}.yaml (auto-merged PR) and queues it for the nightly\n"
+        "# study runner: c125 dev -> c500 dev -> one c500 holdout (E26.2/E26.3, D121). The D25\n"
+        "# rule is the default.\n"
         + json.dumps(doc, indent=2, sort_keys=True)
         + "\n"
     )
@@ -2852,21 +3214,20 @@ def cmd_record(p: Paths, run_dir: Path, now: dt.datetime) -> int:
         if f.get("category") == "quick-change":
             items[f["key"]]["quick_change"] = f["quick_change"]
             items[f["key"]]["evidence"] = f.get("evidence")
-    # E7.15: draft study specs for the owner, BT-<next> upward in finding order
-    next_bt = _study_num(str(bt_meta.get("next_study_id") or "BT-1"))
+    finding_ids = {k: it["id"] for k, it in items.items()}
+    # E7.15 + E26.2 (D121): each study_spec is a `kind: bt` backlog entry that keeps its
+    # BT-<n> across runs while proposed; its draft is written for `approve BT-<n>`
+    floor = study_floor(studies, bt_meta.get("next_study_id"))
     study_specs = []
-    for f in doc.get("findings", []):
-        if "study_spec" not in f:
-            continue
-        sid = f"BT-{next_bt}"
-        next_bt += 1
+    for f, entry in apply_study_backlog(backlog, doc, run_dir.name, iso(now), floor, finding_ids):
+        sid = entry["id"]
         it = items[f["key"]]
         path = write_study_spec(run_dir, sid, f["study_spec"], f, it["id"], now)
+        entry["draft_path"] = str(path)
         it["study_spec"] = {"id": sid, "path": str(path), "run": run_dir.name}
         study_specs.append(f"{it['id']} -> {sid} ({path})")
     reviews = apply_reviews(ledger, doc, run_dir.name, iso(now))
     save_json(p.ledger, ledger)
-    finding_ids = {k: it["id"] for k, it in items.items()}
     moves = apply_backlog(backlog, doc, run_dir.name, iso(now), finding_ids, used)
     backlog["next_experiment"] = {
         "value": doc.get("next_experiment"),
@@ -2874,6 +3235,12 @@ def cmd_record(p: Paths, run_dir: Path, now: dt.datetime) -> int:
         "reason": doc.get("next_reason"),
         "run": run_dir.name,
     }
+    backlog["next_study"] = {
+        "value": doc.get("next_study"),
+        "reason": doc.get("next_study_reason"),
+        "run": run_dir.name,
+    }
+    sync_bt_queue(backlog, load_bt_queue(p.bt_root / BT_QUEUE), iso(now))
     save_json(p.backlog, backlog)
     state["themes"] = {
         t["theme"]: {k: v for k, v in t.items() if k != "theme"} for t in doc.get("themes", [])
@@ -3018,8 +3385,11 @@ def _owner_entry(
         save_json(p.backlog, backlog)
     if kind == "legacy":
         return backlog, None, legacy_redirect(backlog, pid)
-    if kind == "bt":
-        return backlog, None, f"`{verb} {pid}`: backtest approvals are not wired yet (E26.2)"
+    if kind == "bt":  # E26.2: a `kind: bt` study proposal
+        entry = bt_by_id(backlog, pid)
+        if entry is None:
+            return backlog, None, f"no study proposal {pid} in the backlog"
+        return backlog, entry, None
     entry = backlog_by_id(backlog, pid)
     if entry is None:
         status = registry_status(p.live_db, pid)
@@ -3083,6 +3453,8 @@ def cmd_approve(p: Paths, pid: str, note: str, approval: str, now: dt.datetime) 
             "D86 owner-confirmed registry rule)"
         )
         return 2
+    if owner_id_kind(pid) == "bt":
+        return cmd_approve_bt(p, pid, note, approval, now)
     backlog, entry, refusal = _owner_entry(p, pid, "approve", now)
     if entry is None:
         print(refusal)
@@ -3147,6 +3519,165 @@ def cmd_approve(p: Paths, pid: str, note: str, approval: str, now: dt.datetime) 
     return 0
 
 
+def adopt_study(
+    p: Paths, sid: str, spec_path: Path, approval: str, now: dt.datetime, expect_hash: str = ""
+) -> tuple[int, dict | str]:
+    """``arc backtest study adopt`` (E26.2): commit the draft (auto-merged PR on ``bt/<n>``)
+    and queue it in ``data/backtest/queue.json``. ``ARC_ANALYST_BT_DRY_RUN_PR=1`` skips the
+    PR step only (the live dry run of the card). Returns ``(exit code, JSON | error)``."""
+    argv = [
+        *p.arc,
+        "backtest",
+        "study",
+        "adopt",
+        sid,
+        "--spec",
+        str(spec_path),
+        "--approval",
+        approval,
+        "--queue",
+        str(p.bt_root / BT_QUEUE),
+        "--ledger",
+        str(p.bt_root / BT_LEDGER),
+        "--studies-dir",
+        str(p.bt_root / BT_SPECS),
+        "--now",
+        now.isoformat(),
+        "--json",
+        *(["--expect-hash", expect_hash] if expect_hash else []),
+        *(["--dry-run-pr"] if os.environ.get("ARC_ANALYST_BT_DRY_RUN_PR") == "1" else []),
+    ]
+    env = {**clean_env(), **{k: v for k, v in os.environ.items() if k.startswith(GH_PREFIXES)}}
+    try:
+        r = subprocess.run(
+            argv, cwd=p.repo, env=env, capture_output=True, text=True, timeout=600, check=False
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return 127, str(e)
+    if r.returncode:
+        return r.returncode, (r.stderr or r.stdout).strip()
+    lines = r.stdout.strip().splitlines()
+    try:
+        return 0, json.loads(lines[-1] if lines else "")
+    except ValueError:
+        return 1, f"adopt printed no JSON: {r.stdout[:500]}"
+
+
+def cmd_approve_bt(p: Paths, sid: str, note: str, approval: str, now: dt.datetime) -> int:
+    """Owner ``approve BT-<n>`` (E26.2, D121): the weekly cap (2 per ISO week, ET), then
+    ``arc backtest study adopt``: spec PR (auto-merge) + a ``queued`` entry. The entry moves
+    ``proposed`` -> ``approved`` -> ``queued``; re-sending retries a failed PR or queue step
+    (idempotent per BT id, the approval keeps its week)."""
+    if not APPROVAL_RE.match(approval or ""):
+        print(
+            "approve needs --approval slack:<ts> (the owner's message ts in #arc-analyst, "
+            "D86/D121 owner-confirmed rule)"
+        )
+        return 2
+    backlog, entry, refusal = _owner_entry(p, sid, "approve", now)
+    if entry is None:
+        print(refusal)
+        return 2
+    if entry["status"] not in ("proposed", "approved"):
+        print(f"{sid} is {entry['status']} (already committed and queued); nothing to do")
+        return 2
+    draft = Path(str(entry.get("draft_path") or ""))
+    if not entry.get("draft_path") or not draft.is_file():
+        print(f"{sid}: its draft {draft} is gone; the Analyst re-drafts it on its next run")
+        return 2
+    if entry["status"] == "proposed":
+        week = bt_approvals_in_week(backlog, now, exclude=sid)
+        if len(week) >= BT_WEEKLY_CAP:
+            got = ", ".join(f"{e['id']} ({e['approved_at'][:10]}, {e['status']})" for e in week)
+            y, w = iso_week(now)
+            print(
+                f"{sid} refused: the weekly cap is {BT_WEEKLY_CAP} BT approvals per ISO week "
+                f"(D121); week {y}-W{w:02d} already has {got}. It resets "
+                f"{week_reset(now).strftime('%a %Y-%m-%d %H:%M')} ET; re-send "
+                f"`approve {sid}` then."
+            )
+            return 2
+        entry["status"] = "approved"
+        entry["approved_at"] = iso(now)
+        entry["approval"] = approval
+        _hist(entry, iso(now), "approved", by="owner", note=note, approval=approval)
+        save_json(p.backlog, backlog)
+    code, res = adopt_study(p, sid, draft, entry.get("approval") or approval, now,
+                            entry.get("spec_hash") or "")  # fmt: skip
+    if code or not isinstance(res, dict):
+        print(
+            f"{sid} approved, but `arc backtest study adopt` failed (exit {code}): {res}\n"
+            f"Draft: {draft}. Re-send `approve {sid}` to retry (idempotent; the approval "
+            "keeps its week)."
+        )
+        return 1
+    entry["status"] = res.get("status") or "queued"
+    entry["spec_hash"] = res["spec_hash"]
+    entry["pr_url"] = res.get("pr_url")
+    entry["ladder_state"] = (res.get("entry") or {}).get("ladder_state")
+    _hist(
+        entry, iso(now), "adopted", spec_hash=res["spec_hash"][:12], pr=res.get("pr_url"),
+        pr_status=res.get("pr_status"), queue_position=res.get("queue_position"),
+    )  # fmt: skip
+    save_json(p.backlog, backlog)
+    eta = res.get("eta_nights")
+    print(
+        f"{sid} [{entry['status']}] {entry.get('hypothesis')}\n"
+        f"Spec PR: {res.get('pr_url') or res.get('pr_status') or '-'} "
+        f"(config/backtest_studies/{sid}.yaml; auto-merges when CI is green)\n"
+        f"Queue #{res.get('queue_position') or '-'}, ETA "
+        f"{eta if eta is not None else '?'} night(s) (21:30-08:30 ET; c125 dev -> c500 dev -> "
+        "c500 holdout). The runner starts it once the spec PR is merged."
+    )
+    return 0
+
+
+def stop_study(p: Paths, sid: str, why: str) -> tuple[int, dict | str]:
+    """``arc backtest study stop`` on the queue (E26.2)."""
+    argv = [*p.arc, "backtest", "study", "stop", sid, "--reason", why,
+            "--queue", str(p.bt_root / BT_QUEUE), "--json"]  # fmt: skip
+    try:
+        r = subprocess.run(
+            argv, cwd=p.repo, env=clean_env(), capture_output=True, text=True, timeout=120,
+            check=False,
+        )  # fmt: skip
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return 127, str(e)
+    if r.returncode:
+        return r.returncode, (r.stderr or r.stdout).strip()
+    try:
+        return 0, json.loads(r.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        return 1, f"stop printed no JSON: {r.stdout[:500]}"
+
+
+def cmd_stop(p: Paths, sid: str, why: str, now: dt.datetime) -> int:
+    """Owner ``stop BT-<n> <why>`` (E26.2): a queued/running study becomes ``stopped``
+    (the runner obeys at its next check). A draft that was never committed is dropped
+    with ``drop BT-<n>`` instead."""
+    if owner_id_kind(sid) != "bt":
+        print("`stop` is for backtest studies (BT-<n>); an XP is stopped with `arc experiment stop`")
+        return 2
+    if not why.strip():
+        print("stop needs a reason")
+        return 2
+    backlog, entry, refusal = _owner_entry(p, sid, "stop", now)
+    if entry is not None and entry["status"] in BACKLOG_RANKED:
+        print(f"{sid} is {entry['status']} (not committed): use `drop {sid} <why>`")
+        return 2
+    code, res = stop_study(p, sid, why)
+    if code or not isinstance(res, dict):
+        print(f"{sid}: `arc backtest study stop` refused (exit {code}): {res}")
+        return 2
+    if entry is not None:
+        entry["status"] = "stopped"
+        entry["stop_reason"] = res.get("stop_reason")
+        _hist(entry, iso(now), "stopped", by="owner", reason=why)
+        save_json(p.backlog, backlog)
+    print(f"{sid} -> stopped ({why}); the runner stops it at its next check")
+    return 0
+
+
 def cmd_drop(p: Paths, pid: str, why: str, now: dt.datetime) -> int:
     """Owner ``drop XP-<n> <why>``. The number stays reserved: a gap, never reused (D121)."""
     backlog, entry, refusal = _owner_entry(p, pid, "drop", now)
@@ -3157,7 +3688,10 @@ def cmd_drop(p: Paths, pid: str, why: str, now: dt.datetime) -> int:
         print("drop needs a reason")
         return 2
     if entry["status"] not in BACKLOG_RANKED:
-        print(f"{pid} is {entry['status']}; stop the experiment with `arc experiment stop`")
+        if is_bt(entry):
+            print(f"{pid} is {entry['status']} (committed and queued): use `stop {pid} <why>`")
+        else:
+            print(f"{pid} is {entry['status']}; stop the experiment with `arc experiment stop`")
         return 2
     entry["status"] = "dropped"
     _hist(entry, iso(now), "dropped", by="owner", reason=why)
@@ -3186,7 +3720,7 @@ def cmd_reprioritise(p: Paths, pid: str, why: str, score: float | None, now: dt.
         entry["score_override"] = {"value": score, "reason": f"owner: {why}"}
         _hist(entry, iso(now), "score_override", by="owner", value=score, reason=why)
     save_json(p.backlog, backlog)
-    rank = [e["id"] for e in ranked_backlog(backlog)].index(pid) + 1
+    rank = [e["id"] for e in ranked_backlog(backlog, kind=None)].index(pid) + 1
     print(f"{pid} -> rank #{rank} ({why})")
     return 0
 
@@ -3198,21 +3732,25 @@ def cmd_backlog(p: Paths) -> int:
     if migrate:
         save_json(p.backlog, backlog)  # D121: the XP ids shown are the ones kept
     flag_needs_rewrite(backlog, "")  # in memory: show a K=4 draft as needing a rewrite
-    ranked = ranked_backlog(backlog)
+    ranked = ranked_backlog(backlog, kind=None)  # D121: XP and BT in one ranking
     if not ranked:
         print("backlog: no open proposals")
     for i, e in enumerate(ranked, 1):
-        spec = e.get("spec") or {}
-        print(f"#{i} {e['id']} [{e['status']}] {spec.get('area')}: {spec.get('title')}")
+        if is_bt(e):
+            print(f"#{i} {e['id']} [{e['status']}] backtest study: {e.get('title')}")
+        else:
+            spec = e.get("spec") or {}
+            print(f"#{i} {e['id']} [{e['status']}] {spec.get('area')}: {spec.get('title')}")
         print(f"   {value_formula(e)}")
     others = [
         e
         for e in backlog["items"].values()
         if e.get("status") not in BACKLOG_RANKED or e.get("needs_rewrite")
     ]
-    for e in sorted(others, key=lambda e: _id_num(e["id"])):
+    for e in sorted(others, key=lambda e: (is_bt(e), _id_num(e["id"]), e["id"])):
         flag = " NEEDS REWRITE (D108: 3 treatments)" if e.get("needs_rewrite") else ""
-        print(f"   {e['id']} [{e['status']}]{flag} {(e.get('spec') or {}).get('title')}")
+        title = e.get("title") if is_bt(e) else (e.get("spec") or {}).get("title")
+        print(f"   {e['id']} [{e['status']}]{flag} {title}")
     # D121: what the next xp-proposal reserves (registry, specs, open xp/<n> PRs, backlog)
     print(f"next proposal id: {reserve_proposal_id(dict(backlog), used)} (reserved at record)")
     return 0
@@ -3622,6 +4160,7 @@ def build_context(
     synced = sync_backlog(backlog, overview, iso(now))
     synced += rereserve_collisions(backlog, used, iso(now))
     synced += flag_needs_rewrite(backlog, iso(now))  # D108: K=4 drafts are flagged, not trimmed
+    synced += sync_bt_queue(backlog, load_bt_queue(p.bt_root / BT_QUEUE), iso(now))  # E26.2
     if synced or (migrated and p.backlog.exists()):
         save_json(p.backlog, backlog)  # registry is the truth for registered/running/concluded
     merged = merged_pr_lines(p, state.get("last_run_at"), run_dir)
@@ -3650,12 +4189,17 @@ def build_context(
         *drift_lines(p.bt_root / BT_RECONCILIATION),
         "",
         f"## Backtest studies (D84; E7.12 ledger {BT_LEDGER} + {BT_REPORTS}; next free id "
-        f"{bt['next_study_id']}; cite only a C500 holdout verdict, a C125-only or dev-only "
+        f"{reserve_study_id(backlog, study_floor(bt['studies'], bt['next_study_id']))} (a new "
+        "study_spec reserves it; a re-listed draft keeps its BT id); cite only a C500 holdout verdict, a C125-only or dev-only "
         "result is a hypothesis)",
         *[f"- WARNING: {e}" for e in bt.get("errors") or []],
         *capped_section(
             study_lines(bt["studies"]), BT_SECTION_MAX, run_dir / "backtest-studies.log"
         ),
+        f"## Backtest queue (E26.2, D121: {BT_QUEUE}; approved studies run one at a time "
+        "nightly 21:30-08:30 ET, c125 dev -> c500 dev -> one c500 holdout; at most "
+        f"{BT_WEEKLY_CAP} owner approvals per ISO week)",
+        *bt_queue_lines(*bt_queue_view(p, run_dir)),
         "### Data checkpoints (E7.9 checkpoints.json)",
         *checkpoint_lines(p.bt_root / BT_CHECKPOINTS),
         "",
@@ -3825,6 +4369,8 @@ def main(argv: list[str], p: Paths | None = None, now: dt.datetime | None = None
         return cmd_approve(p, rest[0], rest[1] if len(rest) == 2 else "", "", now)
     if cmd == "drop" and len(rest) == 2:
         return cmd_drop(p, rest[0], rest[1], now)
+    if cmd == "stop" and len(rest) == 2:
+        return cmd_stop(p, rest[0], rest[1], now)
     if cmd == "reprioritise" and len(rest) in (2, 4) and (len(rest) == 2 or rest[2] == "--score"):
         try:
             score = float(rest[3]) if len(rest) == 4 else None

@@ -36,6 +36,7 @@ import datetime as dt
 import json
 import math
 import re
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -450,6 +451,9 @@ class LedgerEntry(BaseModel):
     variants: int = Field(..., description="Distinct arm sets of this study, this run included")
     overfit_warning: bool = False
     run_dir: str
+    #: E26.2 (D121): wall seconds of the run (build + walk); the study queue's
+    #: ETA and the E26.3 runner's fit-or-defer read it. None on rows written before it.
+    runtime_s: float | None = None
 
 
 def load_ledger(path: Path) -> list[LedgerEntry]:
@@ -953,6 +957,7 @@ def run_study(  # noqa: PLR0913
     from arc.backtest.ranking import profile_allows_credit
     from arc.backtest.sim_report import _git_sha, _write_run, build_sim, walk
 
+    t0 = time.monotonic()
     uni = universe or (spec.universe_ladder[0] if phase == "dev" else spec.universe_ladder[-1])
     if uni not in spec.universe_ladder:
         msg = f"{spec.id}: universe {uni} is not on the ladder {spec.universe_ladder}"
@@ -1050,6 +1055,7 @@ def run_study(  # noqa: PLR0913
         variants=n_var,
         overfit_warning=overfit,
         run_dir=str(run_dir),
+        runtime_s=round(time.monotonic() - t0, 1),
     )
     _append(ledger, entry)
     payload = build_report(
