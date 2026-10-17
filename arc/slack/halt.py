@@ -6,7 +6,7 @@ calls the switch, and formats/posts the notices.
 - ``!halt [reason]`` from any thread, by anyone, halts immediately.
 - ``!resume`` works only for ``ARC_OWNER_SLACK_USER_ID``; anyone else gets a
   denial and the halt stays.
-- A daily-loss auto-halt is announced in ``#arc-investor``.
+- A daily-loss auto-halt is announced in ``#arc-investor`` (E3.9: new opens only).
 
 Slack posting is best-effort: the halt is persisted *before* anything is posted,
 so a Slack failure can never leave trading un-halted.
@@ -82,13 +82,14 @@ def auto_halt_on_daily_loss(
     now: dt.datetime,
     slack: ArcSlackClient | None,
     thread_ts: str | None = None,
+    ticks: int = 1,
 ) -> HaltRecord | None:
     """Run the daily-loss auto-halt; on a new halt, announce it in #arc-investor.
 
-    Callers: the pipeline before each gate evaluation, and reconciliation (E6.3)
-    after each PnL snapshot. Returns the new halt, if one was raised.
+    *ticks*: consecutive breached marks, this one included (E3.9, D122: the halt
+    needs ``daily_loss_confirm_ticks``). Returns the new halt, if one was raised.
     """
-    record = switch.check_daily_loss(account, config, now=now)
+    record = switch.check_daily_loss(account, config, now=now, ticks=ticks)
     if record is None or slack is None:
         return record
     try:

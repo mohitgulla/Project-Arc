@@ -15686,6 +15686,12 @@
             ],
             "title": "Health Status"
           },
+          "opens_only": {
+            "default": false,
+            "description": "E11.4/E3.9: every active halt is scope 'opens' (new opens stopped, exits still run); the strip shows 'Opens halted' instead of 'HALTED'",
+            "title": "Opens Only",
+            "type": "boolean"
+          },
           "order_budget": {
             "anyOf": [
               {

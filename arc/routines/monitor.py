@@ -48,6 +48,7 @@ if TYPE_CHECKING:
     from decimal import Decimal
 
     from arc.broker.base import AccountInfo, BrokerPosition
+    from arc.gate.halt import DailyLossTicks
     from arc.pipeline.env import PipelineEnv
     from arc.routines.handlers import JobContext
 
@@ -168,6 +169,40 @@ def _s(v: Decimal | None) -> str | None:
     return None if v is None else str(v)
 
 
+#: E3.9 (D122): routine_state key of the session's consecutive daily-loss breach count.
+DAILY_LOSS_TICKS_KEY = "daily_loss_breach:{session}"
+
+
+def daily_loss_halt_notice_line(reason: str) -> str:
+    """E3.9 (D122): the one-line notice for a new (opens-only) daily-loss halt."""
+    return f"daily-loss halt (new opens only; exits keep running): {reason}"
+
+
+def _daily_loss_ticks(ctx: JobContext, *, breached: bool) -> DailyLossTicks:
+    """E3.9 (D122): advance and persist this session's consecutive breach count.
+
+    Kept in ``routine_state`` (``daily_loss_breach:<session>``: count + last tick ts),
+    so the debounce survives process restarts. A non-breach tick resets it to 0. An
+    unreadable value counts as no prior breach (the gate's per-snapshot rule still
+    blocks opens on this tick either way).
+    """
+    from arc.gate.halt import DailyLossTicks
+
+    session = ctx.now.astimezone(ET).date()
+    key = DAILY_LOSS_TICKS_KEY.format(session=session.isoformat())
+    state = RoutineStateRepo(ctx.conn)
+    prior = DailyLossTicks(session=session)
+    raw = state.get(key)
+    if raw:
+        try:
+            prior = DailyLossTicks.model_validate_json(raw)
+        except ValueError:
+            log.warning("routines.monitor.daily_loss_ticks_unreadable", key=key)
+    ticks = prior.advance(breached=breached, now=ctx.now)
+    state.set(key, ticks.model_dump_json(), now=ctx.now)
+    return ticks
+
+
 def _f(v: Decimal | None) -> float | None:
     return None if v is None else float(v)
 
@@ -219,7 +254,7 @@ def _record_heartbeat(
 
 
 def monitor(ctx: JobContext, env: PipelineEnv) -> JobResult:
-    from arc.gate.halt import HaltSwitch
+    from arc.gate.halt import HaltSwitch, daily_loss_breach
     from arc.pipeline.market import (
         PortfolioError,
         account_baseline,
@@ -239,11 +274,12 @@ def monitor(ctx: JobContext, env: PipelineEnv) -> JobResult:
     # E5.9b (D43): one start-of-day equity for the halt check, the summary, the
     # exits' gate snapshot and the heartbeat the tower reads.
     baseline = account_baseline(ctx.conn, info, now)
-    new_halt = switch.check_daily_loss(
-        account_snapshot(info, now, baseline=baseline), settings, now=now
-    )
+    snap = account_snapshot(info, now, baseline=baseline)
+    # E3.9 (D122): the halt needs daily_loss_confirm_ticks consecutive breached ticks.
+    ticks = _daily_loss_ticks(ctx, breached=daily_loss_breach(snap, settings) is not None)
+    new_halt = switch.check_daily_loss(snap, settings, now=now, ticks=ticks.count)
     if new_halt is not None:
-        notices.append(f"daily-loss halt raised: {new_halt.reason}")
+        notices.append(daily_loss_halt_notice_line(new_halt.reason))
     halt_state = switch.state()
     halted = halt_state.halted
     opens_halted = halt_state.opens_only  # E11.4 (D73): exits keep running
@@ -258,6 +294,7 @@ def monitor(ctx: JobContext, env: PipelineEnv) -> JobResult:
         "halted": halted,
         "opens_halted": opens_halted,
         "halt_raised": new_halt is not None,
+        "daily_loss_ticks": ticks.count,  # E3.9: consecutive breached ticks this session
     }
 
     positions = env.positions()

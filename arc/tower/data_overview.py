@@ -149,6 +149,13 @@ class StatusSection(BaseModel):
     halted: bool
     halt: HaltView | None = Field(default=None, description="Most recent active halt")
     active_halts: int = 0
+    opens_only: bool = Field(
+        default=False,
+        description=(
+            "E11.4/E3.9: every active halt is scope 'opens' (new opens stopped, exits still "
+            "run); the strip shows 'Opens halted' instead of 'HALTED'"
+        ),
+    )
     tick_at: _dt.datetime | None = None
     tick_status: str | None = None
     health_at: _dt.datetime | None = None
@@ -1388,6 +1395,7 @@ def _status(
         halted=bool(active),
         halt=active[0] if active else None,
         active_halts=len(active),
+        opens_only=bool(active) and all(h.scope == "opens" for h in active),
         tick_at=parse_ts(tick["at"]) if tick else None,
         tick_status=tick["status"] if tick else None,
         health_at=parse_ts(health["at"]) if health else None,

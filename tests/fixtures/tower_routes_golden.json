@@ -1598,6 +1598,7 @@
     "halted": true,
     "health_at": null,
     "health_status": null,
+    "opens_only": false,
     "order_budget": null,
     "sessions": 20,
     "sessions_since": "2026-08-31",

@@ -6755,6 +6755,12 @@ export interface components {
             health_at?: string | null;
             /** Health Status */
             health_status?: string | null;
+            /**
+             * Opens Only
+             * @description E11.4/E3.9: every active halt is scope 'opens' (new opens stopped, exits still run); the strip shows 'Opens halted' instead of 'HALTED'
+             * @default false
+             */
+            opens_only: boolean;
             /** @description Absent until the monitor heartbeat carries it (E6.5) */
             order_budget?: components["schemas"]["OrderBudgetView"] | null;
             /**

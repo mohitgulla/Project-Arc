@@ -587,6 +587,28 @@ class TestMarketGuard:
         assert statuses["exits.mandatory"] == "ok"
         assert env.llms["quant"].prompts == [] and env.llms["risk"].prompts == []  # type: ignore[attr-defined]
 
+    def test_opens_only_halt_stops_entry_chain_exits_run(self, settings, routines) -> None:  # noqa: ANN001
+        """E3.9 (D122): a daily-loss (opens-only) halt stops opens before any LLM call;
+        the exit steps still run."""
+        from arc.gate import AccountSnapshot, HaltSwitch
+        from arc.store.repos import HaltRepo
+
+        conn = open_db(":memory:", copy=False)
+        load_fixture_docs(conn)
+        acct = AccountSnapshot(equity=D("96000"), last_equity=D("100000"), as_of=FIXTURE_NOW)
+        rec = HaltSwitch(HaltRepo(conn)).check_daily_loss(acct, settings, now=FIXTURE_NOW, ticks=2)
+        assert rec is not None
+        env = PipelineEnv.fixtures()
+        conn, report = _run(settings, routines, env, conn=conn)
+        d = _outcome(report, "research")
+        assert d.status == "ok" and d.metrics["opens_halted"] == 1
+        assert not env.llms["research"].prompts  # type: ignore[attr-defined]
+        assert _codes(conn, "shortlist")["halt:opens_only"] == ["session"]
+        assert _shortlist(conn)["shortlist"] == []
+        assert not report.proposals
+        statuses = {o.job: o.status for o in report.outcomes}
+        assert statuses["exits.mandatory"] == "ok"
+
     def test_exits_ignore_the_guard(self, settings: ArcSettings) -> None:
         """The positions chain never consults the market guard (exits always allowed)."""
         import inspect

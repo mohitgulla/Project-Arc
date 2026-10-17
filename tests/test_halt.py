@@ -345,35 +345,114 @@ class TestDailyLoss:
         assert (daily_loss_breach(acct, cfg) is not None) is expected
 
     def test_auto_halts_once_per_session(self, switch: HaltSwitch, cfg: ArcSettings) -> None:
-        assert switch.check_daily_loss(_acct("98000", "100000"), cfg, now=NOW) is None
-        rec = switch.check_daily_loss(_acct("96000", "100000"), cfg, now=NOW)
+        assert switch.check_daily_loss(_acct("98000", "100000"), cfg, now=NOW, ticks=2) is None
+        rec = switch.check_daily_loss(_acct("96000", "100000"), cfg, now=NOW, ticks=2)
         assert rec is not None and rec.kind is HaltKind.DAILY_LOSS
-        assert rec.actor == "arc:daily-loss" and "4.0000%" in rec.reason
-        assert switch.is_halted()
+        assert rec.actor == "arc:daily-loss"
+        assert rec.reason == "day loss 4.00% >= 3.00% on 2 ticks"
+        # E3.9 (D122): opens only; exits keep running
+        assert rec.scope is H.HaltScope.OPENS
+        assert not switch.is_halted() and switch.opens_blocked()
         # Repeated checks in the same session do not stack.
-        assert switch.check_daily_loss(_acct("95000", "100000"), cfg, now=NOW) is None
+        assert switch.check_daily_loss(_acct("95000", "100000"), cfg, now=NOW, ticks=3) is None
         assert len(switch.state().active) == 1
 
     def test_owner_resume_not_undone_same_session(
         self, switch: HaltSwitch, cfg: ArcSettings
     ) -> None:
-        switch.check_daily_loss(_acct("96000", "100000"), cfg, now=NOW)
+        switch.check_daily_loss(_acct("96000", "100000"), cfg, now=NOW, ticks=2)
         switch.resume(actor=OWNER, config=cfg, now=NOW)
         later = NOW + dt.timedelta(minutes=5)
-        assert switch.check_daily_loss(_acct("96000", "100000"), cfg, now=later) is None
-        assert not switch.is_halted()
+        assert switch.check_daily_loss(_acct("96000", "100000"), cfg, now=later, ticks=3) is None
+        assert not switch.opens_blocked()
 
     def test_new_session_can_halt_again(self, switch: HaltSwitch, cfg: ArcSettings) -> None:
-        switch.check_daily_loss(_acct("96000", "100000"), cfg, now=NOW)
+        switch.check_daily_loss(_acct("96000", "100000"), cfg, now=NOW, ticks=2)
         switch.resume(actor=OWNER, config=cfg, now=NOW)
         tomorrow = NOW + dt.timedelta(days=1)
-        assert switch.check_daily_loss(_acct("96000", "100000"), cfg, now=tomorrow) is not None
+        acct = _acct("96000", "100000")
+        assert switch.check_daily_loss(acct, cfg, now=tomorrow, ticks=2) is not None
 
     def test_manual_halt_does_not_suppress_daily_loss(
         self, switch: HaltSwitch, cfg: ArcSettings
     ) -> None:
         switch.halt(actor=OTHER, reason="manual", now=NOW)
-        assert switch.check_daily_loss(_acct("96000", "100000"), cfg, now=NOW) is not None
+        assert switch.check_daily_loss(_acct("96000", "100000"), cfg, now=NOW, ticks=2) is not None
+        # the manual halt keeps scope all: the book stays fully halted
+        assert switch.is_halted()
+
+
+# ---------------------------------------------------------------------------
+# E3.9 (D122): 2-tick confirm + opens-only scope
+# ---------------------------------------------------------------------------
+
+
+class TestDailyLossConfirm:
+    def test_one_breach_tick_does_not_halt(self, switch: HaltSwitch, cfg: ArcSettings) -> None:
+        assert cfg.daily_loss_confirm_ticks == 2
+        assert switch.check_daily_loss(_acct("96000", "100000"), cfg, now=NOW) is None
+        assert switch.check_daily_loss(_acct("96000", "100000"), cfg, now=NOW, ticks=1) is None
+        assert not switch.opens_blocked()
+
+    def test_two_consecutive_breaches_halt(self, switch: HaltSwitch, cfg: ArcSettings) -> None:
+        t = H.DailyLossTicks(session=NOW.date())
+        t = t.advance(breached=True, now=NOW)
+        assert (
+            switch.check_daily_loss(_acct("96990", "100000"), cfg, now=NOW, ticks=t.count) is None
+        )
+        later = NOW + dt.timedelta(minutes=10)
+        t = t.advance(breached=True, now=later)
+        assert t.count == 2 and t.last_at == later
+        rec = switch.check_daily_loss(_acct("96990", "100000"), cfg, now=later, ticks=t.count)
+        assert rec is not None and rec.reason == "day loss 3.01% >= 3.00% on 2 ticks"
+
+    def test_breach_recovery_breach_does_not_halt(
+        self, switch: HaltSwitch, cfg: ArcSettings
+    ) -> None:
+        t = H.DailyLossTicks(session=NOW.date())
+        seq = [("96990", True), ("97320", False), ("96990", True)]
+        for i, (eq, breached) in enumerate(seq):
+            now = NOW + dt.timedelta(minutes=10 * i)
+            t = t.advance(breached=breached, now=now)
+            assert switch.check_daily_loss(_acct(eq, "100000"), cfg, now=now, ticks=t.count) is None
+        assert t.count == 1 and not switch.opens_blocked()
+
+    def test_confirm_ticks_one_reproduces_the_old_trigger(self, switch: HaltSwitch) -> None:
+        cfg1 = ArcSettings(  # type: ignore[call-arg]
+            _env_file=None, account_profile="margin", daily_loss_confirm_ticks=1
+        )
+        rec = switch.check_daily_loss(_acct("96990", "100000"), cfg1, now=NOW, ticks=1)
+        assert rec is not None and rec.reason == "day loss 3.01% >= 3.00% on 1 tick"
+        assert rec.scope is H.HaltScope.OPENS
+
+    def test_ticks_reset_on_a_new_session(self) -> None:
+        t = H.DailyLossTicks(session=NOW.date()).advance(breached=True, now=NOW)
+        nxt = t.advance(breached=True, now=NOW + dt.timedelta(days=1))
+        assert nxt.count == 1 and nxt.session == (NOW + dt.timedelta(days=1)).date()
+
+    def test_reason_with_invalid_baseline_keeps_the_gate_detail(self, cfg: ArcSettings) -> None:
+        reason = H.daily_loss_halt_reason(_acct("100000", "0"), cfg, 2)
+        assert reason.startswith("invalid start-of-day equity") and reason.endswith("on 2 ticks")
+
+    def test_close_passes_and_open_fails_under_the_daily_loss_halt(
+        self, switch: HaltSwitch, cfg: ArcSettings
+    ) -> None:
+        from tests.test_gate import NOW as GNOW
+        from tests.test_gate import _held_for_close, make_proposal, mkt
+
+        rec = switch.check_daily_loss(_acct("96000", "100000"), cfg, now=NOW, ticks=2)
+        assert rec is not None and rec.scope is H.HaltScope.OPENS
+        a = AccountSnapshot(equity=D("100000"), last_equity=D("100000"), as_of=GNOW)
+        p = make_proposal()
+        opened = evaluate_with_halt(switch, p, a, Portfolio(), cfg, market=mkt(), now=GNOW)
+        assert RuleCode.HALTED.value in [v.split(":")[0] for v in opened.violations]
+        closed = evaluate_with_halt(
+            switch, p, a, _held_for_close(), cfg, market=mkt(), now=GNOW, closing=True
+        )
+        assert RuleCode.HALTED.value not in [v.split(":")[0] for v in closed.violations]
+        require_trading_allowed(switch, closing=True)
+        with pytest.raises(TradingHaltedError):
+            require_trading_allowed(switch)
 
 
 # ---------------------------------------------------------------------------
@@ -435,16 +514,27 @@ class TestAutoHaltPost:
     def test_posts_to_arc_investor(self, switch: HaltSwitch, cfg: ArcSettings) -> None:
         slack, fake = _slack()
         rec = auto_halt_on_daily_loss(
-            switch, _acct("96000", "100000"), cfg, now=NOW, slack=slack, thread_ts="9.9"
+            switch,
+            _acct("96000", "100000"),
+            cfg,
+            now=NOW,
+            slack=slack,
+            thread_ts="9.9",
+            ticks=2,
         )
         assert rec is not None
         kw = fake.chat_postMessage.call_args.kwargs
         assert kw["channel"] == CHANNEL_ARC_INVESTOR and kw["thread_ts"] == "9.9"
         assert "daily loss" in kw["text"]
+        # E3.9 (D122): the notice says exits keep running
+        assert "new opens only; exits keep running" in kw["text"]
+        assert "day loss 4.00% >= 3.00% on 2 ticks" in kw["text"]
 
     def test_posts_root_without_thread(self, switch: HaltSwitch, cfg: ArcSettings) -> None:
         slack, fake = _slack()
-        auto_halt_on_daily_loss(switch, _acct("96000", "100000"), cfg, now=NOW, slack=slack)
+        auto_halt_on_daily_loss(
+            switch, _acct("96000", "100000"), cfg, now=NOW, slack=slack, ticks=2
+        )
         kw = fake.chat_postMessage.call_args.kwargs
         assert kw["channel"] == CHANNEL_ARC_INVESTOR and "thread_ts" not in kw
 
@@ -455,19 +545,27 @@ class TestAutoHaltPost:
 
     def test_no_repost_same_session(self, switch: HaltSwitch, cfg: ArcSettings) -> None:
         slack, fake = _slack()
-        auto_halt_on_daily_loss(switch, _acct("96000", "100000"), cfg, now=NOW, slack=slack)
-        auto_halt_on_daily_loss(switch, _acct("96000", "100000"), cfg, now=NOW, slack=slack)
+        auto_halt_on_daily_loss(
+            switch, _acct("96000", "100000"), cfg, now=NOW, slack=slack, ticks=2
+        )
+        auto_halt_on_daily_loss(
+            switch, _acct("96000", "100000"), cfg, now=NOW, slack=slack, ticks=2
+        )
         assert fake.chat_postMessage.call_count == 1
 
     def test_slack_failure_still_halts(self, switch: HaltSwitch, cfg: ArcSettings) -> None:
         slack, fake = _slack()
         fake.chat_postMessage.side_effect = RuntimeError("slack down")
-        rec = auto_halt_on_daily_loss(switch, _acct("96000", "100000"), cfg, now=NOW, slack=slack)
-        assert rec is not None and switch.is_halted()
+        rec = auto_halt_on_daily_loss(
+            switch, _acct("96000", "100000"), cfg, now=NOW, slack=slack, ticks=2
+        )
+        assert rec is not None and switch.opens_blocked()
 
     def test_without_slack_client(self, switch: HaltSwitch, cfg: ArcSettings) -> None:
-        rec = auto_halt_on_daily_loss(switch, _acct("96000", "100000"), cfg, now=NOW, slack=None)
-        assert rec is not None and switch.is_halted()
+        rec = auto_halt_on_daily_loss(
+            switch, _acct("96000", "100000"), cfg, now=NOW, slack=None, ticks=2
+        )
+        assert rec is not None and switch.opens_blocked()
 
 
 class TestHaltRepoRaw:

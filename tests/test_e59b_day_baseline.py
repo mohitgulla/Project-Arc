@@ -184,7 +184,7 @@ def test_gate_daily_loss_and_halt_use_the_arc_close(conn: sqlite3.Connection) ->
     # a real 3% loss against the Arc close still halts
     real = account_snapshot(_info(D("96970"), FRI_BROKER), MON_0940, baseline=base)
     assert check_daily_loss(real, cfg) != []
-    assert switch.check_daily_loss(real, cfg, now=MON_0940) is not None
+    assert switch.check_daily_loss(real, cfg, now=MON_0940, ticks=2) is not None
 
 
 def test_gate_fails_closed_without_any_baseline() -> None:

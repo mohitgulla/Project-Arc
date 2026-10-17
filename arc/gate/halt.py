@@ -15,6 +15,10 @@ it survives process restarts. This module owns the *policy*:
   running. ``HaltState.halted`` is True only for a scope-``all`` halt (or a read
   error); ``HaltState.opens_only`` is True when every active halt is scope
   ``opens``. Only the owner clears either.
+- E3.9 (D122): the daily-loss auto-halt is scope ``opens`` (exits keep running) and
+  fires only after ``daily_loss_confirm_ticks`` consecutive ``monitor`` breaches. The
+  count is kept by the caller (:class:`DailyLossTicks`, persisted by ``monitor``); the
+  gate's per-snapshot ``daily_loss`` rule still blocks opens on any single breach.
 
 The gate itself stays pure: callers stamp the halt flag onto the
 :class:`~arc.gate.inputs.AccountSnapshot` with :meth:`HaltSwitch.apply` before
@@ -44,6 +48,7 @@ if TYPE_CHECKING:
 log = structlog.get_logger(__name__)
 
 __all__ = [
+    "DailyLossTicks",
     "HaltKind",
     "HaltRecord",
     "HaltScope",
@@ -51,6 +56,7 @@ __all__ = [
     "HaltState",
     "ResumeNotAuthorizedError",
     "daily_loss_breach",
+    "daily_loss_halt_reason",
     "evaluate_with_halt",
 ]
 
@@ -149,6 +155,38 @@ def daily_loss_breach(account: AccountSnapshot, config: ArcSettings) -> str | No
     """
     violations = check_daily_loss(account, config)
     return violations[0].detail if violations else None
+
+
+def daily_loss_halt_reason(account: AccountSnapshot, config: ArcSettings, ticks: int) -> str:
+    """Pure (E3.9): the stored halt reason, e.g. ``day loss 3.01% >= 3.00% on 2 ticks``.
+
+    A non-positive start-of-day equity (the rule fails closed) keeps the gate's detail.
+    """
+    plural = "" if ticks == 1 else "s"
+    if account.last_equity <= 0:
+        return f"{daily_loss_breach(account, config)} on {ticks} tick{plural}"
+    loss = (account.last_equity - account.equity) / account.last_equity
+    return f"day loss {loss:.2%} >= {config.daily_loss_halt_pct:.2%} on {ticks} tick{plural}"
+
+
+class DailyLossTicks(BaseModel):
+    """E3.9 (D122): consecutive ``monitor`` ticks at or over the daily-loss threshold.
+
+    Pure value: :meth:`advance` returns the next count. A non-breach tick resets it to
+    0, and a new ET session starts from 0. The caller persists it (``routine_state``
+    key ``daily_loss_breach:<session>``); the gate never stores anything.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    session: dt.date
+    count: int = 0
+    last_at: dt.datetime | None = None
+
+    def advance(self, *, breached: bool, now: dt.datetime) -> DailyLossTicks:
+        session = now.astimezone(ET).date()
+        prior = self.count if session == self.session else 0
+        return DailyLossTicks(session=session, count=prior + 1 if breached else 0, last_at=now)
 
 
 class HaltSwitch:
@@ -256,24 +294,37 @@ class HaltSwitch:
         return active
 
     def check_daily_loss(
-        self, account: AccountSnapshot, config: ArcSettings, *, now: dt.datetime
+        self,
+        account: AccountSnapshot,
+        config: ArcSettings,
+        *,
+        now: dt.datetime,
+        ticks: int = 1,
     ) -> HaltRecord | None:
         """Auto-halt if the daily-loss rule trips; at most once per ET trading session.
 
-        Returns the new halt, or None if no halt was raised (no breach, or this
-        session already had a daily-loss halt — even one the owner cleared).
+        E3.9 (D122): *ticks* is the caller's count of consecutive breached ``monitor``
+        ticks, this one included (:class:`DailyLossTicks`). The halt is raised only once
+        ``ticks >= daily_loss_confirm_ticks``, and its scope is ``opens``: new opens stop
+        for the session, exits keep running through the normal gate.
+
+        Returns the new halt, or None if no halt was raised (no breach, not yet
+        confirmed, or this session already had a daily-loss halt — even one the owner
+        cleared).
         """
-        detail = daily_loss_breach(account, config)
-        if detail is None:
+        if daily_loss_breach(account, config) is None:
+            return None
+        if ticks < config.daily_loss_confirm_ticks:
             return None
         session = now.astimezone(ET).date().isoformat()
         if self._repo.exists_for_session(kind=HaltKind.DAILY_LOSS.value, session_date=session):
             return None
         return self.halt(
             actor="arc:daily-loss",
-            reason=detail,
+            reason=daily_loss_halt_reason(account, config, ticks),
             now=now,
             kind=HaltKind.DAILY_LOSS,
+            scope=HaltScope.OPENS,
         )
 
 

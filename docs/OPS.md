@@ -3130,6 +3130,25 @@ Where to see it: the Quant menu's `liquidity` field (`score`, `min_leg_oi`,
 `!arc config set scanner.liquidity_rank.enabled off` (selection, menus and proposal hashes
 byte-identical to before E2.6).
 
+## E3.9 daily-loss halt: opens only, 2-tick confirm (D122)
+
+- `monitor` counts consecutive ticks at or over `daily_loss_halt_pct` (3%) in
+  `routine_state` `daily_loss_breach:<session>` (`{session, count, last_at}`; a non-breach
+  tick resets it to 0). The heartbeat/run metrics carry `daily_loss_ticks`.
+- At `daily_loss_confirm_ticks` (default 2; registry 1–6, `!arc config set
+  daily_loss_confirm_ticks 1` restores the single-tick trigger) it raises a `daily_loss`
+  halt with scope **`opens`**: new opens stop for the session; exits (mandatory and
+  Research-managed) keep running through the normal gate with `closing=True`.
+  Once per session: an owner `!resume` is not undone the same day.
+- The gate's per-snapshot `daily_loss` rule still refuses an open on any single breached
+  mark; only the persisted halt is debounced.
+- Under an opens-only halt the dispatcher runs `research` and `positions.evaluate` (they
+  are not `halted (persona)`). Research skips its LLM ranking, journals
+  `halt:opens_only` and writes an empty shortlist; the exit steps of the chain still run.
+- Slack: `daily-loss halt (new opens only; exits keep running): day loss 3.01% >= 3.00%
+  on 2 ticks`. Tower status strip: `Opens halted` (amber), with `at HH:MM ET · now <day %>`.
+- Manual `!halt`, reconcile and book-invariant halts keep scope `all`.
+
 ## E3.7 tiered per-underlying cap (D116)
 
 The gate rule `per_underlying_limit` caps Σ max loss on one underlying (existing + new) at
