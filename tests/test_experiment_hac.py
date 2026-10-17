@@ -311,6 +311,8 @@ def test_spec_without_analysis_hashes_as_before_d119() -> None:
 )
 def test_committed_specs_hash_unchanged_by_the_analysis_field(path: Path) -> None:
     sp = load_spec(path)
+    if sp.analysis is not None:  # D130: XP-2 pre-registers its analysis (hash-locked)
+        pytest.skip("spec pre-registers an analysis block")
     doc = sp.model_dump(mode="json")
     doc.pop("analysis")
     pre = ExperimentSpec.model_validate(doc)
