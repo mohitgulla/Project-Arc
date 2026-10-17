@@ -805,6 +805,17 @@ _STATIC: tuple[Tunable, ...] = (
         hard_ceiling=0.05,
     ),
     _s(
+        "daily_loss_confirm_ticks",
+        Group.RISK,
+        _I,
+        "Consecutive monitor ticks at or over the daily-loss threshold before the opens-only "
+        "daily-loss halt is raised (1 = the first breach halts; exits always keep running).",
+        Risk.UP,
+        min=1,
+        max=6,
+        hard_ceiling=6,
+    ),
+    _s(
         "max_open_positions",
         Group.RISK,
         _I,
