@@ -36,6 +36,7 @@ from arc.experiments.arms import arm_stores, read_identity
 from arc.experiments.attribution import (
     SMOKE,
     ArmWindow,
+    Attribution,
     BookViolation,
     CodeAllocationError,
     account_book,
@@ -593,6 +594,52 @@ def test_an_untagged_order_or_fill_is_an_account_violation() -> None:
 def test_check_book_without_a_cash_baseline_checks_positions_only() -> None:
     attr = attribute(_acts(), order_tags(LIVE["orders"]), WINDOWS)
     assert check_book(attr, LIVE_POS, broker_cash=D(1), cash_baseline=None) == []
+
+
+def test_latest_fee_day_total_sums_only_the_most_recent_fee_day() -> None:
+    assert attribute(_acts(), order_tags(LIVE["orders"]), WINDOWS).latest_fee_day_total == 0
+    acts = _acts(
+        _fee("-0.33"),
+        _fee("-0.40", id="20261013000000000::fee-a", date="2026-10-13"),
+        _fee("-0.25", id="20261013000000000::fee-b", date="2026-10-13"),
+    )
+    assert attribute(acts, order_tags(LIVE["orders"]), WINDOWS).latest_fee_day_total == D("0.65")
+
+
+#: XP-1 at 03:10 ET on 2026-10-15: 20 FEE rows ($1.27 for 10-14) booked, cash lagging
+INCIDENT_T0_CASH = D("249894.13")
+INCIDENT_FLOWS = D("-6763.27")
+
+
+def _incident(broker_cash: D, *, day_fees: D = D("1.27")) -> list[Any]:
+    attr = Attribution(
+        cash={"XP-1:control": INCIDENT_FLOWS}, fee_rows=20, latest_fee_day_total=day_fees
+    )
+    return check_book(attr, [], broker_cash=broker_cash, cash_baseline=INCIDENT_T0_CASH)
+
+
+def test_fees_posted_before_cash_reflects_them_do_not_halt() -> None:
+    # residual +0.57 sat outside the old [-0.20, +0.20] band and halted all four arms
+    assert _incident(D("243131.43")) == []
+    assert _incident(D("243130.86")) == []  # 07:37 re-read: residual 0.00
+
+
+def test_cash_lag_beyond_one_days_posted_fees_still_halts() -> None:
+    (v,) = _incident(INCIDENT_T0_CASH + INCIDENT_FLOWS + D("1.50"))
+    assert (v.scope, v.kind) == ("account", "cash")
+    assert "residual 1.50" in v.detail and "allowed [-0.20, +1.47]" in v.detail
+    assert "latest fee day 1.27" in v.detail
+    # the negative side does not widen with the posted fees
+    (v,) = _incident(INCIDENT_T0_CASH + INCIDENT_FLOWS - D("0.21"))
+    assert "residual -0.21" in v.detail
+
+
+def test_no_fee_rows_keeps_the_upper_bound_at_tol() -> None:
+    assert _incident(INCIDENT_T0_CASH + INCIDENT_FLOWS + D("0.20"), day_fees=D(0)) == []
+    (v,) = _incident(INCIDENT_T0_CASH + INCIDENT_FLOWS + D("0.21"), day_fees=D(0))
+    assert "allowed [-0.20, +0.20]" in v.detail
+    (v,) = account_violations(_book(cash=CASH_T0 - D("2015.00") + D("0.02")))
+    assert v.kind == "cash" and "allowed [-0.66, +0.01]" in v.detail
 
 
 # --- halting ------------------------------------------------------------------------------

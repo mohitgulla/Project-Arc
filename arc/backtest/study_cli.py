@@ -19,12 +19,15 @@ from arc.backtest.study import (
     DEFAULT_LEDGER,
     DEFAULT_REPORT_DIR,
     DEFAULT_RUNS_DIR,
+    RetiredStudy,
     StudyRefusedError,
     arm_set_hash,
     check_holdout,
     ladder_flags,
     load_ledger,
+    load_retired,
     load_study,
+    retired_message,
     run_study,
     study_hash,
     study_path,
@@ -167,6 +170,18 @@ def add_study_parser(bs: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         "--slack", action="store_true", help="Post the event lines to #arc-analyst (else print)"
     )
 
+    rt = ss.add_parser(
+        "retire",
+        help="E26.5 (D127): append a study to config/backtest_studies/retired.yaml "
+        "(history only; commit the file via a PR)",
+    )
+    rt.add_argument("id", help="BT-<n>")
+    rt.add_argument("--reason", required=True, help="Why it no longer describes the algo")
+    rt.add_argument("--by", default="owner", help="Who retired it (default owner)")
+    rt.add_argument("--at", type=_date, default=None, help="Date (default: today ET)")
+    rt.add_argument("--studies-dir", type=Path, default=None, help="Spec directory")
+    rt.add_argument("--dry-run", action="store_true", help="Print the new file; write nothing")
+
 
 def run_study_cli(args: argparse.Namespace) -> int:
     cmd = args.study_command
@@ -180,21 +195,27 @@ def run_study_cli(args: argparse.Namespace) -> int:
         return _stop(args)
     if cmd == "night":
         return _night(args)
+    if cmd == "retire":
+        return _retire(args)
     path = study_path(args.id, args.studies_dir)
     if not path.is_file():
         sys.stderr.write(f"arc backtest study: no spec {path}\n")
         return 2
     try:
         spec = load_study(path)
+        retired = load_retired(args.studies_dir).get(args.id)
     except ValueError as exc:
         sys.stderr.write(f"arc backtest study: {exc}\n")
         return 2
     if cmd == "show":
-        return _show(args, spec)
+        return _show(args, spec, retired)
+    if retired is not None:  # E26.5 (D127): history only, never re-run
+        sys.stderr.write(f"arc backtest study run: refused: {retired_message(retired)}\n")
+        return 2
     return _run(args, spec)
 
 
-def _show(args: argparse.Namespace, spec: object) -> int:
+def _show(args: argparse.Namespace, spec: object, retired: RetiredStudy | None = None) -> int:
     from arc.backtest.study import StudySpec
 
     assert isinstance(spec, StudySpec)
@@ -222,11 +243,17 @@ def _show(args: argparse.Namespace, spec: object) -> int:
             "runs": len(mine),
             "holdout_runs": len(hold),
             "holdout_state": state,
+            "retired": (
+                {"at": retired.at.isoformat(), "by": retired.by, "reason": retired.reason}
+                if retired
+                else None
+            ),
         }
         sys.stdout.write(json.dumps(doc, sort_keys=True) + "\n")
         return 0
     out = [
         f"{spec.id} · {spec.hypothesis}",
+        *([f"RETIRED: {retired_message(retired)}"] if retired else []),
         f"spec hash {h}",
         f"arm set   {a}",
         f"profiles {', '.join(spec.profiles)}; ladder {', '.join(spec.universe_ladder)}; "
@@ -325,6 +352,32 @@ def _night(args: argparse.Namespace) -> int:
         sys.stderr.write(f"arc backtest study night: skipped: {exc}\n")
         return 4
     sys.stdout.write(res.summary + "\n")
+    return 0
+
+
+def _retire(args: argparse.Namespace) -> int:
+    """E26.5 (D127): append *id* to ``retired.yaml`` (refuses a malformed id or a repeat)."""
+    from arc.backtest.study import RETIRED_FILE, STUDIES_DIR, retired_text
+    from arc.utils.calendar import now_et
+
+    d = args.studies_dir or STUDIES_DIR
+    try:
+        rows = load_retired(d)
+        if args.id in rows:
+            msg = f"{args.id} is already retired ({rows[args.id].at}: {rows[args.id].reason})"
+            raise ValueError(msg)
+        new = RetiredStudy(
+            id=args.id, at=args.at or now_et().date(), by=args.by, reason=args.reason
+        )
+    except ValueError as exc:
+        sys.stderr.write(f"arc backtest study retire: refused: {exc}\n")
+        return 3
+    text = retired_text([*rows.values(), new])
+    if args.dry_run:
+        sys.stdout.write(text)
+        return 0
+    (d / RETIRED_FILE).write_text(text)
+    sys.stdout.write(f"{retired_message(new)}\nwrote {d / RETIRED_FILE}: commit it via a PR\n")
     return 0
 
 

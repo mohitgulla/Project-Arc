@@ -1,0 +1,60 @@
+# Retired backtest studies (E26.5, PLAN D127). A retired study is history, not
+# evidence: the Analyst leaves it out of its findings and BT-REF evidence, `arc backtest
+# study adopt|run` and the nightly runner refuse it, and the Tower lists it under
+# Retired. Nothing is deleted: its spec, report and ledger rows stay. Ids are never
+# reused, so a new study takes the next number above every id here.
+#
+# Keep the body JSON (valid YAML): the Analyst gate reads it with the stdlib
+# (`#` comment lines dropped, like idea_seed.yaml). `arc backtest study retire` appends.
+{
+  "retired": [
+    {
+      "id": "BT-1",
+      "at": "2026-10-17",
+      "by": "owner",
+      "reason": "strategy/backtest harness evolved since these were specced; results no longer relevant (owner 2026-10-17)"
+    },
+    {
+      "id": "BT-2",
+      "at": "2026-10-17",
+      "by": "owner",
+      "reason": "strategy/backtest harness evolved since these were specced; results no longer relevant (owner 2026-10-17)"
+    },
+    {
+      "id": "BT-3",
+      "at": "2026-10-17",
+      "by": "owner",
+      "reason": "strategy/backtest harness evolved since these were specced; results no longer relevant (owner 2026-10-17)"
+    },
+    {
+      "id": "BT-4",
+      "at": "2026-10-17",
+      "by": "owner",
+      "reason": "strategy/backtest harness evolved since these were specced; results no longer relevant (owner 2026-10-17)"
+    },
+    {
+      "id": "BT-5",
+      "at": "2026-10-17",
+      "by": "owner",
+      "reason": "strategy/backtest harness evolved since these were specced; results no longer relevant (owner 2026-10-17)"
+    },
+    {
+      "id": "BT-6",
+      "at": "2026-10-17",
+      "by": "owner",
+      "reason": "strategy/backtest harness evolved since these were specced; results no longer relevant (owner 2026-10-17)"
+    },
+    {
+      "id": "BT-7",
+      "at": "2026-10-17",
+      "by": "owner",
+      "reason": "strategy/backtest harness evolved since these were specced; results no longer relevant (owner 2026-10-17)"
+    },
+    {
+      "id": "BT-8",
+      "at": "2026-10-17",
+      "by": "owner",
+      "reason": "strategy/backtest harness evolved since these were specced; results no longer relevant (owner 2026-10-17)"
+    }
+  ]
+}
