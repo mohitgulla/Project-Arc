@@ -938,6 +938,25 @@ class ArcSettings(BaseSettings):
         default=5.0,
         description="Target wing width in dollars between short and long strikes.",
     )
+    # D131 (E28.1): credit wings as a share of spot, fitted to the per-underlying cap.
+    scanner_wing_mode: Literal["pct_spot", "dollars"] = Field(
+        default="pct_spot",
+        description=(
+            "Credit wing selection. pct_spot = the widest listed strike gap <= "
+            "scanner_wing_pct_spot x spot whose 1-contract max loss (+ entry costs) fits the "
+            "per-underlying cap; dollars = the pre-D131 wing nearest scanner_wing_width."
+        ),
+    )
+    scanner_wing_pct_spot: Annotated[float, Field(ge=0.01, le=0.10)] = Field(
+        default=0.05,
+        description="pct_spot wing mode: the widest credit wing as a share of spot (D131: 5%).",
+    )
+    scanner_min_credit_width: Annotated[float, Field(ge=0.0, le=0.40)] = Field(
+        default=0.10,
+        description=(
+            "Drop credit structures whose mid credit / width is below this (0 = off; D131)."
+        ),
+    )
     # Debit strategies (D25, E3.4): long-leg band and debit-vertical short band.
     scanner_long_delta_min: Annotated[float, Field(gt=0.0, lt=1.0)] = Field(
         default=0.40, description="Lower bound of the long-leg |delta| band (debit strategies)."

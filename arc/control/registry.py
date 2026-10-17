@@ -994,6 +994,43 @@ _STATIC: tuple[Tunable, ...] = (
         hard_ceiling=25.0,
     ),
     _s(
+        "wing_mode",
+        Group.ENTRIES,
+        ValueType.CHOICE,
+        "Credit wing selection: pct_spot = the widest strike gap up to wing_pct_spot of spot whose "
+        "1-contract max loss fits the per-underlying cap; dollars = the fixed wing_width.",
+        Risk.ANY,
+        field="scanner_wing_mode",
+        choices=("pct_spot", "dollars"),
+        ref="D131",
+    ),
+    _s(
+        "wing_pct_spot",
+        Group.ENTRIES,
+        _F,
+        "pct_spot wing mode: the widest credit wing as a share of spot (wider = larger max loss "
+        "per contract, still within the per-underlying cap).",
+        Risk.UP,
+        field="scanner_wing_pct_spot",
+        unit="pct",
+        min=0.01,
+        max=0.10,
+        hard_ceiling=0.10,
+        ref="D131",
+    ),
+    _s(
+        "min_credit_width",
+        Group.ENTRIES,
+        _F,
+        "Credit-quality floor: drop credit spreads and condors whose credit / width is below "
+        "this (0 = off).",
+        Risk.DOWN,
+        field="scanner_min_credit_width",
+        min=0.0,
+        max=0.40,
+        ref="D131",
+    ),
+    _s(
         "pipeline_scan_top",
         Group.ENTRIES,
         _I,
