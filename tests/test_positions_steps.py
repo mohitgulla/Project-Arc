@@ -165,8 +165,10 @@ def _dte_settings(conn: sqlite3.Connection) -> ArcSettings:
 def _env_with(positions: list[BrokerPosition], risk_reply: str | None = None) -> PipelineEnv:
     env = _env(positions)
     info = env.account()
-    cash = D("100000")  # settled cash for the D25 cash_debit profile
-    env.account = lambda: info.model_copy(update={"cash": cash, "buying_power": cash})
+    cash = D("100000")  # settled cash (D25 cash_debit) / options buying power (D129 margin)
+    env.account = lambda: info.model_copy(
+        update={"cash": cash, "buying_power": cash, "options_buying_power": cash}
+    )
     env.mint_tokens = True  # a live paper run: PASS mints an arc2 token
     if risk_reply is not None:
         raise AssertionError("risk_reply is gone with risk.reallocate (E13.15)")

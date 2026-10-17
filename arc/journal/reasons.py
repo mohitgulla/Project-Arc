@@ -244,6 +244,7 @@ class ReasonCode(StrEnum):
     GATE_ACCOUNT_NET_DEBIT = "gate:account_profile_net_debit"
     GATE_ACCOUNT_SHORT_LEG = "gate:account_profile_short_leg"
     GATE_ACCOUNT_CASH = "gate:account_profile_settled_cash"
+    GATE_ACCOUNT_BP = "gate:account_profile_buying_power"  # D129
     GATE_ORDER_BUDGET = "gate:order_budget"
     GATE_DAY_TRADES = "gate:account_profile_day_trades"
     GATE_LIVE_SIZE_CAP = "gate:live_size_cap"  # D70 (E11.3)
@@ -512,6 +513,7 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.GATE_ACCOUNT_NET_DEBIT: "Gate: account profile needs a net debit",
     ReasonCode.GATE_ACCOUNT_SHORT_LEG: "Gate: account profile forbids this short leg",
     ReasonCode.GATE_ACCOUNT_CASH: "Gate: not enough settled cash",
+    ReasonCode.GATE_ACCOUNT_BP: "Gate: not enough options buying power",
     ReasonCode.GATE_ORDER_BUDGET: "Gate: daily order budget",
     ReasonCode.GATE_DAY_TRADES: "Gate: day-trade limit of the account profile",
     ReasonCode.GATE_LIVE_SIZE_CAP: "Gate: live size cap (live gate not met)",

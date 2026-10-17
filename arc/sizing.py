@@ -24,7 +24,10 @@ E22.3 (D97, D25): on a ``cash_settled`` profile the caller passes ``cash_availab
 worst band price x 100 + fees). Contracts are then also capped at
 ``floor(cash_available / cash_per_contract)`` (``cash_capped``; ``cash_zero`` when not
 even one fits), so sizing stops proposing an order the gate's cash rule would reject.
-``cash_available=None`` (margin profiles, backtests) leaves sizing as before.
+D129: on a ``margin`` profile the same two inputs carry Alpaca's options buying power
+and the gate's ``account_profile_buying_power`` need for one unit (band-worst max
+loss + fees), so the fit covers both buying-power rules. ``cash_available=None``
+(backtests, unbounded max loss) leaves sizing as before.
 
 Pure function: no I/O, no LLM, Decimal arithmetic throughout.
 """
@@ -99,7 +102,8 @@ def size_contracts(
     """Apply D18 against the per-underlying budget still free (see module doc).
 
     ``max_loss_per_contract`` is dollars per one structure unit. ``cash_available`` /
-    ``cash_per_contract`` (E22.3, ``cash_settled`` profiles only) add the cash fit.
+    ``cash_per_contract`` (E22.3 settled cash; D129 options buying power) add the
+    buying-power fit.
     """
     suggestion = max(int(suggestion), 0)
     existing = max(Decimal(existing_max_loss), Decimal(0))
@@ -157,7 +161,7 @@ def size_contracts(
         if cash_cap < 1:
             return none(
                 "cash_zero",
-                f"settled cash ${free} left does not cover one contract "
+                f"buying power ${free} left does not cover one contract "
                 f"(${cash_per_contract} incl. fees)",
                 cap,
             )

@@ -117,6 +117,7 @@ class RuleCode(StrEnum):
     ACCOUNT_NET_DEBIT = "account_profile_net_debit"
     ACCOUNT_SHORT_LEG = "account_profile_short_leg"
     ACCOUNT_CASH = "account_profile_settled_cash"
+    ACCOUNT_BP = "account_profile_buying_power"  # D129: margin options buying power
     # D32 daily options order budget (E6.5)
     ORDER_BUDGET = "order_budget"
     # E10.2 day-trade limit of the account profile (PDT / good-faith parity)
@@ -697,6 +698,12 @@ def check_account_profile(
       band's worst case (:func:`worst_case`) so every ladder step fits. Fees are the
       conservative ``gate_fee_per_leg_contract`` × legs × contracts. Unknown settled
       cash fails closed.
+    * ``margin`` (D129): ``max_loss_total + fees <= options buying power``. Alpaca
+      reduces ``options_buying_power`` by a defined-risk spread's max loss (credit:
+      (width − credit) × 100; debit: the debit paid), so the band-worst
+      ``max_loss_total`` is the collateral the order needs. An unbounded max loss is
+      already a ``per_underlying_limit`` violation and is not re-reported here.
+      Unknown options buying power fails closed.
 
     A settings object whose profile is unresolved raises, so :func:`evaluate`
     reports ``rule_error`` (fail closed).
@@ -729,12 +736,21 @@ def check_account_profile(
                 RuleCode.ACCOUNT_SHORT_LEG,
                 f"uncovered short leg(s) under profile {prof.name}: {', '.join(bare)}",
             )
+    n = proposal.sizing.contracts
+    units = sum(leg.ratio for leg in legs) * n
+    fees = _d(config.gate_fee_per_leg_contract) * Decimal(units)
+    if prof.buying_power is BuyingPower.MARGIN and d.max_loss_total is not None:
+        need = d.max_loss_total + fees
+        if account.options_buying_power is None:
+            out += _v(RuleCode.ACCOUNT_BP, "options buying power unknown (margin profile)")
+        elif need > account.options_buying_power:
+            out += _v(
+                RuleCode.ACCOUNT_BP,
+                f"needs ${need} (max loss {d.max_loss_total} for {n} contract(s) + fees) "
+                f"> options buying power ${account.options_buying_power}",
+            )
     if prof.buying_power is BuyingPower.CASH_SETTLED:
-        n = proposal.sizing.contracts
-        units = sum(leg.ratio for leg in legs) * n
-        need = max(d.limit_price, _ZERO) * _HUNDRED * n + _d(
-            config.gate_fee_per_leg_contract
-        ) * Decimal(units)
+        need = max(d.limit_price, _ZERO) * _HUNDRED * n + fees
         if account.settled_cash is None:
             out += _v(RuleCode.ACCOUNT_CASH, "settled cash unknown (cash_settled profile)")
         elif need > account.settled_cash:
@@ -927,14 +943,15 @@ def _run(name: str, rule: Rule) -> list[Violation]:
 # position were closed to free room. Everything else (halt, band, profile, data) is
 # not fixable by reallocating, so it never qualifies.
 CAPACITY_CODES: frozenset[RuleCode] = frozenset(
-    {RuleCode.PER_UNDERLYING, RuleCode.MAX_POSITIONS, RuleCode.ACCOUNT_CASH}
+    {RuleCode.PER_UNDERLYING, RuleCode.MAX_POSITIONS, RuleCode.ACCOUNT_CASH, RuleCode.ACCOUNT_BP}
 )
 
 
 class CapacityRejection(StrEnum):
     """Typed ``rejected_for`` reason of a capacity-only gate failure (E6.4)."""
 
-    BUYING_POWER = "buying_power"  # settled cash (D25 cash_debit) or per-underlying budget
+    # settled cash (D25 cash_debit), options buying power (D129 margin) or per-underlying budget
+    BUYING_POWER = "buying_power"
     PORTFOLIO_CAP = "portfolio_cap"  # max open positions
     # D32: the daily order budget is used up. Typed like the capacity reasons so the
     # audit rows carry it, but closing a position frees no orders (it costs some), so

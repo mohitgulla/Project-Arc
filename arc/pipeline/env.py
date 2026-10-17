@@ -222,4 +222,5 @@ def fixture_account() -> AccountInfo:
         buying_power=Decimal(data["buying_power"]),
         cash=Decimal(data["cash"]),
         last_equity=Decimal(data["last_equity"]),
+        options_buying_power=Decimal(data["options_buying_power"]),  # D129
     )
