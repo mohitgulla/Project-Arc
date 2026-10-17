@@ -53,7 +53,7 @@ from arc.backtest.universe import checkpoint_symbols, load_universe
 from arc.data.history.store import ParquetHistoryStore
 from arc.features.vol import IV_LOOKBACK, MIN_IV_HISTORY
 from arc.universe.config import LiquidityThresholds
-from arc.universe.screen import ATM_TARGET_DTE, LiquidityMetrics, screen_liquidity
+from arc.universe.screen import LiquidityMetrics, pick_expiry_by_atm_oi, screen_liquidity
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -445,10 +445,19 @@ def day_liquidity_metrics(
     win = raw[(dte >= lo) & (dte <= hi)]
     expiries = sorted(set(win["expiration"]))
     out["expiries_in_window"] = len(expiries)
-    if expiries:
-        exp = min(expiries, key=lambda e: (abs((e - day).days - ATM_TARGET_DTE), e))
-        near = win[win["expiration"] == exp]
-        p = float(price)  # type: ignore[arg-type]
+    p = float(price)  # type: ignore[arg-type]
+    # E12.4a: same expiry pick as the live screen (most near-ATM OI in the window)
+    exp = pick_expiry_by_atm_oi(
+        (
+            (_as_date(e), float(k), None if pd.isna(oi) else int(oi))
+            for e, k, oi in zip(win["expiration"], win["strike"], win["open_interest"], strict=True)
+        ),
+        p,
+        th.atm_strikes,
+        today=day,
+    )
+    if exp is not None:
+        near = win[win["expiration"].map(_as_date) == exp]
         ks = sorted(set(near["strike"].astype(float)), key=lambda k: (abs(k - p), k))
         strike = ks[0]
         near_atm = set(ks[: th.atm_strikes])
