@@ -22,7 +22,14 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 Group = Literal[
-    "ticker_price", "ticker_options", "market", "calendar", "event", "portfolio", "candidate"
+    "ticker_price",
+    "ticker_options",
+    "market",
+    "calendar",
+    "event",
+    "portfolio",
+    "candidate",
+    "model",
 ]
 Dtype = Literal["float", "int", "bool", "category"]
 NullPolicy = Literal["keep_nan", "missing_indicator", "zero", "category_unknown"]
@@ -180,6 +187,36 @@ FEATURES: tuple[FeatureSpec, ...] = (
     _f("cand_pop", _CD, 0, _MENU, "managed PoP"),
     _f("cand_rorc_day", _CD, 0, _MENU, "return on risk capital per day"),
     _f("cand_vrp", _CD, 0, _MENU, "the menu row's VRP"),
+)  # fmt: skip
+
+# --- M1 baselines (E27.2): panel features, kept as model inputs -----------------------
+_M1_H = (5, 10, 21, 42)
+_M1_Q = ("05", "10", "25", "50", "75", "90", "95")
+_MOD: Group = "model"
+_M1_SRC = ("data/ml/models/m1/<version> (arc.ml.m1.predict)",)
+
+FEATURES = (
+    *FEATURES,
+    *(
+        _f(f"har_rv_h{h}", _P, 252 + h + 21, _OHLC, f"HAR-RV forecast of the next {h} sessions' annualised vol (252-row fit)")
+        for h in _M1_H
+    ),
+    *(
+        _f(f"hq_q{q}_h{h}", _P, 252 + h + 20, _OHLC, f"historical-quantile baseline: q{q} of the {h}-session log return (trailing 252 rv20-standardised returns x HAR vol)")
+        for h in _M1_H
+        for q in _M1_Q
+    ),
+    _f("history_short", _P, 252, _OHLC, "1 when the ticker has no close 252 sessions back", dtype="bool"),
+    # --- M1 outputs (E27.2): produced by arc.ml.m1.predict, never by compute_panel ------
+    *(
+        _f(f"m1_q{q}_h{h}", _MOD, 0, _M1_SRC, f"M1 conformal q{q} of the {h}-session log return")
+        for h in _M1_H
+        for q in _M1_Q
+    ),
+    *(_f(f"m1_rv_h{h}", _MOD, 0, _M1_SRC, f"M1 median realised vol over the next {h} sessions (annualised)") for h in _M1_H),
+    *(_f(f"m1_p_up_h{h}", _MOD, 0, _M1_SRC, f"M1 P(log return over {h} sessions > 0)") for h in _M1_H),
+    *(_f(f"m1_move_vs_implied_h{h}", _MOD, 0, _M1_SRC, f"M1 E|{h}-session log return| / (IV30 x sqrt({h}/252))") for h in _M1_H),
+    _f("m1_direction", _MOD, 0, _M1_SRC, "+1 / -1 = sign of m1_q50_h21 when |median| > 0.25 x (q75 - q25), else 0", dtype="int"),
 )  # fmt: skip
 
 
