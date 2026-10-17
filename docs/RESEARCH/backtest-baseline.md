@@ -1,5 +1,14 @@
 # E7.2 — Cost-aware backtest: baseline and D4 structures
 
+> **D125 (E7.19, 2026-10-17):** every study verdict recorded before D125 ran on the
+> one-expiry live-shaped sim (`expiry_mode: nearest`: one expiration nearest the middle
+> of the profile's DTE envelope, so every cash_debit trade sat at 31–45 DTE, no sleeve
+> slots, no short-sleeve exit block). From E7.19 the sim trades both entry-DTE sleeves
+> (every expiry per sleeve, capped at 3; per-sleeve slots; per-sleeve exit block; the
+> intraday-rule high/low proxy). The incumbent book for every later study is
+> `data/backtest/runs/baseline_d125/` ([sim-alignment.md](sim-alignment.md)); re-check
+> any pre-D125 verdict against it before relying on it.
+
 Status: first baseline, 2026-09-27. Engine: `arc/backtest/`. Reproduce:
 
     uv run arc backtest --tickers SPY --start 2024-02-01 --end 2026-08-07 \

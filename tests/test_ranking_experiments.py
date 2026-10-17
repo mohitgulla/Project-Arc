@@ -147,8 +147,12 @@ def test_e75b_overlay_is_live_shaped_and_tilted() -> None:
     for prof, specs in cfg.backtest.menus.items():
         assert all(m.expiry_mode is ExpiryMode.ALL for m in specs), prof
         # same kinds and anchor deltas as the E7.5 menu: only the expiry shape changes
-        strip = [m.model_dump(exclude={"expiry_mode"}) for m in specs]
-        assert strip == [m.model_dump(exclude={"expiry_mode"}) for m in base.backtest.menus[prof]]
+        # (E7.19: the base menu is expiry_mode all + max_expiries_per_sleeve 3; the
+        # E7.5b overlay keeps every expiration, uncapped)
+        shape = {"expiry_mode", "max_expiries_per_sleeve"}
+        assert all(m.max_expiries_per_sleeve is None for m in specs), prof
+        strip = [m.model_dump(exclude=shape) for m in specs]
+        assert strip == [m.model_dump(exclude=shape) for m in base.backtest.menus[prof]]
     assert {Ranker.MANAGED_NET_EV_TILTED, Ranker.RORC_DAY_TILTED} <= set(cfg.ranking.rankers)
     assert cfg.ranking.filters == base.ranking.filters
 
