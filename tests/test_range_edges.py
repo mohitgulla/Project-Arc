@@ -506,12 +506,37 @@ def test_trending_regime_neutral_and_credit_capable_pass(sideways: dict[str, Any
     conn, _ = _run(IDEAS)
     assert _tickers(conn) == ["PLTR", "NVDA", "XOM"]
     sideways["label"] = "sideways"
-    # margin: bullish/bearish map to credit spreads too -> not long premium only
-    conn, _ = _run(IDEAS, profile="margin")
-    assert _tickers(conn) == ["PLTR", "NVDA", "XOM"]
-    assert _decisions(conn, "mid_range_entry") == []
     conn, _ = _run({"NVDA": "neutral"}, profile="margin")
     assert _decisions(conn, "mid_range_entry") == []
+    assert _decisions(conn, "mid_range_debit_only") == []
+
+
+def test_margin_keeps_a_mid_range_idea_for_its_credit_structures(
+    sideways: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D128: margin also maps bullish to a bull put, so mid-range NVDA is kept, journaled
+    mid_range_debit_only, and scanned for credit only; edge names keep every kind."""
+    import arc.scanner
+    from tests.test_e59_research_portfolio import _outcome, _shortlist
+
+    scanned: dict[str, list[str]] = {}
+    real_scan = arc.scanner.scan
+
+    def spy(provider: Any, ticker: str, params: Any, **kw: Any) -> Any:
+        scanned[ticker] = sorted(s.value for s in params.strategies)
+        return real_scan(provider, ticker, params, **kw)
+
+    monkeypatch.setattr(arc.scanner, "scan", spy)
+    stances = {"PLTR": "bearish", "NVDA": "bullish", "XOM": "bullish"}
+    conn, report = _run(stances, profile="margin")
+    assert _tickers(conn) == ["PLTR", "NVDA", "XOM"]
+    assert _shortlist(conn)["credit_only"] == ["NVDA"]
+    assert _decisions(conn, "mid_range_entry") == []
+    (row,) = _decisions(conn, "mid_range_debit_only")
+    assert row["subject"] == "NVDA" and row["choice"] == "noted"
+    assert row["reason_text"].endswith("; debit skipped, credit kept")
+    assert _outcome(report, "research").metrics.get("mid_range_debit_only") == 1
+    assert scanned["NVDA"] == ["bull_put"]
 
 
 def test_too_narrow_range_is_kept_and_noted(sideways: dict[str, Any]) -> None:

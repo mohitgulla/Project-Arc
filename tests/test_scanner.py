@@ -611,7 +611,15 @@ class TestParams:
             ScanParams(strategies=[])
 
     def test_from_settings(self) -> None:
-        s = get_settings(scanner_wing_width=10.0, dte_min=21, dte_max=50, account_profile="margin")
+        from tests.legacy_profiles import legacy_margin_file
+
+        s = get_settings(
+            scanner_wing_width=10.0,
+            dte_min=21,
+            dte_max=50,
+            account_profile="margin",
+            account_profiles_file=legacy_margin_file(),  # pre-D128: credit only, one window
+        )
         p = ScanParams.from_settings(s, target_delta=0.25, dte_min=None)
         assert p.strategies == list(CREDIT_STRATEGIES)  # margin profile's stance map
         assert p.wing_width == 10.0

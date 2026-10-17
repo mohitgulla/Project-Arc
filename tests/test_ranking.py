@@ -251,8 +251,10 @@ def test_stance_kinds_and_apply_stance() -> None:
     assert k["bull"] == {"bull_call", "long_call"}
     assert k["bear"] == {"bear_put", "long_put"}
     assert k["sideways"] == frozenset()
-    m = stance_kinds("margin")
-    assert m["sideways"] == {"iron_condor"} and m["bull"] == {"bull_put"}
+    m = stance_kinds("margin")  # D128: credit + cash_debit's debit kinds
+    assert m["sideways"] == {"iron_condor"}
+    assert m["bull"] == {"bull_put", "bull_call", "long_call"}
+    assert m["bear"] == {"bear_call", "bear_put", "long_put"}
     d1, d2, d3 = dt.date(2025, 1, 2), dt.date(2025, 1, 3), dt.date(2025, 1, 6)
 
     def cand(kind: str) -> object:

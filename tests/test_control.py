@@ -138,7 +138,7 @@ def test_every_setting_is_classified_tunable_or_not() -> None:
 
 def test_summary_lists_options_for_categorical_keys(svc: ControlService) -> None:
     card = cards.config_summary(svc.show(), version=svc.version())
-    assert "`account_profile` = cash_debit _(options: cash_long_only | cash_debit | margin)_" in (
+    assert "`account_profile` = margin _(options: cash_long_only | cash_debit | margin)_" in (
         card.text
     )
     assert "_(options: scanner | managed_net_ev | rorc_day | vrp)_" in card.text
@@ -429,6 +429,7 @@ def test_confirm_refused_when_value_moved(svc: ControlService) -> None:
 
 
 def test_cancel(svc: ControlService) -> None:
+    svc.base = base(account_profile="cash_debit")  # D128: margin is the default; switch up to it
     r = svc.set("account_profile", "margin", actor=OWNER, source="slack")
     assert r.outcome == "pending" and r.pending is not None
     assert svc.cancel(r.pending.code, actor=OWNER, source="slack").outcome == "cancelled"
@@ -556,6 +557,7 @@ def test_gate_sees_override(svc: ControlService) -> None:
 def test_profile_switch_changes_scanner_strategies(svc: ControlService) -> None:
     from arc.scanner.scan import profile_strategy_set
 
+    svc.base = base(account_profile="cash_debit")  # D128: margin is the default
     before = profile_strategy_set(svc.settings())
     r = svc.set("account_profile", "margin", actor=OWNER, source="slack")
     assert r.pending is not None
@@ -568,14 +570,14 @@ def test_profile_switch_changes_scanner_strategies(svc: ControlService) -> None:
 
 
 def test_profile_dte_override_reaches_entry_window(svc: ControlService) -> None:
-    # E22.4 (D97): the shipped cash_debit window is the envelope of its sleeves; the
-    # short sleeve's dte_min is its lower edge
+    # E22.4 (D97): the shipped window is the envelope of its sleeves; the short
+    # sleeve's dte_min is its lower edge (D128: margin, the default, has them too)
     lo, hi = svc.settings().entry_dte_window
-    key = "profiles.cash_debit.sleeves.short.dte_min"
+    key = "profiles.margin.sleeves.short.dte_min"
     r = svc.set(key, str(lo + 5), actor=OWNER, source="slack")
     assert r.outcome == "applied"
     assert svc.settings().entry_dte_window == (lo + 5, hi)
-    short_max = svc.view("profiles.cash_debit.sleeves.short.dte_max").value
+    short_max = svc.view("profiles.margin.sleeves.short.dte_max").value
     bad = svc.set(key, str(short_max + 5), actor=OWNER, source="slack")
     assert bad.outcome == "refused"  # the sleeve model rejects min > max
 
@@ -744,8 +746,12 @@ def test_cards_render(svc: ControlService) -> None:
     assert "No changes" in cards.history_card([]).text
 
 
-def test_cli_round_trip(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_cli_round_trip(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
     from arc.cli import main
+
+    monkeypatch.setenv("ARC_ACCOUNT_PROFILE", "cash_debit")  # D128: switch up to margin
 
     db = str(tmp_path / "arc.db")
 
@@ -895,7 +901,7 @@ def test_yaml_parse_is_cached_per_file_version(
     assert len(views) > 100
     assert len(parses) == len(set(parses))  # one parse per file, not one per key
     assert len(parses) <= 10  # a handful of config files, not ~560 key reads
-    lo = svc.view("profiles.cash_debit.sleeves.short.dte_min").value
+    lo = svc.view("profiles.margin.sleeves.short.dte_min").value
     assert len(parses) == len(set(parses))  # still cached
     # an edit to the file is picked up (mtime changes the cache key)
     text = prof.read_text()
@@ -903,7 +909,7 @@ def test_yaml_parse_is_cached_per_file_version(
     prof.write_text(text.replace(f"dte_min: {lo}", f"dte_min: {lo + 3}", 1))
     st = prof.stat()
     os.utime(prof, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000))
-    assert svc.view("profiles.cash_debit.sleeves.short.dte_min").value == lo + 3
+    assert svc.view("profiles.margin.sleeves.short.dte_min").value == lo + 3
 
 
 def test_cached_yaml_is_never_mutated_by_callers(svc: ControlService) -> None:

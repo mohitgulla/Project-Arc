@@ -116,7 +116,8 @@ def strict_rules() -> list[str]:
         flagged_sectors=["technology"],
         flagged_stances=["bullish"],
     )
-    settings = ArcSettings(_env_file=None)  # type: ignore[call-arg]
+    # pinned to cash_debit (the profile when the golden was taken; D128 made margin default)
+    settings = ArcSettings(_env_file=None, account_profile="cash_debit")  # type: ignore[call-arg]
     return _research_rules({"AMD": Stance.BULLISH}, settings, None, pctx)
 
 

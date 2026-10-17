@@ -168,6 +168,10 @@ class ReasonCode(StrEnum):
     VWAP_MISSING = "vwap_missing"  # anti_chase.vwap on, intraday fetch failed: daily rule only
     # E23.1 (D98): the deterministic range-edge entry filter (personas.range_edges)
     MID_RANGE_ENTRY = "mid_range_entry"  # sideways regime, long premium from mid-range
+    # D128: on a profile with credit spreads for the stance (margin), a stretched /
+    # mid-range idea keeps its credit structures; only the debit ones leave the menu
+    STRETCHED_DEBIT_ONLY = "stretched_debit_only"
+    MID_RANGE_DEBIT_ONLY = "mid_range_debit_only"
     RANGE_TOO_NARROW = "range_too_narrow"  # range < min_range_atr x ATR14: rule skipped, kept
     VP_MISSING = "vp_missing"  # levels value_area, no value area: 20d high/low used
     # E23.2 (D98): the pullback watch for anti-chase drops (personas.pullback_watch)
@@ -445,6 +449,8 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.TECHNICALS_MISSING: "Technical filter skipped: no technicals",
     ReasonCode.VWAP_MISSING: "VWAP check skipped: no intraday bars",
     ReasonCode.MID_RANGE_ENTRY: "Skipped: mid-range entry in a sideways market",
+    ReasonCode.STRETCHED_DEBIT_ONLY: "Debit structures skipped (move stretched); credit kept",
+    ReasonCode.MID_RANGE_DEBIT_ONLY: "Debit structures skipped (mid-range); credit kept",
     ReasonCode.RANGE_TOO_NARROW: "Range check skipped: range too narrow",
     ReasonCode.VP_MISSING: "Range check used the 20-day high/low: no value area",
     ReasonCode.PULLBACK_WATCH_ADDED: "Stretched idea put on pullback watch",

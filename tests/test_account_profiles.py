@@ -197,25 +197,31 @@ class TestProfilesConfig:
         assert set(lo.allowed_kinds) == {MK.LONG_CALL, MK.LONG_PUT}
         m = p.get("margin")
         assert m.allow_short_legs is ShortLegPolicy.ANY and not m.require_net_debit
+        assert m.buying_power is BuyingPower.MARGIN
+        # D128: a superset of cash_debit (credit first, then its debit structures)
+        assert m.strategies_for("bullish") == ["bull_put", "bull_call_debit", "long_call"]
+        assert m.strategies_for("bearish") == ["bear_call", "bear_put_debit", "long_put"]
         assert m.strategies_for("neutral") == ["iron_condor"]
+        assert set(cd.allowed_kinds) < set(m.allowed_kinds)
+        assert m.sleeves == cd.sleeves
         assert (m.dte_min, m.dte_max) == (None, None)
         assert "net debit only" in cd.summary() and "settled cash" in cd.summary()
         assert "no short legs" in lo.summary()
         assert "net debit" not in m.summary()
 
-    def test_paper_default_is_cash_debit(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_default_is_margin(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("ARC_ACCOUNT_PROFILE", raising=False)
         s = ArcSettings(_env_file=None)  # type: ignore[call-arg]
-        assert DEFAULT_ACCOUNT_PROFILE == "cash_debit"
-        assert s.account_profile == "cash_debit"
-        assert s.profile.name == "cash_debit"
+        assert DEFAULT_ACCOUNT_PROFILE == "margin"  # D128 (was cash_debit, D25)
+        assert s.account_profile == "margin"
+        assert s.profile.name == "margin"
         assert s.entry_dte_window == (10, 60)  # D97/D118: union of short 10-35 + swing 36-60
 
     def test_env_switch_needs_no_code_change(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("ARC_ACCOUNT_PROFILE", "margin")
+        monkeypatch.setenv("ARC_ACCOUNT_PROFILE", "cash_long_only")
         s = ArcSettings(_env_file=None)  # type: ignore[call-arg]
-        assert s.profile.name == "margin"
-        assert s.entry_dte_window == (s.dte_min, s.dte_max)
+        assert s.profile.name == "cash_long_only"
+        assert s.profile.strategies_for("bullish") == ["long_call"]
 
     def test_new_profile_from_yaml_only(self, tmp_path: Path) -> None:
         """A profile added in YAML is selectable and enforced with no code change."""
@@ -473,15 +479,24 @@ class TestGateAccountProfile:
         )
         assert not (codes(d) & PROFILE_CODES), d.violations
 
-    def test_profile_dte_window_reaches_gate(self) -> None:
-        """cash_debit's 30-60 window (not the global 30-45) is what the gate enforces."""
+    def test_profile_dte_window_reaches_gate(self, tmp_path: Path) -> None:
+        """The profile's window (not the global 30-45) is what the gate enforces.
+
+        D128: margin carries the 10-60 sleeves too; a sleeve-less margin falls back to
+        the global window, so 56 DTE passes the shipped profile and fails that one.
+        """
         far = dt.date(2026, 12, 4)  # 56 DTE
         s = debit_vertical(
             "call", "SPY", far, long_strike=570, long_premium="7", short_strike=580,
             short_premium="3", as_of=AS_OF,
         )  # fmt: skip
+        data = yaml.safe_load(Path("config/account_profiles.yaml").read_text())
+        data["profiles"]["margin"].pop("sleeves")
+        f = tmp_path / "profiles.yaml"
+        f.write_text(yaml.safe_dump(data))
         assert RuleCode.DTE_WINDOW not in codes(gate(s, cfg()))
-        assert RuleCode.DTE_WINDOW in codes(gate(s, cfg("margin")))
+        assert RuleCode.DTE_WINDOW not in codes(gate(s, cfg("margin")))
+        assert RuleCode.DTE_WINDOW in codes(gate(s, cfg("margin", account_profiles_file=f)))
 
 
 @settings(max_examples=60, deadline=None)
