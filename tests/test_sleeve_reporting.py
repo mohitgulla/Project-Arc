@@ -283,7 +283,9 @@ def test_meta_and_usage(conn) -> None:  # noqa: ANN001
     ]
     short_exit = {e.kind: e.summary for e in meta[0].exits}
     assert "close at 3 DTE" in short_exit["vertical_debit"]
-    assert sleeve_meta(ArcSettings(account_profile="margin")) == []
+    from tests.legacy_profiles import legacy_margin_settings
+
+    assert sleeve_meta(legacy_margin_settings()) == []  # a sleeve-less profile
     usage = sleeve_usage(conn, SLEEVES)
     assert [(u.label, u.open, u.max_positions) for u in usage] == [("Short", 2, 5), ("Swing", 1, 5)]
     assert sleeve_usage(conn, []) == []

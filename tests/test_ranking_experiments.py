@@ -148,7 +148,10 @@ def test_e75b_overlay_is_live_shaped_and_tilted() -> None:
         assert all(m.expiry_mode is ExpiryMode.ALL for m in specs), prof
         # same kinds and anchor deltas as the E7.5 menu: only the expiry shape changes
         strip = [m.model_dump(exclude={"expiry_mode"}) for m in specs]
-        assert strip == [m.model_dump(exclude={"expiry_mode"}) for m in base.backtest.menus[prof]]
+        want = [m.model_dump(exclude={"expiry_mode"}) for m in base.backtest.menus[prof]]
+        if prof == "margin":  # D128 added cash_debit's debit kinds; the overlay pins credit
+            want = want[:1]
+        assert strip == want
     assert {Ranker.MANAGED_NET_EV_TILTED, Ranker.RORC_DAY_TILTED} <= set(cfg.ranking.rankers)
     assert cfg.ranking.filters == base.ranking.filters
 

@@ -1,8 +1,8 @@
 # Account profiles (PLAN D25; card E3.4). Validated by arc.account_profiles.
 #
-# Selected by ARC_ACCOUNT_PROFILE (default cash_debit: paper mimics the expected
-# no-margin real-money account). Switching profile, or editing one, needs no
-# code change. The gate enforces the selected profile (rule account_profile);
+# Selected by ARC_ACCOUNT_PROFILE (default margin since D128, 2026-10-17; was
+# cash_debit under D25, to mimic an expected no-margin real-money account).
+# Switching profile, or editing one, needs no code change. The gate enforces the selected profile (rule account_profile);
 # the scanner, the persona prompts and the entry DTE window follow it.
 #
 #   allowed_kinds      structure kinds the account may open
@@ -23,16 +23,23 @@
 
 profiles:
   margin:
-    description: "D4 set: credit verticals, iron condors, debit verticals, long calls/puts."
+    # D128 (owner 2026-10-17): the default profile, a superset of cash_debit. Credit
+    # verticals and iron condors join the debit structures, neutral trades an iron
+    # condor, and the D97/D118 sleeves carry over. Buying power is the broker's margin
+    # BP (no settled-cash rule; the per-underlying cap still binds).
+    description: "Margin (D128 default): credit + debit verticals, iron condors, long calls/puts."
     allowed_kinds: [vertical_credit, vertical_debit, iron_condor, long_call, long_put]
     require_net_debit: false
     buying_power: margin
     allow_short_legs: any
-    dte_min: null
-    dte_max: null
+    # Same sleeves as cash_debit (D97/D118). Close the short sleeve without a PR (Slack):
+    # `profiles.margin.sleeves.short.max_positions 0`.
+    sleeves:
+      short: {dte_min: 10, dte_max: 35, max_positions: 5, exit_policy: short}
+      swing: {dte_min: 36, dte_max: 60, max_positions: 5}
     stance_strategies:
-      bullish: [bull_put]
-      bearish: [bear_call]
+      bullish: [bull_put, bull_call_debit, long_call]
+      bearish: [bear_call, bear_put_debit, long_put]
       neutral: [iron_condor]
 
   cash_debit:

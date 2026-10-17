@@ -52,7 +52,7 @@ def _rules_at_entry_dte(entry_dte: int, settings: ArcSettings | None = None) -> 
 
 
 class TestShippedProfiles:
-    @pytest.mark.parametrize("profile", ["cash_debit", "cash_long_only"])
+    @pytest.mark.parametrize("profile", ["cash_debit", "cash_long_only", "margin"])
     def test_two_sleeves_five_plus_five(self, profile: str) -> None:
         s = _settings(profile)
         assert [
@@ -78,12 +78,11 @@ class TestShippedProfiles:
         got = _settings().sleeve_for_dte(dte)
         assert (got.name if got else None) == sleeve
 
-    def test_margin_untouched(self) -> None:
+    def test_margin_has_the_cash_sleeves(self) -> None:
+        """D128: margin (the default) carries the same two sleeves as cash_debit."""
         m = _settings("margin")
-        assert not m.profile.has_sleeves
-        assert (m.profile.dte_min, m.profile.dte_max) == (None, None)
-        assert m.entry_dte_window == (m.dte_min, m.dte_max) == (30, 45)
-        assert [x.name for x in m.entry_sleeves] == ["default"]
+        assert m.profile.has_sleeves
+        assert m.entry_sleeves == _settings("cash_debit").entry_sleeves
 
     def test_baked_defaults(self) -> None:
         s = ArcSettings(_env_file=None)  # type: ignore[call-arg]

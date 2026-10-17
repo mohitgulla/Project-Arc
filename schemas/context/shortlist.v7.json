@@ -361,6 +361,14 @@
       "default": null,
       "title": "Budget"
     },
+    "credit_only": {
+      "description": "Tickers whose Quant menu holds credit structures only (D128)",
+      "items": {
+        "type": "string"
+      },
+      "title": "Credit Only",
+      "type": "array"
+    },
     "excluded": {
       "description": "Candidates not ranked, each with a one-line reason",
       "items": {

@@ -163,6 +163,7 @@ def sleeved_svc(tmp_path: Path) -> ControlService:
     base = ArcSettings(  # type: ignore[call-arg]
         _env_file=None,
         approver_slack_user_ids=[OWNER],
+        account_profile="cash_debit",  # D128: margin is the default; these pin cash_debit
         account_profiles_file=sleeved_file(tmp_path),
     )
     return ControlService(

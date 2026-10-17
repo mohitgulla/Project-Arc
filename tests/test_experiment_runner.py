@@ -226,7 +226,9 @@ def _gate_rows(c: sqlite3.Connection) -> list[dict[str, object]]:
     ]
 
 
-@pytest.mark.parametrize("profile", [None, "cash_debit"])
+# D128: the default profile (formerly the None case) is margin now; the canned bullish
+# Quant reply picks the fixture SPY debit spread off a cash_debit menu, so only that runs.
+@pytest.mark.parametrize("profile", ["cash_debit"])
 def test_arm_paired_late_gates_replayed_quotes_as_control_did(
     control: Path, tmp_path: Path, profile: str | None
 ) -> None:
@@ -258,6 +260,10 @@ def test_arm_paired_late_gates_replayed_quotes_as_control_did(
     r = svc.set("entries.net_ev_floor_live", "off", actor=owner, source="slack")
     assert r.pending is not None
     svc.confirm(r.pending.code, actor=owner, source="slack")
+    # D128: the canned Quant reply picks the debit spread off the control-ranked menu
+    r = svc.set("menu_measure", "control", actor=owner, source="slack")
+    if r.pending is not None:
+        svc.confirm(r.pending.code, actor=owner, source="slack")
     conn.close()
     prof = ["--profile", profile] if profile else []
     assert _arc("propose", "--fixtures", "--fixture-set", "bullish", *prof, "--db",

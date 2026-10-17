@@ -691,7 +691,7 @@ The plugin shells out to the CLI; the CLI owns every rule.
   Never tunable: `ARC_ENV`, gate code, secrets, paths, `config_version`.
   `!arc config` lists every key grouped (account, universe, risk, entries incl. each
   profile's DTE window, exits, positions, execution, costs, approvals, routines);
-  categorical keys show their options inline, e.g. `account_profile = cash_debit
+  categorical keys show their options inline, e.g. `account_profile = margin
   (options: cash_long_only | cash_debit | margin)`.
 - **Adding a knob** (any card): add the `ArcSettings` field / YAML path to the registry,
   or list it in `NOT_EXPOSED` with a reason. `tests/test_control.py::
@@ -1882,7 +1882,7 @@ The treatment arm is the same trading loop on its own paper account
 - The arm sizes and gates from its virtual account (`VirtualBroker`): equity
   moves only with its own fills/marks, buying power = min(broker, virtual −
   legacy), and under a cash profile only settled cash (T+1) counts. Control's
-  account profile (debit-only, day-trade limit, D32 budget) applies unchanged.
+  account profile (D128: margin by default; day-trade limit, D32 budget) applies unchanged.
 - Shared inputs: Sweep/sources run once, in control. The arm reuses control's
   steps before the fork step (the first step its overlay changes; never later
   than `propose`) and replays control's market tape (`market_tape`). Every arm
@@ -2765,8 +2765,10 @@ Regime is context and a Research/backtest input only; it is never a gate input
 A deterministic drop between Research and Quant (`arc/pipeline/steps.py`
 `_anti_chase_filter`; the rule is `arc.features.technicals.is_stretched`, pure). After
 Research ranks and after the E5.9 portfolio drops, a **bullish/bearish idea that the
-account profile can only structure as long premium** (long call/put, debit vertical:
-`cash_debit`, `cash_long_only`) is dropped when its move is already stretched:
+account profile can structure as long premium** (long call/put, debit vertical) is checked.
+On `cash_debit` / `cash_long_only` a stretched idea is dropped; on `margin` (D128) it is kept
+for its credit spreads only (journaled `stretched_debit_only`, `shortlist.credit_only`, still
+put on the pullback watch). The rule:
 
 - D78 rule (`anti_chase.combine: all`): `stretch_atr` = (close − SMA20) / ATR14 ≥ 2.5
   **and** RSI14 ≥ 75. Bears mirror it (≤ −2.5 and RSI ≤ 25). The inputs are the
@@ -2921,14 +2923,13 @@ Commands (rehearse on a scratch `--db`):
 
 ## E22.4 switch-on: DTE sleeves live on the cash profiles (D97)
 
-`config/account_profiles.yaml` gives `cash_debit` and `cash_long_only` two entry-DTE
-sleeves instead of one 30-60 window (`margin` is unchanged: global 30-45):
+`config/account_profiles.yaml` gives every shipped profile two entry-DTE sleeves instead
+of one window (D97 on the cash profiles; D128 put them on `margin`, the default, too):
 
 | Profile | Sleeve | Entry DTE | Slots | Exit policy |
 |---|---|---|---|---|
-| `cash_debit`, `cash_long_only` | `short` | 10-35 (D118; was 10-29) | 5 | `config/exits.yaml` `sleeves.short` |
-| `cash_debit`, `cash_long_only` | `swing` | 36-60 (D118; was 30-60) | 5 | the kind policy (D23/D78) |
-| `margin` | `default` | 30-45 (global) | `max_open_positions` | the kind policy |
+| `margin`, `cash_debit`, `cash_long_only` | `short` | 10-35 (D118; was 10-29) | 5 | `config/exits.yaml` `sleeves.short` (debit kinds; credit kinds use the kind policy) |
+| `margin`, `cash_debit`, `cash_long_only` | `swing` | 36-60 (D118; was 30-60) | 5 | the kind policy (D23/D78) |
 
 DTE 36 belongs to `swing` (D118); a position's sleeve is fixed by its **entry** DTE. Short-sleeve
 debit exits (`vertical_debit`, `long_call`, `long_put`): take profit 40% of the debit,
@@ -2938,7 +2939,8 @@ keeps take profit 60%, a 75% EOD-only stop, lock 0.50 → 0.20 and close at 7 DT
 
 Baked defaults: `max_open_positions` 10 (was 8) and `dedupe.executed_cooldown` 2
 sessions (was 5). Rollback without a PR: `!arc config set
-profiles.cash_debit.sleeves.short.max_positions 0` closes the short sleeve to new opens
+profiles.margin.sleeves.short.max_positions 0` (or `profiles.cash_debit...` on the cash
+profile) closes the short sleeve to new opens
 (held short-sleeve positions keep their exit block). The `sleeves.short` exit values
 are not registry keys; changing them is a PR to `config/exits.yaml`.
 
@@ -2992,8 +2994,9 @@ Check: `arc routines run levels --db <scratch copy> --no-slack`, then
 ## E23.1 range-edge entry filter for sideways regimes (D98)
 
 **What it does.** After Research ranks (and after anti-chase), each bullish/bearish idea
-whose account profile structures it as **long premium only** (`cash_debit`; not `margin`,
-whose credit spreads already sell the range) is checked when its `regime.current` is in
+whose account profile can structure it as **long premium** (D128: on `margin`, whose credit
+spreads already sell the range, the idea is kept and only its debit structures leave the
+menu, journaled `mid_range_debit_only`) is checked when its `regime.current` is in
 `range_edges.regimes` (default `[sideways]`). A bullish idea is kept only from the bottom
 of its range (position ≤ `bull_max_pos` 0.35), a bearish one only from the top (≥
 `bear_min_pos` 0.65). Anything else, the wrong edge included, is dropped as

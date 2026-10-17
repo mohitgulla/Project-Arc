@@ -210,7 +210,9 @@ class TestPerSleeveMenus:
 
 
 def test_single_window_menu_has_no_sleeve(monkeypatch: pytest.MonkeyPatch) -> None:
-    s = ArcSettings(_env_file=None, account_profile="margin")  # type: ignore[call-arg]
+    from tests.legacy_profiles import legacy_margin_settings
+
+    s = legacy_margin_settings()  # D128: shipped margin has sleeves; pin the single window
     _, report, prompts = _run(s, monkeypatch)
     for c in _chains(prompts["quant"]).values():
         assert all("sleeve" not in r for r in c["menu"])

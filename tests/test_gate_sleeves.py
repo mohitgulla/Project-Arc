@@ -274,8 +274,10 @@ class TestSettings:
         ]
         assert s.exit_block_for_dte(45) is None
 
-    def test_margin_uses_global_window(self) -> None:
-        s = cfg(profile="margin")
+    def test_sleeveless_margin_uses_global_window(self) -> None:
+        from tests.legacy_profiles import legacy_margin_settings
+
+        s = legacy_margin_settings()  # D128: shipped margin has sleeves
         assert s.entry_dte_window == (s.dte_min, s.dte_max)
         assert s.entry_sleeves[0].name == "default"
 

@@ -271,8 +271,9 @@ def _fixture_run(monkeypatch: pytest.MonkeyPatch, **kw: Any) -> tuple[Any, Any, 
 
     monkeypatch.delenv("ARC_GATE_SECRET", raising=False)
     from arc.routines.config import load_routines
+    from tests.legacy_profiles import legacy_margin_settings
 
-    s = ArcSettings(_env_file=None, account_profile="margin", **kw)  # type: ignore[call-arg]
+    s = legacy_margin_settings(**kw)  # pre-D128 single-window margin: "Free slots: 10/10"
     return _recording_fixture_run(s, load_routines())
 
 
@@ -356,6 +357,9 @@ def test_propose_cash_capped_and_cash_zero(monkeypatch: pytest.MonkeyPatch) -> N
             _env_file=None, account_profile=profile, portfolio_dollar_delta_cap_pct=1.0
         )
         s._yaml_overrides = {"ranking": {("ranking", "filters", "live"): False}}  # noqa: SLF001
+        from tests.legacy_profiles import pin_control_menu
+
+        pin_control_menu(s)  # D128: the canned Quant reply is on the control menu
         env = PipelineEnv.fixtures(FIXTURE_SETS["bullish"])
         base = env.account()
         env.account = lambda: base.model_copy(update={"cash": Decimal(cash)})  # type: ignore[method-assign]
@@ -450,8 +454,10 @@ class TestLoopFreeSlots:
             "SELECT choice, reason_text, payload FROM decisions "
             "WHERE reason_code='loop_forced_free_slots'"
         ).fetchall()
-        assert row["choice"] == "noted" and "Free slots: 10/10" in row["reason_text"]
-        assert json.loads(row["payload"])["free_slots"]["sleeves"][0]["free"] == 10
+        # D128: the default margin profile carries the two D97 sleeves
+        assert row["choice"] == "noted"
+        assert "Free slots: short 5/5, swing 5/5" in row["reason_text"]
+        assert [s["free"] for s in json.loads(row["payload"])["free_slots"]["sleeves"]] == [5, 5]
 
     def test_no_pressure_keeps_max_idle(self) -> None:
         """Every slot taken: the plain max_idle applies (no forced run)."""
