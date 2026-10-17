@@ -27,6 +27,8 @@ log = structlog.get_logger(__name__)
 # Channel IDs from workspace config (PLAN.md §2.5, D2)
 CHANNEL_PROJECT_ARC: str = "C0C4KBPN7T5"
 CHANNEL_ARC_INVESTOR: str = "C0C4NS1AL3X"
+#: #arc-analyst (E9.1; the Analyst profile's channel). E26.3's study runner posts here.
+CHANNEL_ARC_ANALYST: str = "C0C5CB72LG5"
 
 
 class ArcSlackClient:

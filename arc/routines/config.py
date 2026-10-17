@@ -1077,6 +1077,80 @@ class HistoryTopupSettings(BaseModel):
     iv_append: bool = True
 
 
+class StudyFailRule(BaseModel):
+    """E26.3 (D121): a dev rung is a *clear fail* (the study stops, no holdout spent)
+    when every treatment on every profile is a non-switch call **and** its CI upper
+    bound (treatment - control daily P&L difference) is below ``ci_hi_below``."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    ci_hi_below: float = 0.0
+
+
+_WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+
+class BacktestStudiesSettings(BaseModel):
+    """E26.3 (D121): the ``backtest_studies:`` block (the nightly study runner).
+
+    Offline infra like ``history_topup:``: change by PR, not runtime-tunable. Times are
+    ET. On a trading day nothing runs between ``window_end`` and ``window_start``; a
+    night that ends on the first session after a weekend or holiday ends at
+    ``weekend_window_end`` instead.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    window_start: _dt.time = _dt.time(21, 30)
+    window_end: _dt.time = _dt.time(8, 30)
+    # "<Ddd> HH:MM": the end of a night followed by a weekend / holiday (normally Mon).
+    weekend_window_end: str = "Mon 08:30"
+    workers: Annotated[int, Field(ge=1, le=16)] = 6
+    nice: Annotated[int, Field(ge=0, le=19)] = 10
+    # Wait this long for a still-running history.topup at the start, then skip the night.
+    topup_wait: _dt.timedelta = _dt.timedelta(minutes=30)
+    # SIGTERM at the window end, then SIGKILL after this grace.
+    kill_grace: _dt.timedelta = _dt.timedelta(seconds=120)
+    # How often a running study is checked (window end, owner stop, heartbeat).
+    poll: _dt.timedelta = _dt.timedelta(seconds=30)
+    # A weekend/holiday night (the only run until the next session) re-reads the queue
+    # this often when it is empty, so a study approved on Saturday starts that night.
+    idle_poll: _dt.timedelta = _dt.timedelta(minutes=10)
+    # A rung's estimate is the median runtime_s of recent ledger rows x this margin.
+    runtime_margin: Annotated[float, Field(ge=1.0, le=5.0)] = 1.2
+    fail_rule: StudyFailRule = Field(default_factory=StudyFailRule)
+    # Repo-relative paths (the E7.14 queue's layout).
+    queue: str = "data/backtest/queue.json"
+    ledger: str = "data/backtest/ledger.jsonl"
+    runs_dir: str = "data/backtest/runs"
+    report_dir: str = "docs/RESEARCH/studies"
+    data_dir: str = "data"
+
+    @field_validator("window_start", "window_end", mode="before")
+    @classmethod
+    def _times(cls, v: Any) -> Any:
+        return _parse_hhmm(v) if isinstance(v, str) else v
+
+    @field_validator("topup_wait", "kill_grace", "poll", "idle_poll", mode="before")
+    @classmethod
+    def _durations(cls, v: Any) -> Any:
+        return parse_duration(v) if isinstance(v, str) else v
+
+    @field_validator("weekend_window_end")
+    @classmethod
+    def _weekend(cls, v: str) -> str:
+        parts = v.split()
+        if len(parts) != 2 or parts[0] not in _WEEKDAYS:  # noqa: PLR2004
+            msg = f"weekend_window_end {v!r}: use '<Mon..Sun> HH:MM'"
+            raise ValueError(msg)
+        _parse_hhmm(parts[1])
+        return v
+
+    @property
+    def weekend_end_time(self) -> _dt.time:
+        return _parse_hhmm(self.weekend_window_end.split()[1])
+
+
 class VolumeProfileSettings(BaseModel):
     """E23.0 (D98): the 20-session composite volume profile on regime technicals.
 
@@ -1378,6 +1452,8 @@ class RoutinesConfig(BaseModel):
     options_fast: OptionsFastSettings = Field(default_factory=OptionsFastSettings)  # E13.6
     iv_backfill: IvBackfillSettings = Field(default_factory=IvBackfillSettings)  # E16.1 (D76)
     history_topup: HistoryTopupSettings = Field(default_factory=HistoryTopupSettings)  # E7.13
+    # E26.3 (D121): the nightly backtest study runner
+    backtest_studies: BacktestStudiesSettings = Field(default_factory=BacktestStudiesSettings)
     # E23.0 (D98): levels on regime technicals (strategy.yaml blocks)
     volume_profile: VolumeProfileSettings = Field(default_factory=VolumeProfileSettings)
     oi_walls: OiWallsSettings = Field(default_factory=OiWallsSettings)
