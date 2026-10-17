@@ -126,6 +126,9 @@ def _paths(tmp_path: Path, db: Path) -> Any:
     return aa.Paths(
         home=tmp_path / "analyst", repo=REPO, live_db=db, arc=ARC_ARGV,
         backtest_root=tmp_path / "bt",
+        # per-test XP verdict dir: the repo's committed verdicts (XP-1, D130) must not
+        # count as a "new verdict" wake in every gate test
+        verdicts_dir=tmp_path / "xp_verdicts",
     )  # fmt: skip
 
 
