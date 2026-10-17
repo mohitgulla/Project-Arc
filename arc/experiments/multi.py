@@ -587,6 +587,7 @@ def build_multi_report(
         production=production,
         analysis=sp.analysis,
         covariate_missing=cov_missing if method.waits_on_covariate else None,
+        analysis_amended=st.analysis_amended,
     )
 
 

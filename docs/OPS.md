@@ -1661,7 +1661,20 @@ the same deep-merge format as the backtest overlays in `config/experiments/*.yam
     arc experiment stop XP-1 --reason owner --actor local
 
 - After `register` the spec is locked (store check plus a DB trigger): a change
-  needs a new id. One `registered`/`running` experiment per area; the next
+  needs a new id. The one exception (D122, E25.10) is the `analysis` block of a
+  registered/running XP, owner only and audited:
+
+      arc experiment amend-analysis XP-1 --covariates spy_ret --hac-lag 5 \
+          --actor <owner id> --reason "#project-arc <thread ts>"
+
+  It appends a new spec revision (`amends_revision` = the one it replaces; the DB
+  trigger refuses any other diff) plus an `experiment_events` row with the status
+  unchanged and `{amended: analysis, from, to, from_hash, to_hash,
+  sessions_at_amend, owner_approval}`. The registration row and hash stay. `verify`
+  then checks the chain registered hash → amendment(s) → current hash, recomputing
+  every link; `show` prints the amendment, and reports carry `analysis_amended`.
+  Back up the store first (`sqlite3 data/arc.db ".backup <scratch>/arc.db.bak"`).
+- One `registered`/`running` experiment per area; the next
   queued one is registered when it stops.
 - **Owner approval (D86, E21.2).** `create` and `register` refuse without
   `--owner-approval <ref>`: `XP-<n>` (an Analyst proposal the owner approved in

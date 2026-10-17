@@ -41,7 +41,8 @@ if TYPE_CHECKING:
     import sqlite3
 
     from arc.experiments.evaluate import ExperimentReport
-    from arc.experiments.models import ExperimentState
+    from arc.experiments.models import AnalysisAmendment, ExperimentState
+    from arc.experiments.store import ExperimentStore
 
 __all__ = ["add_experiment_parser", "run_experiment"]
 
@@ -77,6 +78,32 @@ def add_experiment_parser(sub: argparse._SubParsersAction[argparse.ArgumentParse
     s.add_argument("experiment_id")
     v = common(esub.add_parser("verify", help="Recompute the spec hash against the lock"))
     v.add_argument("experiment_id")
+    am = common(
+        esub.add_parser(
+            "amend-analysis",
+            help="D122 (E25.10): owner-only, audited change of a registered/running XP's "
+            "analysis block (append-only new revision + event; nothing else may change)",
+        )
+    )
+    am.add_argument("experiment_id")
+    am.add_argument(
+        "--covariates",
+        required=True,
+        help="comma list (spy_ret[,vix_chg]); 'none' = unadjusted ([])",
+    )
+    am.add_argument(
+        "--hac-lag", required=True, help="Bartlett lag in sessions (1-20), or 'none' (iid)"
+    )
+    am.add_argument("--actor", required=True, help="owner Slack id, or local (shell owner)")
+    am.add_argument(
+        "--reason", required=True, help="where the owner decided it, e.g. '#project-arc <ts>'"
+    )
+    am.add_argument(
+        "--owner-approval",
+        default=None,
+        help="slack:<ts> | owner:<note> (default: slack:<ts> found in --reason, else "
+        "owner:<reason>)",
+    )
     st = common(esub.add_parser("stop", help="Stop an experiment (owner)"))
     st.add_argument("experiment_id")
     st.add_argument("--reason", required=True, choices=[x.value for x in StopReason])
@@ -262,6 +289,8 @@ def _detail(s: ExperimentState) -> list[str]:
         )
     lines.append(f"  spec sha256 {s.spec_hash}")
     lines.append(f"  registered sha256 {s.registered_hash or '- (draft: not locked yet)'}")
+    for a in s.amendments:  # E25.10 (D122)
+        lines.append("  " + _amendment_line(a))
     lines.append("  events:")
     for e in s.events:
         reason = f" ({e.reason.value})" if e.reason else ""
@@ -461,6 +490,15 @@ def long_run_lines(r: ExperimentReport) -> list[str]:
     """D119: the headline pair's adjusted + HAC primary and (pre-registered) the iid one."""
     p = r.primary
     out: list[str] = []
+    if r.analysis_amended is not None:  # D122 (E25.10)
+        from arc.experiments.store import analysis_text
+
+        am = r.analysis_amended
+        out.append(
+            f"  analysis amended by the owner at session {am.sessions_at_amend} "
+            f"({am.at:%Y-%m-%d %H:%M %Z}): {analysis_text(am.from_)} -> "
+            f"{analysis_text(am.to)}; the verdict reads the amended analysis"
+        )
     if p.adjustment is not None:
         out.append(_long_run_line(p, r.alpha))
     if p.primary_unadjusted is not None:
@@ -518,6 +556,68 @@ def production_lines(r: ExperimentReport) -> list[str]:
     if pp.missing_sessions:
         lines.append(f"    missing {', '.join(map(str, pp.missing_sessions))}")
     return lines
+
+
+def _amend_approval(reason: str, given: str | None) -> str:
+    """``--owner-approval``, else ``slack:<ts>`` when *reason* names a Slack ts, else
+    ``owner:<reason>`` (D86's three forms)."""
+    if given:
+        return given
+    import re
+
+    m = re.search(r"\b(\d{9,}\.\d+)\b", reason)
+    return f"slack:{m.group(1)}" if m else f"owner:{reason.strip()[:200]}"
+
+
+def _run_amend(args: argparse.Namespace, store: ExperimentStore, conn: sqlite3.Connection) -> int:
+    """``amend-analysis`` (E25.10, D122): owner-only; the sessions at the amendment are
+    the latest stored report's (0 when none is stored yet)."""
+    from pydantic import ValidationError
+
+    from arc.experiments.evaluate import latest_report
+    from arc.experiments.models import Analysis
+
+    if not _owner(args.actor):
+        _err(f"arc experiment amend-analysis: {args.actor} is not the owner")
+        return 2
+    covs = [] if args.covariates.strip().lower() in ("none", "") else [
+        c.strip() for c in args.covariates.split(",") if c.strip()
+    ]  # fmt: skip
+    lag_text = str(args.hac_lag).strip().lower()
+    try:
+        lag = None if lag_text in ("none", "null") else int(lag_text)
+        analysis = Analysis.model_validate({"covariates": covs, "hac_lag": lag})
+    except (ValueError, ValidationError) as exc:
+        _err(f"arc experiment amend-analysis: invalid analysis: {exc}")
+        return 2
+    rep = latest_report(conn, args.experiment_id)
+    st = store.amend_analysis(
+        args.experiment_id,
+        analysis,
+        actor=args.actor,
+        owner_approval=_amend_approval(args.reason, args.owner_approval),
+        sessions_at_amend=0 if rep is None else rep.sessions,
+        reason=args.reason,
+        is_owner=_owner,
+    )
+    if args.json:
+        _out(json.dumps(_state_json(st), indent=2))
+    else:
+        a = st.amendments[-1]
+        _out(_summary(st))
+        _out("  " + _amendment_line(a))
+    return 0
+
+
+def _amendment_line(a: AnalysisAmendment) -> str:
+    from arc.experiments.store import analysis_text
+
+    return (
+        f"analysis amended {a.at:%Y-%m-%d %H:%M %Z} by {a.actor} at session "
+        f"{a.sessions_at_amend}: {analysis_text(a.from_)} -> {analysis_text(a.to)} "
+        f"(r{a.amends_revision} {a.from_hash[:12]} -> r{a.revision} {a.to_hash[:12]}; "
+        f"approval {a.owner_approval})"
+    )
 
 
 def _owner(actor: str) -> bool:
@@ -1104,7 +1204,15 @@ def run_experiment(args: argparse.Namespace) -> int:
                     f"  stored     {v['stored_hash']}\n"
                     f"  recomputed {v['recomputed_hash']}"
                 )
+                if "lock_hash" in v:  # E25.10: amended, the lock chain
+                    _out(f"  lock       {v['lock_hash']} (amended, D122)")
+                    for link in v["chain"]:
+                        _out(f"    {link}")
+                    for p in v["problems"]:
+                        _out(f"  problem: {p}")
             return 0 if v["ok"] else 1
+        elif cmd == "amend-analysis":
+            return _run_amend(args, store, conn)
         elif cmd in ("report", "evaluate"):
             return _run_eval(args, store, conn)
         elif cmd == "plan":

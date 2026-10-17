@@ -520,6 +520,52 @@
         "title": "Analysis",
         "type": "object"
       },
+      "AnalysisAmended": {
+        "additionalProperties": false,
+        "description": "E25.10 (D122): what a report carries when its spec's analysis was amended mid-run,\nso the report stays reproducible: when, after how many sessions, from what to what.",
+        "properties": {
+          "at": {
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "from": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Analysis"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The analysis before (null = the D44 iid unadjusted)"
+          },
+          "sessions_at_amend": {
+            "minimum": 0.0,
+            "title": "Sessions At Amend",
+            "type": "integer"
+          },
+          "to": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Analysis"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The analysis the verdict reads from now on"
+          }
+        },
+        "required": [
+          "at",
+          "sessions_at_amend",
+          "from",
+          "to"
+        ],
+        "title": "AnalysisAmended",
+        "type": "object"
+      },
       "AppInfo": {
         "additionalProperties": false,
         "properties": {
@@ -5679,6 +5725,17 @@
               }
             ],
             "description": "D119: the spec's pre-registered analysis"
+          },
+          "analysis_amended": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AnalysisAmended"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D122: the owner amended the spec's analysis mid-run (when, at which session, from what to what); the verdict reads the amended analysis"
           },
           "area": {
             "title": "Area",

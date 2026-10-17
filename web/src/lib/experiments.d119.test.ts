@@ -152,6 +152,39 @@ describe("verdict basis (D120: verdicts are unchanged)", () => {
   });
 });
 
+describe("owner-amended analysis (D122)", () => {
+  const AMENDED = { at: "2026-10-16T20:00:00-04:00", sessions_at_amend: 3, from: null, to: { covariates: ["spy_ret" as const], hac_lag: 5 } };
+
+  it("the verdict chip says SPY-adjusted (amended at session n), not pre-registered", () => {
+    const vb = verdictBasis({ analysis: { covariates: ["spy_ret"], hac_lag: 5 } }, AMENDED);
+    expect(vb).toEqual({ basis: "adjusted", preD119: false, amendedAt: 3 });
+    const note = verdictNote(headlineEstimate(descriptive(adj({ pre_registered: true }))), vb);
+    expect(note).toBe("verdict on SPY-adjusted (amended at session 3)");
+    expect(note).not.toMatch(/pre-registered|D1\d\d/);
+  });
+
+  it("the chip shows even while the headline falls back (n < 3)", () => {
+    const a = adj({ pre_registered: true, status: "insufficient_n", n: 2, estimate: null, beta: null });
+    const vb = verdictBasis({ analysis: { covariates: ["spy_ret"], hac_lag: 5 } }, AMENDED);
+    expect(verdictNote(headlineEstimate(descriptive(a)), vb)).toBe("verdict on SPY-adjusted (amended at session 3)");
+  });
+
+  it("amended back to none reads unadjusted (amended), never 'pre-dates D119'", () => {
+    const vb = verdictBasis({ analysis: null }, { ...AMENDED, sessions_at_amend: 5 });
+    expect(vb.preD119).toBe(false);
+    expect(verdictNote(headlineEstimate(descriptive(adj())), vb)).toBe("verdict on unadjusted (amended at session 5)");
+  });
+
+  it("adjustedPairs carries the amended note for every pair", () => {
+    const r = { ...(K3_D119_DETAIL.report as ExperimentReport), analysis_amended: AMENDED };
+    const blocks = adjustedPairs(r, K3_D119_DETAIL.spec);
+    expect(blocks.length).toBeGreaterThan(0);
+    expect(blocks.every((b) => b.verdictNote === "verdict on SPY-adjusted (amended at session 3)")).toBe(true);
+    // the unamended fixture is unchanged: no note
+    expect(adjustedPairs(K3_D119_DETAIL.report as ExperimentReport, K3_D119_DETAIL.spec).every((b) => b.verdictNote === null)).toBe(true);
+  });
+});
+
 describe("stat chips and the mostly-market-beta flag", () => {
   it("β̂ ± SE, R², HAC f (source), σ_LR, each with a plain-words tip", () => {
     const chips = statChips(descriptive(adj({ beta: -0.3 })));

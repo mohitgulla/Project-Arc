@@ -388,21 +388,36 @@ export interface VerdictBasisView {
   basis: Basis;
   /** the spec carries no `analysis` block (registered before D119, e.g. XP-1) */
   preD119: boolean;
+  /** the owner amended the analysis mid-run: the session count at the amendment (else absent) */
+  amendedAt?: number;
 }
 
-/** What the verdict is decided on: the spec's pre-registered analysis (D119), else D44 unadjusted. */
-export function verdictBasis(x: { analysis?: Analysis | null } | null | undefined): VerdictBasisView {
+/**
+ * What the verdict is decided on: the spec's pre-registered analysis (D119), else D44
+ * unadjusted. *amended* is the report's `analysis_amended` (D122): the analysis was changed
+ * by the owner mid-run, so the basis is the amended one, not a pre-registered one.
+ */
+export function verdictBasis(
+  x: { analysis?: Analysis | null } | null | undefined,
+  amended?: { sessions_at_amend: number } | null,
+): VerdictBasisView {
   const an = x?.analysis;
-  if (!an) return { basis: "unadjusted", preD119: true };
-  return { basis: (an.covariates ?? []).includes("spy_ret") ? "adjusted" : "unadjusted", preD119: false };
+  const am = amended ? { amendedAt: amended.sessions_at_amend } : {};
+  if (!an) return { basis: "unadjusted", preD119: !amended, ...am };
+  return { basis: (an.covariates ?? []).includes("spy_ret") ? "adjusted" : "unadjusted", preD119: false, ...am };
 }
 
 /**
  * The verdict chip's extra text when the headline basis differs from the verdict basis:
  * an adjusted headline on a spec that decides on the unadjusted number. A fallback headline
- * on an adjusted spec already carries its own chip (pending / on hold), so no note.
+ * on an adjusted spec already carries its own chip (pending / on hold), so no note. An
+ * amended analysis always says so, with the session it was amended at.
  */
 export function verdictNote(h: HeadlineView, v: VerdictBasisView): string | null {
+  if (v.amendedAt !== undefined) {
+    const on = v.basis === "adjusted" ? "SPY-adjusted" : "unadjusted";
+    return `verdict on ${on} (amended at session ${v.amendedAt})`;
+  }
   if (h.basis !== "adjusted" || v.basis !== "unadjusted") return null;
   return v.preD119 ? "verdict on unadjusted — spec pre-dates D119" : "verdict on unadjusted (pre-registered)";
 }
@@ -487,7 +502,7 @@ export function adjustedPairs(
   spec?: { analysis?: Analysis | null } | null,
 ): AdjustedPairView[] {
   if (!r) return [];
-  const vb = verdictBasis(spec ?? r);
+  const vb = verdictBasis(spec ?? r, r.analysis_amended);
   const view = (arm: string, p: PrimaryLike, verdict: string | null | undefined): AdjustedPairView => {
     const h = headlineEstimate(p);
     return { arm, headline: h, other: otherLine(h), chips: statChips(p), verdict: verdictPill(verdict), verdictNote: verdictNote(h, vb), mostlyBeta: mostlyBeta(p) };

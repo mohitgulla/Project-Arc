@@ -10,7 +10,9 @@ Five checks:
 1. **Pre-registration lock.** For every experiment, the stored spec re-hashes to its
    ``spec_hash`` (the stored text is canonical JSON, so SHA-256 of the canonical re-dump must
    match), every non-draft event carries that hash, and no spec revision was written after the
-   lock (the DB trigger forbids it; a row here means the trigger was bypassed).
+   lock (the DB trigger forbids it; a row here means the trigger was bypassed). An owner
+   amendment of the ``analysis`` block (D122) is the one allowed post-lock revision: the lock
+   then chains registered hash -> amendment event(s) -> current hash, every link recomputed.
 2. **Control changes during a running experiment.** Commits on main inside an experiment's
    running window (running event -> stop event, or HEAD) that touch a path of its area
    (``experiment_areas.json``). For each: the touched paths and, for ``config/*.yaml``, the
@@ -79,6 +81,42 @@ def canonical(spec_text: str) -> str:
 
 def sha256(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
+
+
+def _amendment_problems(revs: list, amends: list, registered: "str | None", has_col: bool) -> list:
+    """D122 (E25.10): each analysis amendment links the previous lock to a stored revision
+    whose spec differs from the one it amends only in ``analysis`` (all hashes recomputed)."""
+    problems: list = []
+    if not amends:
+        return problems
+    by_rev = {r[0]: r for r in revs}
+    prev = registered
+    for e in amends:
+        d = e["detail"]
+        frm, to = by_rev.get(d.get("amends_revision")), by_rev.get(d.get("revision"))
+        tag = f"amendment event #{e['id']} (r{d.get('amends_revision')} -> r{d.get('revision')})"
+        if frm is None or to is None:
+            problems.append(f"{tag}: revision missing")
+            continue
+        try:
+            fh, th = sha256(canonical(frm[3])), sha256(canonical(to[3]))
+            fs, ts = json.loads(frm[3]), json.loads(to[3])
+        except ValueError:
+            problems.append(f"{tag}: spec is not JSON")
+            continue
+        if d.get("from_hash") != prev or fh != prev:
+            problems.append(f"{tag}: does not follow the lock {str(prev)[:12]}")
+        if th != d.get("to_hash") or e["spec_hash"] != th:
+            problems.append(f"{tag}: amended revision re-hashes to {th[:12]}")
+        fa, ta = fs.pop("analysis", None), ts.pop("analysis", None)
+        if fs != ts:
+            problems.append(f"{tag}: changes more than the analysis block")
+        if fa != d.get("from") or ta != d.get("to"):
+            problems.append(f"{tag}: event from/to do not match the stored analysis")
+        if has_col and to[6] != d.get("amends_revision"):
+            problems.append(f"{tag}: revision not flagged amends_revision")
+        prev = th
+    return problems
 
 
 def load_areas(path: Path) -> dict:
@@ -173,10 +211,14 @@ def experiments(conn: sqlite3.Connection) -> list[dict]:
             "SELECT experiment_id FROM experiments GROUP BY experiment_id ORDER BY MIN(id)"
         )
     ]
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(experiments)")}
+    amends_col = "amends_revision" in cols  # migration 039 (D122); older copies lack it
+    sel = "amends_revision" if amends_col else "NULL"
     for eid in ids:
         revs = conn.execute(
-            "SELECT revision, kind, area, spec, spec_hash, created_at FROM experiments "
-            "WHERE experiment_id = ? ORDER BY revision",
+            "SELECT revision, kind, area, spec, spec_hash, created_at, "
+            + sel
+            + " FROM experiments WHERE experiment_id = ? ORDER BY revision",
             (eid,),
         ).fetchall()
         events = [
@@ -188,7 +230,7 @@ def experiments(conn: sqlite3.Connection) -> list[dict]:
                 (eid,),
             )
         ]  # fmt: skip
-        rev, kind, area, spec, stored, _created = revs[-1]
+        rev, kind, area, spec, stored, _created, _amends = revs[-1]
         try:
             recomputed = sha256(canonical(spec))
             canonical_ok = canonical(spec) == spec
@@ -197,17 +239,27 @@ def experiments(conn: sqlite3.Connection) -> list[dict]:
         locked = [e for e in events if e["status"] != "draft"]
         registered = locked[0]["spec_hash"] if locked else None
         lock_at = locked[0]["at"] if locked else None
-        late_revs = [r[0] for r in revs if lock_at is not None and r[5] > lock_at]
-        hashes = sorted({e["spec_hash"] for e in locked})
-        problems = []
+        # D122 (E25.10): owner amendments of the analysis block are the one allowed
+        # post-lock revision; each is checked link by link, the rest stay "late".
+        amends = [e for e in locked if e["detail"].get("amended") == "analysis"]
+        problems = _amendment_problems(revs, amends, registered, amends_col)
+        amended_revs = {e["detail"].get("revision") for e in amends}
+        late_revs = [
+            r[0] for r in revs
+            if lock_at is not None and r[5] > lock_at and r[0] not in amended_revs
+        ]  # fmt: skip
+        lock = amends[-1]["detail"].get("to_hash") if amends else registered
+        allowed = {registered} | {e["detail"].get("to_hash") for e in amends}
+        hashes = sorted({e["spec_hash"] for e in locked} - allowed)
         if recomputed != stored:
             problems.append(f"stored spec re-hashes to {recomputed[:12]}, not {stored[:12]}")
         if not canonical_ok:
             problems.append("stored spec is not canonical JSON")
-        if registered is not None and registered != stored:
-            problems.append(f"latest revision {stored[:12]} != registered {registered[:12]}")
-        if len(hashes) > 1:
-            problems.append(f"non-draft events carry {len(hashes)} different hashes")
+        if lock is not None and lock != stored:
+            what = "latest amendment" if amends else "registered"
+            problems.append(f"latest revision {stored[:12]} != {what} {str(lock)[:12]}")
+        if hashes:
+            problems.append(f"non-draft events carry {len(hashes)} hash(es) outside the lock chain")
         if late_revs:
             problems.append(f"revision(s) {late_revs} written after the lock (trigger bypassed)")
         status = events[-1] if events else {"status": "draft", "reason": None}
@@ -580,11 +632,7 @@ def render(
     if not residuals:
         out.append("- no stored report with a production panel (spec v3) yet")
     for r in residuals or []:
-        ci = (
-            f"[{r['lo'] * 100:+.3f}%, {r['hi'] * 100:+.3f}%]"
-            if r["lo"] is not None
-            else "n/a"
-        )
+        ci = f"[{r['lo'] * 100:+.3f}%, {r['hi'] * 100:+.3f}%]" if r["lo"] is not None else "n/a"
         mean = f"{r['mean'] * 100:+.3f}%/day" if r["mean"] is not None else "n/a"
         out.append(
             f"- {r['id']}: start book {r['book_open']} open (last close "

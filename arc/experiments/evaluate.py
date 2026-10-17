@@ -73,6 +73,7 @@ from arc.experiments.covariate_check import CovariateCheck  # noqa: TC001 - pyda
 from arc.experiments.models import (
     CONTROL_ARM,
     Analysis,
+    AnalysisAmended,
     ExperimentKind,
     ExperimentState,
     ExperimentStatus,
@@ -556,6 +557,13 @@ class ExperimentReport(BaseModel):
         None,
         exclude_if=_absent,
         description="D119: paired sessions with no SPY return (an adjusted verdict waits)",
+    )
+    # -- D122 (E25.10): omitted when absent ---------------------------------------------
+    analysis_amended: AnalysisAmended | None = Field(
+        None,
+        exclude_if=_absent,
+        description="D122: the owner amended the spec's analysis mid-run (when, at which "
+        "session, from what to what); the verdict reads the amended analysis",
     )
 
     @property
@@ -1692,6 +1700,7 @@ def build_report(
             if method.waits_on_covariate and primary.adjustment is not None
             else None
         ),
+        analysis_amended=st.analysis_amended,
     )
 
 

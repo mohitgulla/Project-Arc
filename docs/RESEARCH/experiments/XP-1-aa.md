@@ -6,6 +6,8 @@ Status: **pending live run (E15.9)**. XP-1 is the K=3 calibration A/A (control a
 
 Regenerate the example with `.venv/bin/python scripts/xp1_aa_dry_run.py --dir <empty scratch dir> --write-doc`.
 
+**Amendment (PLAN D122, E25.10, owner 2026-10-16, #project-arc 1792193805.441269):** XP-1 was registered with no `analysis` block (D44 iid unadjusted). At session 3/10 the owner moved it to the SPY-adjusted primary, `analysis: {covariates: [spy_ret], hac_lag: 5}`, through the audited `arc experiment amend-analysis` path: a new append-only spec revision plus an amendment event, with the registered hash left in place and `arc experiment verify` checking the chain. The owner accepts the deviation from pre-registration, because an A/A has no winner to bias. From then on the verdict reads the adjusted primary, the report carries `analysis_amended` (when, at which session, from → to), and the A/A stop records `sigma_adj`, which later A/B sizing reads through `aa_sigma(analysis)`.
+
 ## Example: fixture dry run (synthetic data)
 
 ### XP-1 A/A calibration report
