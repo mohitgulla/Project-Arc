@@ -31,13 +31,28 @@ Cron pre-run gate (no args):
      E7.15 (D84) adds, read-only: the backtest studies (``data/backtest/ledger.jsonl`` +
      ``docs/RESEARCH/studies/*.json``, each spec's hash from ``arc backtest study show
      --json``), the E7.9 checkpoints and the E7.14 backtest<->live drift. A holdout
-     verdict not seen at the last ``mark`` also wakes the agent.
+     verdict not seen at the last ``mark`` also wakes the agent, and so does (E26.4) an XP
+     verdict file ``config/experiments/live/verdicts/XP-<n>.yaml`` not seen at it.
 
 Agent subcommands:
   record RUN_DIR              validate RUN_DIR/findings.json, reconcile into the ledger
                               (A-ids) and the XP backlog (XP-ids, xp_backlog.json)
-  mark RUN_DIR                advance the watermark to this run (only after record)
-  check-report FILE           the Slack report respects the size cap and sections
+  record RUN_DIR --mode verdict
+                              E26.4 (D121) verdict run: the narrower contract (one new XP and
+                              one new BT proposal at most, each citing a new verdict; no quick
+                              changes, standing themes or full review)
+  mark RUN_DIR                advance the watermark to this run (only after record); on a
+                              verdict run it advances only the verdict run's watermark
+  check-report FILE [--mode verdict]
+                              the Slack report respects the size cap and sections
+                              (verdict run: <= 1,200 chars)
+
+Verdict gate (E26.4, D121; cron `arc-analyst-verdict-check`, daily 09:30 PT, through
+``arc_analyst_verdict.py`` because Hermes runs a cron script without arguments):
+  gate --mode verdict         wake only on a BT holdout verdict or an XP verdict file
+                              (``config/experiments/live/verdicts/XP-<n>.yaml``) that neither
+                              the weekly run nor a verdict run has read, at most once per ET day,
+                              and never when the weekly run is due within 24 h
   check-seed [FILE]           validate the idea seed (default: the installed copy)
 Owner subcommands (run by an interactive Hermes session on the owner's thread reply):
   triage A-ID STATUS [NOTE]   STATUS in accepted|wontfix|fixed
@@ -68,6 +83,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
+import hashlib
 import json
 import os
 import re
@@ -335,6 +351,20 @@ STUDY_SPEC_CATEGORIES = ("theme", "data-gap", "xp-proposal")  # untested hypothe
 # Legacy (pre-E7.15) backtest_ref values: kept only on backlog entries that already held them.
 LEGACY_REF_PREFIXES = ("docs/RESEARCH", "data/backtest")
 
+# ---- E26.4 (D121): the short verdict run ----
+XP_VERDICTS = Path("config") / "experiments" / "live" / "verdicts"  # E21.4 verdict files
+VERDICT_REPORT_MAX = 1_200
+VERDICT_REPORT_SECTIONS = ("verdict run", "*Read*", "*Follow-up*")
+VERDICT_DOC_KEYS = ("mode", "verdicts", "findings", "backlog_drops")
+VERDICT_CATEGORIES = ("xp-proposal", "theme", "data-gap")  # a study_spec rides on any of them
+VERDICT_MAX_NEW = 1  # new proposals per kind (XP, BT) per verdict run
+VERDICT_REF_RE = re.compile(r"(?<![A-Za-z0-9_-])((?:XP|BT)-[1-9]\d*)(?![0-9])")
+WEEKLY_TZ = ZoneInfo("America/Los_Angeles")  # arc-analyst-weekly-audit: `0 14 * * 0` host PT
+WEEKLY_WEEKDAY = 6  # Sunday
+WEEKLY_AT = dt.time(14, 0)
+VERDICT_WEEKLY_GAP = dt.timedelta(hours=24)  # skip when the weekly run is due within this
+VERDICT_RUN_SUFFIX = "-verdict"
+
 
 @dataclasses.dataclass(frozen=True)
 class Paths:
@@ -346,10 +376,15 @@ class Paths:
     arc: tuple[str, ...]  # argv prefix of the arc CLI
     gh: tuple[str, ...] = ()  # argv prefix of the GitHub CLI; () = skip the merged-PR section
     backtest_root: Path | None = None  # E7.15: where data/backtest + studies live; None = repo
+    verdicts_dir: Path | None = None  # E26.4: XP verdict files; None = repo's XP_VERDICTS
 
     @property
     def bt_root(self) -> Path:
         return self.backtest_root or self.repo
+
+    @property
+    def xp_verdicts(self) -> Path:
+        return self.verdicts_dir or self.repo / XP_VERDICTS
 
     @property
     def ledger(self) -> Path:
@@ -447,10 +482,15 @@ def snapshot_db(live: Path, dest: Path) -> None:
 
 
 def wake_decision(
-    conn: sqlite3.Connection, state: dict, now: dt.datetime, holdouts: list | None = None
+    conn: sqlite3.Connection,
+    state: dict,
+    now: dt.datetime,
+    holdouts: list | None = None,
+    xp_verdicts: list | None = None,
 ) -> dict:
     """Whether the agent should run, and why. Reads the COPY only. *holdouts* are the
-    research ledger's holdout run keys (E7.15): one not seen at the last ``mark`` wakes it."""
+    research ledger's holdout run keys (E7.15): one not seen at the last ``mark`` wakes it.
+    *xp_verdicts* are the XP verdict files' keys (E26.4, :func:`xp_verdict_keys`): the same."""
     closed_total, closed_max = conn.execute(
         f"SELECT COUNT(*), COALESCE(MAX(rowid), 0) FROM outcomes WHERE {closed_filter()}"
     ).fetchone()
@@ -489,15 +529,18 @@ def wake_decision(
     seen = set(state.get("bt_holdouts_seen") or [])
     new_holdouts = [h for h in holdouts or [] if h not in seen]
     if new_holdouts:
-        ids = sorted({h.split(":", 1)[0] for h in new_holdouts}, key=lambda s: int(s[3:]))
-        reasons.append(f"new backtest holdout verdict(s) since the last run: {', '.join(ids)}")
+        ids = verdict_ids(new_holdouts)
+        reasons.append(f"new backtest holdout verdict(s) since the last run: {ids}")
+    new_xp = [k for k in xp_verdicts or [] if k not in set(state.get("xp_verdicts_seen") or [])]
+    if new_xp:
+        reasons.append(f"new XP verdict file(s) since the last run: {verdict_ids(new_xp)}")
     wake = closed_total > 0 and bool(reasons)
     if closed_total == 0:
         reasons = ["no closed outcome in the journal yet (E9.4 start condition)"]
     elif not reasons:
         reasons = [
             "no new closed outcome, no halt, no experiment status change and no new backtest "
-            "holdout verdict since the last run"
+            "holdout verdict or XP verdict file since the last run"
         ]
     return {
         "wake": wake,
@@ -508,7 +551,26 @@ def wake_decision(
         "halts": halts,
         "since": iso(since),
         "new_holdouts": new_holdouts,
+        "new_xp_verdicts": new_xp,
     }
+
+
+def verdict_ids(keys: list) -> str:
+    """``BT-3, XP-2`` from verdict keys ``<id>:<hash>[:<at>]``, numerically sorted per kind."""
+    ids = {k.split(":", 1)[0] for k in keys}
+    return ", ".join(sorted(ids, key=lambda s: (s[:2], int(s[3:]))))
+
+
+def xp_verdict_keys(directory: Path) -> list[str]:
+    """E26.4: one key per committed XP verdict file, ``XP-<n>:<sha256 of the text, 12>``.
+    A rewritten file (a new verdict on the same id) is a new key; a missing dir is none."""
+    if not directory.is_dir():
+        return []
+    out = []
+    for f in sorted(directory.glob("XP-*.yaml")):
+        if EXPERIMENT_ID_RE.match(f.stem):
+            out.append(f"{f.stem}:{hashlib.sha256(f.read_bytes()).hexdigest()[:12]}")
+    return sorted(out, key=lambda k: int(k.split(":", 1)[0][3:]))
 
 
 def sleeve_case(sleeves: list | None) -> str:
@@ -1691,7 +1753,24 @@ def sync_backlog(backlog: dict, overview: list[dict], when: str) -> list[str]:
     return out
 
 
-def backlog_lines(backlog: dict, overview: list[dict], max_arms: int) -> list[str]:
+def proposal_age(entry: dict, now: dt.datetime | None) -> str:
+    """E26.4: ` | proposed <N>d ago (verdict run <run>)` for the weekly context; '' without
+    *now* or a ``created`` stamp."""
+    created = entry.get("created")
+    if now is None or not created:
+        return ""
+    try:
+        days = (now - dt.datetime.fromisoformat(created)).days
+    except (TypeError, ValueError):
+        return ""
+    run = str(entry.get("created_run") or "")
+    src = f" (verdict run {run})" if run.endswith(VERDICT_RUN_SUFFIX) else ""
+    return f" | proposed {max(days, 0)}d ago{src}"
+
+
+def backlog_lines(
+    backlog: dict, overview: list[dict], max_arms: int, now: dt.datetime | None = None
+) -> list[str]:
     """Context: every open proposal ranked, its formula and inputs, and slot readiness."""
     ranked = ranked_backlog(backlog)
     live = [e for e in backlog["items"].values() if e.get("status") in ("registered", "running")]
@@ -1700,7 +1779,7 @@ def backlog_lines(backlog: dict, overview: list[dict], max_arms: int) -> list[st
         for e in backlog["items"].values()
         if e.get("status") in BACKLOG_RANKED and e.get("needs_rewrite")
     ]
-    out = study_backlog_lines(backlog)
+    out = study_backlog_lines(backlog, now)
     if not ranked and not live and not rewrite:
         return [
             "- empty (no XP proposal yet: propose from the seed leads or live buckets n >= 20)",
@@ -1715,6 +1794,7 @@ def backlog_lines(backlog: dict, overview: list[dict], max_arms: int) -> list[st
             f"- #{rank} {e['id']} [{e['status']}] {spec.get('area')}: {spec.get('title')} "
             f"(key {e['key']}) | evidence {e.get('evidence_kind')}"
             f"{' ' + e['evidence_ref'] if e.get('evidence_ref') else ''} n={e.get('n')} | {slot}"
+            f"{proposal_age(e, now)}"
         )
         out.append(f"  {value_formula(e)}")
         for name in TREATMENT_NAMES:
@@ -1745,7 +1825,7 @@ def mixed_rank_lines(backlog: dict) -> list[str]:
     ]
 
 
-def study_backlog_lines(backlog: dict) -> list[str]:
+def study_backlog_lines(backlog: dict, now: dt.datetime | None = None) -> list[str]:
     """The ``kind: bt`` entries (E26.2): ranked proposals with their formula, then the ones
     the owner approved (queue status), stopped or dropped this far."""
     ranked = ranked_backlog(backlog, kind="bt")
@@ -1753,7 +1833,7 @@ def study_backlog_lines(backlog: dict) -> list[str]:
     for rank, e in enumerate(ranked, 1):
         out.append(
             f"- BT #{rank} {e['id']} [{e['status']}] {e.get('title')} (key {e['key']}) | "
-            f"draft {e.get('draft_path') or '-'}"
+            f"draft {e.get('draft_path') or '-'}{proposal_age(e, now)}"
         )
         out.append(f"  {value_formula(e)}")
     done = sorted(
@@ -2379,6 +2459,35 @@ def apply_reviews(ledger: dict, doc: dict, run: str, when: str) -> list[str]:
     return out
 
 
+def _finding_shape_errs(f: dict, i: int) -> list[str]:
+    """The per-finding fields both contracts (weekly and E26.4 verdict run) require."""
+    errs = []
+    missing = [k for k in REQUIRED if not str(f.get(k, "")).strip()]
+    if missing:
+        errs.append(f"findings[{i}] missing {missing}")
+    if f.get("severity") not in SEVERITIES:
+        errs.append(f"findings[{i}] bad severity {f.get('severity')!r}")
+    if f.get("category") not in CATEGORIES:
+        errs.append(f"findings[{i}] bad category {f.get('category')!r}")
+    if f.get("action") not in ACTIONS:
+        errs.append(f"findings[{i}] bad action {f.get('action')!r}")
+    n = f.get("n")
+    if not isinstance(n, int) or isinstance(n, bool) or n < 0:
+        errs.append(f"findings[{i}] n (closed trades in the bucket) must be an int >= 0")
+    if f.get("theme") is not None and f.get("theme") not in THEMES:
+        errs.append(f"findings[{i}] unknown theme {f.get('theme')!r}")
+    draft = f.get("draft_card") or {}
+    if f.get("action") == "new-card" and not (draft.get("title") and draft.get("body")):
+        errs.append(f"findings[{i}] action new-card needs draft_card.title and draft_card.body")
+    for gone in ("forward_spec", "experiment"):
+        if gone in f:
+            errs.append(
+                f"findings[{i}] `{gone}` is retired (D86): an experiment is an "
+                "xp-proposal with a `proposal`"
+            )
+    return errs
+
+
 def validate_findings(
     doc: dict,
     ledger: dict,
@@ -2412,30 +2521,7 @@ def validate_findings(
     if len(new_props) > MAX_NEW_PROPOSALS:
         errs.append(f"{len(new_props)} new xp-proposals: at most {MAX_NEW_PROPOSALS} per run (D86)")
     for i, f in enumerate(findings):
-        missing = [k for k in REQUIRED if not str(f.get(k, "")).strip()]
-        if missing:
-            errs.append(f"findings[{i}] missing {missing}")
-        if f.get("severity") not in SEVERITIES:
-            errs.append(f"findings[{i}] bad severity {f.get('severity')!r}")
-        if f.get("category") not in CATEGORIES:
-            errs.append(f"findings[{i}] bad category {f.get('category')!r}")
-        if f.get("action") not in ACTIONS:
-            errs.append(f"findings[{i}] bad action {f.get('action')!r}")
-        n = f.get("n")
-        if not isinstance(n, int) or isinstance(n, bool) or n < 0:
-            errs.append(f"findings[{i}] n (closed trades in the bucket) must be an int >= 0")
-            n = None
-        if f.get("theme") is not None and f.get("theme") not in THEMES:
-            errs.append(f"findings[{i}] unknown theme {f.get('theme')!r}")
-        draft = f.get("draft_card") or {}
-        if f.get("action") == "new-card" and not (draft.get("title") and draft.get("body")):
-            errs.append(f"findings[{i}] action new-card needs draft_card.title and draft_card.body")
-        for gone in ("forward_spec", "experiment"):
-            if gone in f:
-                errs.append(
-                    f"findings[{i}] `{gone}` is retired (D86): an experiment is an "
-                    "xp-proposal with a `proposal`"
-                )
+        errs += _finding_shape_errs(f, i)
         cat = f.get("category")
         if cat == "xp-proposal":
             errs += validate_proposal(f, i, backlog, seed_ids, studies)
@@ -3174,8 +3260,33 @@ def _seed_ids(p: Paths) -> frozenset:
     return frozenset(x["id"] for x in ideas)
 
 
+def write_study_drafts(
+    run_dir: Path,
+    backlog: dict,
+    doc: dict,
+    items: dict,
+    finding_ids: dict,
+    floor: int,
+    now: dt.datetime,
+) -> list[str]:
+    """E7.15 + E26.2 (D121): each study_spec is a `kind: bt` backlog entry that keeps its
+    BT-<n> across runs while proposed; its draft is written for `approve BT-<n>`."""
+    out = []
+    for f, entry in apply_study_backlog(backlog, doc, run_dir.name, iso(now), floor, finding_ids):
+        sid = entry["id"]
+        it = items[f["key"]]
+        path = write_study_spec(run_dir, sid, f["study_spec"], f, it["id"], now)
+        entry["draft_path"] = str(path)
+        it["study_spec"] = {"id": sid, "path": str(path), "run": run_dir.name}
+        out.append(f"{it['id']} -> {sid} ({path})")
+    return out
+
+
 def cmd_record(p: Paths, run_dir: Path, now: dt.datetime) -> int:
     doc = json.loads((run_dir / "findings.json").read_text())
+    if load_json(run_dir / "metrics.json", {}).get("mode") == "verdict":
+        print("refusing: this RUN_DIR is a verdict run; use `record RUN_DIR --mode verdict`")
+        return 2
     ledger = load_json(p.ledger, {"next_id": 1, "items": {}})
     state = load_json(p.state, {})
     meta = load_json(run_dir / "metrics.json", {})
@@ -3215,17 +3326,8 @@ def cmd_record(p: Paths, run_dir: Path, now: dt.datetime) -> int:
             items[f["key"]]["quick_change"] = f["quick_change"]
             items[f["key"]]["evidence"] = f.get("evidence")
     finding_ids = {k: it["id"] for k, it in items.items()}
-    # E7.15 + E26.2 (D121): each study_spec is a `kind: bt` backlog entry that keeps its
-    # BT-<n> across runs while proposed; its draft is written for `approve BT-<n>`
     floor = study_floor(studies, bt_meta.get("next_study_id"))
-    study_specs = []
-    for f, entry in apply_study_backlog(backlog, doc, run_dir.name, iso(now), floor, finding_ids):
-        sid = entry["id"]
-        it = items[f["key"]]
-        path = write_study_spec(run_dir, sid, f["study_spec"], f, it["id"], now)
-        entry["draft_path"] = str(path)
-        it["study_spec"] = {"id": sid, "path": str(path), "run": run_dir.name}
-        study_specs.append(f"{it['id']} -> {sid} ({path})")
+    study_specs = write_study_drafts(run_dir, backlog, doc, items, finding_ids, floor, now)
     reviews = apply_reviews(ledger, doc, run_dir.name, iso(now))
     save_json(p.ledger, ledger)
     moves = apply_backlog(backlog, doc, run_dir.name, iso(now), finding_ids, used)
@@ -3263,6 +3365,8 @@ def cmd_mark(p: Paths, run_dir: Path, now: dt.datetime) -> int:
         print("refusing to mark: run `arc_analyst.py record RUN_DIR` first")
         return 2
     meta = load_json(run_dir / "metrics.json", {})
+    if meta.get("mode") == "verdict":
+        return mark_verdict_run(p, run_dir, meta, now)
     if "closed_max_rowid" not in meta:
         print(f"refusing to mark: {run_dir}/metrics.json is not a gate run")
         return 2
@@ -3276,6 +3380,10 @@ def cmd_mark(p: Paths, run_dir: Path, now: dt.datetime) -> int:
     if "bt_holdouts" in meta:  # E7.15: the holdout verdicts this run has read
         state["bt_holdouts_seen"] = sorted(
             set(state.get("bt_holdouts_seen") or []) | set(meta["bt_holdouts"])
+        )
+    if "xp_verdicts" in meta:  # E26.4: the XP verdict files this run has read
+        state["xp_verdicts_seen"] = sorted(
+            set(state.get("xp_verdicts_seen") or []) | set(meta["xp_verdicts"])
         )
     save_json(p.state, state)
     print(f"watermark -> outcome rowid {meta['closed_max_rowid']}, last run {meta['now']}")
@@ -3758,19 +3866,21 @@ def cmd_backlog(p: Paths) -> int:
 
 def cmd_reset(p: Paths) -> int:
     state = load_json(p.state, {})
-    for k in ("closed_watermark", "last_run_at", "bt_holdouts_seen"):
+    for k in ("closed_watermark", "last_run_at", "bt_holdouts_seen", "xp_verdicts_seen",
+              "verdict_run"):  # fmt: skip
         state.pop(k, None)
     save_json(p.state, state)
     print("next run reviews unconditionally (if the journal has a closed outcome)")
     return 0
 
 
-def cmd_check_report(path: Path) -> int:
-    errs = validate_report(path.read_text())
+def cmd_check_report(path: Path, mode: str = "weekly") -> int:
+    text = path.read_text()
+    errs = validate_verdict_report(text) if mode == "verdict" else validate_report(text)
     if errs:
         print("report rejected:\n- " + "\n- ".join(errs))
         return 2
-    print(f"report ok ({len(path.read_text())} chars)")
+    print(f"report ok ({len(text)} chars)")
     return 0
 
 
@@ -4231,7 +4341,7 @@ def build_context(
         f"## XP backlog (yours; {p.backlog}; ranked by value, owner pins first; "
         f"cap {BACKLOG_CAP} open, <= {MAX_NEW_PROPOSALS} new per run)",
         *([f"- registry sync: {s}" for s in synced] or []),
-        *backlog_lines(backlog, overview, max_arms),
+        *backlog_lines(backlog, overview, max_arms, now),
         "",
         f"## Experiment idea seed (D86: leads from retired dev drafts, not proposals; "
         f"open until proposed (seed_ref) or dropped (seed_drops); full: {p.idea_seed})",
@@ -4300,9 +4410,10 @@ def cmd_gate(p: Paths, now: dt.datetime) -> int:
     state = load_json(p.state, {})
     bt_entries, _ = load_bt_ledger(p.bt_root / BT_LEDGER)
     holdouts = [holdout_key(e) for e in bt_entries if e["phase"] == "holdout"]
+    xp_keys = xp_verdict_keys(p.xp_verdicts)
     conn = sqlite3.connect(f"{staging.resolve().as_uri()}?mode=ro", uri=True)
     try:
-        decision = wake_decision(conn, state, now, holdouts)
+        decision = wake_decision(conn, state, now, holdouts, xp_keys)
         experiments = [
             {
                 "id": e["experiment_id"],
@@ -4337,6 +4448,7 @@ def cmd_gate(p: Paths, now: dt.datetime) -> int:
             # holdout keys `mark` stores so the same verdict does not wake the next run
             "backtest": {"studies": bt["studies"], "next_study_id": bt["next_study_id"]},
             "bt_holdouts": holdouts,
+            "xp_verdicts": xp_keys,  # E26.4: the XP verdict files `mark` stores as seen
         },
     )
     ctx = build_context(p, run_dir, copy, decision, now, bt)
@@ -4346,14 +4458,339 @@ def cmd_gate(p: Paths, now: dt.datetime) -> int:
     return 0
 
 
+# ---------- E26.4 (D121): the short verdict run ----------
+
+
+def unseen_verdicts(state: dict, holdouts: list, xp_keys: list) -> tuple[list, list]:
+    """The BT holdout keys and XP verdict-file keys neither the weekly run nor a verdict
+    run has marked as read (both ``mark`` paths add to the same seen lists)."""
+    bt_seen = set(state.get("bt_holdouts_seen") or [])
+    xp_seen = set(state.get("xp_verdicts_seen") or [])
+    return [h for h in holdouts if h not in bt_seen], [k for k in xp_keys if k not in xp_seen]
+
+
+def next_weekly_run(now: dt.datetime) -> dt.datetime:
+    """The next ``arc-analyst-weekly-audit`` slot at or after *now* (Sunday 14:00 PT)."""
+    local = now.astimezone(WEEKLY_TZ)
+    day = local.date() + dt.timedelta(days=(WEEKLY_WEEKDAY - local.weekday()) % 7)
+    slot = dt.datetime.combine(day, WEEKLY_AT, tzinfo=WEEKLY_TZ)
+    return slot if slot >= local else slot + dt.timedelta(days=7)
+
+
+def verdict_gate_decision(state: dict, now: dt.datetime, holdouts: list, xp_keys: list) -> dict:
+    """Wake the short run only on an unseen verdict, at most once per ET day, and never when
+    the weekly run (which reads every verdict anyway) is due within ``VERDICT_WEEKLY_GAP``."""
+    new_bt, new_xp = unseen_verdicts(state, holdouts, xp_keys)
+    today = now.astimezone(ET).date().isoformat()
+    weekly = next_weekly_run(now)
+    out = {"wake": False, "new_holdouts": new_bt, "new_xp_verdicts": new_xp, "day": today,
+           "next_weekly": iso(weekly)}  # fmt: skip
+    if not new_bt and not new_xp:
+        out["reason"] = "no new backtest holdout verdict or XP verdict file since the last run"
+    elif (state.get("verdict_run") or {}).get("day") == today:
+        out["reason"] = f"a verdict run already happened today ({today} ET); next one tomorrow"
+    elif weekly - now <= VERDICT_WEEKLY_GAP:
+        out["reason"] = f"the weekly run is due within 24 h ({iso(weekly)}); it reads them"
+    else:
+        out["wake"] = True
+        out["reason"] = f"new verdict(s): {verdict_ids(new_bt + new_xp)}"
+    return out
+
+
+def verdict_refs(text) -> set[str]:
+    return set(VERDICT_REF_RE.findall(str(text or "")))
+
+
+def related_backlog(backlog: dict, ids: set[str]) -> list[dict]:
+    """Backlog entries a verdict touches: the entry itself (``BT-<n>``/``XP-<n>``) or one
+    that cites it (evidence_ref, the spec's backtest_ref, evidence text)."""
+    out = []
+    for e in backlog["items"].values():
+        spec = e.get("spec") or {}
+        cites = {e.get("id"), e.get("evidence_ref"), spec.get("backtest_ref")}
+        cites |= verdict_refs(e.get("evidence"))
+        if ids & {c for c in cites if c}:
+            out.append(e)
+    return sorted(out, key=lambda e: (is_bt(e), _id_num(e["id"]), e["id"]))
+
+
+def xp_verdict_lines(directory: Path, keys: list) -> list[str]:
+    out = []
+    for k in keys:
+        xid = k.split(":", 1)[0]
+        path = directory / f"{xid}.yaml"
+        text = path.read_text() if path.is_file() else "(file gone since the gate)"
+        out += [f"### {xid} ({path})", "```yaml", clip(text.strip(), 2_500), "```"]
+    return out
+
+
+def build_verdict_context(
+    p: Paths, run_dir: Path, decision: dict, bt: dict, backlog: dict, now: dt.datetime
+) -> str:
+    ids = {k.split(":", 1)[0] for k in decision["new_holdouts"] + decision["new_xp_verdicts"]}
+    bt_ids = {k.split(":", 1)[0] for k in decision["new_holdouts"]}
+    studies = [s for s in bt["studies"] if s["id"] in bt_ids]
+    related = related_backlog(backlog, ids)
+    open_titles = [
+        f"- {e['id']} [{e['status']}] "
+        f"{e.get('title') if is_bt(e) else (e.get('spec') or {}).get('title')}"
+        for e in ranked_backlog(backlog, kind=None)
+    ]
+    lines = [
+        f"RUN_DIR={run_dir}",
+        "MODE: verdict run (E26.4, D121): read the new verdict(s) below and propose at most "
+        "one follow-up XP and one follow-up BT, each citing a verdict id. No quick changes, "
+        "no standing themes, no full review: the weekly run does those.",
+        f"VERDICTS: {verdict_ids(decision['new_holdouts'] + decision['new_xp_verdicts'])}",
+        f"NEXT WEEKLY RUN: {decision['next_weekly']}",
+        "DELIVERY: top-level post in #arc-analyst (the runner's message ts is not stored, so "
+        "the reply cannot be threaded under it)",
+        "",
+        "## New backtest holdout verdicts (D84 ledger; C500 holdout = citable evidence)",
+        *(study_lines(studies) or ["- none"]),
+        "",
+        f"## New XP verdict files ({p.xp_verdicts})",
+        *(xp_verdict_lines(p.xp_verdicts, decision["new_xp_verdicts"]) or ["- none"]),
+        "",
+        "## Backlog entries these verdicts touch (status changes go in backlog_drops)",
+        *([f"- {e['id']} [{e['status']}] key={e['key']} | {value_formula(e)}" for e in related]
+          or ["- none"]),  # fmt: skip
+        "",
+        f"## Open backlog (ids only; do not re-propose these; cap {BACKLOG_CAP} XP)",
+        *(open_titles or ["- empty"]),
+        f"- next free study id {bt['next_study_id']}",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def cmd_gate_verdict(p: Paths, now: dt.datetime) -> int:
+    """``gate --mode verdict`` (cron ``arc-analyst-verdict-check``). Reads no audit store:
+    the verdict run works from the research ledger, the verdict files and the backlog."""
+    p.home.mkdir(parents=True, exist_ok=True)
+    state = load_json(p.state, {})
+    bt_entries, _ = load_bt_ledger(p.bt_root / BT_LEDGER)
+    holdouts = [holdout_key(e) for e in bt_entries if e["phase"] == "holdout"]
+    xp_keys = xp_verdict_keys(p.xp_verdicts)
+    decision = verdict_gate_decision(state, now, holdouts, xp_keys)
+    if not decision["wake"]:
+        print(f"skip: {decision['reason']}")
+        print(json.dumps({"wakeAgent": False}))
+        return 0
+    run_dir = p.runs / (now.astimezone(ET).strftime("%Y-%m-%d-%H%M") + VERDICT_RUN_SUFFIX)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    bt = backtest_snapshot(p, run_dir)
+    used = used_xp_numbers(p)
+    backlog = load_backlog(p.backlog, used, iso(now))
+    save_json(
+        run_dir / "metrics.json",
+        {
+            "mode": "verdict",
+            "now": iso(now),
+            "reason": decision["reason"],
+            "next_weekly": decision["next_weekly"],
+            "verdict_ids": sorted(
+                {k.split(":", 1)[0] for k in decision["new_holdouts"] + decision["new_xp_verdicts"]}
+            ),
+            "bt_holdouts": decision["new_holdouts"],
+            "xp_verdicts": decision["new_xp_verdicts"],
+            "backtest": {"studies": bt["studies"], "next_study_id": bt["next_study_id"]},
+        },
+    )
+    state["verdict_run"] = {"day": decision["day"], "run_dir": str(run_dir), "at": iso(now)}
+    save_json(p.state, state)  # once per ET day, even if the agent fails to mark
+    ctx = build_verdict_context(p, run_dir, decision, bt, backlog, now)
+    (run_dir / "context.md").write_text(ctx)
+    print(f"WAKE: {decision['reason']}")
+    print(clip(ctx, MAX_STDOUT))
+    return 0
+
+
+def validate_verdict_findings(
+    doc: dict,
+    backlog: dict,
+    verdict_id_list: list,
+    studies: list | None = None,
+    used=(),
+) -> list[str]:
+    """The narrower E26.4 contract: ``mode: verdict``, every verdict read, at most one new
+    XP and one new BT proposal (each citing a verdict of this run), drops of related
+    entries only. Anything weekly-only (quick changes, themes, review lists) is refused."""
+    errs: list[str] = []
+    studies = studies or []
+    vids = set(verdict_id_list)
+    for k in sorted(set(doc) - set(VERDICT_DOC_KEYS)):
+        errs.append(
+            f"`{k}` is not allowed in a verdict run (no quick changes, standing themes or "
+            "full review; the weekly run does those)"
+        )
+    if doc.get("mode") != "verdict":
+        errs.append("mode must be 'verdict'")
+    reads = {
+        r.get("id"): r for r in doc.get("verdicts") or [] if isinstance(r, dict) and r.get("id")
+    }
+    for vid in sorted(vids - set(reads), key=lambda s: (s[:2], int(s[3:]))):
+        errs.append(f"verdict {vid} has no `verdicts` entry (id + read)")
+    for vid, r in reads.items():
+        if vid not in vids:
+            errs.append(f"verdicts: {vid} is not a new verdict of this run ({sorted(vids)})")
+        if not str(r.get("read", "")).strip():
+            errs.append(f"verdicts: {vid} needs a `read` (what the verdict says, with N)")
+    findings = doc.get("findings") or []
+    keys = [f.get("key") for f in findings]
+    if len(keys) != len(set(keys)):
+        errs.append("duplicate keys in findings")
+    n_xp = n_bt = 0
+    for i, f in enumerate(findings):
+        cat = f.get("category")
+        if cat == "quick-change" or "quick_change" in f:
+            errs.append(f"findings[{i}] quick changes are not allowed in a verdict run")
+            continue
+        if cat not in VERDICT_CATEGORIES:
+            errs.append(
+                f"findings[{i}] category {cat!r}: a verdict run only proposes "
+                f"({', '.join(VERDICT_CATEGORIES)}); the weekly run reviews the rest"
+            )
+            continue
+        errs += _finding_shape_errs(f, i)
+        cited = verdict_refs(f.get("evidence")) | verdict_refs(
+            (f.get("proposal") or {}).get("evidence_ref")
+        )
+        if not cited & vids:
+            errs.append(f"findings[{i}] must cite a verdict of this run ({sorted(vids)}) in "
+                        "its evidence")  # fmt: skip
+        if cat == "xp-proposal":
+            if f.get("key") in backlog["items"]:
+                errs.append(f"findings[{i}] {f['key']} is already in the backlog: edits wait "
+                            "for the weekly run (backlog_drops for a status change)")  # fmt: skip
+            n_xp += 1
+            errs += validate_proposal(f, i, backlog, frozenset(), studies)
+        elif "proposal" in f:
+            errs.append(f"findings[{i}] `proposal` is only allowed on an xp-proposal")
+        if "study_spec" in f:
+            if BT_KEY_PREFIX + str(f.get("key")) in backlog["items"]:
+                errs.append(f"findings[{i}] study_spec on {f['key']}: already in the backlog")
+            n_bt += 1
+            errs += validate_study_spec(f["study_spec"], f"findings[{i}] study_spec")
+            errs += validate_study_value(f.get("study_value"), f"findings[{i}] study_value")
+        elif "study_value" in f:
+            errs.append(f"findings[{i}] `study_value` is only allowed with a study_spec")
+        elif cat != "xp-proposal":
+            errs.append(f"findings[{i}] a {cat} finding in a verdict run carries a study_spec "
+                        "(the follow-up BT); anything else waits for the weekly run")  # fmt: skip
+    if n_xp > VERDICT_MAX_NEW:
+        errs.append(f"{n_xp} new XP proposals: at most {VERDICT_MAX_NEW} per verdict run")
+    if n_bt > VERDICT_MAX_NEW:
+        errs.append(f"{n_bt} new BT proposals: at most {VERDICT_MAX_NEW} per verdict run")
+    errs += _validate_backlog_moves(doc, findings, backlog, frozenset())
+    related_ids = {e["id"] for e in related_backlog(backlog, vids)}
+    for j, d in enumerate(doc.get("backlog_drops") or []):
+        pid = str((d or {}).get("id") or "") if isinstance(d, dict) else ""
+        entry = backlog_by_id(backlog, pid) if pid else None
+        cites = verdict_refs(d.get("reason")) & vids if isinstance(d, dict) else set()
+        if entry is not None and entry["id"] not in related_ids and not cites:
+            errs.append(
+                f"backlog_drops[{j}] {entry['id']} is not related to this run's verdicts: "
+                "cite the verdict in the reason or leave it to the weekly run"
+            )
+    if not errs:
+        after = json.loads(json.dumps(backlog))
+        apply_backlog(after, doc, "check", "", used=used)
+        n_open = sum(
+            1 for e in after["items"].values() if e.get("status") in BACKLOG_OPEN and not is_bt(e)
+        )
+        if n_open > BACKLOG_CAP:
+            errs.append(f"backlog would hold {n_open} open proposals; cap is {BACKLOG_CAP}: "
+                        "drop the weakest related entry or leave it to the weekly run")  # fmt: skip
+    return errs
+
+
+def cmd_record_verdict(p: Paths, run_dir: Path, now: dt.datetime) -> int:
+    meta = load_json(run_dir / "metrics.json", {})
+    if meta.get("mode") != "verdict":
+        print(f"refusing: {run_dir} is not a verdict run (`gate --mode verdict` makes one)")
+        return 2
+    doc = json.loads((run_dir / "findings.json").read_text())
+    ledger = load_json(p.ledger, {"next_id": 1, "items": {}})
+    used = used_xp_numbers(p)
+    backlog = load_backlog(p.backlog, used, iso(now))
+    bt_meta = meta.get("backtest") or {}
+    studies = bt_meta.get("studies") or []
+    errs = validate_verdict_findings(doc, backlog, meta.get("verdict_ids") or [], studies, used)
+    if errs:
+        print("findings.json rejected (ledger and backlog unchanged):\n- " + "\n- ".join(errs))
+        return 2
+    report = reconcile(ledger, doc, run_dir.name, iso(now))
+    items = ledger["items"]
+    finding_ids = {k: it["id"] for k, it in items.items()}
+    floor = study_floor(studies, bt_meta.get("next_study_id"))
+    study_specs = write_study_drafts(run_dir, backlog, doc, items, finding_ids, floor, now)
+    save_json(p.ledger, ledger)
+    moves = apply_backlog(backlog, doc, run_dir.name, iso(now), finding_ids, used)
+    sync_bt_queue(backlog, load_bt_queue(p.bt_root / BT_QUEUE), iso(now))
+    save_json(p.backlog, backlog)
+    save_json(
+        run_dir / "reconciled.json",
+        {**report, "backlog": moves, "study_specs": study_specs, "mode": "verdict"},
+    )
+    out: dict = {k: [x["id"] for x in v] for k, v in report.items()}
+    out["backlog"] = moves
+    out["study_specs"] = study_specs
+    print(json.dumps(out, indent=2))
+    return 0
+
+
+def mark_verdict_run(p: Paths, run_dir: Path, meta: dict, now: dt.datetime) -> int:
+    """Mark the verdicts this run read as seen; the weekly watermark (closed outcomes,
+    last_run_at) is untouched, so the weekly run still reviews the whole week."""
+    state = load_json(p.state, {})
+    state["bt_holdouts_seen"] = sorted(
+        set(state.get("bt_holdouts_seen") or []) | set(meta.get("bt_holdouts") or [])
+    )
+    state["xp_verdicts_seen"] = sorted(
+        set(state.get("xp_verdicts_seen") or []) | set(meta.get("xp_verdicts") or [])
+    )
+    run = state.get("verdict_run") or {}
+    run.update(marked_run_dir=str(run_dir), marked_at=iso(now))
+    state["verdict_run"] = run
+    save_json(p.state, state)
+    read = ", ".join(meta.get("verdict_ids") or []) or "-"
+    print(f"verdicts read: {read} (weekly watermark kept)")
+    return 0
+
+
+def validate_verdict_report(text: str) -> list[str]:
+    errs = []
+    if len(text) > VERDICT_REPORT_MAX:
+        errs.append(f"report is {len(text)} chars; a verdict run's cap is {VERDICT_REPORT_MAX}")
+    for s in VERDICT_REPORT_SECTIONS:
+        if s not in text:
+            errs.append(f"report lacks {s!r}")
+    for weekly in ("*Quick changes*", "Standing themes"):
+        if weekly in text:
+            errs.append(f"{weekly!r} belongs to the weekly report, not a verdict run")
+    return errs
+
+
 def main(argv: list[str], p: Paths | None = None, now: dt.datetime | None = None) -> int:
     p = p or Paths.from_env()
     now = now or dt.datetime.now(dt.timezone.utc)
     if not argv:
         return cmd_gate(p, now)
     cmd, *rest = argv
+    verdict = rest[-2:] == ["--mode", "verdict"]
+    if verdict:
+        rest = rest[:-2]
+    if cmd == "gate" and not rest:
+        return cmd_gate_verdict(p, now) if verdict else cmd_gate(p, now)
     if cmd == "record" and len(rest) == 1:
+        if verdict:
+            return cmd_record_verdict(p, Path(rest[0]), now)
         return cmd_record(p, Path(rest[0]), now)
+    if cmd == "check-report" and len(rest) == 1:
+        return cmd_check_report(Path(rest[0]), "verdict" if verdict else "weekly")
+    if verdict:
+        print(__doc__)
+        return 64
     if cmd == "mark" and len(rest) == 1:
         return cmd_mark(p, Path(rest[0]), now)
     if cmd == "triage" and len(rest) in (2, 3):
@@ -4382,8 +4819,6 @@ def main(argv: list[str], p: Paths | None = None, now: dt.datetime | None = None
         return cmd_backlog(p)
     if cmd == "reset" and not rest:
         return cmd_reset(p)
-    if cmd == "check-report" and len(rest) == 1:
-        return cmd_check_report(Path(rest[0]))
     if cmd == "check-seed" and len(rest) <= 1:
         return cmd_check_seed(Path(rest[0]) if rest else p.idea_seed)
     print(__doc__)

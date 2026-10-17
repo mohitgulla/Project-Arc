@@ -7,6 +7,7 @@ stores; ``now`` is always injected.
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as _dt
 import importlib.util
 import json
@@ -2212,3 +2213,285 @@ def test_skill_documents_bt_approvals() -> None:
         "nights_needed",
     ):
         assert rule in text, rule
+
+
+# ---------------------------------------------------------------------------
+# E26.4 (D121): the short verdict run (gate --mode verdict, record --mode verdict)
+# ---------------------------------------------------------------------------
+
+TUE = NOW + _dt.timedelta(days=2)  # Tue 2026-10-06 15:00 ET: the weekly run is 5 days off
+XP_VERDICT = "experiment_id: XP-2\nverdict: win\nwinner: t1\n"
+
+
+def _verdict_gate(p: Any, now: _dt.datetime, capsys: pytest.CaptureFixture[str]) -> str:
+    assert aa.main(["gate", "--mode", "verdict"], p, now) == 0
+    return capsys.readouterr().out
+
+
+def _verdict_paths(tmp_path: Path, *lines: dict[str, Any]) -> Any:
+    _bt_root(tmp_path, *lines)
+    p = _paths(tmp_path, tmp_path / "no-store.db")  # the verdict gate reads no audit store
+    return dataclasses.replace(p, verdicts_dir=tmp_path / "verdicts")
+
+
+def test_verdict_gate_skips_without_a_new_verdict(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    p = _verdict_paths(tmp_path, _bt_line(phase="dev", universe="c125"))  # dev only
+    out = _verdict_gate(p, TUE, capsys)
+    assert _last_json(out) == {"wakeAgent": False}
+    assert "no new backtest holdout verdict or XP verdict file" in out
+    assert not p.runs.exists()
+
+
+@pytest.mark.usefixtures("_stub_views")
+def test_verdict_gate_wakes_on_a_new_bt_holdout_once_a_day(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    p = _verdict_paths(tmp_path, _bt_line(phase="dev", universe="c125"), _bt_line())
+    out = _verdict_gate(p, TUE, capsys)
+    assert "wakeAgent" not in out
+    assert "WAKE: new verdict(s): BT-3" in out
+    (run_dir,) = sorted(p.runs.iterdir())
+    assert run_dir.name.endswith("-verdict")
+    assert f"RUN_DIR={run_dir}" in out and "MODE: verdict run" in out
+    assert "- BT-3 take profit 0.4 beats 0.5 on margin" in out
+    meta = aa.load_json(run_dir / "metrics.json", {})
+    assert meta["mode"] == "verdict" and meta["verdict_ids"] == ["BT-3"]
+    assert meta["bt_holdouts"] == [f"BT-3:{'a' * 12}:2026-10-03T18:00:00-04:00"]
+    # a second run the same ET day is skipped, even though the agent has not marked yet
+    out = _verdict_gate(p, TUE + _dt.timedelta(hours=5), capsys)
+    assert _last_json(out) == {"wakeAgent": False}
+    assert "a verdict run already happened today (2026-10-06 ET)" in out
+    # unmarked (the agent failed): the next day wakes again on the same verdict
+    out = _verdict_gate(p, TUE + _dt.timedelta(days=1), capsys)
+    assert "WAKE: new verdict(s): BT-3" in out
+
+
+def test_verdict_gate_wakes_on_a_new_xp_verdict_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    p = _verdict_paths(tmp_path)
+    p.xp_verdicts.mkdir()
+    (p.xp_verdicts / "XP-2.yaml").write_text(XP_VERDICT)
+    (p.xp_verdicts / "notes.yaml").write_text("x: 1\n")  # not a verdict file
+    out = _verdict_gate(p, TUE, capsys)
+    assert "WAKE: new verdict(s): XP-2" in out
+    assert "### XP-2 (" in out and "verdict: win" in out
+    (run_dir,) = sorted(p.runs.iterdir())
+    meta = aa.load_json(run_dir / "metrics.json", {})
+    assert meta["xp_verdicts"] == aa.xp_verdict_keys(p.xp_verdicts)
+    assert meta["xp_verdicts"][0].startswith("XP-2:")
+
+
+@pytest.mark.parametrize(
+    ("now", "wakes"),
+    [
+        (_dt.datetime(2026, 10, 10, 13, tzinfo=ET), True),  # Sat 10:00 PT: weekly in 28 h
+        (_dt.datetime(2026, 10, 10, 17, tzinfo=ET), False),  # Sat 14:00 PT: exactly 24 h
+        (_dt.datetime(2026, 10, 11, 12, tzinfo=ET), False),  # Sun 09:00 PT: weekly in 5 h
+        (_dt.datetime(2026, 10, 11, 18, tzinfo=ET), True),  # Sun 15:00 PT: weekly ran
+    ],
+)
+def test_verdict_gate_skips_when_the_weekly_run_is_due_within_24h(
+    tmp_path: Path, now: _dt.datetime, wakes: bool
+) -> None:
+    keys = [f"BT-3:{'a' * 12}:2026-10-03T18:00:00-04:00"]
+    d = aa.verdict_gate_decision({}, now, keys, [])
+    assert d["wake"] is wakes
+    if not wakes:
+        assert "the weekly run is due within 24 h" in d["reason"]
+    assert aa.next_weekly_run(now) > now
+
+
+def test_weekly_gate_and_mark_cover_xp_verdict_files(
+    _pipeline_db: bytes, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    conn = _conn(_pipeline_db)
+    _close_one(conn, NOW - _dt.timedelta(days=30))
+    state = {"closed_watermark": 10**9, "last_run_at": aa.iso(NOW)}
+    keys = ["XP-2:abcdefabcdef"]
+    d = aa.wake_decision(conn, state, NOW + _dt.timedelta(days=7), [], keys)
+    assert d["wake"] and d["new_xp_verdicts"] == keys
+    assert "new XP verdict file(s) since the last run: XP-2" in d["reasons"]
+    d = aa.wake_decision(conn, {**state, "xp_verdicts_seen": keys}, NOW, [], keys)
+    assert not d["wake"]
+    # the weekly mark stores them as seen, like the holdout keys
+    p = _paths(tmp_path, tmp_path / "unused.db")
+    run_dir = p.runs / "r1"
+    run_dir.mkdir(parents=True)
+    aa.save_json(run_dir / "metrics.json",
+                 {"now": aa.iso(NOW), "closed_max_rowid": 7, "xp_verdicts": keys})  # fmt: skip
+    _write_valid_findings(run_dir)
+    assert aa.main(["record", str(run_dir)], p, NOW) == 0
+    assert aa.main(["mark", str(run_dir)], p, NOW) == 0
+    assert aa.load_json(p.state, {})["xp_verdicts_seen"] == keys
+    capsys.readouterr()
+
+
+def _verdict_run(p: Any, doc: dict[str, Any], vids: tuple[str, ...] = ("BT-3",)) -> Path:
+    run_dir = p.runs / "2026-10-06-0930-verdict"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    aa.save_json(run_dir / "metrics.json", {
+        "mode": "verdict", "now": aa.iso(TUE), "verdict_ids": list(vids),
+        "bt_holdouts": [f"BT-3:{'a' * 12}:2026-10-03T18:00:00-04:00"], "xp_verdicts": [],
+        "backtest": {"studies": BT3, "next_study_id": "BT-4"}})  # fmt: skip
+    (run_dir / "findings.json").write_text(json.dumps(doc))
+    return run_dir
+
+
+def _vdoc(*findings: dict[str, Any], **extra: Any) -> dict[str, Any]:
+    return {"mode": "verdict", "findings": list(findings),
+            "verdicts": [{"id": "BT-3", "read": "C500 holdout: t1 switch, +$1,234 CI [100, 2400]"}],
+            **extra}  # fmt: skip
+
+
+def _bt_follow_up(key: str = "theme:tp-follow-up") -> dict[str, Any]:
+    return _theme_finding(key=key, evidence="BT-3 holdout: t1 switch; test 0.35 next")
+
+
+def test_record_verdict_accepts_one_xp_and_one_bt_and_mark_keeps_the_weekly_watermark(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    p = _paths(tmp_path, tmp_path / "unused.db")
+    aa.save_json(p.state, {"closed_watermark": 5, "last_run_at": "2026-10-04T15:00:00-04:00"})
+    run_dir = _verdict_run(p, _vdoc(_prop(), _bt_follow_up()))
+    assert aa.main(["record", str(run_dir), "--mode", "verdict"], p, TUE) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert len(out["backlog"]["new"]) == 1 and out["backlog"]["new"][0].startswith("XP-")
+    assert out["study_specs"][0].split(" -> ")[1].startswith("BT-4")
+    assert (run_dir / "study-specs" / "BT-4.yaml").is_file()
+    backlog = aa.load_json(p.backlog, {})
+    xp = backlog["items"]["xp-proposal:tp-level"]
+    assert xp["created_run"] == run_dir.name
+    # the weekly context shows the verdict-run proposals with their age
+    lines = aa.backlog_lines(aa.load_backlog(p.backlog), [], 10, TUE + _dt.timedelta(days=5))
+    assert any(f"proposed 5d ago (verdict run {run_dir.name})" in ln for ln in lines), lines
+    # the weekly record refuses a verdict RUN_DIR; mark keeps the weekly watermark
+    assert aa.main(["record", str(run_dir)], p, TUE) == 2
+    assert aa.main(["mark", str(run_dir)], p, TUE) == 0
+    state = aa.load_json(p.state, {})
+    assert state["closed_watermark"] == 5 and state["last_run_at"] == "2026-10-04T15:00:00-04:00"
+    assert state["bt_holdouts_seen"] == [f"BT-3:{'a' * 12}:2026-10-03T18:00:00-04:00"]
+    assert aa.unseen_verdicts(state, state["bt_holdouts_seen"], []) == ([], [])
+
+
+@pytest.mark.parametrize(
+    ("doc", "needle"),
+    [
+        (_vdoc(_qc()), "quick changes are not allowed in a verdict run"),
+        (_vdoc(_prop(), _prop(key="xp-proposal:tp-level-2")),
+         "2 new XP proposals: at most 1 per verdict run"),
+        (_vdoc(_bt_follow_up(), _bt_follow_up("theme:tp-follow-up-2")),
+         "2 new BT proposals: at most 1 per verdict run"),
+        (_vdoc(themes=_themes()), "`themes` is not allowed in a verdict run"),
+        (_vdoc(quick_changes_none="none"), "`quick_changes_none` is not allowed"),
+        (_vdoc(_flaw()), "category 'flaw': a verdict run only proposes"),
+        (_vdoc(_theme_finding(key="theme:x", evidence="n=6 condors")),
+         "must cite a verdict of this run"),
+        (_vdoc({k: v for k, v in _bt_follow_up().items() if not k.startswith("study_")}),
+         "carries a study_spec"),
+        (_vdoc(verdicts=[]), "verdict BT-3 has no `verdicts` entry"),
+        (_vdoc(mode="weekly"), "mode must be 'verdict'"),
+        (_vdoc(backlog_drops=[{"id": "XP-9", "reason": "x"}]), "is not in the backlog"),
+    ],
+)  # fmt: skip
+def test_record_verdict_contract(doc: dict[str, Any], needle: str) -> None:
+    errs = aa.validate_verdict_findings(doc, aa.empty_backlog(), ["BT-3"], BT3)
+    assert any(needle in e for e in errs), errs
+
+
+def test_record_verdict_accepts_a_proposal_citing_the_verdict_by_evidence_ref() -> None:
+    prop = {**_prop(), "evidence": "take-profit follow-up"}  # evidence_ref BT-3 still cites it
+    assert aa.validate_verdict_findings(_vdoc(prop), aa.empty_backlog(), ["BT-3"], BT3) == []
+    assert aa.validate_verdict_findings(_vdoc(), aa.empty_backlog(), ["BT-3"], BT3) == []
+
+
+def test_record_verdict_rejection_writes_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    p = _paths(tmp_path, tmp_path / "unused.db")
+    run_dir = _verdict_run(p, _vdoc(_qc()))
+    assert aa.main(["record", str(run_dir), "--mode", "verdict"], p, TUE) == 2
+    assert "quick changes are not allowed" in capsys.readouterr().out
+    assert not p.backlog.exists() and not p.ledger.exists()
+    weekly = p.runs / "w"
+    weekly.mkdir()
+    aa.save_json(weekly / "metrics.json", {"now": aa.iso(NOW), "closed_max_rowid": 1})
+    (weekly / "findings.json").write_text(json.dumps(_vdoc()))
+    assert aa.main(["record", str(weekly), "--mode", "verdict"], p, TUE) == 2
+    assert "is not a verdict run" in capsys.readouterr().out
+
+
+def _verdict_template() -> str:
+    body = _skill().split("## Verdict run", 1)[1]
+    return body.split("```", 4)[3].removeprefix("\n")
+
+
+def test_verdict_report_template_and_cap(tmp_path: Path) -> None:
+    template = _verdict_template()
+    assert template.startswith("*Arc Analyst · verdict run")
+    assert aa.validate_verdict_report(template) == []
+    assert len(template) <= aa.VERDICT_REPORT_MAX == 1_200
+    r = tmp_path / "r.md"
+    r.write_text(template + "x" * 1_200)
+    assert aa.main(["check-report", str(r), "--mode", "verdict"], None, NOW) == 2
+    r.write_text(template + "\n*Quick changes*\n• none")
+    assert aa.cmd_check_report(r, "verdict") == 2
+    r.write_text(template)
+    assert aa.main(["check-report", str(r), "--mode", "verdict"], None, NOW) == 0
+
+
+def test_skill_and_prompt_document_the_verdict_run() -> None:
+    text = _skill()
+    for rule in (
+        "## Verdict run (E26.4, D121; cron `arc-analyst-verdict-check`, daily 09:30 PT)",
+        "**at most once per ET day**",
+        "at most **one new XP proposal** and at most **one new BT proposal**",
+        "`arc_analyst.py record RUN_DIR --mode verdict`",
+        "check-report RUN_DIR/report.md --mode verdict",
+        "**Report (≤ 1,200 chars),**",
+    ):
+        assert rule in text, rule
+    prompt = (ANALYST / "prompt_verdict.md").read_text()
+    assert "`## Verdict run`" in prompt and "never run a backtest" in prompt
+    assert "--mode verdict" in prompt
+
+
+def test_verdict_wrapper_runs_the_verdict_gate(tmp_path: Path) -> None:
+    """Hermes runs a cron script without arguments: the wrapper supplies `gate --mode verdict`."""
+    r = subprocess.run(
+        [sys.executable, str(ANALYST / "arc_analyst_verdict.py")],
+        capture_output=True, text=True, timeout=60, check=True,
+        env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path),
+             "ARC_ANALYST_HOME": str(tmp_path / "home"), "ARC_REPO": str(tmp_path / "repo")},
+    )  # fmt: skip
+    assert _last_json(r.stdout) == {"wakeAgent": False}
+
+
+def test_install_dry_run_creates_both_jobs_and_pauses_only_the_weekly(tmp_path: Path) -> None:
+    r = subprocess.run(
+        ["bash", str(ANALYST / "install.sh"), "--dry-run"],
+        capture_output=True, text=True, check=True, timeout=60,
+        env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path),
+             "ARC_ANALYST_PROFILE_HOME": str(tmp_path / "prof"), "HERMES_BIN": "hermes"},
+    )  # fmt: skip
+    crons = [line for line in r.stdout.splitlines() if "cron create" in line]
+    assert len(crons) == 2
+    weekly, verdict = crons
+    assert "--name arc-analyst-weekly-audit" in weekly and "--paused" in weekly
+    for part in (
+        "-p arc-analyst",
+        "30\\ 9\\ \\*\\ \\*\\ \\*",
+        "--name arc-analyst-verdict-check",
+        "--skill arc-analyst",
+        "--script arc_analyst_verdict.py",
+        "--model anthropic/claude-fable-5.1",
+        "--reasoning-effort max",
+        "--deliver slack:C0C5CB72LG5",
+    ):
+        assert part in verdict, part
+    assert "--paused" not in verdict
+    assert f"{tmp_path / 'prof'}/scripts/arc_analyst_verdict.py" in r.stdout
+    header = (ANALYST / "install.sh").read_text().split("set -euo")[0]
+    assert "created ACTIVE" in header and "re-pause applies to the weekly job only" in header

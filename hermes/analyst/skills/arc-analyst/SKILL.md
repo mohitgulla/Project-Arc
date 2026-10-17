@@ -332,6 +332,49 @@ required. `study_value` is required for (and only on) a finding with a `study_sp
 _Reply in thread: `@hermes create A-<n>` · `ship A-<n>` · `comment A-<n>` · `wontfix A-<n> <why>` · `accept A-<n>` · `approve XP-<n>` · `drop XP-<n> <why>` · `reprioritise XP-<n> <why>` · `approve BT-<n>` · `drop BT-<n> <why>` · `stop BT-<n> <why>` · `rerun`. Artefacts: <RUN_DIR>_
 ```
 
+## Verdict run (E26.4, D121; cron `arc-analyst-verdict-check`, daily 09:30 PT)
+A short extra run that fires when a new verdict lands: a BT holdout verdict in the research
+ledger, or an XP verdict file `config/experiments/live/verdicts/XP-<n>.yaml`. Its gate
+(`arc_analyst.py gate --mode verdict`) wakes you only on a verdict neither the weekly run nor
+an earlier verdict run has read, **at most once per ET day** (several new verdicts are handled
+together in that one run), and never when the weekly run is due within 24 h (it reads them).
+The context starts with `MODE: verdict run`; when you see it, this section replaces
+§Procedure, the findings schema and the weekly report format.
+- **Scope:** read the new verdict(s) and the related ledger/backlog entries in the context
+  only. No quick changes, no standing themes, no full review, no web fetches: the weekly run
+  still reviews everything, and lists your proposals there with their age.
+- **Allowed:** at most **one new XP proposal** and at most **one new BT proposal**
+  (`study_spec`), each citing a verdict id of this run in its `evidence`, plus status changes
+  of the related backlog entries (`backlog_drops`, reason citing the verdict). All other
+  strategy gates still hold (C500 holdout evidence, 3 treatments, value inputs).
+- `RUN_DIR/findings.json` for a verdict run:
+```json
+{
+  "mode": "verdict",
+  "verdicts": [{"id": "BT-8", "read": "C500 holdout: t1 switch, diff +$1,234 CI [100, 2,400], n=412"}],
+  "findings": [],
+  "backlog_drops": [{"id": "XP-4", "reason": "superseded by the BT-8 holdout (keep control)"}]
+}
+```
+  Every new verdict needs a `verdicts` line. `findings` holds only `xp-proposal`s and `theme` /
+  `data-gap` findings carrying a `study_spec` (same shapes as the weekly schema). Any other key
+  (`themes`, `quick_change_reviews`, `experiments`, `next_*`, …) is rejected.
+- Steps: `arc_analyst.py record RUN_DIR --mode verdict` → write `RUN_DIR/report.md` →
+  `arc_analyst.py check-report RUN_DIR/report.md --mode verdict` → `arc_analyst.py mark RUN_DIR`
+  (marks these verdicts as read; the weekly watermark is untouched). Your final response IS
+  the report.
+- **Report (≤ 1,200 chars),** a top-level post in #arc-analyst. The runner's verdict message
+  ts is not stored, so it can't be threaded under it:
+```
+*Arc Analyst · verdict run · <YYYY-MM-DD>* — <BT-n / XP-n>
+*Read*
+• *BT-<n>* <c500 holdout> <switch|keep control> diff $<±d> CI [<lo>, <hi>] · <what it means>
+*Follow-up*
+• new *XP-<n>* <title> · value <score> (or "none: <why>") · new *BT-<m>* <hypothesis> (or "none: <why>")
+• dropped XP-<k>: <why> (only related entries)
+_Reply: `approve XP-<n>` · `approve BT-<m>` · `drop … <why>`. Full review Sun 14:00 PT._
+```
+
 ## Owner commands in the Analyst channel (interactive turns, not the cron)
 Only the owner (`U0C5KUMH28G`) may trigger actions. Resolve an A-id from the newest
 `~/.hermes/profiles/arc-analyst/analyst/runs/*/reconciled.json` and `findings.json`, an XP proposal id
