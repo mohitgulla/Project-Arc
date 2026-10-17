@@ -151,8 +151,10 @@ function ExperimentList() {
         )}
         {total > 0 && (
           <p className="mt-3 text-micro text-muted" data-testid="experiments-footnote">
-            Live: paired daily P&amp;L difference vs control (%/day, always-valid range). Backtests: net P&amp;L difference over the
-            simulated period on the backtest account (block-bootstrap range). The two are never pooled.
+            Live: paired daily P&amp;L difference vs control (%/day, always-valid range).
+            <br />
+            Backtests: net P&amp;L difference over the simulated period on the backtest account (block-bootstrap range). The two are
+            never pooled.
           </p>
         )}
       </Card>
