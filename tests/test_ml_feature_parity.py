@@ -258,3 +258,17 @@ def test_store_build_resumable(facts: dict[str, Any], tmp_path: Path) -> None:
     again = build_store(hdir, out, list(TICKERS), days[-7], days[-1], members={})
     assert again == {"dates_skipped": 5, "dates_written": 2, "rows": 2 * len(TICKERS)}
     pd.testing.assert_frame_equal(pd.read_parquet(p), df)
+
+
+def test_input_diffs_names_the_revised_bar(facts: dict[str, Any]) -> None:
+    from arc.ml.features.parity import input_diffs
+
+    px = facts["px"]
+    rev = {t: df.copy() for t, df in px.items()}
+    d = facts["sess"][-2]
+    rev["BBB"].loc[d, "close"] *= 1.0004  # a vendor revision after the history pull
+    out = input_diffs(rev, px, facts["sess"][-1])
+    assert out["ticker"].tolist() == ["BBB"]
+    assert out.iloc[0]["rows"] == 1 and out.iloc[0]["first"] == d
+    assert out.iloc[0]["max_rel_diff"] == pytest.approx(0.0004, rel=1e-6)
+    assert input_diffs(px, px, facts["sess"][-1]).empty

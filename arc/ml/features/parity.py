@@ -15,7 +15,8 @@ import numpy as np
 import pandas as pd
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    import datetime as dt
+    from collections.abc import Mapping, Sequence
 
 EXACT_TOL = 1e-9
 
@@ -36,6 +37,37 @@ SOURCE_TOL: dict[str, tuple[float, str]] = {
                      "compared only where earn_src agrees"),
     "earn_src": (np.inf, "2 live when Finnhub knows the date; history has no calendar"),
 }  # fmt: skip
+
+
+def input_diffs(
+    live: Mapping[str, pd.DataFrame], hist: Mapping[str, pd.DataFrame], end: dt.date
+) -> pd.DataFrame:
+    """Per ticker: OHLC input rows (≤ *end*, common dates) that differ beyond 1e-9 relative.
+
+    A non-exact price feature traces back to one of these rows (e.g. a vendor revising a
+    daily bar after the history pull), not to a formula.
+    """
+    rows = []
+    for t in sorted(set(live) & set(hist)):
+        a, b = live[t], hist[t]
+        idx = a.index.intersection(b.index)
+        idx = idx[idx <= end]
+        if not len(idx):
+            continue
+        cols = [c for c in ("open", "high", "low", "close") if c in a and c in b]
+        rel = ((a.loc[idx, cols] - b.loc[idx, cols]).abs() / b.loc[idx, cols].abs()).max(axis=1)
+        bad = rel[rel > EXACT_TOL]
+        if len(bad):
+            rows.append(
+                {
+                    "ticker": t,
+                    "rows": len(bad),
+                    "first": min(bad.index),
+                    "last": max(bad.index),
+                    "max_rel_diff": float(bad.max()),
+                }
+            )
+    return pd.DataFrame(rows, columns=["ticker", "rows", "first", "last", "max_rel_diff"])
 
 
 def compare_panels(live: pd.DataFrame, hist: pd.DataFrame, features: Sequence[str]) -> pd.DataFrame:

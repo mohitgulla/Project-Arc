@@ -122,7 +122,7 @@ def _parity(args: argparse.Namespace) -> int:
     from arc.ml.features.adapters.history import history_inputs, universe_symbols
     from arc.ml.features.adapters.live import live_inputs
     from arc.ml.features.compute import compute_panel
-    from arc.ml.features.parity import compare_panels
+    from arc.ml.features.parity import compare_panels, input_diffs
     from arc.ml.features.registry import panel_feature_names, registry
     from arc.utils.calendar import sessions_between
 
@@ -137,16 +137,12 @@ def _parity(args: argparse.Namespace) -> int:
         etfs = frozenset()
     conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)  # read-only: never writes
     try:
-        live = compute_panel(
-            live_inputs(conn, tickers, days[0], days[-1], data_dir=data, etfs=etfs),
-            days,
-            tickers,
-        )
+        li = live_inputs(conn, tickers, days[0], days[-1], data_dir=data, etfs=etfs)
     finally:
         conn.close()
-    hist = compute_panel(
-        history_inputs(data, tickers, days[0], days[-1], members={}, etfs=etfs), days, tickers
-    )
+    hi = history_inputs(data, tickers, days[0], days[-1], members={}, etfs=etfs)
+    live = compute_panel(li, days, tickers)
+    hist = compute_panel(hi, days, tickers)
     reg = registry()
     feats = [f for f in panel_feature_names() if reg[f].available_live]
     rep = compare_panels(live, hist, feats)
@@ -163,4 +159,11 @@ def _parity(args: argparse.Namespace) -> int:
         f"exact features: {int(exact['ok'].sum())}/{len(exact)} within 1e-9; "
         f"over tolerance: {int((~rep['ok']).sum())}\n"
     )
+    inp = input_diffs(li.ohlc, hi.ohlc, days[-1])
+    if len(inp):
+        w("input OHLC rows that differ between the stores (window ending --day):\n")
+        with pd.option_context("display.width", 200, "display.max_rows", 500):
+            w(inp.to_string(index=False) + "\n")
+    else:
+        w("input OHLC: identical in both stores over the window\n")
     return 0 if bool(rep["ok"].all()) else 1
