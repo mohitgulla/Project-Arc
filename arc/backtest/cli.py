@@ -208,6 +208,13 @@ def add_backtest_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     )
     sm.add_argument("--active-cap", type=int, default=None, help="Override backtest.sim.active_cap")
     sm.add_argument(
+        "--intraday-proxy",
+        choices=["none", "range"],
+        default=None,
+        help="E7.19: override backtest.sim.intraday_proxy (range = daily high/low check of "
+        "intraday-flagged exit rules)",
+    )
+    sm.add_argument(
         "--slippage-from-scorecard",
         type=Path,
         default=None,
@@ -413,6 +420,8 @@ def run_sim_cli(args: argparse.Namespace) -> int:
         upd["selection"] = args.selection
     if args.active_cap is not None:
         upd["active_cap"] = args.active_cap
+    if getattr(args, "intraday_proxy", None) is not None:
+        upd["intraday_proxy"] = args.intraday_proxy
     sim = bt.sim.model_validate({**bt.sim.model_dump(), **upd})
     bt_upd: dict[str, object] = {"sim": sim}
     if args.provider:

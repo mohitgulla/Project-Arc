@@ -81,3 +81,14 @@ class SimSettings(BaseModel):
     exclude_kinds: tuple[str, ...] = Field(
         (), description="Strategy kinds never opened (structure counterfactuals)"
     )
+    # E7.19 (D125): sim alignment with the live entry-DTE sleeves.
+    intraday_proxy: Literal["none", "range"] = Field(
+        "range",
+        description="Intraday-flagged exit rules (stop_eod_only: false, profit_lock.eod_only: "
+        "false) on EOD data: range = also check them at the session's underlying high and "
+        "low, every leg re-priced at its EOD IV (sticky strike); a rule that fires there "
+        "fills at that proxy price minus the spread cost (stop_intraday_proxy / "
+        "lock_intraday_proxy). Stop-first: the proxy is checked before the EOD rules, so a "
+        "day touching both a stop and a take profit books the stop. Over-states stop hits "
+        "on whipsaw days (high/low order unknown). none = EOD marks only",
+    )

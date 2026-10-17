@@ -5,7 +5,9 @@ Per (profile, ranker) run, under ``<out>/<profile>/<ranker>/``:
 * ``trades.csv``: one row per open (size, fill, exit, exit delays, capacity clip);
 * ``skips.csv``: every skip with its reason code (:data:`arc.backtest.sim.SKIP_REASONS`);
 * ``equity.csv``: the daily marked equity series;
-* ``decisions.csv``: per day eligible / screened / active / candidates / opened.
+* ``decisions.csv``: per day eligible / screened / active / candidates / opened;
+* ``sleeves.csv`` (E7.19): per entry-DTE sleeve n, net, per-$-risk, win rate, exit
+  mix, mean DTE at entry and mean days held (:func:`sleeve_table`).
 
 Plus ``<out>/manifest.json`` (git sha, config hashes, universe version + checkpoint,
 partitions, cache hit rate, runtime, peak RSS) and ``<out>/report.md``. Aggregates
@@ -55,7 +57,7 @@ if TYPE_CHECKING:
 
 log = structlog.get_logger()
 
-__all__ = ["SimBuild", "SimManifest", "build_sim", "run_sim_report", "walk"]
+__all__ = ["SimBuild", "SimManifest", "build_sim", "run_sim_report", "sleeve_table", "walk"]
 
 
 class SimManifest(BaseModel):
@@ -144,6 +146,47 @@ def _write_run(run: SimRun, d: Path) -> None:
     run.skips.to_csv(d / "skips.csv", index=False)
     run.equity.rename_axis("day").to_csv(d / "equity.csv")
     run.decisions.to_csv(d / "decisions.csv", index=False)
+    sleeve_table(run.trades).to_csv(d / "sleeves.csv", index=False)
+
+
+def sleeve_table(trades: pd.DataFrame) -> pd.DataFrame:
+    """E7.19: one row per entry-DTE sleeve (plus ``all``) of a run's trades.
+
+    ``per_risk`` = net / Σ max loss (contracts x ``max_loss_unit``); ``exit_mix`` =
+    ``reason:count`` joined by spaces, most frequent first (ties by name).
+    """
+    cols = [
+        "sleeve",
+        "n",
+        "net",
+        "per_risk",
+        "win_rate",
+        "exit_mix",
+        "mean_dte_entry",
+        "mean_days_held",
+    ]
+    if trades.empty or "sleeve" not in trades:
+        return pd.DataFrame(columns=cols)
+
+    def row(name: str, g: pd.DataFrame) -> dict[str, object]:
+        risk = float((g["contracts"] * g["max_loss_unit"]).sum())
+        net = float(g["pnl"].sum())
+        vc = g["exit_reason"].astype(str).value_counts()
+        mix = sorted(vc.items(), key=lambda kv: (-int(kv[1]), str(kv[0])))
+        return {
+            "sleeve": name,
+            "n": len(g),
+            "net": round(net, 2),
+            "per_risk": round(net / risk, 4) if risk else None,
+            "win_rate": round(float((g["pnl"] > 0).mean()), 3),
+            "exit_mix": " ".join(f"{k}:{int(v)}" for k, v in mix),
+            "mean_dte_entry": round(float(g["dte_entry"].mean()), 1),
+            "mean_days_held": round(float(g["days_held"].mean()), 1),
+        }
+
+    rows = [row(str(k), g) for k, g in trades.groupby("sleeve", sort=True)]
+    rows.append(row("all", trades))
+    return pd.DataFrame(rows, columns=cols)
 
 
 def run_summary(run: SimRun, equity0: float) -> dict[str, object]:
@@ -170,6 +213,16 @@ def run_summary(run: SimRun, equity0: float) -> dict[str, object]:
     }
 
 
+def sleeve_frame(runs: Sequence[SimRun]) -> pd.DataFrame:
+    """:func:`sleeve_table` of every run, with its profile and ranker."""
+    parts = [sleeve_table(r.trades).assign(profile=r.profile, ranker=r.ranker) for r in runs]
+    parts = [p for p in parts if len(p)]
+    if not parts:
+        return pd.DataFrame()
+    df = pd.concat(parts, ignore_index=True)
+    return df[["profile", "ranker", *[c for c in df.columns if c not in ("profile", "ranker")]]]
+
+
 def _md_table(df: pd.DataFrame) -> str:
     if df.empty:
         return "_none_\n"
@@ -180,7 +233,11 @@ def _md_table(df: pd.DataFrame) -> str:
 
 
 def render_report(
-    manifest: SimManifest, summaries: pd.DataFrame, skips: pd.DataFrame, sim_cfg: object
+    manifest: SimManifest,
+    summaries: pd.DataFrame,
+    skips: pd.DataFrame,
+    sim_cfg: object,
+    sleeves: pd.DataFrame | None = None,
 ) -> str:
     m = manifest
     hit = "n/a" if m.cache_hit_rate is None else f"{m.cache_hit_rate:.1%}"
@@ -197,7 +254,8 @@ def render_report(
         f"- sim settings: `{json.dumps(sim_cfg, default=str)}`\n\n"
         f"## Runs\n\n{_md_table(summaries)}\n"
         f"## Skip reasons (count per run)\n\n{_md_table(skips)}\n"
-        f"## Gate rules\n\nApplied (pure `arc.gate.rules`):\n\n"
+        + (f"## Entry-DTE sleeves (E7.19)\n\n{_md_table(sleeves)}\n" if sleeves is not None else "")
+        + "## Gate rules\n\nApplied (pure `arc.gate.rules`):\n\n"
         + "".join(f"- {r}\n" for r in m.gate_rules_applied)
         + "\nNot applied:\n\n"
         + "".join(f"- {r}\n" for r in m.gate_rules_not_applied)
@@ -409,11 +467,12 @@ def run_sim_report(
         [{"profile": r.profile, "ranker": r.ranker, **r.skip_counts} for r in runs],
         columns=["profile", "ranker", *SKIP_REASONS],
     )
+    sleeves = sleeve_frame(runs)
     summaries.to_csv(out_dir / "summary.csv", index=False)
     skips.to_csv(out_dir / "skip_counts.csv", index=False)
     (out_dir / "manifest.json").write_text(manifest.model_dump_json(indent=1))
     (out_dir / "report.md").write_text(
-        render_report(manifest, summaries, skips, sim.model_dump(mode="json"))
+        render_report(manifest, summaries, skips, sim.model_dump(mode="json"), sleeves)
     )
     log.info("backtest.sim.done", out=str(out_dir), **manifest.runtime_s)
     return manifest

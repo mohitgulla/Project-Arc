@@ -174,8 +174,17 @@ class MenuSpec(BaseModel):
         description="nearest = one expiration nearest the window middle (E7.5); all = every "
         "expiration in the DTE window, like the live scanner (E7.5b)",
     )
+    max_expiries_per_sleeve: int | None = Field(
+        None,
+        ge=1,
+        description="E7.19 (D125): with expiry_mode all, at most this many expirations per "
+        "DTE window (one sleeve): the ones nearest the window's low end, middle and high end "
+        "for 3 (arc.backtest.strategies.capped_expirations); None = every expiration",
+    )
 
-    def specs(self, dte_min: int, dte_max: int) -> list[StrategySpec]:
+    def specs(
+        self, dte_min: int, dte_max: int, exit_block: str | None = None
+    ) -> list[StrategySpec]:
         return [
             StrategySpec(
                 kind=k,
@@ -186,6 +195,8 @@ class MenuSpec(BaseModel):
                 width_pct=self.width_pct,
                 min_volume=self.min_volume,
                 expiry_mode=self.expiry_mode,
+                max_expiries=self.max_expiries_per_sleeve,
+                exit_block=exit_block,
             )
             for k in self.kinds
             for d in self.deltas
@@ -336,11 +347,14 @@ class BacktestSettings(BaseModel):
         lo, hi = self.dte_windows.get(profile, default)
         return int(lo), int(hi)
 
-    def specs_for(self, profile: str, dte_min: int, dte_max: int) -> list[StrategySpec]:
+    def specs_for(
+        self, profile: str, dte_min: int, dte_max: int, exit_block: str | None = None
+    ) -> list[StrategySpec]:
+        """*profile*'s menu on one DTE window; *exit_block* (E7.19) = that sleeve's exits."""
         if profile not in self.menus:
             msg = f"no backtest menu for profile {profile!r} in config/ranking.yaml"
             raise KeyError(msg)
-        return [s for m in self.menus[profile] for s in m.specs(dte_min, dte_max)]
+        return [s for m in self.menus[profile] for s in m.specs(dte_min, dte_max, exit_block)]
 
 
 class RankingFile(BaseModel):
@@ -517,7 +531,7 @@ def build_menu(
                 continue
             if structure.max_loss is None or structure.max_loss <= 0:
                 continue
-            policy = exits.policy_for(STRUCTURE_KIND[spec.kind])
+            policy = exits.policy_for(STRUCTURE_KIND[spec.kind], spec.exit_block)
             res = model_exits(
                 structure,
                 policy,

@@ -589,7 +589,9 @@ def test_backtest_tilt_and_live_shaped_menu_options() -> None:
 
     f = load_ranking_file()
     assert f.backtest.direction_tilt == 0.0  # E7.5 primary run unchanged
-    assert all(m.expiry_mode is ExpiryMode.NEAREST for ms in f.backtest.menus.values() for m in ms)
+    # E7.19 (D125): every expiration of each sleeve window, capped at 3 per sleeve
+    assert all(m.expiry_mode is ExpiryMode.ALL for ms in f.backtest.menus.values() for m in ms)
+    assert all(m.max_expiries_per_sleeve == 3 for ms in f.backtest.menus.values() for m in ms)
     m = MenuSpec.model_validate({"kinds": ["long_call"], "deltas": [0.55], "expiry_mode": "all"})
     assert {s.expiry_mode for s in m.specs(30, 60)} == {ExpiryMode.ALL}
     with pytest.raises(ValueError, match="less than or equal"):

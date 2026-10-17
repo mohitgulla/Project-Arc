@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 import re
 import sys
 import time
@@ -40,7 +41,7 @@ if str(ROOT) not in sys.path:
 from scripts.loss_attribution import DATA  # noqa: E402
 from scripts.loss_attribution_report import BEAR, BULL, book  # noqa: E402
 
-RUNS = DATA / "backtest" / "runs" / "anatomy"
+RUNS = Path(os.environ.get("ARC_ANATOMY_RUNS") or DATA / "backtest" / "runs" / "anatomy")
 MACRO_FILE = ROOT / "config" / "backtest" / "macro_calendar_2020_2026.yaml"
 SECTOR_FILE = DATA / "backtest" / "sector_map.parquet"
 SECTOR_ETFS = ("XLK", "XLF", "XLE", "XLV", "XLY", "XLP", "XLI", "XLU", "XLB", "XLRE", "XLC")
