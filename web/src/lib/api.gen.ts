@@ -4,6 +4,46 @@
  */
 
 export interface paths {
+    "/api/backtests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Backtests
+         * @description Every backtest study: furthest stage, the best treatment on the live account's profile.
+         */
+        get: operations["backtests_api_backtests_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/backtests/{study_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Backtest
+         * @description One study: decision rule, arms, every run's per-profile metrics and verdicts.
+         */
+        get: operations["backtest_api_backtests__study_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/experiments": {
         parameters: {
             query?: never;
@@ -931,6 +971,42 @@ export interface components {
              */
             viewable: boolean;
         };
+        /** ArmMetrics */
+        ArmMetrics: {
+            /**
+             * Arm
+             * @description control | t1..t3
+             */
+            arm: string;
+            /** Avg Days Held */
+            avg_days_held?: number | null;
+            /** Capacity Clipped Share */
+            capacity_clipped_share?: number | null;
+            /** Cost Share Of Gross */
+            cost_share_of_gross?: number | null;
+            /** Exit Reasons */
+            exit_reasons?: {
+                [key: string]: number;
+            };
+            /** Max Dd Pct */
+            max_dd_pct?: number | null;
+            /** Net Pnl */
+            net_pnl?: number | null;
+            /** Profit Factor */
+            profit_factor?: number | null;
+            /** Return Pct */
+            return_pct?: number | null;
+            /** Skips */
+            skips?: {
+                [key: string]: number;
+            };
+            /** Sortino */
+            sortino?: number | null;
+            /** Trades */
+            trades?: number | null;
+            /** Win Rate */
+            win_rate?: number | null;
+        };
         /**
          * ArmPlan
          * @description How one runner arm runs (E13.12, D56): computed at t0, stored on ``arm_identity``.
@@ -1073,6 +1149,193 @@ export interface components {
              * @enum {string}
              */
             scorecard_gate: "off" | "met" | "unmet";
+        };
+        /** BacktestDetailResponse */
+        BacktestDetailResponse: {
+            /** Account Profile */
+            account_profile: string;
+            /**
+             * Arms
+             * @description Treatment arm -> overlay
+             */
+            arms?: {
+                [key: string]: unknown;
+            };
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Created */
+            created?: string | null;
+            /**
+             * Linked
+             * @description Live experiments whose spec cites this study
+             */
+            linked?: components["schemas"]["LinkedExperiment"][];
+            /**
+             * Rule
+             * @description The pre-registered decision rule, plain text
+             */
+            rule?: string | null;
+            /** Rule Kind */
+            rule_kind?: string | null;
+            /**
+             * Runs
+             * @description Every ledger row, oldest first
+             */
+            runs: components["schemas"]["BacktestRun"][];
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Production's data (shared inputs)
+             * @default false
+             */
+            shared_from_control: boolean;
+            study: components["schemas"]["BacktestListItem"];
+        };
+        /**
+         * BacktestListItem
+         * @description One study row on the Experiments list.
+         */
+        BacktestListItem: {
+            /**
+             * Ci Level
+             * @description Block-bootstrap range coverage, e.g. 0.9
+             */
+            ci_level?: number | null;
+            /** @description Best treatment on *profile* in the furthest stage's latest run */
+            headline?: components["schemas"]["Headline"] | null;
+            /**
+             * Hypothesis
+             * @description The spec's hypothesis, plan/card ids removed
+             */
+            hypothesis: string;
+            /** Ladder */
+            ladder: components["schemas"]["RungState"][];
+            /** Last Run At */
+            last_run_at?: string | null;
+            /**
+             * Profile
+             * @description Profile the headline is on: the live account's when the study ran on it, else the study's first profile
+             */
+            profile?: string | null;
+            /**
+             * Profiles
+             * @description Account profiles the study ran on
+             */
+            profiles: string[];
+            /**
+             * Runs
+             * @description Ledger rows (runs) for the study
+             * @default 0
+             */
+            runs: number;
+            /**
+             * Stage
+             * @description Furthest stage run, e.g. 'C500 Holdout'
+             */
+            stage?: string | null;
+            /** Stage Phase */
+            stage_phase?: ("dev" | "holdout") | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "done" | "stopped_at_dev" | "running" | "queued" | "stopped" | "failed" | "not_run";
+            /** Study Id */
+            study_id: string;
+            /**
+             * Variants
+             * @description Treatment arms in the spec
+             */
+            variants: number;
+        };
+        /**
+         * BacktestRun
+         * @description One ledger row: a rung of the ladder (or an extra size, e.g. C250).
+         */
+        BacktestRun: {
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+            /**
+             * End
+             * Format: date
+             */
+            end: string;
+            /** Overfit Warning */
+            overfit_warning: boolean;
+            /**
+             * Phase
+             * @enum {string}
+             */
+            phase: "dev" | "holdout";
+            /** Results */
+            results: components["schemas"]["ProfileResult"][];
+            /** Runtime S */
+            runtime_s?: number | null;
+            /**
+             * Stage
+             * @description 'C125 Dev', 'C500 Holdout', ...
+             */
+            stage: string;
+            /**
+             * Start
+             * Format: date
+             */
+            start: string;
+            /** Universe */
+            universe: string;
+        };
+        /** BacktestsResponse */
+        BacktestsResponse: {
+            /**
+             * Account Profile
+             * @description The live account's profile (the default)
+             */
+            account_profile: string;
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Items */
+            items: components["schemas"]["BacktestListItem"][];
+            /**
+             * Queued
+             * @description Approved studies waiting for a night
+             * @default 0
+             */
+            queued: number;
+            /**
+             * Running
+             * @description Study the nightly runner is on, if any
+             */
+            running?: string | null;
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Production's data (shared inputs)
+             * @default false
+             */
+            shared_from_control: boolean;
+            /**
+             * Skipped Rows
+             * @description Ledger lines that did not parse (not shown)
+             * @default 0
+             */
+            skipped_rows: number;
+            /**
+             * Window Start
+             * @description Nightly runner start, ET (HH:MM)
+             * @default 21:30
+             */
+            window_start: string;
         };
         /**
          * BenchmarkSeries
@@ -3706,6 +3969,50 @@ export interface components {
              */
             shared_from_control: boolean;
         };
+        /**
+         * Headline
+         * @description One treatment's result on one profile in one run (the ledger's verdict row).
+         */
+        Headline: {
+            /**
+             * Arm
+             * @description Treatment arm (t1..t3)
+             */
+            arm: string;
+            /**
+             * Call
+             * @description The rule's call, plain words (e.g. 'keep control')
+             */
+            call: string;
+            /**
+             * Ci Hi
+             * @description Upper end of the block-bootstrap range, $
+             */
+            ci_hi?: number | null;
+            /**
+             * Ci Lo
+             * @description Lower end of the block-bootstrap range, $
+             */
+            ci_lo?: number | null;
+            /**
+             * Periods Won
+             * @description Market periods (bear/sideways/bull) won
+             */
+            periods_won?: number | null;
+            /** Periods Won Names */
+            periods_won_names?: string[];
+            /**
+             * Pnl Diff
+             * @description Treatment − control net P&L, dollars
+             */
+            pnl_diff: number;
+            /**
+             * Switch
+             * @description The pre-registered rule says switch to the arm
+             * @default false
+             */
+            switch: boolean;
+        };
         /** HealthItem */
         HealthItem: {
             /** Age S */
@@ -4044,6 +4351,15 @@ export interface components {
             label: string;
             /** Route */
             route?: string | null;
+        };
+        /** LinkedExperiment */
+        LinkedExperiment: {
+            /** Experiment Id */
+            experiment_id: string;
+            /** Status */
+            status: string;
+            /** Title */
+            title: string;
         };
         /** LlmDay */
         LlmDay: {
@@ -5545,6 +5861,15 @@ export interface components {
                 [key: string]: number;
             };
         };
+        /** ProfileResult */
+        ProfileResult: {
+            /** Arms */
+            arms: components["schemas"]["ArmMetrics"][];
+            /** Profile */
+            profile: string;
+            /** Treatments */
+            treatments: components["schemas"]["Headline"][];
+        };
         /**
          * ProfitLock
          * @description E18.1 (D78) trailing take profit, in units of the take-profit basis.
@@ -6011,6 +6336,21 @@ export interface components {
             step_index: number;
             /** Summary */
             summary: string | null;
+        };
+        /** RungState */
+        RungState: {
+            /** Done */
+            done: boolean;
+            /**
+             * Label
+             * @description 'C125 Dev' | 'C500 Dev' | 'Holdout'
+             */
+            label: string;
+            /**
+             * Rung
+             * @enum {string}
+             */
+            rung: "c125_dev" | "c500_dev" | "holdout";
         };
         /**
          * RunningDetail
@@ -7917,6 +8257,108 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    backtests_api_backtests_get: {
+        parameters: {
+            query?: {
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
+                arm?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BacktestsResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    backtest_api_backtests__study_id__get: {
+        parameters: {
+            query?: {
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
+                arm?: string | null;
+            };
+            header?: never;
+            path: {
+                study_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BacktestDetailResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     experiments_api_experiments_get: {
         parameters: {
             query?: {

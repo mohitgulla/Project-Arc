@@ -1,6 +1,7 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 
 import { apiGet, type ApiPath, type Meta, type Positions, type Snapshot } from "./api";
+import type { BacktestDetail, BacktestsList } from "./backtests";
 import type { ExperimentDetail, ExperimentsList } from "./experiments";
 import type { ContextEntry, RunDetail } from "./ops";
 import type { Overview, OverviewRange } from "./overview";
@@ -207,6 +208,30 @@ export function useExperiments() {
     queryKey: [arm, "experiments"],
     queryFn: ({ signal }) => apiGet("/api/experiments", { query: withArm(undefined, arm), signal }),
     placeholderData: keepPreviousData,
+    ...poll,
+  });
+}
+
+/** D124: backtest studies on the Experiments page (research ledger, Production-level). */
+export function useBacktests() {
+  const arm = useArm();
+  const poll = usePoll();
+  return useQuery<BacktestsList>({
+    queryKey: [arm, "backtests"],
+    queryFn: ({ signal }) => apiGet("/api/backtests", { query: withArm(undefined, arm), signal }),
+    placeholderData: keepPreviousData,
+    ...poll,
+  });
+}
+
+export function useBacktest(id: string | undefined) {
+  const arm = useArm();
+  const poll = usePoll();
+  return useQuery<BacktestDetail>({
+    queryKey: [arm, "backtest", id],
+    queryFn: ({ signal }) =>
+      apiGet(`/api/backtests/${id}` as "/api/backtests/{study_id}", { query: withArm(undefined, arm), signal }),
+    enabled: Boolean(id),
     ...poll,
   });
 }

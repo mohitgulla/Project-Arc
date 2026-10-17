@@ -1,13 +1,13 @@
-import type { ReactNode } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 
 import { Card } from "../components/Card";
+import { Eyebrow, ListRowFrame, Pill, Strip, TONE_TEXT, Tip } from "../components/ExperimentBits";
 import { EmptyState } from "../components/EmptyState";
-import { ArmEquityChart, ArmLegend, DuelBars, ForestPlot, SessionsBar } from "../components/ExperimentCharts";
+import { ArmEquityChart, ArmLegend, DuelBars, ForestPlot, RowRangeBar, SessionsBar } from "../components/ExperimentCharts";
 import { DivergingBars } from "../components/DivergingBars";
-import { InfoTip } from "../components/InfoTip";
 import { KeyValueList } from "../components/KeyValueList";
 import { Money } from "../components/Money";
+import { SegmentedControl } from "../components/SegmentedControl";
 import { Section } from "../components/Section";
 import {
   adjustedPairs,
@@ -58,47 +58,19 @@ import {
   type AdjustedPairView,
   type ExperimentDetail,
   type ExperimentRow,
-  type PillTone,
-  type PillView,
 } from "../lib/experiments";
 import { formatEt, titleCase } from "../lib/format";
-import { useExperiment, useExperiments } from "../lib/useApi";
+import { isBacktestId, parseFilter, summaryStrip, FILTERS, type ListFilter } from "../lib/backtests";
+import { useBacktests, useExperiment, useExperiments } from "../lib/useApi";
+import { BacktestDetailView, BacktestListRow } from "./Backtests";
 
 const DAY_S = 86_400;
-
-const PILL: Record<PillTone, string> = {
-  pos: "bg-pos-bg text-pos-text",
-  neg: "bg-neg-bg text-neg-text",
-  neutral: "bg-control text-secondary",
-  warn: "bg-control text-warn",
-  accent: "bg-range-active text-[color:var(--range-active-text)]",
-};
-const TONE_TEXT: Record<string, string> = { pos: "text-pos-text", neg: "text-neg-text", neutral: "text-title" };
-
-function Pill({ v, testid }: { v: PillView; testid?: string }) {
-  return (
-    <span
-      data-testid={testid}
-      data-tone={v.tone}
-      className={`inline-flex items-center whitespace-nowrap rounded-pill px-1.5 py-0.5 text-caption font-semibold ${PILL[v.tone]}`}
-    >
-      {v.label}
-    </span>
-  );
-}
-
-function Tip({ about, children }: { about: string; children: ReactNode }) {
-  return <InfoTip label={`About ${about}`}>{children}</InfoTip>;
-}
-
-function Eyebrow({ children }: { children: ReactNode }) {
-  return <p className="mb-2 text-micro font-semibold uppercase tracking-[0.06em] text-muted">{children}</p>;
-}
 
 /** Experiments (E10.5, D44; full-page redesign D95): the list, or one experiment's page. */
 export function ExperimentsPage() {
   const { experimentId } = useParams();
-  return experimentId ? <ExperimentDetailView id={experimentId} /> : <ExperimentList />;
+  if (!experimentId) return <ExperimentList />;
+  return isBacktestId(experimentId) ? <BacktestDetailView id={experimentId} /> : <ExperimentDetailView id={experimentId} />;
 }
 
 // ---------------------------------------------------------------------------
@@ -107,42 +79,74 @@ export function ExperimentsPage() {
 
 function ExperimentList() {
   const q = useExperiments();
+  const bq = useBacktests();
+  const [params] = useSearchParams();
+  const filter: ListFilter = parseFilter(params.get("show"));
   const rows = q.data?.items ?? [];
+  const bts = bq.data?.items ?? [];
   const groups = groupExperiments(rows);
   const latest = rows.map((r) => r.evaluated_at).filter(Boolean).sort().at(-1);
+  const showLive = filter !== "backtest";
+  const showBt = filter !== "live";
+  const total = (showLive ? rows.length : 0) + (showBt ? bts.length : 0);
+  const loading = q.isLoading || bq.isLoading;
   return (
-    <Card
-      title="Experiments"
-      testid="experiments-list"
-      freshness={{ at: latest ?? null, cadenceS: DAY_S, label: "EOD evaluation" }}
-      headerExtra={rows.length > 0 ? <Pill v={{ label: String(rows.length), tone: "neutral" }} /> : undefined}
-    >
-      {q.isError ? (
-        <EmptyState caption={`Could not load experiments: ${String(q.error)}`} />
-      ) : rows.length === 0 ? (
-        <EmptyState caption={q.isLoading ? "Loading…" : "No experiments yet."} />
-      ) : (
-        <div className="grid gap-4">
-          {groups.map((g) => (
-            <section key={g.title} data-testid="experiment-group">
-              <Eyebrow>
-                {g.title} · {g.rows.length}
-              </Eyebrow>
-              <div className="divide-y divide-line border-y border-line">
-                {g.rows.map((r) => (
-                  <ExperimentListRow key={r.experiment_id} r={r} />
-                ))}
-              </div>
-            </section>
-          ))}
-        </div>
-      )}
-    </Card>
+    <div className="grid gap-4" data-testid="experiments-page">
+      <Strip cols={6} testid="experiments-summary" items={summaryStrip(rows, bq.data)} />
+      <Card
+        title="Experiments"
+        testid="experiments-list"
+        freshness={{ at: latest ?? null, cadenceS: DAY_S, label: "EOD evaluation" }}
+        headerExtra={
+          <>
+            {total > 0 && <Pill v={{ label: String(total), tone: "neutral" }} />}
+            <SegmentedControl size="sm" label="Show" param="show" fallback="all" options={FILTERS.map((f) => ({ value: f.key, label: f.label }))} testid="experiments-filter" />
+          </>
+        }
+      >
+        {q.isError && showLive && <EmptyState caption={`Could not load experiments: ${String(q.error)}`} />}
+        {bq.isError && showBt && <EmptyState caption={`Could not load backtests: ${String(bq.error)}`} />}
+        {total === 0 && !q.isError && !bq.isError ? (
+          <EmptyState caption={loading ? "Loading…" : "No experiments yet."} />
+        ) : (
+          <div className="grid gap-4">
+            {showLive &&
+              groups.map((g) => (
+                <section key={g.title} data-testid="experiment-group">
+                  <Eyebrow>
+                    Live · {g.title} · {g.rows.length}
+                  </Eyebrow>
+                  <div className="divide-y divide-line border-y border-line">
+                    {g.rows.map((r) => (
+                      <ExperimentListRow key={r.experiment_id} r={r} />
+                    ))}
+                  </div>
+                </section>
+              ))}
+            {showBt && bts.length > 0 && (
+              <section data-testid="backtest-group">
+                <Eyebrow>Backtests · {bts.length}</Eyebrow>
+                <div className="divide-y divide-line border-y border-line">
+                  {bts.map((r) => (
+                    <BacktestListRow key={r.study_id} r={r} />
+                  ))}
+                </div>
+              </section>
+            )}
+          </div>
+        )}
+        {total > 0 && (
+          <p className="mt-3 text-micro text-muted" data-testid="experiments-footnote">
+            Live: paired daily P&amp;L difference vs control (%/day, always-valid range). Backtests: net P&amp;L difference over the
+            simulated period on the backtest account (block-bootstrap range). The two are never pooled.
+          </p>
+        )}
+      </Card>
+    </div>
   );
 }
 
 function ExperimentListRow({ r }: { r: ExperimentRow }) {
-  const navigate = useNavigate();
   const sv = sessionsView(r);
   // D120: the SPY-adjusted effect is the headline when fitted; pre-D119 rows are unchanged.
   const h = headlineEstimate(listPrimary(r));
@@ -154,51 +158,62 @@ function ExperimentListRow({ r }: { r: ExperimentRow }) {
   const head = r.headline_arm ? armShort(r.headline_arm) : "T1";
   const ref = refName(r);
   return (
-    <button
-      type="button"
-      data-testid="experiment-row"
-      onClick={() => navigate(`/experiments/${r.experiment_id}`)}
-      className="grid w-full gap-x-6 gap-y-3 py-4 text-left hover:bg-hover max-tablet:grid-cols-2 tablet:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1.3fr)_auto] tablet:items-center tablet:px-2"
-    >
-      <div className="min-w-0 max-tablet:col-span-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="font-semibold text-title">{r.experiment_id}</span>
+    <ListRowFrame
+      id={r.experiment_id}
+      to={`/experiments/${r.experiment_id}`}
+      testid="experiment-row"
+      pills={
+        <>
           <Pill v={statusPill(r)} testid="status-pill" />
           <Pill v={{ label: kindLabel(r), tone: "neutral" }} />
-        </div>
-        <p className="mt-1 truncate text-caption text-secondary">
-          {titleCase(r.area)} · {r.title}
-        </p>
-      </div>
-      <div className="min-w-0">
-        <div className="mb-1.5 flex items-baseline justify-between gap-2 text-caption">
-          <span className="text-muted">Sessions</span>
-          <span className="font-semibold tabular-nums text-primary">{r.sessions ?? "—"} <span className="font-normal text-muted">/ {r.min_sessions === r.max_sessions ? r.max_sessions : `${r.min_sessions}–${r.max_sessions}`}</span></span>
-        </div>
-        <SessionsBar v={sv} />
-      </div>
-      <div className="min-w-0">
-        <p className="text-caption text-muted">
-          {r.variants > 1 ? `Best · ${head}` : head} vs {ref}
-          {h.basis === "adjusted" && <span data-testid="row-basis"> · SPY-adjusted</span>}
-        </p>
-        <div className="flex flex-wrap items-baseline gap-x-2">
-          <span className={`text-title font-semibold tabular-nums ${TONE_TEXT[tone]}`} data-testid="row-delta">
-            {h.est === null ? "n/a" : `${pct(h.est)}/day`}
-          </span>
-          <span className="text-micro text-muted tabular-nums">{hasRange ? ciText({ primary_ci_lo: h.lo, primary_ci_hi: h.hi }) : "—"}</span>
-        </div>
-        {forestRow && <ForestPlot compact axis={false} domain={domain} rows={[forestRow]} testid="row-forest" />}
-      </div>
-      <div className="flex flex-wrap items-center gap-1.5 max-tablet:col-span-2 tablet:justify-end">
-        {counts.length === 0 ? (
+        </>
+      }
+      right={
+        counts.length === 0 ? (
           <Pill v={verdictPill(r.verdict)} />
         ) : (
           counts.map((c) => <Pill key={c.label} v={{ ...c, label: r.variants > 1 ? `${c.n} ${c.label}` : c.label }} testid="verdict-pill" />)
-        )}
-        <span className="arc-action ml-2">Open ↗</span>
-      </div>
-    </button>
+        )
+      }
+      summary={
+        <>
+          {titleCase(r.area)} · {r.title}
+        </>
+      }
+      left={{
+        caption: (
+          <span className="flex items-baseline justify-between gap-2">
+            <span className="text-muted">Sessions</span>
+            <span className="font-semibold tabular-nums text-primary">
+              {r.sessions ?? "—"} <span className="font-normal text-muted">/ {r.min_sessions === r.max_sessions ? r.max_sessions : `${r.min_sessions}–${r.max_sessions}`}</span>
+            </span>
+          </span>
+        ),
+        bar: <SessionsBar v={sv} showCaption={false} />,
+        below: <p className="truncate text-micro text-muted">{sv.caption}</p>,
+      }}
+      rightCol={{
+        caption: (
+          <span className="block truncate">
+            {r.variants > 1 ? `Best · ${head}` : head} vs {ref}
+            {h.basis === "adjusted" && <span data-testid="row-basis"> · SPY-adjusted</span>}
+          </span>
+        ),
+        bar: forestRow ? (
+          <RowRangeBar est={forestRow.est} lo={forestRow.lo} hi={forestRow.hi} domain={domain} tone={tone} label={`range ${ciText({ primary_ci_lo: h.lo, primary_ci_hi: h.hi })}`} testid="row-forest" />
+        ) : (
+          <div className="h-bar w-full rounded-full bg-track" />
+        ),
+        below: (
+          <div className="flex flex-wrap items-baseline gap-x-2">
+            <span className={`whitespace-nowrap text-title font-semibold tabular-nums ${TONE_TEXT[tone]}`} data-testid="row-delta">
+              {h.est === null ? "n/a" : `${pct(h.est)}/day`}
+            </span>
+            <span className="whitespace-nowrap text-micro text-muted tabular-nums">{hasRange ? ciText({ primary_ci_lo: h.lo, primary_ci_hi: h.hi }) : "—"}</span>
+          </div>
+        ),
+      }}
+    />
   );
 }
 
@@ -224,26 +239,6 @@ export function ExperimentDetailView({ id }: { id: string }) {
       ) : (
         <ExperimentBody d={q.data} />
       )}
-    </div>
-  );
-}
-
-function Strip({ items }: { items: { label: string; value: ReactNode; sub?: ReactNode }[] }) {
-  return (
-    <div
-      className="grid grid-cols-2 overflow-hidden rounded-card border border-line bg-card tablet:grid-cols-4"
-      data-testid="experiment-strip"
-    >
-      {items.map((it, i) => (
-        <div
-          key={it.label}
-          className={`min-w-0 px-4 py-3 ${i % 2 === 1 ? "border-l border-line" : ""} ${i >= 2 ? "max-tablet:border-t max-tablet:border-line tablet:border-l" : ""}`}
-        >
-          <p className="text-caption text-muted">{it.label}</p>
-          <div className="mt-0.5 truncate font-semibold tabular-nums text-title">{it.value}</div>
-          {it.sub && <div className="mt-1 text-micro text-muted">{it.sub}</div>}
-        </div>
-      ))}
     </div>
   );
 }

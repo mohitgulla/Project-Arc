@@ -820,6 +820,145 @@
         "title": "ArmMeta",
         "type": "object"
       },
+      "ArmMetrics": {
+        "additionalProperties": false,
+        "properties": {
+          "arm": {
+            "description": "control | t1..t3",
+            "title": "Arm",
+            "type": "string"
+          },
+          "avg_days_held": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Days Held"
+          },
+          "capacity_clipped_share": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capacity Clipped Share"
+          },
+          "cost_share_of_gross": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Share Of Gross"
+          },
+          "exit_reasons": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Exit Reasons",
+            "type": "object"
+          },
+          "max_dd_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Dd Pct"
+          },
+          "net_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Pnl"
+          },
+          "profit_factor": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profit Factor"
+          },
+          "return_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Return Pct"
+          },
+          "skips": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Skips",
+            "type": "object"
+          },
+          "sortino": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sortino"
+          },
+          "trades": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trades"
+          },
+          "win_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Win Rate"
+          }
+        },
+        "required": [
+          "arm"
+        ],
+        "title": "ArmMetrics",
+        "type": "object"
+      },
       "ArmPlan": {
         "additionalProperties": false,
         "description": "How one runner arm runs (E13.12, D56): computed at t0, stored on ``arm_identity``.\n\n``fork_step`` is the first loop step the arm runs itself; ``arm_personas`` the\nnon-loop personas it runs on its own store (their output never comes from\ncontrol); ``shared_kinds`` the context kinds synced from control before each\npaired chain (and before the arm's own Scout / Scalp), minus every row\n``own_producers`` wrote: the arm writes those itself.",
@@ -1142,6 +1281,377 @@
           "blocks"
         ],
         "title": "AutoApproveView",
+        "type": "object"
+      },
+      "BacktestDetailResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "account_profile": {
+            "title": "Account Profile",
+            "type": "string"
+          },
+          "arms": {
+            "additionalProperties": true,
+            "description": "Treatment arm -> overlay",
+            "title": "Arms",
+            "type": "object"
+          },
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "created": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created"
+          },
+          "linked": {
+            "description": "Live experiments whose spec cites this study",
+            "items": {
+              "$ref": "#/components/schemas/LinkedExperiment"
+            },
+            "title": "Linked",
+            "type": "array"
+          },
+          "rule": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The pre-registered decision rule, plain text",
+            "title": "Rule"
+          },
+          "rule_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rule Kind"
+          },
+          "runs": {
+            "description": "Every ledger row, oldest first",
+            "items": {
+              "$ref": "#/components/schemas/BacktestRun"
+            },
+            "title": "Runs",
+            "type": "array"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Production's data (shared inputs)",
+            "title": "Shared From Control",
+            "type": "boolean"
+          },
+          "study": {
+            "$ref": "#/components/schemas/BacktestListItem"
+          }
+        },
+        "required": [
+          "as_of",
+          "account_profile",
+          "study",
+          "runs"
+        ],
+        "title": "BacktestDetailResponse",
+        "type": "object"
+      },
+      "BacktestListItem": {
+        "additionalProperties": false,
+        "description": "One study row on the Experiments list.",
+        "properties": {
+          "ci_level": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Block-bootstrap range coverage, e.g. 0.9",
+            "title": "Ci Level"
+          },
+          "headline": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Headline"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Best treatment on *profile* in the furthest stage's latest run"
+          },
+          "hypothesis": {
+            "description": "The spec's hypothesis, plan/card ids removed",
+            "title": "Hypothesis",
+            "type": "string"
+          },
+          "ladder": {
+            "items": {
+              "$ref": "#/components/schemas/RungState"
+            },
+            "title": "Ladder",
+            "type": "array"
+          },
+          "last_run_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Run At"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Profile the headline is on: the live account's when the study ran on it, else the study's first profile",
+            "title": "Profile"
+          },
+          "profiles": {
+            "description": "Account profiles the study ran on",
+            "items": {
+              "type": "string"
+            },
+            "title": "Profiles",
+            "type": "array"
+          },
+          "runs": {
+            "default": 0,
+            "description": "Ledger rows (runs) for the study",
+            "title": "Runs",
+            "type": "integer"
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Furthest stage run, e.g. 'C500 Holdout'",
+            "title": "Stage"
+          },
+          "stage_phase": {
+            "anyOf": [
+              {
+                "enum": [
+                  "dev",
+                  "holdout"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage Phase"
+          },
+          "status": {
+            "enum": [
+              "done",
+              "stopped_at_dev",
+              "running",
+              "queued",
+              "stopped",
+              "failed",
+              "not_run"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "study_id": {
+            "title": "Study Id",
+            "type": "string"
+          },
+          "variants": {
+            "description": "Treatment arms in the spec",
+            "title": "Variants",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "study_id",
+          "hypothesis",
+          "status",
+          "variants",
+          "profiles",
+          "ladder"
+        ],
+        "title": "BacktestListItem",
+        "type": "object"
+      },
+      "BacktestRun": {
+        "additionalProperties": false,
+        "description": "One ledger row: a rung of the ladder (or an extra size, e.g. C250).",
+        "properties": {
+          "at": {
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "end": {
+            "format": "date",
+            "title": "End",
+            "type": "string"
+          },
+          "overfit_warning": {
+            "title": "Overfit Warning",
+            "type": "boolean"
+          },
+          "phase": {
+            "enum": [
+              "dev",
+              "holdout"
+            ],
+            "title": "Phase",
+            "type": "string"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/ProfileResult"
+            },
+            "title": "Results",
+            "type": "array"
+          },
+          "runtime_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runtime S"
+          },
+          "stage": {
+            "description": "'C125 Dev', 'C500 Holdout', ...",
+            "title": "Stage",
+            "type": "string"
+          },
+          "start": {
+            "format": "date",
+            "title": "Start",
+            "type": "string"
+          },
+          "universe": {
+            "title": "Universe",
+            "type": "string"
+          }
+        },
+        "required": [
+          "at",
+          "phase",
+          "universe",
+          "stage",
+          "start",
+          "end",
+          "overfit_warning",
+          "results"
+        ],
+        "title": "BacktestRun",
+        "type": "object"
+      },
+      "BacktestsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "account_profile": {
+            "description": "The live account's profile (the default)",
+            "title": "Account Profile",
+            "type": "string"
+          },
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/BacktestListItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "queued": {
+            "default": 0,
+            "description": "Approved studies waiting for a night",
+            "title": "Queued",
+            "type": "integer"
+          },
+          "running": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Study the nightly runner is on, if any",
+            "title": "Running"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Production's data (shared inputs)",
+            "title": "Shared From Control",
+            "type": "boolean"
+          },
+          "skipped_rows": {
+            "default": 0,
+            "description": "Ledger lines that did not parse (not shown)",
+            "title": "Skipped Rows",
+            "type": "integer"
+          },
+          "window_start": {
+            "default": "21:30",
+            "description": "Nightly runner start, ET (HH:MM)",
+            "title": "Window Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "as_of",
+          "account_profile",
+          "items"
+        ],
+        "title": "BacktestsResponse",
         "type": "object"
       },
       "BenchmarkSeries": {
@@ -7566,6 +8076,83 @@
         "title": "HaltsResponse",
         "type": "object"
       },
+      "Headline": {
+        "additionalProperties": false,
+        "description": "One treatment's result on one profile in one run (the ledger's verdict row).",
+        "properties": {
+          "arm": {
+            "description": "Treatment arm (t1..t3)",
+            "title": "Arm",
+            "type": "string"
+          },
+          "call": {
+            "description": "The rule's call, plain words (e.g. 'keep control')",
+            "title": "Call",
+            "type": "string"
+          },
+          "ci_hi": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Upper end of the block-bootstrap range, $",
+            "title": "Ci Hi"
+          },
+          "ci_lo": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Lower end of the block-bootstrap range, $",
+            "title": "Ci Lo"
+          },
+          "periods_won": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Market periods (bear/sideways/bull) won",
+            "title": "Periods Won"
+          },
+          "periods_won_names": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Periods Won Names",
+            "type": "array"
+          },
+          "pnl_diff": {
+            "description": "Treatment \u2212 control net P&L, dollars",
+            "title": "Pnl Diff",
+            "type": "number"
+          },
+          "switch": {
+            "default": false,
+            "description": "The pre-registered rule says switch to the arm",
+            "title": "Switch",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "arm",
+          "pnl_diff",
+          "call"
+        ],
+        "title": "Headline",
+        "type": "object"
+      },
       "HealthItem": {
         "additionalProperties": false,
         "properties": {
@@ -8372,6 +8959,30 @@
           "label"
         ],
         "title": "LinkRef",
+        "type": "object"
+      },
+      "LinkedExperiment": {
+        "additionalProperties": false,
+        "properties": {
+          "experiment_id": {
+            "title": "Experiment Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "experiment_id",
+          "title",
+          "status"
+        ],
+        "title": "LinkedExperiment",
         "type": "object"
       },
       "LlmDay": {
@@ -12576,6 +13187,36 @@
         "title": "ProductionSession",
         "type": "object"
       },
+      "ProfileResult": {
+        "additionalProperties": false,
+        "properties": {
+          "arms": {
+            "items": {
+              "$ref": "#/components/schemas/ArmMetrics"
+            },
+            "title": "Arms",
+            "type": "array"
+          },
+          "profile": {
+            "title": "Profile",
+            "type": "string"
+          },
+          "treatments": {
+            "items": {
+              "$ref": "#/components/schemas/Headline"
+            },
+            "title": "Treatments",
+            "type": "array"
+          }
+        },
+        "required": [
+          "profile",
+          "arms",
+          "treatments"
+        ],
+        "title": "ProfileResult",
+        "type": "object"
+      },
       "ProfitLock": {
         "additionalProperties": false,
         "description": "E18.1 (D78) trailing take profit, in units of the take-profit basis.\n\nArmed once the peak P&L since entry \u2265 ``arm_pct \u00b7 B``; then closes when the\ncurrent P&L \u2264 ``floor_pct \u00b7 B`` (``B`` = max gain for credit, debit for debit).\n``eod_only``: evaluated on end-of-day marks only (default: every mark).",
@@ -14117,6 +14758,36 @@
           "route"
         ],
         "title": "RunRow",
+        "type": "object"
+      },
+      "RungState": {
+        "additionalProperties": false,
+        "properties": {
+          "done": {
+            "title": "Done",
+            "type": "boolean"
+          },
+          "label": {
+            "description": "'C125 Dev' | 'C500 Dev' | 'Holdout'",
+            "title": "Label",
+            "type": "string"
+          },
+          "rung": {
+            "enum": [
+              "c125_dev",
+              "c500_dev",
+              "holdout"
+            ],
+            "title": "Rung",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rung",
+          "label",
+          "done"
+        ],
+        "title": "RungState",
         "type": "object"
       },
       "RunningDetail": {
@@ -18748,6 +19419,161 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/backtests": {
+      "get": {
+        "description": "Every backtest study: furthest stage, the best treatment on the live account's profile.",
+        "operationId": "backtests_api_backtests_get",
+        "parameters": [
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+              "title": "Arm"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BacktestsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Backtests",
+        "tags": [
+          "experiments"
+        ]
+      }
+    },
+    "/api/backtests/{study_id}": {
+      "get": {
+        "description": "One study: decision rule, arms, every run's per-profile metrics and verdicts.",
+        "operationId": "backtest_api_backtests__study_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "study_id",
+            "required": true,
+            "schema": {
+              "title": "Study Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+              "title": "Arm"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BacktestDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Backtest",
+        "tags": [
+          "experiments"
+        ]
+      }
+    },
     "/api/experiments": {
       "get": {
         "description": "Every forward experiment with the latest stored evaluation's numbers.",
