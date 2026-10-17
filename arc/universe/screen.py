@@ -8,7 +8,9 @@ property-tested).
 
 :func:`measure_liquidity` gathers the numbers from a ``MarketDataProvider``
 (the same one the scanner uses). It never raises: a data error becomes a
-metrics object with ``error`` set, which the screen fails.
+metrics object with ``error`` set, which the screen fails. Near-ATM OI and the ATM
+spread are measured on the in-window expiry with the most near-ATM OI
+(:func:`pick_liquidity_expiry`, E12.4a), not a thin nearest-30-DTE weekly.
 """
 
 from __future__ import annotations
@@ -21,6 +23,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from arc.universe.config import LiquidityThresholds
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from arc.data.base import MarketDataProvider, OptionContract
 
 __all__ = [
@@ -29,10 +33,12 @@ __all__ = [
     "LiquidityThresholds",
     "ScreenResult",
     "measure_liquidity",
+    "pick_expiry_by_atm_oi",
+    "pick_liquidity_expiry",
     "screen_liquidity",
 ]
 
-ATM_TARGET_DTE = 30  # same expiry pick as the scanner's IV context (arc.scanner.scan)
+ATM_TARGET_DTE = 30  # tie-break / no-OI fallback for the liquidity expiry (E12.4a)
 _ADV_LOOKBACK_CALENDAR_DAYS = 45
 
 
@@ -109,6 +115,66 @@ def _spread_pct(c: OptionContract) -> float | None:
     return (c.ask - c.bid) / mid if mid > 0 else None
 
 
+def pick_expiry_by_atm_oi(
+    rows: Iterable[tuple[_dt.date, float, int | None]],
+    price: float,
+    atm_strikes: int,
+    *,
+    today: _dt.date,
+) -> _dt.date | None:
+    """Pure: the expiry with the most near-ATM OI among ``(expiry, strike, oi)`` rows.
+
+    Near-ATM = the *atm_strikes* strikes of that expiry nearest *price*, calls and
+    puts summed (rows with unknown OI add nothing). Ties go to the expiry nearest
+    :data:`ATM_TARGET_DTE`, then the earlier date. If no expiry has any known OI the
+    nearest-30-DTE expiry is returned, so the screen fails as "near-ATM OI unknown".
+    ``None`` only when *rows* is empty.
+    """
+    strikes: dict[_dt.date, set[float]] = {}
+    ois: dict[tuple[_dt.date, float], list[int]] = {}
+    for exp, strike, oi in rows:
+        strikes.setdefault(exp, set()).add(strike)
+        if oi is not None:
+            ois.setdefault((exp, strike), []).append(oi)
+    if not strikes:
+        return None
+
+    def _dte_key(e: _dt.date) -> tuple[int, _dt.date]:
+        return abs((e - today).days - ATM_TARGET_DTE), e
+
+    totals: dict[_dt.date, int] = {}
+    for exp, ks in strikes.items():
+        near = sorted(ks, key=lambda k: (abs(k - price), k))[:atm_strikes]
+        known = [v for k in near for v in ois.get((exp, k), [])]
+        if known:
+            totals[exp] = sum(known)
+    if not totals:
+        return min(strikes, key=_dte_key)
+    return min(totals, key=lambda e: (-totals[e], *_dte_key(e)))
+
+
+def pick_liquidity_expiry(
+    chain: Iterable[OptionContract],
+    price: float | None,
+    atm_strikes: int,
+    *,
+    today: _dt.date,
+) -> _dt.date | None:
+    """The expiry the screen measures (E12.4a): most near-ATM OI in *chain*.
+
+    *chain* is already limited to the entry DTE window. ``None`` when the chain is
+    empty or *price* is unknown.
+    """
+    if not price:
+        return None
+    return pick_expiry_by_atm_oi(
+        ((c.expiration, c.strike, c.open_interest) for c in chain),
+        price,
+        atm_strikes,
+        today=today,
+    )
+
+
 def measure_liquidity(
     market: MarketDataProvider,
     ticker: str,
@@ -149,8 +215,8 @@ def measure_liquidity(
         ]
         expiries = sorted({c.expiration for c in chain})
         out["expiries_in_window"] = len(expiries)
-        if expiries and price:
-            exp = min(expiries, key=lambda e: (abs((e - today).days - ATM_TARGET_DTE), e))
+        exp = pick_liquidity_expiry(chain, price, thresholds.atm_strikes, today=today)
+        if exp is not None and price:
             near = [c for c in chain if c.expiration == exp]
             by_distance = sorted({c.strike for c in near}, key=lambda k: (abs(k - price), k))
             strike = by_distance[0]
