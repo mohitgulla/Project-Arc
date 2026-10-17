@@ -58,6 +58,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 import structlog
 from pydantic import BaseModel, ValidationError
 
+from arc.account_profiles import BuyingPower
 from arc.context.kinds import (
     NOTE_SECTION_MAX,
     CandidatePayload,
@@ -202,7 +203,7 @@ if TYPE_CHECKING:
     from arc.context.store import ContextEntry, ContextSnapshot
     from arc.exits import ExitConfig, ExitModelResult
     from arc.gate.band import PriceBand
-    from arc.gate.inputs import Portfolio
+    from arc.gate.inputs import AccountSnapshot, Portfolio
     from arc.personas.schemas import PoolItem
     from arc.pipeline.env import PipelineEnv
     from arc.pipeline.market import PricedStructure
@@ -2295,12 +2296,13 @@ def _opens_today_by_sleeve(ctx: JobContext) -> dict[str, int]:
 
 
 def _free_slots(ctx: JobContext, env: PipelineEnv) -> FreeSlots | None:
-    """E22.3 (D97): free slots per sleeve, settled cash and the per-name cap, or ``None``.
+    """E22.3 (D97): free slots per sleeve, buying power and the per-name cap, or ``None``.
 
+    The buying-power figure is settled cash on cash profiles and Alpaca's options
+    buying power on margin profiles (D129).
     ``None`` when the broker legs cannot be grouped (logged); Research then gets no
     free-slots line and the loop keeps its plain ``max_idle``.
     """
-    from arc.account_profiles import BuyingPower
     from arc.pipeline.market import open_entry_dtes, settled_cash
 
     settings = ctx.settings
@@ -2310,7 +2312,10 @@ def _free_slots(ctx: JobContext, env: PipelineEnv) -> FreeSlots | None:
     except PortfolioError as exc:
         log.warning("pipeline.free_slots_unavailable", error=str(exc))
         return None
-    cash = settled_cash(info) if settings.profile.buying_power is BuyingPower.CASH_SETTLED else None
+    is_cash = settings.profile.buying_power is BuyingPower.CASH_SETTLED
+    cash = settled_cash(info) if is_cash else None
+    # D129: margin profiles show Alpaca's options buying power (None = unknown)
+    obp = None if is_cash else info.options_buying_power
     slots = free_slots(
         settings.entry_sleeves,
         dtes,
@@ -2319,6 +2324,7 @@ def _free_slots(ctx: JobContext, env: PipelineEnv) -> FreeSlots | None:
         per_name_cap=book_alloc_tier(ctx.conn, positions, info.equity, settings, now=ctx.now).pct
         * info.equity,
         settled_cash=cash,
+        options_buying_power=obp,
         opens_today=_opens_today_by_sleeve(ctx),
     )
     ctx.record_input("free_slots", "db", slots.model_dump(mode="json"))
@@ -4542,16 +4548,57 @@ def cash_per_contract(st: Any, band: PriceBand, settings: ArcSettings) -> Decima
     The gate's ``account_profile_settled_cash`` need for one contract: the band's
     worst price × 100 plus ``gate_fee_per_leg_contract`` × legs (ratio-weighted).
     """
+    return max(band.hi, Decimal(0)) * 100 + _fees_per_contract(st, settings)
+
+
+def _fees_per_contract(st: Any, settings: ArcSettings) -> Decimal:
+    """``gate_fee_per_leg_contract`` × ratio-weighted legs, as the gate counts fees."""
     legs = sum(leg.ratio for leg in st.legs)
-    fee = Decimal(str(settings.gate_fee_per_leg_contract)) * Decimal(legs)
-    return max(band.hi, Decimal(0)) * 100 + fee
+    return Decimal(str(settings.gate_fee_per_leg_contract)) * Decimal(legs)
+
+
+def buying_power_per_contract(st: Any, band: PriceBand, settings: ArcSettings) -> Decimal | None:
+    """D129: options buying power one structure unit needs, as the gate counts it.
+
+    The gate's ``account_profile_buying_power`` need for one contract: the band-worst
+    max loss (:func:`worst_loss_per_contract`) plus fees. ``None`` when the max loss
+    is unbounded (sizing already rejects that; no fit is applied).
+    """
+    worst = worst_loss_per_contract(st, band)
+    if worst is None:
+        return None
+    return worst + _fees_per_contract(st, settings)
+
+
+def fit_per_contract(st: Any, band: PriceBand, settings: ArcSettings) -> Decimal | None:
+    """The per-contract need of the active profile's buying-power rule (D25 / D129)."""
+    if settings.profile.buying_power is BuyingPower.CASH_SETTLED:
+        return cash_per_contract(st, band, settings)
+    return buying_power_per_contract(st, band, settings)
+
+
+def fit_basis(settings: ArcSettings) -> str:
+    """Journal label of the figure sizing fits contracts to (D129)."""
+    if settings.profile.buying_power is BuyingPower.CASH_SETTLED:
+        return "settled_cash"
+    return "options_buying_power"
+
+
+def fit_available(account: AccountSnapshot, settings: ArcSettings) -> Decimal | None:
+    """The account figure sizing fits to: settled cash (cash profiles) or options
+    buying power (margin, D129). ``None`` = unknown (the gate then fails closed)."""
+    if settings.profile.buying_power is BuyingPower.CASH_SETTLED:
+        return account.settled_cash
+    return account.options_buying_power
 
 
 def cash_fit_enabled(settings: ArcSettings) -> bool:
-    """E22.3: sizing fits contracts to settled cash only on ``cash_settled`` profiles."""
-    from arc.account_profiles import BuyingPower
+    """E22.3 / D129: sizing fits contracts to the profile's buying-power figure.
 
-    return settings.profile.buying_power is BuyingPower.CASH_SETTLED
+    ``cash_settled`` profiles fit to settled cash; ``margin`` profiles (D129) fit to
+    options buying power. Every known profile fits, so this is ``True`` for both.
+    """
+    return settings.profile.buying_power in (BuyingPower.CASH_SETTLED, BuyingPower.MARGIN)
 
 
 class GateSecretMissingError(RuntimeError):
@@ -4908,9 +4955,12 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
     lines: list[str] = []
     passed = proposals = 0
     by_sleeve: Counter[str] = Counter()  # E22.2 (D97): proposals per DTE sleeve
-    # E22.3 (D97/D25): settled cash still free in this run (cash_settled profiles; None =
-    # no cash fit). First come within a run, in Research rank order; no per-sleeve split.
-    cash_left: Decimal | None = account.settled_cash if cash_fit_enabled(settings) else None
+    # E22.3 (D97/D25) / D129: buying power still free in this run (settled cash on cash
+    # profiles, options buying power on margin; None = unknown or no fit). First come
+    # within a run, in Research rank order; no per-sleeve split.
+    cash_left: Decimal | None = (
+        fit_available(account, settings) if cash_fit_enabled(settings) else None
+    )
 
     def skip(t: str, key: str, code: ReasonCode, text: str, **payload: Any) -> None:
         skipped[key] += 1
@@ -5093,7 +5143,9 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
         limit = limit_price(st.net_debit_credit, grid_for(st.legs, market, settings))
         # D24: the gate checks the whole price band; size at its worst price (D18).
         band = band_for(st, limit, market, settings)
-        per_cash = cash_per_contract(st, band, settings) if cash_left is not None else None
+        # D129: the per-contract need of the profile's buying-power rule; None when the
+        # max loss is unbounded (margin), so no fit is applied (sizing rejects it anyway).
+        per_cash = fit_per_contract(st, band, settings) if cash_left is not None else None
         # D116: the tier from the in-run book (earlier passes in this run count as deployed)
         tier = portfolio_alloc_tier(portfolio, info.equity, settings)
         size = size_contracts(
@@ -5102,7 +5154,7 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
             equity=info.equity,
             cap_pct=tier.pct,
             existing_max_loss=existing_max_loss(portfolio, t),  # S-7: remaining budget
-            cash_available=cash_left,  # E22.3: settled cash left after this run's opens
+            cash_available=cash_left if per_cash is not None else None,  # E22.3 / D129
             cash_per_contract=per_cash,
             cap_label=tier.describe(),
         )
@@ -5121,9 +5173,10 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
         }
         if live_cap is not None:
             sizing_payload["live_cap"] = live_cap
-        if cash_left is not None:  # E22.3: the cash fit's inputs
+        if cash_left is not None:  # E22.3 / D129: the buying-power fit's inputs
             sizing_payload["cash_available"] = str(cash_left)
-            sizing_payload["cash_per_contract"] = str(per_cash)
+            sizing_payload["cash_per_contract"] = None if per_cash is None else str(per_cash)
+            sizing_payload["fit_basis"] = fit_basis(settings)
         if settings.profile.has_sleeves:  # E22.1 (D97): the open's entry-DTE sleeve
             sizing_payload["sleeve"] = sleeve.name if sleeve is not None else None
         if not size.trade:
@@ -5340,7 +5393,7 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
                 kind_of(st.legs),  # D116: the gate's own delta-cap unit
             )
             if cash_left is not None and per_cash is not None:
-                # E22.3: the next open in this run sizes against the cash still free.
+                # E22.3 / D129: the next open in this run sizes against what is still free.
                 cash_left = cash_after(cash_left, per_cash, size.contracts)
     sleeve_metrics: dict[str, int] = {}
     if settings.profile.has_sleeves:  # E22.2 (D97): opens per sleeve (0s included)

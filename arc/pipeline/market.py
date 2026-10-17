@@ -139,6 +139,7 @@ def account_snapshot(
         equity=info.equity,
         last_equity=baseline.value if baseline is not None else Decimal(0),
         settled_cash=settled_cash(info),
+        options_buying_power=info.options_buying_power,  # D129: as reported; None = unknown
         orders_used_today=orders_used_today,
         day_trades_used=day_trades_used,
         live_gate_met=live_gate_met,

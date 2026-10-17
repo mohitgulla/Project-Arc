@@ -94,7 +94,10 @@ def held(n: int = 2) -> Portfolio:
 
 def account() -> AccountSnapshot:
     return AccountSnapshot(
-        equity=D("100000"), last_equity=D("100000"), as_of=NOW - dt.timedelta(seconds=5)
+        equity=D("100000"),
+        last_equity=D("100000"),
+        options_buying_power=D("100000"),
+        as_of=NOW - dt.timedelta(seconds=5),
     )
 
 

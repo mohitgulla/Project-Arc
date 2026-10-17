@@ -39,7 +39,9 @@ def cfg(dollar: float = 1.0, beta: float = 4.0) -> ArcSettings:
 
 
 def acct(equity: D = EQ) -> AccountSnapshot:
-    return AccountSnapshot(equity=equity, last_equity=equity, as_of=NOW)
+    return AccountSnapshot(
+        equity=equity, last_equity=equity, options_buying_power=equity, as_of=NOW
+    )
 
 
 def _st(legs: list[tuple[str, str, str]], delta: float) -> Structure:
