@@ -1,0 +1,992 @@
+"""M1 training, walk-forward evaluation and artefacts (E27.2, D126). Dev data only.
+
+Protocol (pre-registered in this file; changing it changes the artefact version):
+
+* **Dataset**: the E27.1 feature store, sessions 2020-01-02 → 2023-12-29 (dev), all C500
+  rows, with the M1 labels from OHLC cut at 2023-12-31 (:mod:`arc.ml.m1.dataset`).
+  Training rows start 2020-07-01 (the 252-session features need the warm-up).
+* **Folds** (walk-forward by year): test 2022 (train 2020-07 → 2021-12) and test 2023
+  (train 2020-07 → 2022-12). For a block starting at session b and horizon h, training
+  rows are dated before ``sessions[idx(b) − h − 5]``: a purge of h sessions (the label
+  window) plus a 5-session embargo.
+* **Models** per (kind ∈ {log_ret, rv}, h, level):
+  - LightGBM quantile regression, pooled over tickers (no ticker id), on a
+    vol-standardised target (``log_ret / scale`` and ``ln(rv / rv_scale)``, scale = HAR
+    → rv20 → IV30), fixed params :data:`LGB_PARAMS` and :data:`NUM_ROUNDS`;
+  - baselines: historical quantiles (``log_ret``, IV lognormal where missing), HAR-IV
+    (``rv``), and the IV lognormal as a third reference for ``log_ret``.
+* **CQR**: per fold, the calibration block is the 252 sessions before the purged test
+  cutoff, split in two halves. Each half is predicted by a *calibration model* trained
+  on every pre-cutoff row outside that half (purge + embargo on both sides, i.e.
+  cross-fitted so the 2020-07 start still leaves enough training rows); the per-level
+  offsets of the pooled residuals (:mod:`arc.ml.m1.conformal`) are applied to
+  the fold's test model. Baselines are calibrated the same way. The shipped model is
+  trained on every dev row; its offsets come from the fold-2023 test residuals (the last
+  252 dev sessions, all labels inside dev).
+* **Keep rule** per target (kind, h): ship LightGBM iff in **both** test years its
+  calibrated pinball loss is below the calibrated baseline's with a one-sided
+  Diebold-Mariano p < 0.05 (per-day cross-sectional mean differential, Newey-West
+  h − 1 lags) **and** its post-CQR coverage error (max |empirical − nominal| over the 7
+  levels, all rows) is ≤ 3 points; else ship the baseline.
+
+Determinism: fixed seeds, ``deterministic=True``, a fixed thread count; the same inputs
+give byte-identical LightGBM text dumps (sha256 in the manifest).
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import hashlib
+import json
+import math
+import time
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
+import pandas as pd
+import structlog
+
+from arc.ml.features.compute import M1_HORIZONS, M1_QUANTILES, qtag
+from arc.ml.features.registry import (
+    FEATURES,
+    default_model_features,
+    panel_feature_names,
+    schema_version,
+)
+from arc.ml.m1 import metrics as mt
+from arc.ml.m1.baselines import HarIv, iv_lognormal_quantiles
+from arc.ml.m1.conformal import apply_offsets, fit_offsets, sort_quantiles
+from arc.ml.m1.dataset import DEV_END, scale
+from arc.ml.m1.predict import (
+    KINDS,
+    M1Manifest,
+    M1Model,
+    TargetModel,
+    direction,
+    feature_matrix,
+    p_up_and_abs,
+    publish,
+    raw_baseline,
+    raw_lgbm,
+    rv_scale,
+)
+from arc.utils.calendar import sessions_between
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable, Sequence
+    from pathlib import Path
+
+log = structlog.get_logger(__name__)
+
+TRAIN_START = dt.date(2020, 7, 1)
+EMBARGO = 5
+CAL_SESSIONS = 252
+TEST_YEARS: tuple[int, ...] = (2022, 2023)
+KEEP_P = 0.05
+KEEP_COVERAGE = 0.03
+LGB_PARAMS: dict[str, Any] = {
+    "objective": "quantile",
+    "learning_rate": 0.05,
+    "num_leaves": 31,
+    "min_data_in_leaf": 1000,
+    "feature_fraction": 0.7,
+    "bagging_fraction": 0.5,
+    "bagging_freq": 1,
+    "lambda_l2": 1.0,
+    "max_bin": 63,
+    "seed": 20261017,
+    "deterministic": True,
+    "force_row_wise": True,
+    "num_threads": 6,
+    "verbose": -1,
+}
+NUM_ROUNDS = 300
+_ID = ("date", "ticker", "pit_member", "is_etf")
+
+
+def model_features() -> list[str]:
+    """Live-available panel features (registry order); the M1 input list."""
+    panel = set(panel_feature_names())
+    return [f for f in default_model_features() if f in panel]
+
+
+def _lgb() -> Any:
+    import lightgbm
+
+    return lightgbm
+
+
+# ---------------------------------------------------------------------------
+# Folds
+# ---------------------------------------------------------------------------
+
+
+def dev_sessions() -> list[dt.date]:
+    return sessions_between(dt.date(2020, 1, 1), DEV_END)
+
+
+def _idx(sessions: Sequence[dt.date], d: dt.date) -> int:
+    """Index of the first session ≥ *d* (len(sessions) past the end)."""
+    return next((k for k, x in enumerate(sessions) if x >= d), len(sessions))
+
+
+def cutoff(sessions: Sequence[dt.date], block_start: dt.date, h: int) -> dt.date:
+    """Rows dated before this are purged-and-embargoed relative to *block_start*."""
+    return sessions[max(_idx(sessions, block_start) - h - EMBARGO, 0)]
+
+
+def session_index(df: pd.DataFrame, sessions: Sequence[dt.date]) -> np.ndarray:
+    """Per row, the index of its date in *sessions* (−1 when not a session)."""
+    pos = {d: k for k, d in enumerate(sessions)}
+    return np.array([pos.get(d, -1) for d in df["date"]], dtype=np.int64)
+
+
+def purged_outside(
+    si: np.ndarray, sessions: Sequence[dt.date], b0: dt.date, b1: dt.date, h: int
+) -> np.ndarray:
+    """Rows clear of block [b0, b1) on both sides: before it by h + embargo (labels end
+    before it starts), after it by h + embargo (labels do not overlap the block's)."""
+    i0, i1 = _idx(sessions, b0), _idx(sessions, b1)
+    return (si < i0 - h - EMBARGO) | (si >= i1 + h + EMBARGO)
+
+
+@dataclass(frozen=True)
+class FoldPlan:
+    """One walk-forward fold. The calibration block is the last :data:`CAL_SESSIONS`
+    before the purged test cut, split in two halves that are cross-fitted."""
+
+    name: str
+    test_start: dt.date
+    test_end: dt.date
+
+    def test_cut(self, s: Sequence[dt.date], h: int) -> dt.date:
+        return cutoff(s, self.test_start, h)
+
+    def cal_start(self, s: Sequence[dt.date], h: int) -> dt.date:
+        i = s.index(self.test_cut(s, h))
+        return s[max(i - CAL_SESSIONS, 0)]
+
+    def cal_halves(self, s: Sequence[dt.date], h: int) -> tuple[tuple[dt.date, dt.date], ...]:
+        a, b = s.index(self.cal_start(s, h)), s.index(self.test_cut(s, h))
+        m = (a + b) // 2
+        return ((s[a], s[m]), (s[m], s[b]))
+
+
+FOLDS: tuple[FoldPlan, ...] = tuple(
+    FoldPlan(f"test{y}", dt.date(y, 1, 1), dt.date(y, 12, 31)) for y in TEST_YEARS
+)
+
+
+# ---------------------------------------------------------------------------
+# Fitting
+# ---------------------------------------------------------------------------
+
+
+def std_target(df: pd.DataFrame, kind: str, h: int) -> np.ndarray:
+    if kind == "log_ret":
+        return df[f"log_ret_h{h}"].to_numpy(dtype=float) / scale(df, h)
+    rv = df[f"rv_h{h}"].to_numpy(dtype=float)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return np.where(rv > 0, np.log(rv / rv_scale(df, h)), np.nan)
+
+
+def target(df: pd.DataFrame, kind: str, h: int) -> np.ndarray:
+    return df[f"{kind}_h{h}"].to_numpy(dtype=float)
+
+
+def rows_for(df: pd.DataFrame, kind: str, h: int, lo: dt.date, hi: dt.date) -> pd.DataFrame:
+    """Rows dated in [lo, hi) with a finite target and scale."""
+    m = (df["date"] >= lo) & (df["date"] < hi)
+    sub = df[m]
+    ok = np.isfinite(std_target(sub, kind, h))
+    return sub[ok]
+
+
+@dataclass
+class FitSet:
+    """Boosters per (kind, h, level) and HAR-IV per h, trained on one row window each."""
+
+    boosters: dict[tuple[str, int, float], Any] = field(default_factory=dict)
+    har_iv: dict[int, HarIv] = field(default_factory=dict)
+    n_rows: dict[tuple[str, int], int] = field(default_factory=dict)
+    seconds: float = 0.0
+
+
+def fit_target(
+    tr: pd.DataFrame,
+    kind: str,
+    h: int,
+    features: Sequence[str],
+    *,
+    levels: Sequence[float] = M1_QUANTILES,
+    params: dict[str, Any] | None = None,
+    rounds: int = NUM_ROUNDS,
+) -> dict[float, Any]:
+    lgb = _lgb()
+    x = feature_matrix(tr, features)
+    y = std_target(tr, kind, h)
+    out: dict[float, Any] = {}
+    for p in levels:
+        prm = {**(params or LGB_PARAMS), "alpha": float(p)}
+        ds = lgb.Dataset(x, y, feature_name=list(features), free_raw_data=True)
+        out[float(p)] = lgb.train(prm, ds, num_boost_round=rounds)
+    return out
+
+
+def fit_set(
+    df: pd.DataFrame,
+    train_mask: Callable[[int], np.ndarray],
+    features: Sequence[str],
+    *,
+    horizons: Sequence[int] = M1_HORIZONS,
+    params: dict[str, Any] | None = None,
+    rounds: int = NUM_ROUNDS,
+    lgbm: bool = True,
+    progress: Callable[[str], None] | None = None,
+) -> FitSet:
+    """Train everything on the rows of *train_mask(h)* (dated ≥ TRAIN_START) per horizon."""
+    fs = FitSet()
+    t0 = time.monotonic()
+    after_start = (df["date"] >= TRAIN_START).to_numpy()
+    for h in horizons:
+        m = train_mask(h) & after_start
+        sub = df[m]
+        rv_rows = sub[np.isfinite(std_target(sub, "rv", h))]
+        fs.har_iv[h] = HarIv.fit(rv_rows, h)
+        for kind in KINDS:
+            tr = rv_rows if kind == "rv" else sub[np.isfinite(std_target(sub, kind, h))]
+            fs.n_rows[(kind, h)] = len(tr)
+            if lgbm:
+                for p, b in fit_target(tr, kind, h, features, params=params, rounds=rounds).items():
+                    fs.boosters[(kind, h, p)] = b
+            if progress is not None:
+                progress(f"  fit {kind} h{h}: {len(tr)} rows")
+    fs.seconds = time.monotonic() - t0
+    return fs
+
+
+def raw_predictions(
+    fs: FitSet, df: pd.DataFrame, kind: str, h: int, features: Sequence[str]
+) -> dict[str, np.ndarray]:
+    """Uncalibrated (n, K) quantiles of every model for *df*'s rows."""
+    lv = list(M1_QUANTILES)
+    out: dict[str, np.ndarray] = {}
+    if fs.boosters:
+        out["lgbm"] = raw_lgbm(fs.boosters, kind, h, feature_matrix(df, features), df, lv)
+    out["baseline"] = raw_baseline(kind, h, df, fs.har_iv.get(h), lv)
+    if kind == "log_ret":
+        iv = df["iv30"].to_numpy(dtype=float)
+        out["iv_lognormal"] = iv_lognormal_quantiles(np.where(iv > 0, iv, np.nan), h, lv)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Evaluation
+# ---------------------------------------------------------------------------
+
+
+def _split_masks(df: pd.DataFrame) -> dict[str, np.ndarray]:
+    etf = df["is_etf"].astype(bool).to_numpy()
+    return {"All": np.ones(len(df), dtype=bool), "Stocks": ~etf, "ETFs": etf}
+
+
+def coverage_error(cov: np.ndarray, levels: Sequence[float] = M1_QUANTILES) -> float:
+    return float(np.max(np.abs(cov - np.asarray(levels))))
+
+
+@dataclass
+class FoldResult:
+    """Per (kind, h): calibrated quantiles per model on the fold's test rows."""
+
+    fold: str
+    rows: dict[tuple[str, int], pd.DataFrame] = field(default_factory=dict)
+    q: dict[tuple[str, int, str], np.ndarray] = field(default_factory=dict)
+    q_raw: dict[tuple[str, int, str], np.ndarray] = field(default_factory=dict)
+    offsets: dict[tuple[str, int, str], dict[float, float]] = field(default_factory=dict)
+    crossing: dict[tuple[str, int], float] = field(default_factory=dict)
+    cal_cov_err: dict[tuple[str, int, str], float] = field(default_factory=dict)
+    fit_seconds: float = 0.0
+
+
+def run_fold(
+    df: pd.DataFrame,
+    plan: FoldPlan,
+    features: Sequence[str],
+    *,
+    horizons: Sequence[int] = M1_HORIZONS,
+    params: dict[str, Any] | None = None,
+    rounds: int = NUM_ROUNDS,
+    progress: Callable[[str], None] | None = None,
+) -> tuple[FoldResult, FitSet]:
+    s = dev_sessions()
+    si = session_index(df, s)
+    say = progress or (lambda _m: None)
+    halves = {h: plan.cal_halves(s, h) for h in horizons}
+    cal_fs: list[FitSet] = []
+    for k in range(2):
+        say(f"{plan.name}: calibration models (cross-fit half {k + 1}/2)")
+        cal_fs.append(
+            fit_set(
+                df,
+                lambda h, k=k: (
+                    (si >= 0)
+                    & (si < s.index(plan.test_cut(s, h)))
+                    & purged_outside(si, s, *halves[h][k], h)
+                ),
+                features,
+                horizons=horizons,
+                params=params,
+                rounds=rounds,
+                progress=progress,
+            )
+        )
+    say(f"{plan.name}: test models")
+    test_fs = fit_set(
+        df,
+        lambda h: (si >= 0) & (si < s.index(plan.test_cut(s, h))),
+        features,
+        horizons=horizons,
+        params=params,
+        rounds=rounds,
+        progress=progress,
+    )
+    res = FoldResult(plan.name, fit_seconds=sum(f.seconds for f in cal_fs) + test_fs.seconds)
+    lv = list(M1_QUANTILES)
+    for h in horizons:
+        for kind in KINDS:
+            test = rows_for(df, kind, h, plan.test_start, plan.test_end + dt.timedelta(days=1))
+            res.rows[(kind, h)] = test.reset_index(drop=True)
+            raw_test = raw_predictions(test_fs, test, kind, h, features)
+            parts = [
+                (rows_for(df, kind, h, b0, b1), fs)
+                for (b0, b1), fs in zip(halves[h], cal_fs, strict=True)
+            ]
+            raw_cal: dict[str, np.ndarray] = {}
+            for name in raw_test:
+                raw_cal[name] = np.vstack(
+                    [raw_predictions(fs, c, kind, h, features)[name] for c, fs in parts]
+                )
+            y_cal = np.concatenate([target(c, kind, h) for c, _ in parts])
+            for name, qt in raw_test.items():
+                res.q_raw[(kind, h, name)] = qt
+                if name == "iv_lognormal":
+                    res.q[(kind, h, name)] = np.sort(qt, axis=1)
+                    continue
+                offs = fit_offsets(raw_cal[name], y_cal, lv)
+                res.offsets[(kind, h, name)] = offs
+                res.q[(kind, h, name)] = apply_offsets(qt, offs, lv)
+                ok = np.isfinite(y_cal) & np.isfinite(raw_cal[name]).all(axis=1)
+                res.cal_cov_err[(kind, h, name)] = coverage_error(
+                    mt.coverage(y_cal[ok], apply_offsets(raw_cal[name][ok], offs, lv))
+                )
+            if "lgbm" in raw_test:
+                res.crossing[(kind, h)] = sort_quantiles(raw_test["lgbm"])[1]
+    return res, test_fs
+
+
+def metric_rows(res: FoldResult, horizons: Sequence[int] = M1_HORIZONS) -> pd.DataFrame:
+    """One row per (kind, h, split, model): pinball, CRPS, coverage error, DM vs baseline."""
+    lv = list(M1_QUANTILES)
+    recs = []
+    for h in horizons:
+        for kind in KINDS:
+            rows = res.rows[(kind, h)]
+            y = target(rows, kind, h)
+            dates = rows["date"].to_numpy()
+            models = [m for m in ("lgbm", "baseline", "iv_lognormal") if (kind, h, m) in res.q]
+            base_pb = mt.pinball(y, res.q[(kind, h, "baseline")], lv).mean(axis=1)
+            for split, mask in _split_masks(rows).items():
+                if not mask.any():
+                    continue
+                for m in models:
+                    q = res.q[(kind, h, m)]
+                    pb = mt.pinball(y, q, lv).mean(axis=1)
+                    cov = mt.coverage(y[mask], q[mask])
+                    raw_cov = mt.coverage(y[mask], np.sort(res.q_raw[(kind, h, m)][mask], axis=1))
+                    diff = pd.Series(pb[mask] - base_pb[mask]).groupby(dates[mask]).mean()
+                    stat, p2 = (
+                        mt.dm_test(diff.to_numpy(), h) if m != "baseline" else (np.nan, np.nan)
+                    )
+                    p1 = (
+                        p2 / 2
+                        if np.isfinite(stat) and stat < 0
+                        else (1 - p2 / 2 if np.isfinite(stat) else np.nan)
+                    )
+                    rec: dict[str, Any] = {
+                        "fold": res.fold,
+                        "kind": kind,
+                        "h": h,
+                        "split": split,
+                        "model": m,
+                        "n": int(mask.sum()),
+                        "pinball": float(pb[mask].mean()),
+                        "crps": float(mt.crps_from_quantiles(y[mask], q[mask], lv).mean()),
+                        "cov_err": coverage_error(cov),
+                        "cov_err_raw": coverage_error(raw_cov),
+                        "cov_err_cal": res.cal_cov_err.get((kind, h, m), float("nan")),
+                        "dm_stat": stat,
+                        "dm_p_one_sided": p1,
+                    }
+                    for p, c in zip(lv, cov, strict=True):
+                        rec[f"cov_{qtag(p)}"] = float(c)
+                    med = q[mask, lv.index(0.5)]
+                    if kind == "log_ret":
+                        nz = med != 0
+                        rec["sign_acc"] = float((np.sign(med[nz]) == np.sign(y[mask][nz])).mean())
+                        rec["rank_ic"] = mt.daily_rank_ic(dates[mask], med, y[mask])
+                    else:
+                        rec["qlike"] = float(np.nanmean(mt.qlike(y[mask], med)))
+                        rec["rank_ic"] = mt.daily_rank_ic(dates[mask], med, y[mask])
+                    recs.append(rec)
+            if kind == "rv":  # point forecasts for QLIKE reference
+                har = rows[f"har_rv_h{h}"].to_numpy(dtype=float)
+                for nm, fc in (("har_point", har), ("iv30_point", rows["iv30"].to_numpy(float))):
+                    for split, mask in _split_masks(rows).items():
+                        if mask.any():
+                            recs.append(
+                                {
+                                    "fold": res.fold,
+                                    "kind": kind,
+                                    "h": h,
+                                    "split": split,
+                                    "model": nm,
+                                    "n": int(mask.sum()),
+                                    "qlike": float(np.nanmean(mt.qlike(y[mask], fc[mask]))),
+                                }
+                            )
+    return pd.DataFrame(recs)
+
+
+def keep_decisions(table: pd.DataFrame, horizons: Sequence[int] = M1_HORIZONS) -> pd.DataFrame:
+    """The pre-registered keep rule per (kind, h) from the All-split rows of both folds."""
+    recs = []
+    for kind in KINDS:
+        for h in horizons:
+            t = table[(table.kind == kind) & (table.h == h) & (table.split == "All")]
+            checks = []
+            for fold in sorted(t.fold.unique()):
+                lg = t[(t.fold == fold) & (t.model == "lgbm")]
+                bs = t[(t.fold == fold) & (t.model == "baseline")]
+                if lg.empty or bs.empty:
+                    checks.append((fold, False, "missing"))
+                    continue
+                lgr, bsr = lg.iloc[0], bs.iloc[0]
+                better = lgr.pinball < bsr.pinball
+                sig = bool(np.isfinite(lgr.dm_p_one_sided) and lgr.dm_p_one_sided < KEEP_P)
+                cov_ok = lgr.cov_err <= KEEP_COVERAGE
+                why = (
+                    f"pinball {lgr.pinball:.5f} vs {bsr.pinball:.5f}, "
+                    f"DM p {lgr.dm_p_one_sided:.3g}, cov err {100 * lgr.cov_err:.1f} pts"
+                )
+                checks.append((fold, bool(better and sig and cov_ok), why))
+            keep = bool(checks) and all(c[1] for c in checks)
+            recs.append(
+                {
+                    "kind": kind,
+                    "h": h,
+                    "source": "lgbm" if keep else "baseline",
+                    **{f"{f}_pass": ok for f, ok, _ in checks},
+                    **{f"{f}_detail": why for f, _, why in checks},
+                }
+            )
+    return pd.DataFrame(recs)
+
+
+# ---------------------------------------------------------------------------
+# Diagnostics: importance, regimes, other targets
+# ---------------------------------------------------------------------------
+
+
+def gain_importance(fs: FitSet, features: Sequence[str], kind: str, h: int) -> pd.Series:
+    tot = pd.Series(0.0, index=list(features))
+    for p in M1_QUANTILES:
+        b = fs.boosters.get((kind, h, float(p)))
+        if b is not None:
+            tot += pd.Series(b.feature_importance("gain"), index=list(features))
+    return tot / tot.sum() if tot.sum() > 0 else tot
+
+
+def permutation_importance(
+    fs: FitSet,
+    test: pd.DataFrame,
+    kind: str,
+    h: int,
+    features: Sequence[str],
+    cands: Iterable[str],
+    *,
+    level: float = 0.5,
+    n_rows: int = 40_000,
+    seed: int = 20261017,
+) -> pd.Series:
+    """Rise in standardised pinball of the *level* model when one feature is shuffled."""
+    rng = np.random.default_rng(seed)
+    sub = test.iloc[np.sort(rng.choice(len(test), min(n_rows, len(test)), replace=False))]
+    x = feature_matrix(sub, features)
+    y = std_target(sub, kind, h)
+    b = fs.boosters[(kind, h, float(level))]
+    base = float(mt.pinball(y, b.predict(x)[:, None], [level]).mean())
+    out = {}
+    for f in cands:
+        j = list(features).index(f)
+        xp = x.copy()
+        xp[:, j] = rng.permutation(xp[:, j])
+        out[f] = float(mt.pinball(y, b.predict(xp)[:, None], [level]).mean()) - base
+    return pd.Series(out).sort_values(ascending=False)
+
+
+def regime_labels(rows: pd.DataFrame, h: int) -> pd.DataFrame:
+    trend = rows["spy_trend"].map({1.0: "bull", -1.0: "bear", 0.0: "sideways"}).fillna("unknown")
+    vp = rows["vix_proxy_pct_252"]
+    vix = np.where(vp >= 0.8, "high", np.where(vp <= 0.2, "low", "mid"))  # noqa: PLR2004
+    vix = np.where(vp.isna(), "unknown", vix)
+    earn = (~rows["is_etf"].astype(bool)) & (rows["sess_to_earn"] <= h)
+    return pd.DataFrame(
+        {
+            "spy_trend": trend.to_numpy(),
+            "vix_pct": vix,
+            "earnings_in_h": np.where(earn, "yes", "no"),
+            "class": np.where(rows["is_etf"].astype(bool), "ETF", "Stock"),
+        },
+        index=rows.index,
+    )
+
+
+def regime_table(res: FoldResult, kind: str, h: int, model: str) -> pd.DataFrame:
+    rows = res.rows[(kind, h)]
+    y = target(rows, kind, h)
+    lv = list(M1_QUANTILES)
+    q, qb = res.q[(kind, h, model)], res.q[(kind, h, "baseline")]
+    pb = mt.pinball(y, q, lv).mean(axis=1)
+    pbb = mt.pinball(y, qb, lv).mean(axis=1)
+    lab = regime_labels(rows, h)
+    recs = []
+    for col in lab.columns:
+        for val, idx in lab.groupby(col).groups.items():
+            m = rows.index.isin(idx)
+            if m.sum() < 500:  # noqa: PLR2004
+                continue
+            cov = mt.coverage(y[m], q[m])
+            recs.append(
+                {
+                    "fold": res.fold,
+                    "kind": kind,
+                    "h": h,
+                    "regime": col,
+                    "value": val,
+                    "n": int(m.sum()),
+                    "pinball": float(pb[m].mean()),
+                    "pinball_vs_base": float(pb[m].mean() - pbb[m].mean()),
+                    "cov_err": coverage_error(cov),
+                    "cov_05": float(cov[0]),
+                    "cov_95": float(cov[-1]),
+                }
+            )
+    return pd.DataFrame(recs)
+
+
+def other_targets(res: FoldResult, h: int, model: str) -> dict[str, float]:
+    """Rank IC of the M1-implied width/|move| vs excursion and move-vs-implied labels."""
+    rows = res.rows[("log_ret", h)]
+    q = res.q[("log_ret", h, model)]
+    lv = list(M1_QUANTILES)
+    _, eabs = p_up_and_abs(q, lv)
+    iv = rows["iv30"].to_numpy(dtype=float)
+    tau = math.sqrt(h / 252)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        mvi = eabs / (iv * tau)
+        up = (q[:, lv.index(0.95)] - q[:, lv.index(0.5)]) / (iv * tau)
+        dn = (q[:, lv.index(0.5)] - q[:, lv.index(0.05)]) / (iv * tau)
+    d = rows["date"].to_numpy()
+    y_mvi = rows[f"move_vs_implied_h{h}"].to_numpy(dtype=float)
+    return {
+        "move_vs_implied_ic": mt.daily_rank_ic(d, mvi, y_mvi),
+        "move_vs_implied_mean_fc": float(np.nanmean(np.where(iv > 0, mvi, np.nan))),
+        "move_vs_implied_mean_real": float(np.nanmean(y_mvi)),
+        "max_up_ic": mt.daily_rank_ic(d, up, rows[f"max_up_h{h}"].to_numpy(dtype=float)),
+        "max_dn_ic": mt.daily_rank_ic(d, dn, rows[f"max_dn_h{h}"].to_numpy(dtype=float)),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Artefacts
+# ---------------------------------------------------------------------------
+
+
+def data_digest(df: pd.DataFrame, features: Sequence[str]) -> str:
+    cols = [*_ID, *features, *(c for c in df.columns if c.startswith(("log_ret_h", "rv_h")))]
+    h = pd.util.hash_pandas_object(df[cols], index=False).to_numpy()
+    return hashlib.sha256(h.tobytes()).hexdigest()[:16]
+
+
+def protocol_hash() -> str:
+    body = {
+        "train_start": str(TRAIN_START),
+        "embargo": EMBARGO,
+        "cal_sessions": CAL_SESSIONS,
+        "test_years": TEST_YEARS,
+        "keep_p": KEEP_P,
+        "keep_cov": KEEP_COVERAGE,
+        "levels": M1_QUANTILES,
+        "horizons": M1_HORIZONS,
+        "dev_end": str(DEV_END),
+    }
+    return hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()[:16]
+
+
+def version_of(feature_schema: str, digest: str, params: dict[str, Any], rounds: int) -> str:
+    blob = json.dumps(
+        [feature_schema, digest, params, rounds, protocol_hash()], sort_keys=True, default=str
+    ).encode()
+    return "m1-" + hashlib.sha256(blob).hexdigest()[:12]
+
+
+def booster_file(kind: str, h: int, p: float) -> str:
+    return f"lgbm/{kind}_h{h}_q{qtag(p)}.txt"
+
+
+def write_model(
+    out_dir: Path,
+    fs: FitSet,
+    targets: Sequence[TargetModel],
+    *,
+    features: Sequence[str],
+    digest: str,
+    params: dict[str, Any],
+    rounds: int,
+    code_sha: str,
+    feature_manifest_sha: str,
+    train_window: dict[str, str],
+    calibration_window: dict[str, str],
+) -> M1Manifest:
+    """Write ``lgbm/*.txt`` (text dumps), ``manifest.json``; returns the manifest."""
+    fschema = schema_version()
+    version = version_of(fschema, digest, params, rounds)
+    vdir = out_dir / version
+    (vdir / "lgbm").mkdir(parents=True, exist_ok=True)
+    files: dict[str, str] = {}
+    for (kind, h, p), b in sorted(fs.boosters.items()):
+        name = booster_file(kind, h, p)
+        text = b.model_to_string()
+        (vdir / name).write_text(text)
+        files[name] = hashlib.sha256(text.encode()).hexdigest()
+    man = M1Manifest(
+        version=version,
+        feature_schema=fschema,
+        features=list(features),
+        targets=list(targets),
+        lgb_params=params,
+        num_rounds=rounds,
+        train_window=train_window,
+        calibration_window=calibration_window,
+        code_sha=code_sha,
+        config_hashes={
+            "protocol": protocol_hash(),
+            "lgb_params": hashlib.sha256(json.dumps(params, sort_keys=True).encode()).hexdigest()[
+                :16
+            ],
+            "feature_store_manifest": feature_manifest_sha,
+        },
+        data_digest=digest,
+        files=files,
+    )
+    (vdir / "manifest.json").write_text(man.model_dump_json(indent=2) + "\n")
+    (vdir / "FEATURE_SCHEMA_VERSION").write_text(fschema + "\n")
+    (vdir / "features.json").write_text(json.dumps(list(features), indent=2) + "\n")
+    return man
+
+
+def load_model(vdir: Path, *, check_schema: bool = True) -> M1Model:
+    """Read an artefact directory (text dumps only; refuses a stale feature schema)."""
+    from arc.ml.features.registry import require_schema
+
+    man = M1Manifest.model_validate_json((vdir / "manifest.json").read_text())
+    if check_schema:
+        require_schema(man.feature_schema)
+    lgb = _lgb()
+    boosters = {}
+    for t in man.targets:
+        if t.source != "lgbm":
+            continue
+        for p in man.levels:
+            name = booster_file(t.kind, t.h, p)
+            text = (vdir / name).read_text()
+            if hashlib.sha256(text.encode()).hexdigest() != man.files[name]:
+                msg = f"{name}: sha256 mismatch with manifest"
+                raise ValueError(msg)
+            boosters[(t.kind, t.h, float(p))] = lgb.Booster(model_str=text)
+    return M1Model(man, boosters)
+
+
+def fold_model(
+    res: FoldResult, fs: FitSet, decisions: pd.DataFrame, features: Sequence[str]
+) -> M1Model:
+    """An in-memory M1 for one fold's test block (its offsets, its test boosters)."""
+    targets = []
+    for r in decisions.itertuples():
+        src = str(r.source)
+        offs = res.offsets[(str(r.kind), int(r.h), src)]
+        targets.append(
+            TargetModel(
+                kind=r.kind,
+                h=int(r.h),
+                source=src,  # type: ignore[arg-type]
+                offsets={qtag(p): v for p, v in offs.items()},
+                har_iv=fs.har_iv.get(int(r.h)) if r.kind == "rv" else None,
+            )
+        )
+    man = M1Manifest(
+        version=f"oos-{res.fold}",
+        feature_schema=schema_version(),
+        features=list(features),
+        targets=targets,
+        lgb_params=LGB_PARAMS,
+        num_rounds=NUM_ROUNDS,
+        train_window={},
+        calibration_window={},
+        code_sha="",
+        config_hashes={},
+        data_digest="",
+    )
+    return M1Model(man, fs.boosters)
+
+
+__all__ = [
+    "FEATURES",
+    "FOLDS",
+    "LGB_PARAMS",
+    "NUM_ROUNDS",
+    "FitSet",
+    "FoldPlan",
+    "FoldResult",
+    "TrainRun",
+    "direction",
+    "fit_set",
+    "keep_decisions",
+    "load_model",
+    "metric_rows",
+    "model_features",
+    "publish",
+    "run_fold",
+    "train_m1",
+    "write_model",
+]
+
+
+# ---------------------------------------------------------------------------
+# The whole run
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class TrainRun:
+    """Everything one ``arc ml m1 train`` produced (aggregates feed the report)."""
+
+    manifest: M1Manifest
+    metrics: pd.DataFrame
+    decisions: pd.DataFrame
+    regimes: pd.DataFrame
+    gain: pd.DataFrame
+    permutation: pd.DataFrame
+    others: pd.DataFrame
+    crossing: pd.DataFrame
+    timings: dict[str, float]
+    sizes: dict[str, int]
+    rows: dict[str, int]
+    model_dir: Path
+    oos_path: Path | None = None
+
+
+def _feature_manifest_sha(features_root: Path) -> str:
+    from arc.ml.features.store import version_dir
+
+    p = version_dir(features_root) / "manifest.json"
+    return hashlib.sha256(p.read_bytes()).hexdigest()[:16] if p.is_file() else "none"
+
+
+def train_m1(
+    data_dir: Path,
+    features_root: Path,
+    out_dir: Path,
+    *,
+    code_sha: str,
+    tickers: Sequence[str] | None = None,
+    params: dict[str, Any] | None = None,
+    rounds: int = NUM_ROUNDS,
+    horizons: Sequence[int] = M1_HORIZONS,
+    progress: Callable[[str], None] | None = None,
+) -> TrainRun:
+    """Walk-forward evaluation, keep rule, final fit and artefacts (dev data only)."""
+    from arc.ml.m1.dataset import attach_targets, load_panel
+
+    say = progress or (lambda _m: None)
+    prm = dict(params or LGB_PARAMS)
+    t0 = time.monotonic()
+    panel = load_panel(features_root, dt.date(2020, 1, 1), DEV_END)
+    if tickers is not None:
+        panel = panel[panel["ticker"].isin(set(tickers))].reset_index(drop=True)
+    df = attach_targets(panel, data_dir, horizons=horizons)
+    features = model_features()
+    digest = data_digest(df, features)
+    t_load = time.monotonic() - t0
+    say(f"dataset: {len(df)} rows, {df['ticker'].nunique()} tickers, digest {digest}")
+
+    results: list[FoldResult] = []
+    fitsets: list[FitSet] = []
+    for plan in FOLDS:
+        res, fs = run_fold(
+            df, plan, features, horizons=horizons, params=prm, rounds=rounds, progress=progress
+        )
+        results.append(res)
+        fitsets.append(fs)
+    table = pd.concat([metric_rows(r, horizons) for r in results], ignore_index=True)
+    decisions = keep_decisions(table, horizons)
+    say("keep decisions:\n" + decisions[["kind", "h", "source"]].to_string(index=False))
+
+    # final model: every dev row; offsets from the fold-2023 test residuals
+    say("final model")
+    s = dev_sessions()
+    si = session_index(df, s)
+    final = fit_set(
+        df,
+        lambda _h: si >= 0,
+        features,
+        horizons=horizons,
+        params=prm,
+        rounds=rounds,
+        progress=progress,
+    )
+    last = results[-1]
+    targets = [
+        TargetModel(
+            kind=r.kind,
+            h=int(r.h),
+            source=r.source,  # type: ignore[arg-type]
+            offsets={
+                qtag(p): v for p, v in last.offsets[(str(r.kind), int(r.h), str(r.source))].items()
+            },
+            har_iv=final.har_iv[int(r.h)] if r.kind == "rv" else None,
+        )
+        for r in decisions.itertuples()
+    ]
+    man = write_model(
+        out_dir,
+        final,
+        targets,
+        features=features,
+        digest=digest,
+        params=prm,
+        rounds=rounds,
+        code_sha=code_sha,
+        feature_manifest_sha=_feature_manifest_sha(features_root),
+        train_window={"start": str(TRAIN_START), "end": str(DEV_END), "purge": "labels inside dev"},
+        calibration_window={
+            "start": str(FOLDS[-1].test_start),
+            "end": str(DEV_END),
+            "source": "fold test2023 residuals of the model trained before 2023",
+        },
+    )
+    vdir = out_dir / man.version
+
+    # out-of-sample m1 features (2022, 2023) for M2 / the backtest
+    oos = []
+    for res, fs in zip(results, fitsets, strict=True):
+        plan = next(p for p in FOLDS if p.name == res.fold)
+        m = (df["date"] >= plan.test_start) & (df["date"] <= plan.test_end)
+        oos.append(publish(fold_model(res, fs, decisions, features), df[m].reset_index(drop=True)))
+    oos_df = pd.concat(oos, ignore_index=True)
+    oos_path = vdir / "oos_m1_features.parquet"
+    oos_df.to_parquet(oos_path, index=False)
+
+    # diagnostics
+    regimes = pd.concat(
+        [regime_table(r, kind, h, "lgbm") for r in results for kind in KINDS for h in horizons],
+        ignore_index=True,
+    )
+    gains, perms, others = [], [], []
+    for kind in KINDS:
+        for h in horizons:
+            g = gain_importance(final, features, kind, h)
+            gains.append(pd.DataFrame({"kind": kind, "h": h, "feature": g.index, "gain": g.values}))
+    for res, fs in zip(results, fitsets, strict=True):
+        for kind in KINDS:
+            g = gain_importance(fs, features, kind, 21).sort_values(ascending=False)
+            top = list(g.index[:15])
+            for lvl in (0.05, 0.5, 0.95):
+                pi = permutation_importance(
+                    fs, res.rows[(kind, 21)], kind, 21, features, top, level=lvl
+                )
+                perms.append(
+                    pd.DataFrame(
+                        {
+                            "fold": res.fold,
+                            "kind": kind,
+                            "h": 21,
+                            "level": lvl,
+                            "feature": pi.index,
+                            "pinball_rise": pi.values,
+                        }
+                    )
+                )
+        for h in horizons:
+            src = str(decisions[(decisions.kind == "log_ret") & (decisions.h == h)].source.iloc[0])
+            others.append({"fold": res.fold, "h": h, "model": src, **other_targets(res, h, src)})
+    crossing = pd.DataFrame(
+        [
+            {"fold": r.fold, "kind": k, "h": h, "crossing_rate": v}
+            for r in results
+            for (k, h), v in r.crossing.items()
+        ]
+    )
+
+    # timings and sizes
+    t_pred = time.monotonic()
+    model = load_model(vdir)
+    last_day = max(df["date"])
+    day = df[df["date"] == last_day].reset_index(drop=True)
+    publish(model, day)
+    t_pred = time.monotonic() - t_pred
+    sizes = {p.name: p.stat().st_size for p in sorted((vdir / "lgbm").glob("*.txt"))}
+    timings = {
+        "load_dataset_s": t_load,
+        "fold_fits_s": sum(r.fit_seconds for r in results),
+        "final_fit_s": final.seconds,
+        "predict_one_day_s": t_pred,
+        "predict_one_day_rows": float(len(day)),
+        "total_s": time.monotonic() - t0,
+    }
+    rows = {
+        "dataset": len(df),
+        "tickers": int(df["ticker"].nunique()),
+        **{f"final_{k}_h{h}": n for (k, h), n in final.n_rows.items()},
+    }
+    run = TrainRun(
+        manifest=man,
+        metrics=table,
+        decisions=decisions,
+        regimes=regimes,
+        gain=pd.concat(gains, ignore_index=True),
+        permutation=pd.concat(perms, ignore_index=True),
+        others=pd.DataFrame(others),
+        crossing=crossing,
+        timings=timings,
+        sizes=sizes,
+        rows=rows,
+        model_dir=vdir,
+        oos_path=oos_path,
+    )
+    for name, frame in (
+        ("metrics", table),
+        ("decisions", decisions),
+        ("regimes", regimes),
+        ("gain", run.gain),
+        ("permutation", run.permutation),
+        ("others", run.others),
+        ("crossing", crossing),
+    ):
+        frame.to_csv(vdir / f"eval_{name}.csv", index=False)
+    (vdir / "timings.json").write_text(
+        json.dumps({**timings, "sizes": sizes, "rows": rows}, indent=2) + "\n"
+    )
+    log.info("ml.m1.trained", version=man.version, seconds=round(timings["total_s"], 1))
+    return run
