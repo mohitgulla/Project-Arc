@@ -1,0 +1,9 @@
+book,variant,profile,sum_pnl,delta_equity,diff,min_equity,min_equity_day,open_at_end
+c500_dev,old,margin,-17739.26,-17739.26,-0.0,6270.25,2023-04-13,0
+c500_dev,old,cash_debit,-24926.14,-24926.14,-0.0,73.86,2023-12-04,0
+c125_dev,old,margin,-22894.85,-22894.85,-0.0,2011.23,2023-11-16,0
+c125_dev,old,cash_debit,-24892.09,-24892.09,-0.0,107.91,2023-10-02,0
+c125_dev,new,margin,-16079.48,-16079.48,-0.0,5748.94,2023-06-15,0
+c125_dev,new,cash_debit,-24954.75,-24954.75,-0.0,45.25,2023-08-31,0
+c125_dev,new_noproxy,margin,-16079.48,-16079.48,-0.0,5748.94,2023-06-15,0
+c125_dev,new_noproxy,cash_debit,-24942.3,-24942.3,-0.0,56.18,2023-04-14,0
