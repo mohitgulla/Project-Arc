@@ -378,6 +378,7 @@ IDs below are the card titles on the board. Dependencies are Kanban parent links
 - E7.14 Re-run decision studies on real quotes C125→C500 2020→now (E7.2/E7.5/E7.5b/E16.3/E18.3/E17.3, cost model, universe size, backtest↔live reconciliation), report only (D84) ← E7.9, E7.12
 - E7.15 Analyst reads the D84 backtest — study ledger + holdout verdicts + backtest↔live drift in its context, `BT-<n>` evidence validated, draft study specs, wake on new verdict; option A: BT holdout may back an XP proposal (D84, D86) ← E7.12, E21.3
 - E7.17 Loss attribution: why the live-shaped backtest loses most of the $25K account. Sim sanity check first, then P&L decomposition (structure, regime, year, tier, earnings, exit), cost vs mid, EV/PoP calibration, tail/sizing counterfactuals; report only, owner 2026-10-16 (D84) ← E7.12 (cherry-picks E7.14's d3fa671)
+- E7.18 Loss & drawdown anatomy: drawdown episodes, regime/timeframe/trade/name maps (All/Stocks/ETFs) on C500 + C125 sign-check, trade-path MAE/MFE, entry-time feature table + information audit (what separates losers, what selection ignores, what data we lack), descriptive guard counterfactuals; report only, owner 2026-10-16 (D84) ← E7.17
 - E7.4 Decision journal — every decision + reason_code + inputs in an append-only DB journal; outcome attribution; root-cause reviews; `arc journal show|gaps|replay` (D22) ← E6.1
 
 **E8 Ops**
