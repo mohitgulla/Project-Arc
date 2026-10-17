@@ -29,3 +29,11 @@ incumbent) and an `overlay` on `ranking` / `exits` / `costs` (sim knobs live in
 
 Reports go to `docs/RESEARCH/studies/<id>.md` + `.json` (aggregates only, never raw
 quote rows). Per-run CSVs stay under `data/backtest/studies/` (gitignored).
+
+Retired studies (E26.5, PLAN D127): `retired.yaml` here lists studies whose results no
+longer describe the current algo (BT-1..BT-8). It is not a spec (the `BT-*.yaml` globs skip
+it) and adding a row changes no study hash. A retired study is history only: the Analyst
+leaves it out of evidence and its context, `arc backtest study adopt|run` and the nightly
+runner refuse it, and the Tower lists it under Retired. Nothing is deleted, and ids are never
+reused (the next study is above every retired id). Add one with
+`arc backtest study retire BT-<n> --reason "..."` and commit the file via a PR.

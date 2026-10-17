@@ -1446,6 +1446,17 @@
             "title": "Profiles",
             "type": "array"
           },
+          "retired": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RetiredInfo"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Set when the study is retired: history, not current evidence"
+          },
           "runs": {
             "default": 0,
             "description": "Ledger rows (runs) for the study",
@@ -14409,6 +14420,28 @@
           "entry_id"
         ],
         "title": "RegimeView",
+        "type": "object"
+      },
+      "RetiredInfo": {
+        "additionalProperties": false,
+        "description": "A retired study (history only; the strategy and harness moved on since).",
+        "properties": {
+          "at": {
+            "format": "date",
+            "title": "At",
+            "type": "string"
+          },
+          "reason": {
+            "description": "Why it was retired, plan/card ids removed",
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "at",
+          "reason"
+        ],
+        "title": "RetiredInfo",
         "type": "object"
       },
       "ReviewView": {

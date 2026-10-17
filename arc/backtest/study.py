@@ -75,10 +75,12 @@ __all__ = [
     "DEFAULT_REPORT_DIR",
     "DEFAULT_RUNS_DIR",
     "LIQUIDITY_BUCKETS",
+    "RETIRED_FILE",
     "STUDIES_DIR",
     "SUBPERIODS",
     "ArmMetrics",
     "LedgerEntry",
+    "RetiredStudy",
     "StudyArm",
     "StudyArms",
     "StudyPeriod",
@@ -90,8 +92,12 @@ __all__ = [
     "compare_runs",
     "ladder_flags",
     "load_ledger",
+    "load_retired",
     "load_study",
     "render_report",
+    "retired_from_text",
+    "retired_message",
+    "retired_text",
     "run_study",
     "study_hash",
     "study_path",
@@ -370,6 +376,92 @@ def arm_set_hash(spec: StudySpec) -> str:
 
 def study_path(study_id: str, studies_dir: Path | None = None) -> Path:
     return (studies_dir or STUDIES_DIR) / f"{study_id}.yaml"
+
+
+# ---------------------------------------------------------------------------
+# Retired studies (E26.5, D127)
+# ---------------------------------------------------------------------------
+
+#: ``config/backtest_studies/retired.yaml``: not a ``BT-*.yaml`` glob match, never a spec.
+RETIRED_FILE = "retired.yaml"
+RETIRED_HEADER = (
+    "# Retired backtest studies (E26.5, PLAN D127). A retired study is history, not\n"
+    "# evidence: the Analyst leaves it out of its findings and BT-REF evidence, `arc backtest\n"
+    "# study adopt|run` and the nightly runner refuse it, and the Tower lists it under\n"
+    "# Retired. Nothing is deleted: its spec, report and ledger rows stay. Ids are never\n"
+    "# reused, so a new study takes the next number above every id here.\n"
+    "#\n"
+    "# Keep the body JSON (valid YAML): the Analyst gate reads it with the stdlib\n"
+    "# (`#` comment lines dropped, like idea_seed.yaml). `arc backtest study retire` appends.\n"
+)
+
+
+class RetiredStudy(BaseModel):
+    """One ``retired.yaml`` row."""
+
+    model_config = _FORBID
+
+    id: str
+    at: dt.date
+    by: str = Field(..., min_length=1)
+    reason: str = Field(..., min_length=1)
+
+    @field_validator("id")
+    @classmethod
+    def _id(cls, v: str) -> str:
+        if not _ID_RE.match(v):
+            msg = f"retired id {v!r}: use BT-<n>"
+            raise ValueError(msg)
+        return v
+
+
+class RetiredFile(BaseModel):
+    model_config = _FORBID
+
+    retired: list[RetiredStudy] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _unique(self) -> RetiredFile:
+        ids = [r.id for r in self.retired]
+        dup = sorted({i for i in ids if ids.count(i) > 1})
+        if dup:
+            msg = f"duplicate retired id(s): {', '.join(dup)}"
+            raise ValueError(msg)
+        return self
+
+
+def retired_from_text(text: str | None, where: str = RETIRED_FILE) -> dict[str, RetiredStudy]:
+    """``BT-<n> -> RetiredStudy`` from the file's text (``None``/empty = nothing retired).
+    A malformed file raises ``ValueError`` naming *where*: a typo must not un-retire."""
+    if not text or not text.strip():
+        return {}
+    try:
+        data = yaml.safe_load(text) or {}
+        doc = RetiredFile.model_validate(data)
+    except (yaml.YAMLError, ValueError) as exc:
+        msg = f"{where}: {exc}"
+        raise ValueError(msg) from exc
+    return {r.id: r for r in doc.retired}
+
+
+def load_retired(studies_dir: Path | None = None) -> dict[str, RetiredStudy]:
+    """The retired studies of *studies_dir* (default ``config/backtest_studies``)."""
+    p = (studies_dir or STUDIES_DIR) / RETIRED_FILE
+    return retired_from_text(p.read_text(), str(p)) if p.is_file() else {}
+
+
+def retired_text(rows: Sequence[RetiredStudy]) -> str:
+    """The file body :func:`load_retired` reads (header + JSON, id order)."""
+    doc = {"retired": [r.model_dump(mode="json") for r in sorted(rows, key=_retired_key)]}
+    return RETIRED_HEADER + json.dumps(doc, indent=2, ensure_ascii=False) + "\n"
+
+
+def _retired_key(r: RetiredStudy) -> int:
+    return int(r.id.split("-", 1)[1])
+
+
+def retired_message(r: RetiredStudy) -> str:
+    return f"{r.id} is retired (D127, {r.at} by {r.by}): {r.reason}"
 
 
 def _base(target: str, paths: Mapping[str, Path | None]) -> dict[str, Any]:

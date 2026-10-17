@@ -297,6 +297,10 @@ MAX_SEED_TREATMENTS = 4
 BT_LEDGER = Path("data") / "backtest" / "ledger.jsonl"
 BT_REPORTS = Path("docs") / "RESEARCH" / "studies"
 BT_SPECS = Path("config") / "backtest_studies"
+# E26.5 (D127): retired studies (history, never evidence). JSON body under `#` comments,
+# read with the stdlib like idea_seed.yaml; arc.backtest.study.load_retired is the strict
+# loader (a test pins that both read the committed file the same).
+BT_RETIRED = BT_SPECS / "retired.yaml"
 BT_CHECKPOINTS = Path("data") / "backtest_universe" / "checkpoints.json"  # E7.9
 # E7.14's backtest<->live reconciliation, aggregates only:
 # {"generated_at", "git_sha", "sim_slippage_frac",
@@ -2566,6 +2570,7 @@ def validate_findings(
             )
     errs += _validate_experiment_lines(doc, after or backlog, experiments, max_arms)
     errs += _validate_next_study(doc, after or backlog)
+    errs += _validate_retired_mentions(doc, studies)  # E26.5 (D127)
     themes = {t.get("theme"): t for t in doc.get("themes", [])}
     for tid in THEMES:
         t = themes.get(tid)
@@ -2740,6 +2745,83 @@ def load_study_reports(directory: Path) -> dict[str, dict]:
 def holdout_key(e: dict) -> str:
     """One holdout run's identity (the wake rule's watermark)."""
     return f"{e['study']}:{str(e.get('spec_hash', ''))[:12]}:{e.get('at', '')}"
+
+
+def load_retired_studies(path: Path) -> tuple[dict[str, dict], list[str]]:
+    """E26.5 (D127): ``retired.yaml`` -> ``({BT-<n>: {at, by, reason}}, errors)``. Missing is
+    nothing retired; a malformed file or row is named in *errors* (the strict pydantic loader
+    and CI keep the committed file valid)."""
+    if not path.exists():
+        return {}, []
+    try:
+        doc = parse_seed_text(path.read_text())
+    except (OSError, ValueError) as e:
+        return {}, [f"{path.name} is not readable JSON ({e}): retired studies unknown"]
+    rows = doc.get("retired") if isinstance(doc, dict) else None
+    if not isinstance(rows, list):
+        return {}, [f"{path.name} has no `retired` list"]
+    out, errs = {}, []
+    for i, r in enumerate(rows):
+        sid = str((r or {}).get("id", "")) if isinstance(r, dict) else ""
+        if not BACKTEST_ID_RE.match(sid) or sid in out:
+            errs.append(f"{path.name} retired[{i}]: bad or duplicate id {sid!r}")
+            continue
+        out[sid] = {"at": str(r.get("at") or ""), "by": r.get("by"), "reason": r.get("reason")}
+    return out, errs
+
+
+def retired_ids(p: Paths) -> set[str]:
+    return set(load_retired_studies(p.bt_root / BT_RETIRED)[0])
+
+
+def live_holdouts(entries: list[dict], retired: set[str]) -> list[str]:
+    """The holdout keys that wake a run: a retired study's holdout never does (D127)."""
+    return [
+        holdout_key(e) for e in entries if e["phase"] == "holdout" and e["study"] not in retired
+    ]
+
+
+def current_studies(studies: list[dict]) -> list[dict]:
+    """The studies that are evidence or work in progress: every one not retired."""
+    return [s for s in studies if not s.get("retired")]
+
+
+def retired_lines(studies: list[dict]) -> list[str]:
+    """One context line per retirement reason: the ids, so the model neither cites nor
+    re-proposes them."""
+    by: dict[str, list[str]] = {}
+    for s in studies:
+        r = s.get("retired")
+        if r:
+            by.setdefault(f"{r.get('reason')} ({r.get('at')})", []).append(s["id"])
+    return [
+        f"- RETIRED (D127, history only: never cite, re-run, extend or build on these; draft "
+        f"fresh studies from current main): {', '.join(sorted(ids, key=_study_num))}: {why}"
+        for why, ids in by.items()
+    ]
+
+
+def retired_refs(text, studies: list[dict]) -> list[str]:
+    """Retired ``BT-<n>`` ids named in *text*."""
+    gone = {s["id"] for s in studies if s.get("retired")}
+    found = set(re.findall(r"(?<![\w-])BT-[1-9]\d*(?!\d)", str(text or "")))
+    return sorted(found & gone, key=_study_num)
+
+
+def _validate_retired_mentions(doc: dict, studies: list[dict]) -> list[str]:
+    """``next_*`` text must not lean on a retired study as evidence (D127). Naming it as
+    retired ("BT-1..8 are retired") is fine; citing its result is not."""
+    errs = []
+    for k in ("next_experiment", "next_reason", "next_study", "next_study_reason"):
+        text = str(doc.get(k) or "")
+        if "retired" in text.lower():
+            continue
+        for sid in retired_refs(text, studies):
+            errs.append(
+                f"{k} cites {sid}: it is retired (D127, history only); leave it out or say "
+                "it is retired"
+            )
+    return errs
 
 
 def arm_variables(arms: dict) -> list[str]:
@@ -2949,8 +3031,12 @@ def drift_lines(path: Path) -> list[str]:
 
 def backtest_snapshot(p: Paths, run_dir: Path) -> dict:
     """Ledger + current specs + reports, read-only. Each spec's hash comes from
-    ``arc backtest study show BT-<n> --json`` (the gate has no YAML/pydantic)."""
+    ``arc backtest study show BT-<n> --json`` (the gate has no YAML/pydantic). A retired
+    study (E26.5, D127) keeps its row with ``retired: {at, by, reason}`` (so ids stay taken)
+    but is no evidence, no context finding and wakes nothing."""
     entries, errs = load_bt_ledger(p.bt_root / BT_LEDGER)
+    retired, r_errs = load_retired_studies(p.bt_root / BT_RETIRED)
+    errs += r_errs
     reports = load_study_reports(p.bt_root / BT_REPORTS)
     spec_dir = p.bt_root / BT_SPECS
     spec_ids = (
@@ -2969,7 +3055,11 @@ def backtest_snapshot(p: Paths, run_dir: Path) -> dict:
         }
         for sid, h in reports.items()
     }
+    for sid in retired:
+        current.setdefault(sid, {})
     for sid in spec_ids:
+        if sid in retired:  # history: its hash is never checked as evidence again
+            continue
         text = run_arc(
             p,
             [
@@ -2994,12 +3084,14 @@ def backtest_snapshot(p: Paths, run_dir: Path) -> dict:
             continue
         current[sid] = {**current.get(sid, {}), **d}
     studies = study_overview(entries, current)
+    for s in studies:
+        s["retired"] = retired.get(s["id"])
     nums = [_study_num(s["id"]) for s in studies]
     return {
         "studies": studies,
         "errors": errs,
         "next_study_id": f"BT-{max(nums, default=0) + 1}",
-        "holdouts": [holdout_key(e) for e in entries if e["phase"] == "holdout"],
+        "holdouts": live_holdouts(entries, set(retired)),
     }
 
 
@@ -3039,8 +3131,11 @@ def _check_spec_backtest_ref(ref: str, f: dict, i: int, backlog: dict, studies: 
     if ref.lower() == "none":
         return []
     if BACKTEST_ID_RE.match(ref):
-        if not any(s["id"] == ref for s in studies):
+        s = next((x for x in studies if x["id"] == ref), None)
+        if s is None:
             return [f"findings[{i}] BT-REF: {ref} is not in the study ledger"]
+        if s.get("retired"):
+            return [f"findings[{i}] {_retired_ref_err(ref, s)}"]
         return []
     entry = (backlog.get("items") or {}).get(f.get("key")) or {}
     if ref.startswith(LEGACY_REF_PREFIXES) and (entry.get("spec") or {}).get("backtest_ref") == ref:
@@ -3051,12 +3146,22 @@ def _check_spec_backtest_ref(ref: str, f: dict, i: int, backlog: dict, studies: 
     ]
 
 
+def _retired_ref_err(ref: str, s: dict) -> str:
+    return (
+        f"BT-REF: {ref} is retired (D127): {(s.get('retired') or {}).get('reason')}; "
+        "cite a current study or 'none'"
+    )
+
+
 def check_bt_evidence(ref: str, spec, studies: list[dict]) -> list[str]:
     """Option A (D86): a ``BT-<n>`` backing an XP proposal must resolve to a study whose C500
-    holdout passed under the spec hash still committed, testing the proposal's variable."""
+    holdout passed under the spec hash still committed, testing the proposal's variable.
+    A retired study (D127) is never evidence."""
     s = next((x for x in studies if x["id"] == ref), None)
     if s is None:
         return [f"BT-REF: {ref} is not in the study ledger (data/backtest/ledger.jsonl)"]
+    if s.get("retired"):
+        return [_retired_ref_err(ref, s)]
     h = s.get("holdout")
     if h is None:
         return [
@@ -4303,8 +4408,11 @@ def build_context(
         "study_spec reserves it; a re-listed draft keeps its BT id); cite only a C500 holdout verdict, a C125-only or dev-only "
         "result is a hypothesis)",
         *[f"- WARNING: {e}" for e in bt.get("errors") or []],
+        *retired_lines(bt["studies"]),
         *capped_section(
-            study_lines(bt["studies"]), BT_SECTION_MAX, run_dir / "backtest-studies.log"
+            study_lines(current_studies(bt["studies"])),
+            BT_SECTION_MAX,
+            run_dir / "backtest-studies.log",
         ),
         f"## Backtest queue (E26.2, D121: {BT_QUEUE}; approved studies run one at a time "
         "nightly 21:30-08:30 ET, c125 dev -> c500 dev -> one c500 holdout; at most "
@@ -4409,7 +4517,7 @@ def cmd_gate(p: Paths, now: dt.datetime) -> int:
     snapshot_db(p.live_db, staging)
     state = load_json(p.state, {})
     bt_entries, _ = load_bt_ledger(p.bt_root / BT_LEDGER)
-    holdouts = [holdout_key(e) for e in bt_entries if e["phase"] == "holdout"]
+    holdouts = live_holdouts(bt_entries, retired_ids(p))  # D127: retired never wakes
     xp_keys = xp_verdict_keys(p.xp_verdicts)
     conn = sqlite3.connect(f"{staging.resolve().as_uri()}?mode=ro", uri=True)
     try:
@@ -4559,6 +4667,7 @@ def build_verdict_context(
         f"## Open backlog (ids only; do not re-propose these; cap {BACKLOG_CAP} XP)",
         *(open_titles or ["- empty"]),
         f"- next free study id {bt['next_study_id']}",
+        *retired_lines(bt["studies"]),
     ]
     return "\n".join(lines) + "\n"
 
@@ -4569,7 +4678,7 @@ def cmd_gate_verdict(p: Paths, now: dt.datetime) -> int:
     p.home.mkdir(parents=True, exist_ok=True)
     state = load_json(p.state, {})
     bt_entries, _ = load_bt_ledger(p.bt_root / BT_LEDGER)
-    holdouts = [holdout_key(e) for e in bt_entries if e["phase"] == "holdout"]
+    holdouts = live_holdouts(bt_entries, retired_ids(p))  # D127: retired never wakes
     xp_keys = xp_verdict_keys(p.xp_verdicts)
     decision = verdict_gate_decision(state, now, holdouts, xp_keys)
     if not decision["wake"]:

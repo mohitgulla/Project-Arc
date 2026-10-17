@@ -19,7 +19,9 @@ import {
   periodText,
   profileOrder,
   rangeText,
+  retiredText,
   runsCaption,
+  splitRetired,
   stageRows,
   summaryStrip,
 } from "../lib/backtests";
@@ -124,5 +126,34 @@ describe("backtest detail page", () => {
     expect(html).toContain('data-testid="bt-stages"');
     expect(html).toContain('data-testid="bt-metrics"');
     expect(html).toContain('data-testid="bt-linked-empty"');
+    expect(html).not.toContain('data-testid="retired-banner"');
+  });
+
+  it("a retired study opens with the retired banner and reason", () => {
+    const d = { ...BT7_DETAIL, study: { ...BT7_DETAIL.study, retired: { at: "2026-10-17", reason: "harness evolved" } } };
+    const html = render(<BacktestBody d={d} />);
+    expect(html).toContain('data-testid="retired-banner"');
+    expect(plain(html)).toContain("Retired 2026-10-17: harness evolved. History only");
+  });
+});
+
+describe("retired backtests", () => {
+  const RETIRED = { at: "2026-10-17", reason: "harness evolved" };
+
+  it("split: retired leave the current list and the summary strip counts", () => {
+    const items = BT_LIST.items.map((i) => (i.study_id === "BT-7" ? { ...i, retired: RETIRED } : i));
+    const { current, retired } = splitRetired(items);
+    expect(retired.map((i) => i.study_id)).toEqual(["BT-7"]);
+    expect(current.some((i) => i.study_id === "BT-7")).toBe(false);
+    expect(summaryStrip([], { ...BT_LIST, items })[2]!.value).toBe(`0 / ${current.length}`);
+    expect(retiredText({ retired: RETIRED })).toBe("Retired 2026-10-17: harness evolved");
+    expect(retiredText({ retired: null })).toBeNull();
+  });
+
+  it("row carries the Retired pill and the reason", () => {
+    const r = { ...BT_LIST.items.find((i) => i.study_id === "BT-7")!, retired: RETIRED };
+    const html = render(<BacktestListRow r={r} />);
+    expect(html).toContain('data-testid="retired-pill"');
+    expect(plain(html)).toContain("Retired 2026-10-17: harness evolved");
   });
 });

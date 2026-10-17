@@ -190,13 +190,40 @@ def _specs(paths: BacktestPaths) -> dict[str, _Spec]:
     out: dict[str, _Spec] = {}
     if not d.is_dir():
         return out
-    for f in sorted(d.glob("BT-*.yaml")):
+    for f in sorted(d.glob("BT-*.yaml")):  # never retired.yaml
         try:
             s = _Spec.model_validate(yaml.safe_load(f.read_text()) or {})
         except (OSError, yaml.YAMLError, ValidationError):
             continue
         if _ID_RE.match(s.id):
             out[s.id] = s
+    return out
+
+
+class _RetiredRow(BaseModel):
+    model_config = _LOOSE
+
+    id: str
+    at: _dt.date
+    reason: str
+
+
+def _retired(paths: BacktestPaths) -> dict[str, _RetiredRow]:
+    """``retired.yaml`` (D127), read tolerantly: a bad row is skipped, a bad file is empty
+    (the CLI and tests validate it strictly; the page must not 503 on it)."""
+    f = paths.path(paths.specs) / "retired.yaml"
+    try:
+        raw = yaml.safe_load(f.read_text()) if f.is_file() else None
+    except (OSError, yaml.YAMLError):
+        return {}
+    out: dict[str, _RetiredRow] = {}
+    for r in raw.get("retired", []) if isinstance(raw, dict) else []:
+        try:
+            row = _RetiredRow.model_validate(r)
+        except ValidationError:
+            continue
+        if _ID_RE.match(row.id):
+            out[row.id] = row
     return out
 
 
@@ -232,6 +259,15 @@ class RungState(BaseModel):
     done: bool
 
 
+class RetiredInfo(BaseModel):
+    """A retired study (history only; the strategy and harness moved on since)."""
+
+    model_config = _STRICT
+
+    at: _dt.date
+    reason: str = Field(..., description="Why it was retired, plan/card ids removed")
+
+
 class BacktestListItem(BaseModel):
     """One study row on the Experiments list."""
 
@@ -240,6 +276,9 @@ class BacktestListItem(BaseModel):
     study_id: str
     hypothesis: str = Field(..., description="The spec's hypothesis, plan/card ids removed")
     status: Status
+    retired: RetiredInfo | None = Field(
+        None, description="Set when the study is retired: history, not current evidence"
+    )
     variants: int = Field(..., description="Treatment arms in the spec")
     profiles: list[str] = Field(..., description="Account profiles the study ran on")
     profile: str | None = Field(
@@ -435,6 +474,7 @@ def _item(
     rows: list[_LedgerRow],
     q: _QueueEntry | None,
     account_profile: str,
+    retired: _RetiredRow | None = None,
 ) -> BacktestListItem:
     rows = sorted(rows, key=lambda r: r.at)
     profiles = (
@@ -455,6 +495,7 @@ def _item(
         study_id=study_id,
         hypothesis=scrub_ids(spec.hypothesis) if spec else "",
         status=_status(rows, q),
+        retired=RetiredInfo(at=retired.at, reason=scrub_ids(retired.reason)) if retired else None,
         variants=variants,
         profiles=profiles,
         profile=profile,
@@ -487,15 +528,22 @@ def _collect(
 def load_backtests(
     paths: BacktestPaths, *, settings: Any, now: _dt.datetime, window_start: str = "21:30"
 ) -> BacktestsResponse:
-    """Every study with a spec, a ledger row or a queue entry; latest run first."""
+    """Every study with a spec, a ledger row or a queue entry; latest run first, the
+    retired ones (D127) after every current one."""
     specs, by, queue, skipped = _collect(paths)
+    retired = _retired(paths)
     ap = _account_profile(settings)
     ids = sorted(set(specs) | set(by) | set(queue), key=_num)
     items = [
-        _item(i, specs.get(i), by.get(i, []), queue.get(i), ap) for i in ids if _ID_RE.match(i)
+        _item(i, specs.get(i), by.get(i, []), queue.get(i), ap, retired.get(i))
+        for i in ids
+        if _ID_RE.match(i)
     ]
     epoch = _dt.datetime.min.replace(tzinfo=_dt.UTC)
-    items.sort(key=lambda it: (it.last_run_at or epoch, _num(it.study_id)), reverse=True)
+    items.sort(
+        key=lambda it: (it.retired is None, it.last_run_at or epoch, _num(it.study_id)),
+        reverse=True,
+    )
     running = next((e.id for e in queue.values() if e.status == "running"), None)
     return BacktestsResponse(
         as_of=now,
@@ -621,7 +669,7 @@ def load_backtest(
     return BacktestDetailResponse(
         as_of=now,
         account_profile=ap,
-        study=_item(study_id, spec, rows, queue.get(study_id), ap),
+        study=_item(study_id, spec, rows, queue.get(study_id), ap, _retired(paths).get(study_id)),
         rule=scrub_ids(str(verbatim)) if verbatim else None,
         rule_kind=str(spec.decision_rule.get("kind"))
         if spec and spec.decision_rule.get("kind")
