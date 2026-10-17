@@ -52,6 +52,7 @@ class FreeSlots(BaseModel):
     sleeves: list[SleeveFree]
     single: bool  # a single-window profile: renders ``Free slots: n/N``
     settled_cash: Decimal | None = None  # cash_settled profiles only
+    options_buying_power: Decimal | None = None  # D129: margin profiles (None = unknown)
     per_name_cap: Decimal
 
     @property
@@ -78,6 +79,8 @@ class FreeSlots(BaseModel):
             text = "Free slots: " + ", ".join(f"{s.name} {s.free}/{s.cap}" for s in self.sleeves)
         if self.settled_cash is not None:
             text += f" \u00b7 settled cash ${self.settled_cash:,.0f}"
+        if self.options_buying_power is not None:  # D129
+            text += f" \u00b7 buying power ${self.options_buying_power:,.0f}"
         return text + f" \u00b7 per-name cap ${self.per_name_cap:,.0f}"
 
 
@@ -89,9 +92,14 @@ def free_slots(
     single: bool,
     per_name_cap: Decimal,
     settled_cash: Decimal | None = None,
+    options_buying_power: Decimal | None = None,
     opens_today: Mapping[str, int] | None = None,
 ) -> FreeSlots:
-    """Count each sleeve's free slots like the gate (unknown entry DTE fills every sleeve)."""
+    """Count each sleeve's free slots like the gate (unknown entry DTE fills every sleeve).
+
+    ``settled_cash`` renders on cash profiles, ``options_buying_power`` (D129) on margin
+    profiles; pass only the one the profile uses.
+    """
     global_free = max(max_open_positions - len(entry_dtes), 0)
     today = opens_today or {}
     out: list[SleeveFree] = []
@@ -106,5 +114,6 @@ def free_slots(
         sleeves=out,
         single=single,
         settled_cash=settled_cash,
+        options_buying_power=options_buying_power,
         per_name_cap=per_name_cap,
     )

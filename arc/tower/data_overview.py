@@ -230,8 +230,17 @@ class BenchmarkSeries(BaseModel):
     )
 
 
+BuyingPowerKind = Literal["margin", "cash_settled"]
+
+
 class AccountSplit(BaseModel):
-    """D87: how much of the account is free cash vs held in open positions."""
+    """D87: how much of the account is free cash vs held in open positions.
+
+    D129: on a margin profile the figure that matters for new trades is
+    ``options_buying_power`` (``available``); ``collateral`` is what the broker holds
+    against open spreads and ``in_positions`` (equity − cash) can go negative when
+    short premium dominates. ``stock_buying_power`` is the 4× stock-only figure.
+    """
 
     model_config = _STRICT
 
@@ -244,6 +253,23 @@ class AccountSplit(BaseModel):
     cash_pct: float | None = Field(default=None, description="cash / equity (fraction)")
     options_buying_power: Decimal | None = Field(
         default=None, description="Broker options buying power (cash account: = cash)"
+    )
+    buying_power_kind: BuyingPowerKind | None = Field(
+        default=None, description="D129: the effective account profile's buying-power kind"
+    )
+    stock_buying_power: Decimal | None = Field(
+        default=None,
+        description="D129: raw broker buying_power (4× on margin); stock-only, display only",
+    )
+    collateral: Decimal | None = Field(
+        default=None,
+        description="D129: max(cash − options buying power, 0): what the broker holds "
+        "against open spreads (None when options buying power is unknown)",
+    )
+    available: Decimal | None = Field(
+        default=None,
+        description="D129: what new trades can open with: options buying power on margin, "
+        "cash on a cash-settled profile",
     )
 
 
@@ -1510,21 +1536,35 @@ def _advisory(
     )
 
 
-def _account(monitor: sqlite3.Row | None) -> AccountSplit | None:
-    """D87: cash (available) vs equity − cash (held in open positions), latest monitor."""
+def _account(
+    monitor: sqlite3.Row | None, buying_power_kind: BuyingPowerKind | None = None
+) -> AccountSplit | None:
+    """D87: cash (available) vs equity − cash (held in open positions), latest monitor.
+
+    D129: with *buying_power_kind* ``"margin"`` ``available`` is the broker's options
+    buying power; otherwise it is cash. ``collateral`` = max(cash − options buying
+    power, 0) whenever options buying power is known.
+    """
     if monitor is None:
         return None
     d = _json(monitor["detail"], {})
     eq, cash, at = _dec(d.get("equity")), _dec(d.get("cash")), parse_ts(monitor["at"])
     if eq is None or cash is None or at is None:
         return None
+    obp = _dec(d.get("options_buying_power"))
+    collateral = max(cash - obp, Decimal(0)) if obp is not None else None
+    available = obp if buying_power_kind == "margin" and obp is not None else cash
     return AccountSplit(
         at=at,
         equity=eq,
         cash=cash,
         in_positions=eq - cash,
         cash_pct=float(cash / eq) if eq else None,
-        options_buying_power=_dec(d.get("options_buying_power")),
+        options_buying_power=obp,
+        buying_power_kind=buying_power_kind,
+        stock_buying_power=_dec(d.get("buying_power")),
+        collateral=collateral,
+        available=available,
     )
 
 
@@ -1582,6 +1622,7 @@ def load_overview(
     sleeves: Sequence[DteSleeve] = (),
     max_alloc_pct_reduced: float | None = None,
     alloc_tier_threshold_pct: float | None = None,
+    buying_power_kind: BuyingPowerKind | None = None,
 ) -> OverviewResponse:
     """Every Overview section read in one pass as of *now* (SELECT only).
 
@@ -1611,7 +1652,7 @@ def load_overview(
         status=_status(conn, monitor, now_et),
         equity=_equity(conn, rng, today, daily, reconciled_at, marks, latest),
         day_pnl=_day_pnl(conn, daily, latest, positions),
-        account=_account(monitor),
+        account=_account(monitor, buying_power_kind),
         positions=positions,
         greeks=_greeks_section(
             monitor,

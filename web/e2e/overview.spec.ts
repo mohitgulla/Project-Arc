@@ -54,8 +54,12 @@ for (const vp of VIEWPORTS) {
         // D87: benchmarks, cash split, advisory Greeks
         await expect(page.getByTestId("benchmark-SPY")).toContainText("SPY");
         await expect(page.getByTestId("benchmark-QQQ")).toContainText("QQQ");
-        await expect(page.getByTestId("account-split")).toContainText("Cash (available)");
+        // D129: the default profile is margin (D128) → the Buying Power panel.
+        await expect(page.getByTestId("account-split-margin")).toContainText("Buying Power");
+        await expect(page.getByTestId("account-split")).toContainText("Available to trade");
+        await expect(page.getByTestId("account-split")).toContainText("Collateral held");
         await expect(page.getByTestId("account-split")).toContainText("Invested");
+        await expect(page.getByTestId("account-split-stock-bp")).toContainText("not usable for options");
         await expect(page.getByTestId("greeks-theta-risk")).toHaveText(/^Risk (Low|Med|High)$/);
         await expect(page.getByTestId("greeks-gamma-risk")).toHaveText(/^Risk (Low|Med|High)$/);
         await expect(page.getByTestId("tile-name").first()).toHaveText(/^Play (Bullish|Bearish|Neutral|—)$/);

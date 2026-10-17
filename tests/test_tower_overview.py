@@ -755,6 +755,59 @@ def test_account_split_is_cash_vs_equity_minus_cash(conn: sqlite3.Connection) ->
     assert a is not None
     assert a.cash == D("88000.0") and a.in_positions == a.equity - a.cash
     assert a.cash_pct == pytest.approx(float(a.cash / a.equity))
+    # D129: no profile kind given → cash semantics; the fixture holds no spreads
+    assert a.buying_power_kind is None and a.available == a.cash
+    assert a.collateral == D("0") and a.stock_buying_power == D("88000.0")
+
+
+def _monitor_row(**detail: float) -> dict[str, str]:
+    base = {"equity": 23540.75, "cash": 20065.75}
+    return {"at": "2026-10-16T15:55:00-04:00", "detail": json.dumps({**base, **detail})}
+
+
+def test_account_split_margin_kind_available_is_options_buying_power() -> None:
+    """D129: on margin a credit spread's premium lands in cash, so what new trades can
+    open with is options buying power; the gap is the broker's collateral."""
+    from arc.tower.data_overview import _account
+
+    row = _monitor_row(buying_power=80263.0, options_buying_power=18000.0)
+    a = _account(row, "margin")  # type: ignore[arg-type]
+    assert a is not None
+    assert a.buying_power_kind == "margin"
+    assert a.available == D("18000.0")
+    assert a.collateral == D("2065.75")
+    assert a.stock_buying_power == D("80263.0")
+    assert a.in_positions == a.equity - a.cash
+
+
+def test_account_split_cash_kind_available_is_cash() -> None:
+    from arc.tower.data_overview import _account
+
+    row = _monitor_row(buying_power=20065.75, options_buying_power=20065.75)
+    a = _account(row, "cash_settled")  # type: ignore[arg-type]
+    assert a is not None
+    assert a.buying_power_kind == "cash_settled"
+    assert a.available == a.cash == D("20065.75")
+    assert a.collateral == D("0")
+
+
+def test_account_split_without_options_buying_power_has_no_collateral() -> None:
+    """An older heartbeat without ``options_buying_power``: collateral is unknown and
+    even a margin profile falls back to cash for ``available``."""
+    from arc.tower.data_overview import _account
+
+    a = _account(_monitor_row(buying_power=80263.0), "margin")  # type: ignore[arg-type]
+    assert a is not None
+    assert a.options_buying_power is None and a.collateral is None
+    assert a.available == a.cash and a.stock_buying_power == D("80263.0")
+
+
+def test_account_split_collateral_never_negative() -> None:
+    from arc.tower.data_overview import _account
+
+    a = _account(_monitor_row(options_buying_power=25000.0), "margin")  # type: ignore[arg-type]
+    assert a is not None
+    assert a.collateral == D("0") and a.available == D("25000.0")
 
 
 def test_uncapped_greeks_carry_an_advisory_band(conn: sqlite3.Connection) -> None:

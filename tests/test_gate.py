@@ -106,6 +106,7 @@ def acct(**kw: object) -> AccountSnapshot:
         "equity": D("100000"),
         "last_equity": D("100000"),
         "as_of": NOW - dt.timedelta(seconds=5),
+        "options_buying_power": D("100000"),  # D129: the default (margin) profile fits to it
     }
     base.update(kw)
     return AccountSnapshot(**base)  # type: ignore[arg-type]
@@ -951,6 +952,10 @@ def test_gate_never_reads_context_or_notes() -> None:
     [
         (["per_underlying_limit: SPY 5,682 > 5,000"], R.CapacityRejection.BUYING_POWER),
         (["account_profile_settled_cash: needs $612 > $100"], R.CapacityRejection.BUYING_POWER),
+        (  # D129: a close frees options buying power
+            ["account_profile_buying_power: needs $612 > options buying power $100"],
+            R.CapacityRejection.BUYING_POWER,
+        ),
         (["max_open_positions: 9 > max 8"], R.CapacityRejection.PORTFOLIO_CAP),
         (
             ["per_underlying_limit: x", "max_open_positions: y"],

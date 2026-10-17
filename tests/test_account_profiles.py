@@ -133,11 +133,12 @@ def proposal(s: Structure, contracts: int = 2, **kw: object) -> Proposal:
     return Proposal(**base)  # type: ignore[arg-type]
 
 
-def acct(cash: str | None = "100000") -> AccountSnapshot:
+def acct(cash: str | None = "100000", obp: str | None = "100000") -> AccountSnapshot:
     return AccountSnapshot(
         equity=D("100000"),
         last_equity=D("100000"),
         settled_cash=None if cash is None else D(cash),
+        options_buying_power=None if obp is None else D(obp),
         as_of=NOW - dt.timedelta(seconds=5),
     )
 
@@ -414,8 +415,56 @@ class TestGateAccountProfile:
         unknown = gate(bull_call(), cfg(), acct(None))
         assert codes(unknown) == {RuleCode.ACCOUNT_CASH}
         assert "settled cash unknown" in unknown.violations[0]
-        # margin profile: no cash check at all
+        # margin profile: no settled-cash check (D129 checks options buying power instead)
         assert gate(bull_call(), cfg("margin"), acct("1")).passed
+
+    def test_margin_options_buying_power(self) -> None:
+        """D129: on margin, need = band-worst max loss + fees <= options buying power."""
+        m = cfg("margin")
+        # bull call: max loss $400 x 2 contracts = $800 + fees 0.05 x 2 legs x 2 = $0.20
+        assert gate(bull_call(), m, acct(obp="800.20")).passed
+        d = gate(bull_call(), m, acct(obp="800.19"))
+        assert codes(d) == {RuleCode.ACCOUNT_BP}
+        assert d.violations[0].startswith(
+            "account_profile_buying_power: needs $800.20 (max loss 800.00 for 2 contract(s) + fees)"
+            " > options buying power $800.19"
+        )
+        unknown = gate(bull_call(), m, acct(obp=None))
+        assert codes(unknown) == {RuleCode.ACCOUNT_BP}
+        assert "options buying power unknown (margin profile)" in unknown.violations[0]
+        # a credit spread needs its (width - credit) x 100 max loss, not the premium:
+        # bull put 565/570 for 0.85 -> $415 x 2 = $830 + $0.20 fees
+        assert gate(bull_put(), m, acct(obp="830.20")).passed
+        assert codes(gate(bull_put(), m, acct(obp="830.19"))) == {RuleCode.ACCOUNT_BP}
+        # cash profiles never run the margin rule, even with buying power unknown
+        assert gate(bull_call(), cfg(), acct("800.20", obp=None)).passed
+
+    def test_margin_rule_uses_band_worst_max_loss(self) -> None:
+        s = bull_call()
+        p = proposal(s, limit_price=D("4.00"))
+        m = MarketSnapshot(
+            quotes=quotes_for(s), next_earnings={"SPY": None}, underlying_spot={"SPY": D("580")}
+        )
+        c = cfg("margin")
+        band = R.proposal_band(p, m, c)
+        assert band.hi > D("4.00")
+        worst = R.worst_case(R.derive(p), band, 2).max_loss_total
+        assert worst is not None and worst > D("800")
+        need = worst + D("0.20")
+        ok = evaluate(p, acct(obp=str(need)), Portfolio(), c, market=m, now=NOW, band=band)
+        assert RuleCode.ACCOUNT_BP not in codes(ok)
+        short = evaluate(
+            p, acct(obp=str(need - D("0.01"))), Portfolio(), c, market=m, now=NOW, band=band
+        )
+        assert RuleCode.ACCOUNT_BP in codes(short)
+
+    def test_margin_rule_skips_an_unbounded_max_loss(self) -> None:
+        """An unbounded structure is already per_underlying's violation; no double report."""
+        s = bull_call()
+        p = proposal(s)
+        d = R.derive(p)._replace(max_loss_total=None)
+        v = R.check_account_profile(p, d, acct(obp=None), cfg("margin"))
+        assert [x.code for x in v] == []
 
     def test_settled_cash_uses_band_worst_price(self) -> None:
         s = bull_call()

@@ -59,7 +59,7 @@ class TestCashFitSizing:
     def test_less_than_one_contract_is_cash_zero(self) -> None:
         r = _size(PER - Decimal("0.01"))
         assert (r.contracts, r.code, r.trade) == (0, "cash_zero", False)
-        assert "settled cash" in r.reason and r.cash_contracts == 0
+        assert "buying power" in r.reason and r.cash_contracts == 0
 
     def test_cash_not_binding_keeps_d18_code(self) -> None:
         assert _size(Decimal(10_000)).code == "ok"
@@ -126,7 +126,7 @@ class TestCashFitSizing:
 def test_cash_per_contract_matches_the_gate_rule() -> None:
     """Sizing's per-contract cash equals the gate's need for one contract (D25)."""
     from arc.gate.band import PriceBand
-    from arc.pipeline.steps import cash_fit_enabled, cash_per_contract
+    from arc.pipeline.steps import cash_fit_enabled, cash_per_contract, fit_basis
 
     class _Leg:
         ratio = 1
@@ -139,7 +139,40 @@ def test_cash_per_contract_matches_the_gate_rule() -> None:
     fee = Decimal(str(s.gate_fee_per_leg_contract)) * 2
     assert cash_per_contract(_St(), band, s) == Decimal(100) + fee
     assert cash_fit_enabled(s)
-    assert not cash_fit_enabled(s.with_profile("margin"))
+    # D129: margin profiles fit too, to options buying power (band-worst max loss + fees)
+    assert cash_fit_enabled(s.with_profile("margin"))
+    assert (
+        fit_basis(s) == "settled_cash"
+        and fit_basis(s.with_profile("margin")) == "options_buying_power"
+    )
+
+
+def test_buying_power_per_contract_matches_the_gate_rule() -> None:
+    """D129: sizing's per-contract need on margin equals the gate's need for one contract."""
+    from arc.gate.band import PriceBand
+    from arc.pipeline.steps import buying_power_per_contract, fit_per_contract
+
+    class _Leg:
+        ratio = 1
+
+    class _Credit:  # bull put 5 wide for a 0.85 credit: max loss $415 per unit
+        legs = (_Leg(), _Leg())
+        max_loss = Decimal("415")
+        net_debit_credit = Decimal("-0.85")
+
+    class _Unbounded:
+        legs = (_Leg(),)
+        max_loss = None
+        net_debit_credit = Decimal("1.00")
+
+    s = ArcSettings(_env_file=None, account_profile="margin")  # type: ignore[call-arg]
+    fee = Decimal(str(s.gate_fee_per_leg_contract)) * 2
+    # the band's worst price is a smaller credit (-0.80): max loss grows by $5
+    band = PriceBand(lo=Decimal("-0.85"), hi=Decimal("-0.80"), max_steps=1)
+    assert buying_power_per_contract(_Credit(), band, s) == Decimal("420") + fee
+    assert fit_per_contract(_Credit(), band, s) == Decimal("420") + fee
+    assert buying_power_per_contract(_Unbounded(), band, s) is None
+    assert fit_per_contract(_Unbounded(), band, s) is None
 
 
 # ---------------------------------------------------------------------------
@@ -180,6 +213,29 @@ class TestFreeSlots:
         )
         assert fs.line() == "Free slots: 5/8 \u00b7 per-name cap $10,000"
         assert fs.total_free == 5
+
+    def test_margin_line_shows_options_buying_power(self) -> None:
+        """D129: margin profiles show Alpaca's options buying power, not settled cash."""
+        fs = free_slots(
+            [_sl("default", 30, 60, None)],
+            [35],
+            max_open_positions=10,
+            single=True,
+            per_name_cap=Decimal(2354),
+            options_buying_power=Decimal("20065.37"),
+        )
+        assert fs.line() == (
+            "Free slots: 9/10 \u00b7 buying power $20,065 \u00b7 per-name cap $2,354"
+        )
+        # unknown buying power: no figure rather than a wrong one
+        plain = free_slots(
+            [_sl("default", 30, 60, None)],
+            [35],
+            max_open_positions=10,
+            single=True,
+            per_name_cap=Decimal(2354),
+        )
+        assert plain.line() == "Free slots: 9/10 \u00b7 per-name cap $2,354"
 
     def test_global_cap_bounds_each_sleeve(self) -> None:
         fs = free_slots(
@@ -297,7 +353,8 @@ class TestResearchStep:
         conn, report, prompts = _fixture_run(monkeypatch)
         assert not report.failed
         assert re.search(
-            r"\nFree slots: 10/10 \u00b7 per-name cap \$[\d,]+\nRank at least 4 names when",
+            r"\nFree slots: 10/10 \u00b7 buying power \$100,000 \u00b7 per-name cap \$[\d,]+"
+            r"\nRank at least 4 names when",
             prompts["research"],
         )
         (row,) = conn.execute(
@@ -399,13 +456,14 @@ def test_propose_cash_capped_and_cash_zero(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_swap_open_passes_cash_fit() -> None:
-    """The swap open path (``arc/positions/steps.py``) sizes with the same cash fit."""
+    """The swap open path (``arc/positions/steps.py``) sizes with the same fit (D129)."""
     import inspect
 
     from arc.positions import steps
 
     src = inspect.getsource(steps._open_leg)  # noqa: SLF001
-    assert "cash_available=account.settled_cash if cash_fit else None" in src
+    assert "fit_per_contract(st, band, settings) if cash_fit_enabled(settings)" in src
+    assert "cash_available=fit_available(account, settings) if per_fit is not None" in src
 
 
 # ---------------------------------------------------------------------------
