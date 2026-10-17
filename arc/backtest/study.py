@@ -32,10 +32,13 @@ the live loop, the gate or ``data/arc.db``.
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import json
 import math
 import re
+import signal
+import threading
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -57,7 +60,7 @@ from arc.scanner.rank import Ranker, applicable, incumbent_for
 from arc.utils.yamlpatch import deep_merge
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Iterator, Mapping, Sequence
 
     from arc.backtest.costs import CostModel
     from arc.backtest.ranking import RankingFile
@@ -466,6 +469,29 @@ def _append(path: Path, entry: LedgerEntry) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a") as fh:
         fh.write(entry.model_dump_json() + "\n")
+
+
+@contextlib.contextmanager
+def defer_sigterm() -> Iterator[None]:
+    """E26.3: hold SIGTERM while the ledger line and its report are written, so an
+    interrupt lands either before the line (no ledger line) or after the report (a
+    complete run), never in between.
+
+    Python runs signal handlers on the main thread, whichever thread the OS delivered
+    the signal to, so swapping in a recording handler works in a multi-threaded process
+    (a per-thread ``pthread_sigmask`` would not). A held SIGTERM is re-raised at the end.
+    A no-op off the main thread."""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    held: list[int] = []
+    old = signal.signal(signal.SIGTERM, lambda signum, _frame: held.append(signum))
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, old)
+        if held:
+            signal.raise_signal(signal.SIGTERM)
 
 
 def variants(entries: Sequence[LedgerEntry], study: str, current: str | None = None) -> int:
@@ -1057,7 +1083,6 @@ def run_study(  # noqa: PLR0913
         run_dir=str(run_dir),
         runtime_s=round(time.monotonic() - t0, 1),
     )
-    _append(ledger, entry)
     payload = build_report(
         spec,
         entry,
@@ -1066,16 +1091,19 @@ def run_study(  # noqa: PLR0913
         sectors=load_sectors(),
         latest=latest,
     )
-    run_dir.mkdir(parents=True, exist_ok=True)
     md = render_report(payload)
-    (run_dir / "report.json").write_text(json.dumps(payload, indent=1, default=str) + "\n")
-    (run_dir / "report.md").write_text(md)
-    if report_dir is not None:
-        report_dir.mkdir(parents=True, exist_ok=True)
-        (report_dir / f"{spec.id}.json").write_text(
-            json.dumps(payload, indent=1, default=str) + "\n"
-        )
-        (report_dir / f"{spec.id}.md").write_text(md)
+    # E26.3: the ledger line and its report land together or not at all on SIGTERM.
+    with defer_sigterm():
+        _append(ledger, entry)
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "report.json").write_text(json.dumps(payload, indent=1, default=str) + "\n")
+        (run_dir / "report.md").write_text(md)
+        if report_dir is not None:
+            report_dir.mkdir(parents=True, exist_ok=True)
+            (report_dir / f"{spec.id}.json").write_text(
+                json.dumps(payload, indent=1, default=str) + "\n"
+            )
+            (report_dir / f"{spec.id}.md").write_text(md)
     log.info(
         "backtest.study.done",
         study=spec.id,

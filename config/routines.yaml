@@ -23,6 +23,7 @@
 #   16:40          experiments.evaluate (+ verdict file PRs, E21.4); 16:45 Fri weekly scorecard ([Ops])
 #   18:00 / 18:30  earnings calendar / vol_term
 #   20:30          history.topup: C500 ThetaData free-tier cache + theta_backfill IV (E7.13, D84)
+#   21:30-08:30    backtest.studies: the approved BT study queue, one rung at a time (E26.3, D121)
 #   23:00 / 23:30  options_daily + vix_futures (read by the 06:00 Scout) / market_health (D96)
 #
 # lane (D39): `background` = run detached so a slow job (p90 > 30 s) never delays the
@@ -54,6 +55,7 @@ monitoring:
     monitor: 20m           # 10-min cadence (D52): two slots without finishing means it is wedged
     research: 20m          # D31/D52 trading loop: same rule (loop.max_runtime is 7m, D61)
     broker: 15m            # E11.2 (D72): a ladder is minutes long; broker.reattach adopts a dead one
+    backtest.studies: 60h  # E26.3 (D121): runs all night; a Fri run lasts to Mon 08:30 (59h)
   # E8.2a: one alert per missed slot only for slow jobs; fast jobs (10-min loop,
   # monitor, scalp, rss) get one `coverage:<job>` condition per job instead.
   per_slot_min_interval: 60m   # slots >= this far apart: one `missed_window` alert per slot
@@ -204,6 +206,23 @@ history_topup:
   request_interval_s: 3.0       # free tier 20 req/min
   max_runtime_s: 2400           # no new name starts after 40 min; the rest go first next night
   iv_append: true               # append theta_backfill IV for seeded names
+
+# E26.3 (D121): the nightly `backtest.studies` runner works the approved BT study queue
+# (data/backtest/queue.json), one rung at a time (c125_dev -> c500_dev -> holdout), in a
+# 21:30-08:30 ET window (a weekend/holiday night runs to Mon 08:30). Change by PR
+# (offline backtest infra, not runtime-tunable). Pause: `!arc config set
+# routines.backtest.studies.enabled off`; stop one study: `stop BT-<n>` (OPS § E26.3).
+backtest_studies:
+  window_start: "21:30"         # after history.topup (20:30, up to 40 min)
+  window_end: "08:30"           # before the pre-market jobs; SIGTERM, then SIGKILL after kill_grace
+  weekend_window_end: "Mon 08:30"  # a night followed by a weekend/holiday ends on the next session
+  workers: 6                    # menu-build processes per run
+  nice: 10                      # the trading loop never waits on it
+  topup_wait: 30m               # a history.topup still running at 21:30: wait, then skip the night
+  kill_grace: 120s
+  runtime_margin: 1.2           # fit-or-defer: median measured runtime of the rung x this
+  fail_rule:
+    ci_hi_below: 0.0            # clear dev fail: every treatment non-switch, CI hi < 0, primary diff < 0
 
 # D30 source registry: every raw_doc_ref source (each RSS feed separately) is a Scalp
 # source and declares exactly one of `category:` or `reference: true`. Knobs: weight,
@@ -481,6 +500,16 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     feed: scout                 # slow feed (once a day)
     writes: []                  # parquet under data/ + iv_daily / iv_skips rows; no context kind
     lane: background            # up to history_topup.max_runtime_s (40 min) at the free tier's 20 req/min
+  backtest.studies:             # E26.3 (D121): nightly runner of the approved BT study queue
+    label: Backtest studies
+    about: "Nightly runner of the owner-approved backtest studies (BT-<n>): one rung at a time, C125 dev -> C500 dev -> holdout, 21:30-08:30 ET, resumable"
+    schedule: ["21:30"]         # after history.topup; runs until backtest_studies.window_end (08:30 ET, Mon 08:30 over a weekend)
+    days: trading               # one run per trading-day night; the Fri (or pre-holiday) run covers the weekend/holiday until the next session's 08:30, so slots never overlap
+    ttl: 2h                     # a missed 21:30 still starts until 23:30; later = the next night
+    reference: true             # offline research (ledger + reports under data/ and docs/); never a gate input
+    feed: scout                 # slow feed (once a day)
+    writes: []                  # queue.json / ledger.jsonl / run dirs; no context kind
+    lane: background            # hours long; the routine lock keeps one runner at a time
   betas:                        # E3.6 (D62): 1y daily beta vs SPY -> betas table (beta-weighted delta cap)
     label: Betas
     about: "Daily 1-year beta vs SPY per ticker (Alpaca daily closes) for the beta-weighted delta cap"

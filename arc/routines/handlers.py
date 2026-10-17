@@ -1117,6 +1117,91 @@ def history_topup_source(
     return JobResult(summary=res.summary(), metrics=res.metrics())
 
 
+def _topup_running(conn: sqlite3.Connection) -> bool:
+    """A ``history.topup`` run still ``running`` with a live pid (E26.3 yields to it)."""
+    from arc.routines.runs import pid_alive
+
+    rows = conn.execute(
+        "SELECT pid FROM routine_runs WHERE job = 'history.topup' AND status = 'running'"
+    ).fetchall()
+    return any(pid_alive(r[0]) is not False for r in rows)
+
+
+def backtest_studies_source(
+    ctx: JobContext,
+    *,
+    launcher: Callable[..., Any] | None = None,
+    main: Any | None = None,
+    post: Callable[[str], None] | None = None,
+    sleep: Callable[[float], None] | None = None,
+    window_end: _dt.datetime | None = None,
+    repo_root: Path | None = None,
+) -> JobResult:
+    """E26.3 (D121): the nightly study runner (:mod:`arc.backtest.runner`).
+
+    Works the approved study queue one rung at a time until the night's window closes
+    (``backtest_studies:`` block). A slot outside the window, or a ``history.topup``
+    still running after ``topup_wait``, is a skip. Slack posts go to #arc-analyst (one
+    per rung done / dev-fail stop / failure / holdout verdict) only when the run has
+    Slack (not ``--no-slack``).
+    """
+    import time as _time
+
+    from arc.backtest.runner import RunnerPaths, SkipNightError, popen_launcher, run_night
+
+    cfg = ctx.routines.backtest_studies
+    root = repo_root or _REPO_ROOT
+
+    def _p(rel: str) -> Path:
+        p = Path(rel)
+        return p if p.is_absolute() else root / p
+
+    paths = RunnerPaths(
+        queue=_p(cfg.queue),
+        ledger=_p(cfg.ledger),
+        runs_dir=_p(cfg.runs_dir),
+        report_dir=_p(cfg.report_dir) if cfg.report_dir else None,
+        data_dir=_p(cfg.data_dir),
+        cwd=root,
+    )
+    if main is None:  # pragma: no cover - live git (exercised by the live evidence run)
+        from arc.experiments.publish import GitMainView
+
+        main = GitMainView(repo=root)
+    if post is None:
+        post = _analyst_poster(ctx)
+    try:
+        res = run_night(
+            cfg=cfg,
+            paths=paths,
+            clock=ctx.clock,
+            sleep=sleep or _time.sleep,
+            main=main,
+            launcher=launcher or popen_launcher,
+            post=post,
+            heartbeat=ctx.heartbeat,
+            topup_running=lambda: _topup_running(ctx.conn),
+            window_end=window_end,
+        )
+    except SkipNightError as exc:
+        raise JobSkippedError(str(exc)) from exc
+    return JobResult(summary=res.summary, metrics=res.metrics)
+
+
+def _analyst_poster(ctx: JobContext) -> Callable[[str], None]:
+    """Post to #arc-analyst when this run has Slack; else log the message only."""
+    if not ctx.run_env.slack:
+        return lambda text: log.info("backtest.runner.message", text=text, slack=False)
+    from arc.slack.client import CHANNEL_ARC_ANALYST, ArcSlackClient
+
+    client = ArcSlackClient()
+
+    def post(text: str) -> None:
+        client.post_thread_root(channel=CHANNEL_ARC_ANALYST, text=text)
+
+    return post
+
+
 def betas_source(
     ctx: JobContext,
     market: MarketDataProvider | None = None,
@@ -3041,6 +3126,7 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "iv.record": "arc.routines.handlers:iv_record_source",  # E4.12 (D55) daily 30-DTE IV
     "iv.backfill": "arc.routines.handlers:iv_backfill_source",  # E16.1 (D76) / D81 pre-market
     "history.topup": "arc.routines.handlers:history_topup_source",  # E7.13 (D84) nightly Theta
+    "backtest.studies": "arc.routines.handlers:backtest_studies_source",  # E26.3 (D121)
     "betas": "arc.routines.handlers:betas_source",  # E3.6 (D62) daily 1y beta vs SPY
     "levels": "arc.routines.handlers:levels_source",  # E23.0 (D98) volume profile + OI walls
     # E4.8 (D46): Finnhub per-ticker context (typed kinds, shared 55/min budget)
