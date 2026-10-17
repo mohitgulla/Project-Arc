@@ -128,6 +128,65 @@ export function SessionsBar({ v, showCaption = true }: { v: SessionsView; showCa
   );
 }
 
+/**
+ * A list row's range on the same track as `SessionsBar` (same height and width, D124): the
+ * dashed line is 0, the coloured span the range, the hollow dot the estimate. A range past
+ * the half-width *domain* is clipped with an arrow.
+ */
+export function RowRangeBar({
+  est,
+  lo,
+  hi,
+  domain,
+  tone,
+  label,
+  testid = "row-range",
+}: {
+  est: number;
+  lo: number;
+  hi: number;
+  domain: number;
+  tone: ForestRow["tone"];
+  label: string;
+  testid?: string;
+}) {
+  const x = (v: number) => ((Math.max(-domain, Math.min(domain, v)) + domain) / (2 * domain)) * 100;
+  const color = TONE_COLOR[tone];
+  const a = x(lo);
+  const b = x(hi);
+  return (
+    <div className="relative h-bar w-full rounded-full bg-track" data-testid={testid} aria-label={label} role="img">
+      <span className="absolute -inset-y-1 border-l border-dashed border-line-input" style={{ left: `${x(0)}%` }} />
+      <span className="absolute inset-y-0 rounded-full" style={{ left: `${a}%`, width: `${Math.max(0.5, b - a)}%`, background: color }} />
+      {lo < -domain && (
+        <span className="absolute top-1/2 -translate-y-1/2 text-[9px] leading-none" style={{ left: -2, color }} aria-hidden="true">
+          ◀
+        </span>
+      )}
+      {hi > domain && (
+        <span className="absolute top-1/2 -translate-y-1/2 text-[9px] leading-none" style={{ right: -2, color }} aria-hidden="true">
+          ▶
+        </span>
+      )}
+      <span
+        className="absolute top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 bg-card"
+        style={{ left: `${x(est)}%`, borderColor: color }}
+      />
+    </div>
+  );
+}
+
+/** A backtest's rungs (C125 Dev → C500 Dev → Holdout) as equal segments on the bar track. */
+export function LadderBar({ rungs, testid = "ladder-bar" }: { rungs: { label: string; done: boolean }[]; testid?: string }) {
+  return (
+    <div className="flex h-bar w-full gap-1" data-testid={testid} role="img" aria-label={rungs.map((r) => `${r.label} ${r.done ? "done" : "not run"}`).join(", ")}>
+      {rungs.map((r) => (
+        <span key={r.label} className={`h-full flex-1 rounded-full ${r.done ? "bg-accent-bar" : "bg-track"}`} />
+      ))}
+    </div>
+  );
+}
+
 /** The reference (left: Production, or Control in v3) vs the treatment (right), one mirrored bar pair per metric; the better side bold. */
 export function DuelBars({ rows, order, reference }: { rows: DuelRow[]; order: string[]; reference?: string | null }) {
   const a = order[0] ?? "control";

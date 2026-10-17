@@ -26,6 +26,9 @@ E156_KEYS = ("scope", "shared_from_control")
 #: still checks them against ``?arm=control`` and their key sets.
 YAML_ROUTES = ("/api/meta", "/api/ops/config", "/api/ops/session", "/api/ops/sources",
                "/api/ops/universe")  # fmt: skip
+#: D124: the backtest routes read the repo's study files (``config/backtest_studies``, the
+#: research ledger), not the store; added after the golden, pinned by their own tests.
+GOLDEN_SKIP = ("/api/backtests", "/api/backtests/nope")
 _HEX_ID = re.compile(r"\b(os-)?[0-9a-f]{16}\b|\b[0-9a-f]{32}\b")
 _VOLATILE = {"git_sha", "version", "db", "db_path", "created_at", "as_of"}
 
@@ -48,6 +51,7 @@ def route_urls(client: TestClient, phash: str) -> list[str]:
     out = []
     for path in sorted(spec["paths"]):
         url = path.replace("{proposal_hash}", phash).replace("{experiment_id}", "XP-1")
+        url = url.replace("{study_id}", "nope")
         out.append(url.replace("{run_id}", "nope").replace("{entry_id}", "nope"))
     return out
 
@@ -57,7 +61,7 @@ def dump(
 ) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for url in route_urls(client, phash):
-        if golden_only and url in YAML_ROUTES:
+        if golden_only and (url in YAML_ROUTES or url in GOLDEN_SKIP):
             continue
         r = client.get(url)
         body = r.json()

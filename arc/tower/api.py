@@ -62,6 +62,9 @@ class TowerConfig:
     static_dir: Path = STATIC_DIR
     routines_path: Path | None = None
     clock: Callable[[], _dt.datetime] = field(default=now_et)
+    #: D124: root the backtest study files resolve on (``data/backtest/...``,
+    #: ``config/backtest_studies/``); None = the repo root. Tests point it at a tmp dir.
+    backtest_root: Path | None = None
 
 
 def _error(status: int, error: str, detail: str, now: _dt.datetime) -> JSONResponse:
@@ -88,6 +91,7 @@ def create_app(
     static_dir: Path | str | None = None,
     routines_path: Path | str | None = None,
     clock: Callable[[], _dt.datetime] = now_et,
+    backtest_root: Path | str | None = None,
 ) -> FastAPI:
     """The tower app over the audit store at *db_path* (opened read-only per request).
 
@@ -96,6 +100,7 @@ def create_app(
     config change reaches the tower without a restart.
     """
     from arc.tower.routes import (
+        backtests,
         experiments,
         meta,
         ops,
@@ -113,6 +118,7 @@ def create_app(
         static_dir=Path(static_dir).resolve() if static_dir is not None else STATIC_DIR,
         routines_path=Path(routines_path) if routines_path is not None else None,
         clock=clock,
+        backtest_root=Path(backtest_root) if backtest_root is not None else None,
     )
     app = FastAPI(
         title="Arc Tower",
@@ -143,6 +149,7 @@ def create_app(
     app.include_router(performance.router, prefix=API_PREFIX)
     app.include_router(ops.router, prefix=API_PREFIX)
     app.include_router(experiments.router, prefix=API_PREFIX)
+    app.include_router(backtests.router, prefix=API_PREFIX)
 
     @app.get(f"{API_PREFIX}/{{rest:path}}", include_in_schema=False)
     def _api_not_found(rest: str) -> JSONResponse:
