@@ -505,8 +505,13 @@ def _spread() -> list[BrokerPosition]:
     ]  # fmt: skip
 
 
-def _settings() -> ArcSettings:
-    return ArcSettings(env="paper")  # type: ignore[call-arg]
+def _settings(**kw: object) -> ArcSettings:
+    return ArcSettings(env="paper", **kw)  # type: ignore[call-arg]
+
+
+def _one_tick() -> ArcSettings:
+    """E3.9: the pre-D122 single-tick trigger, for tests about notice mechanics."""
+    return _settings(daily_loss_confirm_ticks=1)
 
 
 class TestMonitor:
@@ -553,20 +558,55 @@ class TestMonitor:
         assert hb.detail["legs"][0]["qty"] == "-1"
 
     def test_daily_loss_raises_halt_notice_once(self, conn: sqlite3.Connection) -> None:
-        from arc.gate.halt import HaltSwitch
+        from arc.gate.halt import HaltScope, HaltSwitch
         from arc.store.repos import HaltRepo
 
         env = _env([], equity="96000", last="100000")
         ctx = _ctx(conn, "monitor", {"every": "30m"}, FIXTURE_NOW, _settings())
-        r = monitor(ctx, env)
-        assert r.metrics["halt_raised"] is True and r.metrics["halted"] is True
-        assert r.notice.startswith("daily-loss halt raised:")
-        assert r.summary.endswith("; HALTED")
-        assert HaltSwitch(HaltRepo(conn)).is_halted()
+        r0 = monitor(ctx, env)  # E3.9 (D122): one breached tick does not halt
+        assert r0.metrics["halt_raised"] is False and r0.metrics["daily_loss_ticks"] == 1
+        assert not HaltSwitch(HaltRepo(conn)).opens_blocked()
+        ctx1 = _ctx(conn, "monitor", {"every": "30m"},
+                    FIXTURE_NOW + dt.timedelta(minutes=10), _settings())  # fmt: skip
+        r = monitor(ctx1, env)
+        assert r.metrics["halt_raised"] is True and r.metrics["daily_loss_ticks"] == 2
+        # opens-only: exits keep running
+        assert r.metrics["halted"] is False and r.metrics["opens_halted"] is True
+        assert r.notice.startswith(
+            "daily-loss halt (new opens only; exits keep running): "
+            "day loss 4.00% >= 3.00% on 2 ticks"
+        )
+        assert r.summary.endswith("; OPENS HALTED (exits still run)")
+        (h,) = HaltSwitch(HaltRepo(conn)).state().active
+        assert h.scope is HaltScope.OPENS
         later = _ctx(conn, "monitor", {"every": "30m"},
                      FIXTURE_NOW + dt.timedelta(minutes=30), _settings())  # fmt: skip
         r2 = monitor(later, env)
         assert r2.metrics["halt_raised"] is False and r2.notice == ""
+
+    def test_daily_loss_breach_counter_resets_on_recovery(self, conn: sqlite3.Connection) -> None:
+        """E3.9: breach, recovery, breach -> no halt; the count lives in routine_state."""
+        from arc.routines.monitor import DAILY_LOSS_TICKS_KEY
+        from arc.routines.runs import RoutineStateRepo
+
+        seq = ["96000", "98000", "96000"]
+        out = []
+        for i, eq in enumerate(seq):
+            now = FIXTURE_NOW + dt.timedelta(minutes=10 * i)
+            ctx = _ctx(conn, "monitor", {"every": "10m"}, now, _settings())
+            out.append(monitor(ctx, _env([], equity=eq, last="100000")).metrics)
+        assert [m["daily_loss_ticks"] for m in out] == [1, 0, 1]
+        assert not any(m["halt_raised"] for m in out)
+        key = DAILY_LOSS_TICKS_KEY.format(session=FIXTURE_NOW.date().isoformat())
+        stored = json.loads(RoutineStateRepo(conn).get(key) or "{}")
+        assert stored["count"] == 1 and stored["session"] == FIXTURE_NOW.date().isoformat()
+        # an unreadable value counts as no prior breach
+        RoutineStateRepo(conn).set(key, "garbage", now=FIXTURE_NOW)
+        ctx = _ctx(conn, "monitor", {"every": "10m"},
+                   FIXTURE_NOW + dt.timedelta(minutes=40), _settings())  # fmt: skip
+        assert (
+            monitor(ctx, _env([], equity="96000", last="100000")).metrics["daily_loss_ticks"] == 1
+        )
 
     def test_unvaluable_position_and_expiry_warn(self, conn: sqlite3.Connection) -> None:
         naked = [
@@ -709,22 +749,22 @@ class TestMonitor:
         ]  # fmt: skip
         spec = {"every": "5m", "expiry_warn_days": 3}
         t0 = et(2026, 9, 25, 10, 0)
-        r1 = monitor(_ctx(conn, "monitor", spec, t0, _settings()),
+        r1 = monitor(_ctx(conn, "monitor", spec, t0, _one_tick()),
                      _env(naked, equity="96000", last="100000"))  # fmt: skip
-        assert "daily-loss halt raised" in r1.notice and "expiring within 3" in r1.notice
+        assert "daily-loss halt (new opens only" in r1.notice and "expiring within 3" in r1.notice
         assert "cannot value open positions" in r1.notice
         seen: list[str] = []
         for i in range(1, 12):  # the rest of the hour, every 5 min: nothing new
-            ctx = _ctx(conn, "monitor", spec, t0 + dt.timedelta(minutes=5 * i), _settings())
+            ctx = _ctx(conn, "monitor", spec, t0 + dt.timedelta(minutes=5 * i), _one_tick())
             seen.append(monitor(ctx, _env(naked, equity="96000", last="100000")).notice)
         assert seen == [""] * 11
         # a different notice the same day posts, alone
         spec2 = {"every": "5m", "expiry_warn_days": 5}
-        r2 = monitor(_ctx(conn, "monitor", spec2, t0 + dt.timedelta(hours=1), _settings()),
+        r2 = monitor(_ctx(conn, "monitor", spec2, t0 + dt.timedelta(hours=1), _one_tick()),
                      _env(naked))  # fmt: skip
         assert r2.notice == "expiring within 5 day(s): SPY 09-28"
         # next ET day: posted again
-        r3 = monitor(_ctx(conn, "monitor", spec, et(2026, 9, 26, 10, 0), _settings()),
+        r3 = monitor(_ctx(conn, "monitor", spec, et(2026, 9, 26, 10, 0), _one_tick()),
                      _env(naked))  # fmt: skip
         assert "expiring within 3 day(s): SPY 09-28" in r3.notice
 
@@ -736,8 +776,8 @@ class TestMonitor:
 
         RoutineStateRepo(conn).set(_NOTICE_KEY, legacy, now=FIXTURE_NOW)
         env = _env([], equity="96000", last="100000")
-        r = monitor(_ctx(conn, "monitor", {"every": "5m"}, FIXTURE_NOW, _settings()), env)
-        assert r.notice.startswith("daily-loss halt raised:")
+        r = monitor(_ctx(conn, "monitor", {"every": "5m"}, FIXTURE_NOW, _one_tick()), env)
+        assert r.notice.startswith("daily-loss halt (new opens only; exits keep running):")
 
     def test_two_runs_in_one_session_propose_at_most_one_exit(
         self, conn: sqlite3.Connection

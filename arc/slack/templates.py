@@ -160,10 +160,13 @@ def halt_notice(*, triggered_by: str, reason: str = "") -> str:
 
 
 def daily_loss_halt_notice(*, detail: str) -> str:
-    """Auto-halt notice when the daily-loss rule trips (posted to #arc-investor)."""
+    """Auto-halt notice when the daily-loss rule trips (posted to #arc-investor).
+
+    E3.9 (D122): the daily-loss halt stops new opens only; exits keep running.
+    """
     return (
-        f"🛑 *HALT* — daily loss limit reached\n{detail}\n"
-        "All new orders are refused for the rest of the session. Only the owner can `!resume`."
+        f"🛑 *HALT* — daily loss limit reached (new opens only; exits keep running)\n{detail}\n"
+        "New opens are refused for the rest of the session. Only the owner can `!resume`."
     )
 
 

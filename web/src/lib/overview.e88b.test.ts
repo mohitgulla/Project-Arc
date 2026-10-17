@@ -1,7 +1,7 @@
 // E8.8b (D48): Overview status row model, Greeks used/cap, and the "Orders today" grep.
 import { describe, expect, it } from "vitest";
 
-import { accountLabel, envLabel, shortAge, statusRow, statusWord, usedOfCap, type Overview } from "./overview";
+import { accountLabel, envLabel, haltWhen, shortAge, statusRow, statusWord, stripTone, usedOfCap, type Overview } from "./overview";
 
 const NOW = Date.parse("2026-09-28T19:40:00Z"); // Mon 15:40 ET
 const min = (m: number) => new Date(NOW - m * 60_000).toISOString();
@@ -13,6 +13,7 @@ function status(over: Partial<Overview["status"]> = {}): Pick<Overview, "status"
       halted: false,
       halt: null,
       active_halts: 0,
+      opens_only: false,
       tick_at: min(3),
       tick_status: "ok",
       health_at: min(7),
@@ -72,9 +73,38 @@ describe("E8.8b status row", () => {
     );
     expect(row).toHaveLength(6);
     expect(row[0]?.key).toBe("account");
-    expect(row[1]).toMatchObject({ key: "trading", label: "HALTED", value: "1h", tone: "neg", detail: "reconcile mismatch" });
+    expect(row[1]).toMatchObject({ key: "trading", label: "HALTED", value: "1h", tone: "neg", detail: "reconcile mismatch · at 14:30 ET" });
     expect(row[1]?.title).toContain("arc:reconcile");
     expect(row[1]?.title).toContain("2 active");
+  });
+
+  it("E3.9: an opens-only daily-loss halt reads `Opens halted` (warn) with when + live day P&L", () => {
+    const halt = {
+      id: "h", kind: "daily_loss", scope: "opens", reason: "day loss 3.01% >= 3.00% on 2 ticks",
+      actor: "arc:daily-loss", at: "2026-10-16T18:00:00Z", active: true,
+    };
+    const o = {
+      ...status({ halted: true, active_halts: 1, opens_only: true, halt } as Partial<Overview["status"]>),
+      day_pnl: { day_pct: -0.0277 } as Overview["day_pnl"],
+    };
+    const row = statusRow(o, CTX);
+    expect(row[1]).toMatchObject({
+      key: "trading",
+      label: "Opens halted",
+      tone: "warn",
+      opensOnly: true,
+      detail: "day loss 3.01% >= 3.00% on 2 ticks · at 14:00 ET · now -2.77%",
+    });
+    expect(row[1]?.title).toContain("exits still run");
+    expect(stripTone(o)).toBe("warn");
+    expect(haltWhen("2026-10-16T18:00:00Z", null)).toBe("at 14:00 ET");
+    expect(haltWhen(null, undefined)).toBe("");
+    // a full (manual) halt keeps HALTED / neg
+    const full = statusRow(
+      status({ halted: true, active_halts: 1, opens_only: false, halt: { ...halt, scope: "all" } } as Partial<Overview["status"]>),
+      CTX,
+    );
+    expect(full[1]).toMatchObject({ label: "HALTED", tone: "neg" });
   });
 
   it("stale or non-ok heartbeats turn --warn (no pill), with the threshold in the title", () => {

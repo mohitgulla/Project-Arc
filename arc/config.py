@@ -285,6 +285,14 @@ class ArcSettings(BaseSettings):
         default=0.03,
         description="Daily portfolio loss halt threshold (3%).",
     )
+    daily_loss_confirm_ticks: Annotated[int, Field(ge=1, le=6)] = Field(
+        default=2,
+        description=(
+            "Consecutive monitor ticks at or over daily_loss_halt_pct before "
+            "the opens-only daily-loss halt is raised (1 = the first breach halts). The "
+            "gate's per-snapshot daily_loss rule still blocks opens on any single breach."
+        ),
+    )
     spread_max_pct: Annotated[float, Field(ge=0.0, le=1.0)] = Field(
         default=0.10,
         description="Max bid-ask spread as fraction of mid (10%).",

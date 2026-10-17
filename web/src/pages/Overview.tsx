@@ -156,10 +156,10 @@ function StatusStrip({ o, cad, now }: { o: Overview; cad: ReturnType<typeof useC
       <ul className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)] gap-x-0.5 gap-y-1 min-[480px]:grid-cols-[minmax(0,1.15fr)_minmax(0,0.8fr)_minmax(0,1.35fr)_minmax(0,0.9fr)] tablet:flex tablet:flex-wrap tablet:items-center tablet:gap-x-4" data-testid="status-slots">
         {slots.map((slot) => {
           const span = PHONE_SPAN[slot.key] ?? "";
-          if (slot.key === "trading" && slot.tone === "neg")
+          if (slot.key === "trading" && (slot.tone === "neg" || slot.opensOnly))
             return (
-              <li key={slot.key} className={`${CELL} col-span-2 flex-wrap py-1 min-[480px]:col-span-4 ${GROUP_START}`} data-testid="halt-banner" title={slot.title}>
-                <span className="rounded-pill bg-neg-bg px-2 py-0.5 font-bold text-neg-text">HALTED</span>
+              <li key={slot.key} className={`${CELL} col-span-2 flex-wrap py-1 min-[480px]:col-span-4 ${GROUP_START}`} data-testid="halt-banner" data-scope={slot.opensOnly ? "opens" : "all"} title={slot.title}>
+                <span className={`rounded-pill px-2 py-0.5 font-bold ${slot.opensOnly ? "bg-warn-bg text-warn-text" : "bg-neg-bg text-neg-text"}`}>{slot.label}</span>
                 <span className="min-w-0 text-primary [overflow-wrap:anywhere]">{slot.detail}</span>
                 <span className="text-muted tabular-nums">
                   {s.halt?.actor}

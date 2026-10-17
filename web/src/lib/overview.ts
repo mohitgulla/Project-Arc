@@ -5,7 +5,7 @@
 import type { TrendPoint } from "../components/TrendChart";
 import type { Stage } from "../components/StatusStepper";
 import { num, type Schemas } from "./api";
-import { STALE_FACTOR, formatAge, formatEt, isStale } from "./format";
+import { STALE_FACTOR, formatAge, formatEt, formatPercent, isStale } from "./format";
 
 export type Overview = Schemas["OverviewResponse"];
 export type EquitySection = Schemas["EquitySection"];
@@ -145,7 +145,8 @@ export function proposalStage(p: Pick<ProposalRow, "gate_passed" | "approval" | 
 
 /** Status strip tone: only the strip and P&L may use --neg / --warn (card rule). */
 export function stripTone(o: Pick<Overview, "status">): "neg" | "warn" | "ok" {
-  if (o.status.halted) return "neg";
+  if (o.status.halted && !o.status.opens_only) return "neg";
+  if (o.status.opens_only) return "warn"; // E3.9: new opens stopped, exits still run
   if ((o.status.alerts ?? []).length > 0) return "warn";
   return "ok";
 }
@@ -227,8 +228,10 @@ export interface StatusSlot {
   tone: SlotTone;
   /** Full text for the tooltip / accessible name. */
   title?: string;
-  /** Halt only: reason line and age, shown under the HALTED pill. */
+  /** Halt only: reason line and age, shown under the HALTED / Opens halted pill. */
   detail?: string;
+  /** E3.9: an opens-only halt (exits still run): `Opens halted` pill, --warn. */
+  opensOnly?: boolean;
 }
 
 /** D92: the production account's display name (was "Control" in D69 specs). */
@@ -272,14 +275,32 @@ export function accountLabel(env?: string, account: string = ARC_INVESTOR): stri
   return [envLabel(env), account].filter(Boolean).join(" · ");
 }
 
+/** `Fri 10-16 14:00` -> `14:00` (ET). */
+function etClock(at: string): string {
+  return formatEt(at).slice(-5);
+}
+
+/**
+ * E3.9 (D122): the halt line's live context, `at 14:00 ET · now −2.77%`, so a frozen
+ * reason (`day loss 3.01% …`) never reads as a P&L mismatch with the current day P&L.
+ */
+export function haltWhen(at: string | null | undefined, dayPct: number | null | undefined): string {
+  const parts: string[] = [];
+  if (at) parts.push(`at ${etClock(at)} ET`);
+  if (dayPct !== null && dayPct !== undefined && Number.isFinite(dayPct)) parts.push(`now ${formatPercent(dayPct)}`);
+  return parts.join(" · ");
+}
+
 /**
  * Slot order (fixed, D92; was D50 Trading · env · Health · Orders · Tick · Alerts):
  * Account · Trading · Orders · Tick · Health · Alerts. The account slot reads
  * `Paper Trade · Arc Investor`; Trading carries the account's session count, `Enabled (7)`;
  * Tick shows minutes (`4m`; D92 rev, owner dropped seconds). A halt replaces the Trading slot (`HALTED`, reason, age);
+ * an opens-only halt (E11.4/E3.9: exits still run) reads `Opens halted` in --warn, with when it
+ * fired and the live day P&L (`at 14:00 ET · now −2.77%`).
  * a stale or non-ok heartbeat turns its slot --warn. Values are Title Case.
  */
-export function statusRow(o: Pick<Overview, "status">, ctx: StatusContext): StatusSlot[] {
+export function statusRow(o: Pick<Overview, "status"> & Partial<Pick<Overview, "day_pnl">>, ctx: StatusContext): StatusSlot[] {
   const s = o.status;
   const slots: StatusSlot[] = [];
   const account = ctx.account ?? ARC_INVESTOR;
@@ -293,13 +314,18 @@ export function statusRow(o: Pick<Overview, "status">, ctx: StatusContext): Stat
   if (s.halted && s.halt) {
     const at = s.halt.at ? `${shortAge(s.halt.at, ctx.now)} · since ${formatEt(s.halt.at)}` : "";
     const more = s.active_halts > 1 ? ` · ${s.active_halts} active` : "";
+    const opensOnly = !!s.opens_only;
+    const when = haltWhen(s.halt.at, o.day_pnl?.day_pct);
     slots.push({
       key: "trading",
-      label: "HALTED",
+      label: opensOnly ? "Opens halted" : "HALTED",
       value: s.halt.at ? shortAge(s.halt.at, ctx.now) : "",
-      tone: "neg",
-      detail: `${s.halt.reason}`,
-      title: `Halted by ${s.halt.actor}: ${s.halt.reason}${at ? ` (${at})` : ""}${more}${sessionsTitle}`,
+      tone: opensOnly ? "warn" : "neg",
+      opensOnly,
+      detail: when ? `${s.halt.reason} · ${when}` : `${s.halt.reason}`,
+      title:
+        (opensOnly ? `New opens halted by ${s.halt.actor} (exits still run): ` : `Halted by ${s.halt.actor}: `) +
+        `${s.halt.reason}${at ? ` (${at})` : ""}${more}${sessionsTitle}`,
     });
   } else {
     slots.push({

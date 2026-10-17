@@ -1011,6 +1011,37 @@ def _shortlist_limit(settings: ArcSettings, budget: BudgetView) -> int:
     return limit
 
 
+def _research_halted(ctx: JobContext, budget: BudgetView, notice: str, n_cands: int) -> JobResult:
+    """E3.9 (D122): an opens-only halt (daily loss, expiry) is active.
+
+    Stop the open branch before any LLM spend: journal ``halt:opens_only`` and write an
+    empty shortlist. The chain goes on (``stop_chain=False``), so ``exits.mandatory``,
+    ``quant.exit`` and ``risk.exit`` still run; the open steps see the empty shortlist
+    and return without an LLM call (same shape as the E5.9 market guard).
+    """
+    why = "new opens halted (opens-only halt; exits keep running)"
+    j = _journal(ctx, ctx.snapshot.id)
+    j.add(
+        JournalPersona.SYSTEM,
+        Stage.SHORTLIST,
+        SESSION_SUBJECT,
+        Choice.NO_TRADE,
+        ReasonCode.HALT_OPENS_ONLY,
+        reason_text=why,
+    )
+    payload = ShortlistPayload(
+        shortlist=[], market_regime="unknown", session_notes=why, no_trade_reason="unclear"
+    )
+    ctx.write("shortlist", SESSION_SUBJECT, payload)
+    log.info("pipeline.opens_halted", candidates=n_cands)
+    return JobResult(
+        summary=f"{why}; empty shortlist ({n_cands} candidates not ranked)",
+        metrics={"shortlist": 0, "opens_halted": 1, **budget.metrics()},
+        notice=notice,
+        stop_chain=False,
+    )
+
+
 def _research_no_opens(
     ctx: JobContext,
     guard: MarketGuard,
@@ -2583,6 +2614,16 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
             metrics={"shortlist": 0, **budget.metrics()},
             notice=notice,
         )
+
+    # E3.9 (D122): an opens-only halt stops the open branch here, before any LLM spend.
+    # (A scope-all halt keeps the old path: the dispatcher skips the job, and a manual
+    # drill run still records proposals that the gate refuses.)
+    from arc.gate.halt import HaltSwitch
+    from arc.store.repos import HaltRepo
+
+    halt_state = HaltSwitch(HaltRepo(ctx.conn)).state()
+    if halt_state.opens_only and not halt_state.halted:
+        return _research_halted(ctx, budget, notice, len(cands))
 
     # D51: the market reference (SPY, QQQ) always gets a fresh regime entry, so the
     # D33 guard reads SPY even when SPY is not a candidate (it left the core list).

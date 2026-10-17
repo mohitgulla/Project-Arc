@@ -187,6 +187,8 @@ class ReasonCode(StrEnum):
     DEDUPE_MISSED_WAIT = "dedupe:missed_wait"  # held until dedupe.missed_retry_after
     RESEARCH_NO_TRADE = "research_no_trade"  # Research chose an empty shortlist
     MARKET_UNCLEAR = "market_unclear"  # VIX / term structure / regime guard: no new opens
+    # E3.9 (D122): an opens-only halt (daily loss, expiry) is active: no new opens
+    HALT_OPENS_ONLY = "halt:opens_only"
     MARKET_DATA_MISSING = "market_data_missing"  # no VIX reading: fail closed for new opens
     PORTFOLIO_VIEW = "portfolio_view"  # Research's read of the open book (noted)
     THESIS_CHECK = "thesis_check"  # Research's check of an open position's thesis
@@ -458,6 +460,7 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.DEDUPE_MISSED_WAIT: "Missed open: waiting before its retry",
     ReasonCode.RESEARCH_NO_TRADE: "Research chose no trade",
     ReasonCode.MARKET_UNCLEAR: "Market unclear: no new opens",
+    ReasonCode.HALT_OPENS_ONLY: "New opens halted (exits keep running)",
     ReasonCode.MARKET_DATA_MISSING: "Market data missing: no new opens",
     ReasonCode.PORTFOLIO_VIEW: "Research's read of the open book",
     ReasonCode.THESIS_CHECK: "Research checked an open position's thesis",
