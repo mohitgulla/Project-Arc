@@ -382,6 +382,11 @@ from `python3 ~/.hermes/profiles/arc-analyst/scripts/arc_analyst.py backlog`.
   - `drop BT-<n> <why>`: a draft that was never committed (`arc_analyst.py drop BT-<n> "<why>"`).
   - `stop BT-<n> <why>`: a queued or running study (`arc_analyst.py stop BT-<n> "<why>"`, which
     runs `arc backtest study stop`; the runner obeys at its next check).
+  - The nightly runner (`backtest.studies`, E26.3) posts its own lines in this channel, each
+    starting `BT · BT-<n> ·` (rung done, clear-dev-fail stop, failure, holdout verdict). They
+    are bot posts, not owner commands: don't answer them. Queue state:
+    `.venv/bin/arc backtest study queue`. Pausing the runner is the owner's
+    `!arc config set routines.backtest.studies.enabled off`.
 - `drop XP-<n> <why>`: `arc_analyst.py drop XP-<n> "<why>"`.
 - `reprioritise XP-<n> <why>`: `arc_analyst.py reprioritise XP-<n> "<why>"` pins it to the top
   (`reprioritise XP-<n> "<why>" --score <x>` overrides its value instead). Reply with the rank.

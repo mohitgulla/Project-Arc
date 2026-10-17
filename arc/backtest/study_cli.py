@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import signal
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -34,7 +35,10 @@ from arc.backtest.study import (
 if TYPE_CHECKING:
     import argparse
 
-__all__ = ["add_study_parser", "run_study_cli"]
+__all__ = ["INTERRUPTED_RC", "StudyInterruptedError", "add_study_parser", "run_study_cli"]
+
+#: ``study run`` exit code on SIGTERM (128 + 15): the E26.3 runner's ``interrupted``.
+INTERRUPTED_RC = 143
 
 
 def _date(s: str) -> dt.date:
@@ -141,6 +145,28 @@ def add_study_parser(bs: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     sp.add_argument("--queue", type=Path, default=DEFAULT_QUEUE)
     sp.add_argument("--json", action="store_true", help="One JSON object")
 
+    ni = ss.add_parser(
+        "night",
+        help="E26.3: work the study queue now, like the nightly backtest.studies routine",
+    )
+    ni.add_argument(
+        "--minutes",
+        type=float,
+        default=None,
+        help="End the window this many minutes from now (default: the configured window)",
+    )
+    ni.add_argument("--config", type=Path, default=None, help="routines.yaml")
+    ni.add_argument("--queue", type=Path, default=None, help="Override backtest_studies.queue")
+    ni.add_argument("--ledger", type=Path, default=None, help="Override backtest_studies.ledger")
+    ni.add_argument("--runs-dir", type=Path, default=None)
+    ni.add_argument("--report-dir", type=Path, default=None)
+    ni.add_argument("--data-dir", type=Path, default=None)
+    ni.add_argument("--main-ref", default="origin/main", help="Ref the committed specs come from")
+    ni.add_argument("--no-fetch", action="store_true", help="Don't `git fetch` the ref first")
+    ni.add_argument(
+        "--slack", action="store_true", help="Post the event lines to #arc-analyst (else print)"
+    )
+
 
 def run_study_cli(args: argparse.Namespace) -> int:
     cmd = args.study_command
@@ -152,6 +178,8 @@ def run_study_cli(args: argparse.Namespace) -> int:
         return _queue(args)
     if cmd == "stop":
         return _stop(args)
+    if cmd == "night":
+        return _night(args)
     path = study_path(args.id, args.studies_dir)
     if not path.is_file():
         sys.stderr.write(f"arc backtest study: no spec {path}\n")
@@ -247,6 +275,78 @@ def _ledger(args: argparse.Namespace) -> int:
     return 0
 
 
+def _night(args: argparse.Namespace) -> int:
+    """E26.3: one study night now (manual / live evidence). ``--minutes`` sets the
+    window end; otherwise the configured window applies (outside it: exit 4)."""
+    import time as _time
+
+    from arc.backtest.runner import RunnerPaths, SkipNightError, run_night
+    from arc.experiments.publish import REPO_ROOT, GitMainView
+    from arc.routines.config import DEFAULT_ROUTINES_PATH, load_routines
+    from arc.utils.calendar import now_et
+
+    cfg = load_routines(args.config or DEFAULT_ROUTINES_PATH).backtest_studies
+
+    def _p(override: Path | None, rel: str) -> Path:
+        p = override or Path(rel)
+        return p if p.is_absolute() else REPO_ROOT / p
+
+    paths = RunnerPaths(
+        queue=_p(args.queue, cfg.queue),
+        ledger=_p(args.ledger, cfg.ledger),
+        runs_dir=_p(args.runs_dir, cfg.runs_dir),
+        report_dir=_p(args.report_dir, cfg.report_dir),
+        data_dir=_p(args.data_dir, cfg.data_dir),
+        cwd=REPO_ROOT,
+    )
+    post = _printer
+    if args.slack:
+        from arc.slack.client import CHANNEL_ARC_ANALYST, ArcSlackClient
+
+        client = ArcSlackClient()
+
+        def post(text: str) -> None:
+            client.post_thread_root(channel=CHANNEL_ARC_ANALYST, text=text)
+
+    end = None
+    if args.minutes is not None:
+        end = now_et() + dt.timedelta(minutes=args.minutes)
+    try:
+        res = run_night(
+            cfg=cfg,
+            paths=paths,
+            clock=now_et,
+            sleep=_time.sleep,
+            main=GitMainView(repo=REPO_ROOT, ref=args.main_ref, fetch=not args.no_fetch),
+            post=post,
+            window_end=end,
+        )
+    except SkipNightError as exc:
+        sys.stderr.write(f"arc backtest study night: skipped: {exc}\n")
+        return 4
+    sys.stdout.write(res.summary + "\n")
+    return 0
+
+
+def _printer(text: str) -> None:
+    sys.stdout.write(f"[#arc-analyst dry-run] {text}\n")
+    sys.stdout.flush()
+
+
+class StudyInterruptedError(BaseException):
+    """SIGTERM during ``study run`` (E26.3): the run stops with no ledger line.
+
+    A ``BaseException`` so no ``except Exception`` in the build/walk swallows it."""
+
+
+def _on_sigterm(signum: int, frame: object) -> None:
+    import multiprocessing
+
+    for child in multiprocessing.active_children():  # the menu-build pool workers
+        child.terminate()
+    raise StudyInterruptedError
+
+
 def _run(args: argparse.Namespace, spec: object) -> int:
     from arc.backtest.study import StudySpec
     from arc.config import ArcSettings
@@ -258,6 +358,9 @@ def _run(args: argparse.Namespace, spec: object) -> int:
     tickers = (
         [t.strip().upper() for t in args.tickers.split(",") if t.strip()] if args.tickers else None
     )
+    # E26.3: the nightly runner stops a run with SIGTERM at the window end; exit 143
+    # with no ledger line (run_study holds SIGTERM while the line + report are written).
+    old = signal.signal(signal.SIGTERM, _on_sigterm)
     try:
         entry = run_study(
             spec,
@@ -279,6 +382,11 @@ def _run(args: argparse.Namespace, spec: object) -> int:
     except (StudyRefusedError, CheckpointIncompleteError) as exc:
         sys.stderr.write(f"arc backtest study: refused: {exc}\n")
         return 3
+    except StudyInterruptedError:
+        sys.stderr.write(f"arc backtest study: {spec.id} interrupted (SIGTERM); no ledger line\n")
+        return INTERRUPTED_RC
+    finally:
+        signal.signal(signal.SIGTERM, old)
     payload = json.loads((Path(entry.run_dir) / "report.json").read_text())
     sys.stdout.write((Path(entry.run_dir) / "report.md").read_text())
     sys.stdout.write("\n" + "\n".join(verdict_lines(payload)) + "\n")

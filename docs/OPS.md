@@ -3238,3 +3238,51 @@ Also `--tickers A,B|watch` or `--tickers-file F` (one per line, `#` comments), p
 `--since/--until` and `--data-dir`. The report prints rows per source before → after.
 Run `arc history stats` (E7.16) first for any name whose `option_stats/daily` is missing;
 the seed computes those sessions itself otherwise, which is slower.
+
+## E26.3 nightly backtest study runner (D121)
+
+**Routine `backtest.studies`** (21:30 ET slot on trading days, background lane, `ttl: 2h`,
+`stuck_after: 60h`). It works the queue `approve BT-<n>` fills (`data/backtest/queue.json`,
+E26.2) inside the study window: 21:30 → 08:30 ET, and a night followed by a weekend or
+holiday runs to the next session's 08:30 (normally Mon 08:30). Such a night is the only run
+until the next session, so with an empty queue it re-reads it every `idle_poll` (10 min)
+instead of ending: a study approved on Saturday starts that night.
+
+- **One study at a time**, oldest approval first. A queued study whose spec
+  `config/backtest_studies/BT-<n>.yaml` is not on `origin/main` yet is passed over
+  (`skipped: spec_unmerged`) and retried later. A committed spec whose hash differs from
+  the queued one marks it `failed`.
+- **Ladder:** `c125_dev` → `c500_dev` → `holdout` (on the spec's last ladder universe; a
+  `[c125]`-only spec goes `c125_dev` → `holdout`). Each rung is `arc backtest study run`
+  in a child (`nice 10`, `--workers 6`), its log appended to
+  `data/backtest/runs/BT-<n>/runner.log`. The holdout needs no owner step; the E7.12 ledger
+  refuses a second holdout of the same spec.
+- **Clear dev fail:** every treatment × profile row of a dev rung is a non-switch with CI
+  upper bound < `fail_rule.ci_hi_below` (0) and a worse primary metric → the study is
+  `stopped`, the holdout is never spent.
+- **Fit-or-defer:** a rung starts only if the time left covers its estimate: the median
+  `runtime_s` of the ledger's rows for that phase × universe (this study's, else any) ×
+  `runtime_margin` (1.2). No history → it starts and may be interrupted.
+- **Window end:** SIGTERM to the child's process group, SIGKILL after `kill_grace` (120 s).
+  `study run` exits 143 with **no ledger line** (the ledger line and the report are written
+  together with SIGTERM held). The rung is recorded `interrupted` and reruns from the start
+  next night; the menu cache it filled makes that faster.
+- **`history.topup` still running** at the slot: waits up to `topup_wait` (30 min), then
+  the night is `skipped`.
+- **#arc-analyst:** one line per rung done, clear-fail stop, failure (last log line + log
+  path) and holdout verdict. Interrupts, deferrals and owner stops post nothing (they are
+  in the run summary).
+- Summary example: `BT-8 c125_dev done; BT-8 holdout done; queue: queue empty`.
+
+Knobs: the `backtest_studies:` block in `config/routines.yaml` (change by PR; not
+registry-tunable).
+
+    !arc config set routines.backtest.studies.enabled off   # pause the routine (owner)
+    @hermes stop BT-<n> <why>     # #arc-analyst: stop one study (arc backtest study stop)
+    .venv/bin/arc backtest study queue                      # status, rung, nights, ETA
+
+A stop lands at the runner's next check (`poll`, 30 s): it terminates the running child and
+marks the rung `stopped`. To work the queue by hand (e.g. after a pause), with the window
+ending N minutes from now and the event lines printed instead of posted:
+
+    .venv/bin/arc backtest study night --minutes 60 [--slack]
