@@ -217,7 +217,8 @@ def _metrics_line(m: dict[str, object]) -> str:
 
     return (
         f"px {num('price', '.2f')} · ADV {num('adv_shares', ',.0f')} · "
-        f"OI {num('atm_open_interest', 'd')} · spread {num('atm_spread_pct', '.1%')} · "
+        f"OI {num('atm_open_interest', 'd')} ({m.get('oi_source') or '-'}) · "
+        f"spread {num('atm_spread_pct', '.1%')} · "
         f"expiries {m.get('expiries_in_window', 0)}"
     )
 
