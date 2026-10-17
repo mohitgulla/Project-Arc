@@ -340,7 +340,7 @@ function ResultCard({ d }: { d: ExperimentDetail }) {
   const h = headlineEstimate(r.primary);
   const tone = ciTone({ primary_ci_lo: h.lo, primary_ci_hi: h.hi });
   const second = otherLine(h);
-  const note = verdictNote(h, verdictBasis(d.spec));
+  const note = verdictNote(h, verdictBasis(d.spec, r.analysis_amended));
   const blocks = adjustedPairs(r, d.spec);
   return (
     <Card

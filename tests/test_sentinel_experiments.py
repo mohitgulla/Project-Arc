@@ -146,6 +146,65 @@ def test_prereg_mismatch_when_the_trigger_was_bypassed(tmp_path: Path) -> None:
     assert "XP-2 ab/exits [running]" in text and "MISMATCH" in text
 
 
+def _amended_registry(tmp_path: Path) -> Path:
+    """The reviewer registry plus an owner analysis amendment of the running XP-2 (D122)."""
+    from arc.experiments.models import Analysis
+    from arc.experiments.store import ExperimentStore
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    migrate(conn)
+    fx.reviewer_registry(conn)
+    clock = [NOW]
+
+    def now() -> _dt.datetime:
+        clock[0] += _dt.timedelta(seconds=1)
+        return clock[0]
+
+    ExperimentStore(conn, now=now).amend_analysis(
+        "XP-2", Analysis(covariates=["spy_ret"], hac_lag=5), actor="local",
+        owner_approval="slack:1792193805.441269", sessions_at_amend=3,
+    )  # fmt: skip
+    path = tmp_path / "arc-copy.db"
+    disk = sqlite3.connect(path)
+    conn.backup(disk)
+    disk.close()
+    return path
+
+
+def test_prereg_lock_accepts_an_owner_analysis_amendment(tmp_path: Path) -> None:
+    db = _amended_registry(tmp_path)
+    conn = _ro(db)
+    x2 = next(e for e in se.experiments(conn) if e["id"] == "XP-2")
+    conn.close()
+    assert x2["prereg_ok"], x2["prereg_problems"]
+    assert x2["revision"] == 2
+
+
+def test_prereg_flags_an_amendment_that_changed_more_than_analysis(tmp_path: Path) -> None:
+    db = _amended_registry(tmp_path)
+    conn = sqlite3.connect(db)
+    conn.execute("DROP TRIGGER experiments_no_update")
+    spec = json.loads(
+        conn.execute(
+            "SELECT spec FROM experiments WHERE experiment_id = 'XP-2' AND revision = 2"
+        ).fetchone()[0]
+    )
+    spec["alpha"] = 0.1
+    conn.execute(
+        "UPDATE experiments SET spec = ? WHERE experiment_id = 'XP-2' AND revision = 2",
+        (json.dumps(spec, sort_keys=True, separators=(",", ":")),),
+    )
+    conn.commit()
+    conn.close()
+    conn = _ro(db)
+    x2 = next(e for e in se.experiments(conn) if e["id"] == "XP-2")
+    conn.close()
+    assert not x2["prereg_ok"]
+    joined = "; ".join(x2["prereg_problems"])
+    assert "changes more than the analysis block" in joined and "re-hashes to" in joined
+
+
 def test_pre_e10_store_and_missing_copy_degrade(tmp_path: Path) -> None:
     repo = Repo(tmp_path / "r")
     head = repo.commit({"README.md": "x"}, "init", NOW - _dt.timedelta(days=1))

@@ -43,6 +43,9 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 __all__ = [
     "ACTIVE_STATUSES",
+    "AMENDABLE_KEY",
+    "AnalysisAmended",
+    "AnalysisAmendment",
     "CONTROL_ARM",
     "FIRST_TREATMENT",
     "IMPLICIT_SPEC_VERSION",
@@ -75,6 +78,7 @@ __all__ = [
     "spec_arm_name",
     "spec_hash",
     "treatment_key",
+    "without_analysis",
 ]
 
 #: The latest spec version (D108). A document must *say* ``spec_version: 3`` to get a
@@ -586,6 +590,73 @@ class ExperimentEvent(BaseModel):
     at: _dt.datetime
 
 
+#: E25.10 (D122): the one key an owner amendment may change on a registered spec.
+AMENDABLE_KEY = "analysis"
+
+
+def without_analysis(spec: ExperimentSpec) -> str:
+    """*spec*'s canonical JSON with the ``analysis`` key removed (what an amendment keeps)."""
+    doc = _canonical_doc(spec)
+    doc.pop(AMENDABLE_KEY, None)
+    return canonical_dumps(doc)
+
+
+class AnalysisAmended(BaseModel):
+    """E25.10 (D122): what a report carries when its spec's analysis was amended mid-run,
+    so the report stays reproducible: when, after how many sessions, from what to what."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        frozen=True,
+        validate_by_name=True,
+        validate_by_alias=True,
+        serialize_by_alias=True,
+    )
+
+    at: _dt.datetime
+    sessions_at_amend: int = Field(..., ge=0)
+    from_: Analysis | None = Field(
+        ..., alias="from", description="The analysis before (null = the D44 iid unadjusted)"
+    )
+    to: Analysis | None = Field(..., description="The analysis the verdict reads from now on")
+
+
+class AnalysisAmendment(BaseModel):
+    """E25.10 (D122): one owner amendment of a registered spec's ``analysis`` block, read
+    back from its ``experiment_events`` row (``detail.amended == "analysis"``)."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        frozen=True,
+        validate_by_name=True,
+        validate_by_alias=True,
+        serialize_by_alias=True,
+    )
+
+    event_id: int
+    at: _dt.datetime
+    actor: str
+    revision: int = Field(..., description="The spec revision the amendment appended")
+    amends_revision: int = Field(..., description="The revision it replaced")
+    from_: Analysis | None = Field(..., alias="from")
+    to: Analysis | None
+    from_hash: str
+    to_hash: str
+    sessions_at_amend: int = Field(..., ge=0)
+    owner_approval: str
+    reason: str = ""
+
+    def reported(self) -> AnalysisAmended:
+        return AnalysisAmended.model_validate(
+            {
+                "at": self.at,
+                "sessions_at_amend": self.sessions_at_amend,
+                "from": self.from_,
+                "to": self.to,
+            }
+        )
+
+
 class ExperimentState(BaseModel):
     """An experiment's latest spec revision plus its status from the event log."""
 
@@ -603,6 +674,15 @@ class ExperimentState(BaseModel):
     running: RunningDetail | None = None
     stop: StopDetail | None = None
     events: list[ExperimentEvent] = Field(default_factory=list)
+    amendments: list[AnalysisAmendment] = Field(
+        default_factory=list,
+        description="E25.10 (D122): owner amendments of the analysis block, oldest first",
+    )
+
+    @property
+    def analysis_amended(self) -> AnalysisAmended | None:
+        """The latest amendment as a report carries it (None: never amended)."""
+        return self.amendments[-1].reported() if self.amendments else None
 
     @property
     def area(self) -> Area:

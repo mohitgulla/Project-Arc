@@ -4,6 +4,11 @@
 # it measures sigma of the paired daily difference and the MDE later A/Bs are sized
 # for. Production is the descriptive baseline (P - C = start book + residual), never a
 # verdict input. First id after the owner's registry reset (2026-10-13, PLAN D111).
+# Analysis amended by the owner mid-run (PLAN D122, card E25.10, 2026-10-16, #project-arc
+# 1792193805.441269): the store carries a second revision with
+# `analysis: {covariates: [spy_ret], hac_lag: 5}` (`arc experiment amend-analysis`). This file
+# stays the *registered* spec (no analysis block, so it still hashes to the registered lock,
+# pinned by tests/test_experiment_hac.py); `arc experiment show XP-1` prints the amendment.
 spec_version: 3
 id: XP-1
 title: K=3 A/A calibration, control arm plus three identical treatments

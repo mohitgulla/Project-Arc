@@ -328,6 +328,7 @@ class ReasonCode(StrEnum):
     EXPERIMENT_QUEUED = "experiment:queued"  # its area already has a registered/running one
     EXPERIMENT_STARTED = "experiment:started"
     EXPERIMENT_AA_OVERRIDE = "experiment:aa_override"  # owner started an ab with no A/A sigma
+    EXPERIMENT_AMENDED = "experiment:amended"  # E25.10 (D122): owner amended the analysis
     EXPERIMENT_STOPPED = "experiment:stopped"
     EXPERIMENT_PROMOTED = "experiment:promoted"
     EXPERIMENT_REJECTED = "experiment:rejected"
@@ -579,6 +580,7 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.EXPERIMENT_QUEUED: "Experiment queued behind another in its area",
     ReasonCode.EXPERIMENT_STARTED: "Experiment started",
     ReasonCode.EXPERIMENT_AA_OVERRIDE: "A/B started without an A/A (owner override)",
+    ReasonCode.EXPERIMENT_AMENDED: "Experiment's analysis amended (owner)",
     ReasonCode.EXPERIMENT_STOPPED: "Experiment stopped",
     ReasonCode.EXPERIMENT_PROMOTED: "Experiment's treatment promoted",
     ReasonCode.EXPERIMENT_REJECTED: "Experiment's treatment rejected",

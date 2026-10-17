@@ -42,7 +42,9 @@ import structlog
 from arc.context.ttl import from_db, to_db
 from arc.experiments.models import (
     ACTIVE_STATUSES,
+    AMENDABLE_KEY,
     TRANSITIONS,
+    AnalysisAmendment,
     ExperimentEvent,
     ExperimentKind,
     ExperimentSpec,
@@ -53,6 +55,7 @@ from arc.experiments.models import (
     StopReason,
     canonical_json,
     spec_hash,
+    without_analysis,
 )
 from arc.journal.reasons import Choice, JournalPersona, ReasonCode, Stage
 from arc.journal.store import JournalStore
@@ -76,6 +79,7 @@ __all__ = [
     "SpecLockedError",
     "TransitionError",
     "Verification",
+    "analysis_text",
     "check_owner_approval",
     "proposal_ref_of",
 ]
@@ -159,7 +163,45 @@ def proposal_ref_of(st: ExperimentState) -> str | None:
 
 
 class Verification(dict[str, Any]):
-    """``{experiment_id, ok, registered_hash, stored_hash, recomputed_hash, revision}``."""
+    """``{experiment_id, ok, registered_hash, stored_hash, recomputed_hash, revision}``;
+    E25.10 adds ``chain`` (one line per amendment link) and ``problems`` when amended."""
+
+
+#: E25.10 (D122): the ``detail.amended`` value of an analysis-amendment event.
+AMENDED_ANALYSIS = "analysis"
+
+
+def _is_amendment(e: ExperimentEvent) -> bool:
+    return e.detail.get("amended") == AMENDED_ANALYSIS
+
+
+def _amendments(events: list[ExperimentEvent]) -> list[AnalysisAmendment]:
+    """The analysis amendments recorded in *events* (oldest first)."""
+    return [
+        AnalysisAmendment.model_validate(
+            {
+                "event_id": e.id,
+                "at": e.at,
+                "actor": e.actor,
+                **{
+                    k: e.detail.get(k)
+                    for k in (
+                        "revision",
+                        "amends_revision",
+                        "from",
+                        "to",
+                        "from_hash",
+                        "to_hash",
+                        "sessions_at_amend",
+                        "owner_approval",
+                    )
+                },
+                "reason": e.detail.get("reason") or "",
+            }
+        )
+        for e in events
+        if _is_amendment(e)
+    ]
 
 
 _STATUS_REASON: dict[ExperimentStatus, ReasonCode] = {
@@ -274,7 +316,11 @@ class ExperimentStore:
             None,
         )
         running = next(
-            (RunningDetail.model_validate(e.detail) for e in events if e.status == "running"),
+            (
+                RunningDetail.model_validate(e.detail)
+                for e in events
+                if e.status == "running" and not _is_amendment(e)
+            ),
             None,
         )
         stop = next(
@@ -292,6 +338,7 @@ class ExperimentStore:
             running=running,
             stop=stop,
             events=events,
+            amendments=_amendments(events),
         )
 
     def require(self, experiment_id: str) -> ExperimentState:
@@ -385,6 +432,7 @@ class ExperimentStore:
         reason: StopReason | None = None,
         detail: dict[str, Any] | None = None,
         reason_code: ReasonCode | None = None,
+        choice: Choice | None = None,
         text: str = "",
     ) -> None:
         at = self._now()
@@ -406,7 +454,7 @@ class ExperimentStore:
             persona=_persona(actor),
             stage=Stage.EXPERIMENT,
             subject=st_id,
-            choice=_STATUS_CHOICE[status],
+            choice=choice or _STATUS_CHOICE[status],
             reason_code=reason_code or _STATUS_REASON[status],
             reason_text=text,
             at=at,
@@ -653,27 +701,224 @@ class ExperimentStore:
     # -- integrity ---------------------------------------------------------------
 
     def verify(self, experiment_id: str) -> Verification:
-        """Recompute the stored spec's hash and compare it with the registered hash."""
+        """Recompute the stored spec's hash and compare it with the lock.
+
+        Not amended: the lock is the registered hash (as before E25.10). Amended (D122):
+        the lock chain registered hash -> amendment event(s) -> current hash, every link
+        recomputed from the stored revisions (:meth:`_amendment_problems`); the result
+        then also carries ``lock_hash``, ``chain`` and ``problems``.
+        """
         st = self.require(experiment_id)
         row = self._spec_row(experiment_id)
         assert row is not None  # noqa: S101 - require() found it
         recomputed = spec_hash(ExperimentSpec.model_validate_json(row["spec"]))
         stored = row["spec_hash"]
-        ok = recomputed == stored and (
-            st.registered_hash is None or st.registered_hash == recomputed
-        )
+        if not st.amendments:
+            ok = recomputed == stored and (
+                st.registered_hash is None or st.registered_hash == recomputed
+            )
+            return Verification(
+                experiment_id=experiment_id,
+                status=st.status.value,
+                ok=ok,
+                revision=st.revision,
+                registered_hash=st.registered_hash,
+                stored_hash=stored,
+                recomputed_hash=recomputed,
+            )
+        problems, chain = self._amendment_problems(st)
+        lock = st.amendments[-1].to_hash
+        if recomputed != stored:
+            problems.append(f"r{st.revision} re-hashes to {recomputed[:12]}, not {stored[:12]}")
+        if lock != recomputed:
+            problems.append(f"latest amendment locks {lock[:12]}, current spec {recomputed[:12]}")
         return Verification(
             experiment_id=experiment_id,
             status=st.status.value,
-            ok=ok,
+            ok=not problems,
             revision=st.revision,
             registered_hash=st.registered_hash,
             stored_hash=stored,
             recomputed_hash=recomputed,
+            lock_hash=lock,
+            chain=chain,
+            problems=problems,
         )
+
+    def _revisions(self, experiment_id: str) -> dict[int, sqlite3.Row]:
+        rows = self.conn.execute(
+            "SELECT * FROM experiments WHERE experiment_id = ? ORDER BY revision",
+            (experiment_id,),
+        ).fetchall()
+        return {r["revision"]: r for r in rows}
+
+    def _amendment_problems(self, st: ExperimentState) -> tuple[list[str], list[str]]:
+        """``(problems, chain)`` of *st*'s lock chain: the registered revision, then each
+        amendment's from -> to link recomputed from the stored rows (D122)."""
+        revs = self._revisions(st.experiment_id)
+        problems: list[str] = []
+        chain: list[str] = []
+
+        def rehash(rev: int) -> tuple[str | None, ExperimentSpec | None]:
+            r = revs.get(rev)
+            if r is None:
+                return None, None
+            sp = ExperimentSpec.model_validate_json(r["spec"])
+            return spec_hash(sp), sp
+
+        reg = next(
+            (n for n, r in revs.items() if r["spec_hash"] == st.registered_hash),
+            None,
+        )
+        if st.registered_hash is None or reg is None:
+            problems.append("amended, but no registered revision carries the registered hash")
+            return problems, chain
+        h, _ = rehash(reg)
+        chain.append(f"r{reg} registered {(h or '-')[:12]}")
+        if h != st.registered_hash:
+            problems.append(f"registered r{reg} re-hashes to {(h or '-')[:12]}")
+        prev_rev, prev_hash = reg, st.registered_hash
+        for a in st.amendments:
+            link = f"r{a.amends_revision} -> r{a.revision} (event #{a.event_id})"
+            fh, fsp = rehash(a.amends_revision)
+            th, tsp = rehash(a.revision)
+            row = revs.get(a.revision)
+            chain.append(f"{link} {a.from_hash[:12]} -> {a.to_hash[:12]}")
+            if a.amends_revision != prev_rev or a.from_hash != prev_hash:
+                problems.append(f"{link}: does not follow r{prev_rev} {prev_hash[:12]}")
+            if fh != a.from_hash or th != a.to_hash or fsp is None or tsp is None:
+                problems.append(f"{link}: stored revisions re-hash to {fh} -> {th}")
+            elif without_analysis(fsp) != without_analysis(tsp):
+                problems.append(f"{link}: changes more than the {AMENDABLE_KEY} block")
+            elif fsp.analysis != a.from_ or tsp.analysis != a.to:
+                problems.append(f"{link}: event from/to do not match the stored analysis")
+            if row is None or row["amends_revision"] != a.amends_revision:
+                problems.append(f"{link}: r{a.revision} is not flagged as amending it")
+            prev_rev, prev_hash = a.revision, a.to_hash
+        late = [n for n in revs if n > reg and n not in {a.revision for a in st.amendments}]
+        if late:
+            problems.append(f"revision(s) {late} after registration are not amendments")
+        return problems, chain
 
     def _check_lock(self, st: ExperimentState) -> None:
         v = self.verify(st.experiment_id)
         if not v["ok"]:
             msg = f"{st.experiment_id}: spec hash mismatch ({v}); refusing to run it"
             raise SpecLockedError(msg)
+
+    # -- E25.10 (D122): owner amendment of the analysis block --------------------
+
+    def amend_analysis(
+        self,
+        experiment_id: str,
+        analysis: Analysis | None,
+        *,
+        actor: str,
+        owner_approval: str,
+        sessions_at_amend: int,
+        reason: str = "",
+        is_owner: Callable[[str], bool] | None = None,
+    ) -> ExperimentState:
+        """Append a revision of a registered/running *experiment_id* whose spec differs
+        from the current one only in its ``analysis`` block (D122), plus an
+        ``experiment_events`` row (status unchanged) recording the change. Nothing is
+        rewritten: the registration row and hash stay; the new hash becomes the lock.
+
+        Refused: a non-owner *actor* (*is_owner*; default: not an ``arc*`` system actor),
+        a missing *owner_approval* (D86), a draft (edit it with ``create``), a queued or
+        concluded experiment, an unchanged analysis, or a spec that fails :meth:`verify`.
+        """
+        approval = check_owner_approval(owner_approval)
+        owner = is_owner or (lambda a: _persona(a) is JournalPersona.OWNER)
+        if not owner(actor):
+            msg = f"only the owner may amend an experiment's analysis ({actor} is not)"
+            raise OwnerApprovalError(msg)
+        if sessions_at_amend < 0:
+            msg = f"sessions_at_amend {sessions_at_amend} < 0"
+            raise ExperimentError(msg)
+        st = self.require(experiment_id)
+        if st.status is ExperimentStatus.DRAFT:
+            msg = (
+                f"{experiment_id} is a draft: its spec is not locked yet; revise it with "
+                "`arc experiment create` instead"
+            )
+            raise TransitionError(msg)
+        if st.status not in ACTIVE_STATUSES:
+            msg = (
+                f"{experiment_id} is {st.status.value}: only a registered or running "
+                "experiment's analysis may be amended"
+            )
+            raise TransitionError(msg)
+        self._check_lock(st)
+        new = ExperimentSpec.model_validate(
+            {**st.spec.model_dump(mode="json"), AMENDABLE_KEY: (
+                None if analysis is None else analysis.model_dump(mode="json")
+            )}
+        )  # fmt: skip
+        if without_analysis(new) != without_analysis(st.spec):  # pragma: no cover - by build
+            msg = f"{experiment_id}: an amendment may change only the {AMENDABLE_KEY} block"
+            raise SpecLockedError(msg)
+        if new.analysis == st.spec.analysis:
+            msg = f"{experiment_id}: analysis is already {analysis_text(st.spec.analysis)}"
+            raise ExperimentError(msg)
+        h = spec_hash(new)
+        revision = st.revision + 1
+        detail: dict[str, Any] = {
+            "amended": AMENDED_ANALYSIS,
+            "from": None if st.spec.analysis is None else st.spec.analysis.model_dump(),
+            "to": None if new.analysis is None else new.analysis.model_dump(),
+            "from_hash": st.spec_hash,
+            "to_hash": h,
+            "revision": revision,
+            "amends_revision": st.revision,
+            "sessions_at_amend": sessions_at_amend,
+            "owner_approval": approval,
+            **({"reason": reason} if reason else {}),
+        }
+        with self.conn:
+            try:
+                self.conn.execute(
+                    """INSERT INTO experiments
+                       (experiment_id, revision, spec_version, area, kind, spec, spec_hash,
+                        actor, created_at, amends_revision)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        experiment_id,
+                        revision,
+                        new.spec_version,
+                        new.area.value,
+                        new.kind.value,
+                        canonical_json(new),
+                        h,
+                        actor,
+                        to_db(self._now()),
+                        st.revision,
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:  # the 039 trigger: belt and braces
+                raise SpecLockedError(str(exc)) from exc
+            self._event(
+                experiment_id,
+                st.status,
+                hash_=h,
+                actor=actor,
+                detail=detail,
+                reason_code=ReasonCode.EXPERIMENT_AMENDED,
+                choice=Choice.APPROVED,
+                text=(
+                    f"analysis {analysis_text(st.spec.analysis)} -> "
+                    f"{analysis_text(new.analysis)} at session {sessions_at_amend}; "
+                    f"spec sha256 {st.spec_hash[:12]} -> {h[:12]}"
+                ),
+            )
+        out = self.require(experiment_id)
+        self._check_lock(out)
+        return out
+
+
+def analysis_text(a: Analysis | None) -> str:
+    """``{covariates: [spy_ret], hac_lag: 5}`` or ``none (D44 iid unadjusted)``."""
+    if a is None:
+        return "none (D44 iid unadjusted)"
+    lag = "null" if a.hac_lag is None else str(a.hac_lag)
+    return f"{{covariates: [{', '.join(a.covariates)}], hac_lag: {lag}}}"

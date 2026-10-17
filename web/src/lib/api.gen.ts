@@ -805,6 +805,24 @@ export interface components {
              */
             hac_lag: number | null;
         };
+        /**
+         * AnalysisAmended
+         * @description E25.10 (D122): what a report carries when its spec's analysis was amended mid-run,
+         *     so the report stays reproducible: when, after how many sessions, from what to what.
+         */
+        AnalysisAmended: {
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+            /** @description The analysis before (null = the D44 iid unadjusted) */
+            from: components["schemas"]["Analysis"] | null;
+            /** Sessions At Amend */
+            sessions_at_amend: number;
+            /** @description The analysis the verdict reads from now on */
+            to: components["schemas"]["Analysis"] | null;
+        };
         /** AppInfo */
         AppInfo: {
             /** Git Sha */
@@ -2974,6 +2992,8 @@ export interface components {
             alpha: number;
             /** @description D119: the spec's pre-registered analysis */
             analysis?: components["schemas"]["Analysis"] | null;
+            /** @description D122: the owner amended the spec's analysis mid-run (when, at which session, from what to what); the verdict reads the amended analysis */
+            analysis_amended?: components["schemas"]["AnalysisAmended"] | null;
             /** Area */
             area: string;
             /** Arms */
