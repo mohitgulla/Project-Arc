@@ -227,6 +227,7 @@ def _run(
         limit_price,
         live_gate_status,
         market_snapshot,
+        market_trend,
         next_earnings,
         proposal_betas,
     )
@@ -267,6 +268,7 @@ def _run(
         {root: priced.spot},
         proposal_betas(conn, [root], day),
         quote_ref_time=priced.quote_ref_times(now),
+        trend=None if closing else market_trend(conn, gs, now=now),  # D131 (E28.2)
     )
     st = priced.structure.model_copy(update={"sleeve": proposal.structure.sleeve})
     limit = limit_price(Decimal(st.net_debit_credit), grid_for(st.legs, snap, gs))

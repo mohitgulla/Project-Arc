@@ -414,7 +414,7 @@ class TestSnapshot:
         assert build_snapshot("X", df["close"], df.index[-1]).technicals is None
 
     def test_regime_kind_v6_round_trip_and_old_rows_load(self) -> None:
-        assert KINDS["regime"].schema_version == 6  # E23.1 (D98): range_pos_20d
+        assert KINDS["regime"].schema_version == 7  # E28.2 (D131): sma100
         snap = build_snapshot_from_bars("NVDA", _bars_from(_nvda()), AS_OF, benchmark=_spy())
         stored = json.loads(
             json.dumps(RegimePayload.model_validate(snap.model_dump()).model_dump(mode="json"))

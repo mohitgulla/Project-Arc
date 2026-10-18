@@ -93,6 +93,7 @@ class TechnicalFeatures(BaseModel):
     close: float
     sma20: float | None = None
     sma50: float | None = None
+    sma100: float | None = Field(None, description="D131 (E28.2): short_premium_regime's SMA100")
     sma200: float | None = None
     pct_vs_sma20: float | None = Field(None, description="close / SMA20 - 1")
     pct_vs_sma50: float | None = None
@@ -306,6 +307,7 @@ def compute_technicals(
 
     sma20 = _sma(c, 20) if need("sma20", 20) else None
     sma50 = _sma(c, 50) if need("sma50", 50) else None
+    sma100 = _sma(c, 100) if need("sma100", 100) else None
     sma200 = _sma(c, 200) if need("sma200", 200) else None
     slope = None
     if need("sma50_slope_20d", 70):
@@ -356,6 +358,7 @@ def compute_technicals(
         close=close,
         sma20=sma20,
         sma50=sma50,
+        sma100=sma100,
         sma200=sma200,
         pct_vs_sma20=_pct(close, sma20),
         pct_vs_sma50=_pct(close, sma50),

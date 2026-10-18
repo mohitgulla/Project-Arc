@@ -208,6 +208,10 @@ class TickRules(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+#: D131 (E28.2): SMA lengths the short_premium_regime gate may compare SPY against (the
+#: regime technicals carry sma50 / sma200; 100 is computed from the same daily bars).
+REGIME_GATE_MAS: frozenset[int] = frozenset({50, 100, 200})
+
 #: E20.4 (D85): ArcSettings fields that moved to config/universe.yaml (`active_max`,
 #: `sizes.<tier>`, `floors.<tier>`); passing one is refused, not silently ignored.
 MOVED_UNIVERSE_FIELDS: frozenset[str] = frozenset(
@@ -357,6 +361,34 @@ class ArcSettings(BaseSettings):
     earnings_blackout: bool = Field(
         default=True,
         description="Block short premium through earnings unless overridden.",
+    )
+    # D131 (E28.2): gate rule short_premium_regime (market reference SPY vs its SMA).
+    regime_gate_enabled: bool = Field(
+        default=True,
+        description=(
+            "Gate rule short_premium_regime: a new open of a regime_gate_blocked_kinds "
+            "structure fails while SPY's daily close < SMA(regime_gate_ma) x (1 + "
+            "regime_gate_buffer_pct); missing / stale (> 2 sessions) input fails closed for "
+            "those kinds. Off = the pre-D131 gate (rollback)."
+        ),
+    )
+    regime_gate_ma: int = Field(
+        default=200,
+        description="short_premium_regime: the SPY simple moving average length (50, 100, 200).",
+    )
+    regime_gate_buffer_pct: Annotated[float, Field(ge=-0.05, le=0.05)] = Field(
+        default=0.0,
+        description=(
+            "short_premium_regime: the threshold is SMA x (1 + this); > 0 blocks earlier "
+            "(SPY must clear the SMA by this share), < 0 lets SPY dip below it first."
+        ),
+    )
+    regime_gate_blocked_kinds: Literal["bull_put,iron_condor", "bull_put", "iron_condor"] = Field(
+        default="bull_put,iron_condor",
+        description=(
+            "short_premium_regime: the structures it blocks below the SMA (bull put = a put "
+            "credit vertical). Bear calls, debit kinds and closes always pass."
+        ),
     )
     max_open_positions: Annotated[int, Field(ge=1)] = Field(
         default=10,  # D97: was 8 (cash profiles: short 5 + swing 5 sleeve slots)
@@ -1397,6 +1429,15 @@ class ArcSettings(BaseSettings):
         """E7.13: a precedence list names each source once."""
         if len(set(v)) != len(v):
             msg = f"iv_series_sources lists a source twice: {v}"
+            raise ValueError(msg)
+        return v
+
+    @field_validator("regime_gate_ma")
+    @classmethod
+    def _regime_gate_ma(cls, v: int) -> int:
+        """D131 (E28.2): only the SMAs the regime technicals carry."""
+        if v not in REGIME_GATE_MAS:
+            msg = f"regime_gate_ma must be one of {sorted(REGIME_GATE_MAS)}, got {v}"
             raise ValueError(msg)
         return v
 
