@@ -256,6 +256,55 @@ def ticker_price_frame(px: pd.DataFrame, ref: pd.DataFrame | None) -> pd.DataFra
     else:
         out["beta_60"] = out["corr_60"] = out["idio_vol_60"] = np.nan
     out["_har_rv"] = har_forecast(r)
+    out = pd.concat([out, m1_baseline_frame(c, r, out["rv20"], out["_har_rv"])], axis=1)
+    return out
+
+
+# ===========================================================================
+# v1 panel: M1 baselines (E27.2) — HAR per horizon, historical quantiles
+# ===========================================================================
+
+#: M1 forecast horizons (sessions) and quantile levels (E27.2, D126).
+M1_HORIZONS: tuple[int, ...] = (5, 10, 21, 42)
+M1_QUANTILES: tuple[float, ...] = (0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95)
+#: Trailing standardised returns the historical-quantile baseline reads (and its minimum).
+HQ_WINDOW = 252
+HQ_MIN_OBS = 126
+#: Sessions of close history below which a ticker is ``history_short``.
+HISTORY_SHORT_SESSIONS = 252
+
+
+def qtag(p: float) -> str:
+    """``0.05`` → ``"05"`` (the quantile tag of feature names)."""
+    return f"{round(p * 100):02d}"
+
+
+def m1_baseline_frame(
+    c: pd.Series, r: pd.Series, rv20: pd.Series, har21: pd.Series
+) -> pd.DataFrame:
+    """M1 baselines kept as features (E27.2), per date of one ticker.
+
+    * ``har_rv_h{h}``: the HAR-RV forecast of the next *h* sessions' annualised vol
+      (:func:`har_forecast` at horizon *h*; ``h = 21`` is the panel's ``_har_rv``).
+    * ``hq_q{p}_h{h}``: the historical-quantile forecast of the *h*-session log return.
+      Each past *h*-session log return ending at s ≤ t is standardised by the rv20 known
+      when it started (``rv20[s-h]·√(h/252)``); the empirical *p*-quantile of the last
+      :data:`HQ_WINDOW` of them (≥ :data:`HQ_MIN_OBS`) is rescaled by today's HAR forecast
+      ``har_rv_h{h}[t]·√(h/252)``. Every input is dated ≤ t.
+    * ``history_short``: 1 when the ticker has no close 252 sessions back.
+    """
+    out = pd.DataFrame(index=c.index)
+    for h in M1_HORIZONS:
+        har = har21 if h == HAR_HORIZON else har_forecast(r, horizon=h)
+        out[f"har_rv_h{h}"] = har
+        tau = math.sqrt(h / TRADING_DAYS)
+        lr = np.log(c / c.shift(h))
+        z = lr / (rv20.shift(h) * tau)
+        z = z.where(np.isfinite(z))
+        roll = z.rolling(HQ_WINDOW, min_periods=HQ_MIN_OBS)
+        for p in M1_QUANTILES:
+            out[f"hq_q{qtag(p)}_h{h}"] = roll.quantile(p, interpolation="linear") * har * tau
+    out["history_short"] = c.shift(HISTORY_SHORT_SESSIONS).isna().astype(float)
     return out
 
 

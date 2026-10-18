@@ -293,10 +293,20 @@ class ExitModelConfig(BaseModel):
     n_paths: int = Field(20_000, ge=100)
     seed: int = Field(20260927, ge=0)
     iv_model: IvModel = Field(default_factory=IvModel)
-    path_vol: Literal["realized_forecast", "iv"] = Field(
+    path_vol: Literal["realized_forecast", "iv", "m1"] = Field(
         "realized_forecast",
         description="Vol the paths move at: the realised-vol forecast (mean HV20/HV60) when "
-        "the caller has one, else IV; 'iv' always uses IV. Marks are always priced at IV.",
+        "the caller has one, else IV; 'iv' always uses IV; 'm1' (E27.2) uses the M1 "
+        "realised-vol forecast with Student-t shocks when the caller passes M1 path "
+        "params, else falls back to 'realized_forecast'. Marks are always priced at IV.",
+    )
+    # E27.2: omitted from dumps at its default so existing config hashes (menu-cache
+    # keys, experiment overlays) are unchanged.
+    drift_source: Literal["none", "m1_median"] = Field(
+        "none",
+        exclude_if=lambda v: v == "none",
+        description="'m1_median' moves the paths at M1's median drift when the caller "
+        "passes M1 path params (a ranking scenario, never the pricing measure).",
     )
 
 

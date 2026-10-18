@@ -50,14 +50,86 @@ def add_ml_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> N
     q.add_argument("--sessions", type=int, default=1, help="Sessions ending --day")
     q.add_argument("--all", action="store_true", help="Also list matching features")
 
+    m = msub.add_parser("m1", help="Model M1: move & vol distribution forecast (E27.2)")
+    m1sub = m.add_subparsers(dest="m1_command", required=True)
+    t = m1sub.add_parser("train", help="Walk-forward eval + keep rule + final fit (dev only)")
+    t.add_argument("--data", type=Path, default=DEFAULT_DATA, help="History data dir")
+    t.add_argument("--features", type=Path, default=None, help="Default <data>/ml/features")
+    t.add_argument("--out", type=Path, default=None, help="Default <data>/ml/models/m1")
+    t.add_argument("--tickers", default=None, help="Comma list (default: every stored ticker)")
+    t.add_argument("--rounds", type=int, default=None, help="Boosting rounds (default fixed)")
+    t.add_argument("--report", type=Path, default=None, help="Also write the research report")
+    r = m1sub.add_parser("report", help="Render docs/RESEARCH/ml-m1.md from a trained version")
+    r.add_argument("--model", type=Path, required=True, help="data/ml/models/m1/<version>")
+    r.add_argument("--out", type=Path, default=REPO / "docs" / "RESEARCH" / "ml-m1.md")
+    r.add_argument("--card", type=Path, default=None, help="Also write model_card.md here")
+
 
 def run_ml(args: argparse.Namespace) -> int:
+    if args.ml_command == "m1":
+        return _m1(args)
     cmd = args.features_command
     if cmd == "list":
         return _list(args)
     if cmd == "build":
         return _build(args)
     return _parity(args)
+
+
+def _git_sha() -> str:
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(REPO), "rev-parse", "HEAD"],  # noqa: S607
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    return out.stdout.strip()
+
+
+def _m1(args: argparse.Namespace) -> int:
+    from arc.ml.m1.report import render_card, render_report
+
+    if args.m1_command == "report":
+        vdir = Path(args.model)
+        Path(args.out).write_text(render_report(vdir))
+        if args.card:
+            Path(args.card).write_text(render_card(vdir))
+        sys.stdout.write(f"wrote {args.out}\n")
+        return 0
+    from arc.ml.m1.train import NUM_ROUNDS, train_m1
+
+    data = Path(args.data)
+    feats = Path(args.features) if args.features else data / "ml" / "features"
+    out = Path(args.out) if args.out else data / "ml" / "models" / "m1"
+
+    def progress(s: str) -> None:
+        sys.stderr.write(s + "\n")
+
+    run = train_m1(
+        data,
+        feats,
+        out,
+        code_sha=_git_sha(),
+        tickers=_split(args.tickers) if args.tickers else None,
+        rounds=args.rounds or NUM_ROUNDS,
+        progress=progress,
+    )
+    (run.model_dir / "model_card.md").write_text(render_card(run.model_dir))
+    if args.report:
+        Path(args.report).write_text(render_report(run.model_dir))
+    sys.stdout.write(
+        f"{run.model_dir}: {run.rows['dataset']} rows, "
+        f"{run.timings['total_s']:.0f}s; keep: "
+        + ", ".join(f"{r.kind} h{r.h}={r.source}" for r in run.decisions.itertuples())
+        + "\n"
+    )
+    return 0
 
 
 def _list(args: argparse.Namespace) -> int:
