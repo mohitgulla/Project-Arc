@@ -867,7 +867,7 @@ class _PitCorr:
     (closes strictly before the session, the live ``betas`` job's formula, rounded as
     stored), computed lazily per pair the rule asks about rather than for every pair
     of the universe each session. Each name's split-adjusted (else raw) closes.
-    Unknown (< 40 returns) is left out, which the rule counts as correlated. Per-run
+    Unknown (< 40 returns) is left out, which the rule treats as not correlated. Per-run
     cache, no global state.
     """
 

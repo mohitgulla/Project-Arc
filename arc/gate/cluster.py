@@ -5,8 +5,8 @@ A new open on ticker *T* is the ``max_names + 1``-th name of its cluster when at
 in-flight opens) have ``corr(T, U) > cluster_cap_corr_threshold`` (0.7). The owner rule
 is at most 2 open names per cluster, so that open fails the gate's ``cluster_cap`` rule.
 
-* A pair with no stored correlation counts as **correlated** (fail closed, like a
-  missing β = 1.0) and is named in the violation.
+* A pair with no stored correlation counts as **not correlated** (owner, D131 revision:
+  no data is not evidence of a cluster), so it never adds a peer.
 * Same-ticker positions are not peers (other rules govern a second structure on *T*).
 * Direction-agnostic in v1: a bull put and a bear call on two correlated names count
   alike (E7.18 measured same-cluster names regardless of direction).
@@ -34,12 +34,11 @@ def corr_key(a: str, b: str) -> str:
 
 
 class ClusterCheck(NamedTuple):
-    """*ticker*'s open cluster peers: ``peers`` (corr above the threshold or unknown,
-    sorted) and ``missing`` (the subset with no stored correlation)."""
+    """*ticker*'s open cluster peers: ``peers`` (stored corr above the threshold,
+    sorted). Pairs with no stored correlation are not peers."""
 
     ticker: str
     peers: tuple[str, ...]
-    missing: tuple[str, ...]
     max_names: int
     threshold: float
 
@@ -49,11 +48,8 @@ class ClusterCheck(NamedTuple):
         return len(self.peers) >= self.max_names
 
     def describe(self) -> str:
-        """``AMD, AVGO (no correlation stored for AVGO: counted)`` for prompts and violations."""
-        text = ", ".join(self.peers) or "none"
-        if self.missing:
-            text += f" (no correlation stored for {', '.join(self.missing)}: counted)"
-        return text
+        """``AMD, AVGO`` for prompts and violations."""
+        return ", ".join(self.peers) or "none"
 
 
 def cluster_check(
@@ -67,15 +63,11 @@ def cluster_check(
     """*ticker*'s cluster peers among *open_names* (see the module doc)."""
     me = ticker.upper()
     peers: set[str] = set()
-    missing: set[str] = set()
     for name in open_names:
         other = name.upper()
         if other == me:
             continue
         c = correlations.get(corr_key(me, other))
-        if c is None:
-            missing.add(other)
+        if c is not None and c > threshold:
             peers.add(other)
-        elif c > threshold:
-            peers.add(other)
-    return ClusterCheck(me, tuple(sorted(peers)), tuple(sorted(missing)), max_names, threshold)
+    return ClusterCheck(me, tuple(sorted(peers)), max_names, threshold)
