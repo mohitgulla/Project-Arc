@@ -269,8 +269,11 @@ def test_publish_is_pure_and_complete() -> None:
         assert (np.diff(q, axis=1) >= 0).all()
         assert out1[f"m1_rv_h{h}"].gt(0).all()
     assert out1["m1_move_vs_implied_h21"].isna().tolist() == [False, False, True]
-    # row C has no HQ history and no IV: log-return quantiles fall back to NaN-safe IV LN
-    assert out1.loc[2, "m1_q50_h21"] != out1.loc[2, "m1_q50_h21"]  # NaN (no iv, no hq)
+    # row C has no HQ history and no IV: log-return quantiles fall back to a zero-drift
+    # lognormal at the realised-vol scale (HAR → rv20), so they stay finite
+    q_c = out1.loc[2, [f"m1_q{qtag(p)}_h21" for p in LV]].to_numpy(dtype=float)
+    assert np.isfinite(q_c).all() and (np.diff(q_c) > 0).all()
+    assert out1.loc[2, "m1_q50_h21"] < 0  # −½σ²τ
     assert set(out1["m1_direction"].dropna()) <= {-1.0, 0.0, 1.0}
 
 

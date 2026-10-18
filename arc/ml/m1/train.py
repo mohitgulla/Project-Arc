@@ -327,6 +327,7 @@ class FoldResult:
     q: dict[tuple[str, int, str], np.ndarray] = field(default_factory=dict)
     q_raw: dict[tuple[str, int, str], np.ndarray] = field(default_factory=dict)
     offsets: dict[tuple[str, int, str], dict[float, float]] = field(default_factory=dict)
+    q_roll: dict[tuple[str, int, str], np.ndarray] = field(default_factory=dict)
     crossing: dict[tuple[str, int], float] = field(default_factory=dict)
     cal_cov_err: dict[tuple[str, int, str], float] = field(default_factory=dict)
     fit_seconds: float = 0.0
@@ -379,8 +380,14 @@ def run_fold(
     for h in horizons:
         for kind in KINDS:
             test = rows_for(df, kind, h, plan.test_start, plan.test_end + dt.timedelta(days=1))
-            res.rows[(kind, h)] = test.reset_index(drop=True)
             raw_test = raw_predictions(test_fs, test, kind, h, features)
+            # evaluate every model on the same rows: target and all forecasts finite
+            ok_t = np.isfinite(target(test, kind, h))
+            for qt in raw_test.values():
+                ok_t &= np.isfinite(qt).all(axis=1)
+            test = test[ok_t].reset_index(drop=True)
+            raw_test = {k: v[ok_t] for k, v in raw_test.items()}
+            res.rows[(kind, h)] = test
             parts = [
                 (rows_for(df, kind, h, b0, b1), fs)
                 for (b0, b1), fs in zip(halves[h], cal_fs, strict=True)
@@ -391,6 +398,9 @@ def run_fold(
                     [raw_predictions(fs, c, kind, h, features)[name] for c, fs in parts]
                 )
             y_cal = np.concatenate([target(c, kind, h) for c, _ in parts])
+            d_cal = np.concatenate([c["date"].to_numpy() for c, _ in parts])
+            y_test = target(test, kind, h)
+            d_test = test["date"].to_numpy()
             for name, qt in raw_test.items():
                 res.q_raw[(kind, h, name)] = qt
                 if name == "iv_lognormal":
@@ -403,9 +413,47 @@ def run_fold(
                 res.cal_cov_err[(kind, h, name)] = coverage_error(
                     mt.coverage(y_cal[ok], apply_offsets(raw_cal[name][ok], offs, lv))
                 )
+                # DIAGNOSTIC ONLY (post-hoc, not the keep rule): rolling CQR. Per test
+                # month, the last CAL_SESSIONS sessions of OOS predictions whose labels end
+                # before the month (cal block ∪ earlier test months): what a nightly live
+                # refresh of the offsets would hold.
+                pool_q = np.vstack([raw_cal[name], qt])
+                pool_y = np.concatenate([y_cal, y_test])
+                pool_d = np.concatenate([d_cal, d_test])
+                pool_i = session_index(pd.DataFrame({"date": pool_d}), s)
+                out = np.empty_like(qt)
+                for m0, idx in rolling_blocks(d_test):
+                    hi = _idx(s, m0) - h - EMBARGO
+                    sel = (pool_i >= hi - CAL_SESSIONS) & (pool_i < hi)
+                    out[idx] = apply_offsets(qt[idx], fit_offsets(pool_q[sel], pool_y[sel], lv), lv)
+                res.q_roll[(kind, h, name)] = out
             if "lgbm" in raw_test:
                 res.crossing[(kind, h)] = sort_quantiles(raw_test["lgbm"])[1]
     return res, test_fs
+
+
+def rolling_blocks(dates: np.ndarray) -> list[tuple[dt.date, np.ndarray]]:
+    """(first day of month, row indices) for each calendar month present in *dates*."""
+    keys = np.array([(d.year, d.month) for d in dates], dtype=np.int64).reshape(-1, 2)
+    out = []
+    for y, m in sorted({(int(a), int(b)) for a, b in keys}):
+        idx = np.flatnonzero((keys[:, 0] == y) & (keys[:, 1] == m))
+        out.append((dt.date(y, m, 1), idx))
+    return out
+
+
+def final_offsets(
+    res: FoldResult, kind: str, h: int, name: str, last_n: int = CAL_SESSIONS
+) -> dict[float, float]:
+    """Offsets for the shipped model: the fold's test-year OOS rows in the last *last_n*
+    sessions with labels inside dev (what the nightly refresh would hold at dev end)."""
+    rows = res.rows[(kind, h)]
+    s = dev_sessions()
+    si = session_index(rows, s)
+    sel = si >= si.max() - last_n + 1
+    return fit_offsets(
+        res.q_raw[(kind, h, name)][sel], target(rows, kind, h)[sel], list(M1_QUANTILES)
+    )
 
 
 def metric_rows(res: FoldResult, horizons: Sequence[int] = M1_HORIZONS) -> pd.DataFrame:
@@ -453,6 +501,10 @@ def metric_rows(res: FoldResult, horizons: Sequence[int] = M1_HORIZONS) -> pd.Da
                     }
                     for p, c in zip(lv, cov, strict=True):
                         rec[f"cov_{qtag(p)}"] = float(c)
+                    qr = res.q_roll.get((kind, h, m))
+                    if qr is not None:  # post-hoc diagnostic: monthly rolling CQR
+                        rec["pinball_roll"] = float(mt.pinball(y[mask], qr[mask], lv).mean())
+                        rec["cov_err_roll"] = coverage_error(mt.coverage(y[mask], qr[mask]))
                     med = q[mask, lv.index(0.5)]
                     if kind == "log_ret":
                         nz = med != 0
@@ -886,7 +938,8 @@ def train_m1(
             h=int(r.h),
             source=r.source,  # type: ignore[arg-type]
             offsets={
-                qtag(p): v for p, v in last.offsets[(str(r.kind), int(r.h), str(r.source))].items()
+                qtag(p): v
+                for p, v in final_offsets(last, str(r.kind), int(r.h), str(r.source)).items()
             },
             har_iv=final.har_iv[int(r.h)] if r.kind == "rv" else None,
         )
@@ -969,12 +1022,36 @@ def train_m1(
     day = df[df["date"] == last_day].reset_index(drop=True)
     publish(model, day)
     t_pred = time.monotonic() - t_pred
+    # the all-LightGBM path (what a future version that keeps every target would cost)
+    t_lgbm = time.monotonic()
+    all_lgbm = M1Model(
+        man.model_copy(
+            update={
+                "targets": [
+                    t.model_copy(
+                        update={
+                            "source": "lgbm",
+                            "offsets": {
+                                qtag(p): v
+                                for p, v in final_offsets(last, t.kind, t.h, "lgbm").items()
+                            },
+                        }
+                    )
+                    for t in man.targets
+                ]
+            }
+        ),
+        final.boosters,
+    )
+    publish(all_lgbm, day)
+    t_lgbm = time.monotonic() - t_lgbm
     sizes = {p.name: p.stat().st_size for p in sorted((vdir / "lgbm").glob("*.txt"))}
     timings = {
         "load_dataset_s": t_load,
         "fold_fits_s": sum(r.fit_seconds for r in results),
         "final_fit_s": final.seconds,
         "predict_one_day_s": t_pred,
+        "predict_one_day_all_lgbm_s": t_lgbm,
         "predict_one_day_rows": float(len(day)),
         "total_s": time.monotonic() - t0,
     }

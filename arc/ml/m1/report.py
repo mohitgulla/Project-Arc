@@ -126,6 +126,22 @@ def render_report(vdir: Path) -> str:
     w.append(_md(pts))
     w.append("\n## Coverage tables\n")
     w.append(coverage_section(m))
+    if "cov_err_roll" in m.columns:
+        w.append("\n## Diagnostic: monthly rolling CQR (post-hoc, not the keep rule)\n")
+        w.append(
+            "The pre-registered CQR fits offsets once, on the 252 sessions before each test "
+            "year; drift between that block and the test year shows as `cov_err` far above "
+            "`cov_err_cal`. This diagnostic refits the offsets at the start of every test "
+            "month on the last 252 sessions of out-of-sample predictions whose labels end "
+            "before the month (purge h + 5), i.e. what a nightly live offset refresh would "
+            "hold. It is reported for the record only; the shipped decision above does not "
+            "use it, and changing the protocol to it needs a new pre-registration.\n"
+        )
+        cols = ["fold", "kind", "h", "model", "pinball", "pinball_roll", "cov_err", "cov_err_roll"]
+        r = m[(m.split == "All") & m.model.isin(["lgbm", "baseline"])][cols].copy()
+        for c in ("cov_err", "cov_err_roll"):
+            r[c] = r[c].map(_pct)
+        w.append(_md(r))
     w.append("\n## Quantile crossing before sorting (LightGBM)\n")
     w.append(_md(cr))
     w.append("\n## Excursions and move-vs-implied (shipped log-return model)\n")
@@ -166,10 +182,12 @@ def render_report(vdir: Path) -> str:
         f"{tm['fold_fits_s']:.0f} s; final fit {tm['final_fit_s']:.0f} s; whole run "
         f"{tm['total_s']:.0f} s ({man.lgb_params.get('num_threads')} threads, "
         f"{man.num_rounds} rounds).\n"
-        f"- Predict one session ({int(tm['predict_one_day_rows'])} names, all 56 models + "
-        f"conformal + published features, incl. loading the text dumps): "
-        f"{tm['predict_one_day_s']:.2f} s, the nightly C500 cost.\n"
-        f"- Model size: {len(tm['sizes'])} text dumps, {sz / 1e6:.1f} MB total.\n"
+        f"- Predict one session ({int(tm['predict_one_day_rows'])} names; shipped model = "
+        f"baselines + conformal + published features, incl. loading the artefact): "
+        f"{tm['predict_one_day_s']:.2f} s, the nightly C500 cost. The all-LightGBM path "
+        f"(56 boosters) takes {tm.get('predict_one_day_all_lgbm_s', float('nan')):.2f} s.\n"
+        f"- Model size: {len(tm['sizes'])} LightGBM text dumps, {sz / 1e6:.1f} MB total "
+        f"(written for every target so a later version can switch without retraining).\n"
     )
     return "\n".join(w) + "\n"
 

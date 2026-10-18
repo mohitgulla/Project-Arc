@@ -128,12 +128,15 @@ def raw_lgbm(
 def raw_baseline(
     kind: str, h: int, df: pd.DataFrame, har_iv: HarIv | None, levels: Sequence[float]
 ) -> np.ndarray:
-    """Uncalibrated (n, K) baseline quantiles: historical quantiles (IV lognormal where
-    they are missing) for ``log_ret``; HAR-IV for ``rv``."""
+    """Uncalibrated (n, K) baseline quantiles: historical quantiles for ``log_ret`` (a
+    zero-drift lognormal at IV30, else at the HAR → rv20 scale, where they are missing);
+    HAR-IV for ``rv``."""
     if kind == "log_ret":
         q = df.reindex(columns=hq_columns(h, levels)).to_numpy(dtype=float, copy=True)
         iv = df["iv30"].to_numpy(dtype=float)
-        ln = iv_lognormal_quantiles(np.where(iv > 0, iv, np.nan), h, levels)
+        # σ for the lognormal fallback: IV30, else the HAR → rv20 realised-vol scale
+        sig = np.where(iv > 0, iv, rv_scale(df, h))
+        ln = iv_lognormal_quantiles(sig, h, levels)
         miss = ~np.isfinite(q).all(axis=1)
         q[miss] = ln[miss]
         return q
