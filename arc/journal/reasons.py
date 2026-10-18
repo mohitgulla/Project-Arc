@@ -135,6 +135,8 @@ class ReasonCode(StrEnum):
     NOT_STRUCTURED = "not_structured"  # E5.7: no structure and no reason from Quant
     OVER_BUDGET = "over_budget"  # E5.7: ranked beyond pipeline_max_shortlist
     SLEEVE_FULL = "sleeve_full"  # E22.2 (D97): a DTE sleeve with no free slot, no menu
+    # D131 (E28.2): SPY below its SMA: bull puts / iron condors taken off the menus
+    REGIME_GATE_CREDIT_OFF = "regime_gate_credit_off"
     # account profile (D25): the profile maps the stance to no structure
     PROFILE_NO_NEUTRAL = "profile:no_neutral_structure"
     PROFILE_NO_STRUCTURE = "profile:no_structure"
@@ -249,6 +251,7 @@ class ReasonCode(StrEnum):
     GATE_DAY_TRADES = "gate:account_profile_day_trades"
     GATE_LIVE_SIZE_CAP = "gate:live_size_cap"  # D70 (E11.3)
     GATE_SLEEVE_POSITIONS = "gate:sleeve_max_positions"  # E22.1 (D97)
+    GATE_SHORT_PREMIUM_REGIME = "gate:short_premium_regime"  # D131 (E28.2)
     # approval (E6.1)
     OWNER_APPROVE = "owner_approve"
     OWNER_REJECT = "owner_reject"
@@ -519,6 +522,8 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.GATE_LIVE_SIZE_CAP: "Gate: live size cap (live gate not met)",
     ReasonCode.GATE_SLEEVE_POSITIONS: "Gate: DTE sleeve full",
     ReasonCode.SLEEVE_FULL: "No menu: DTE sleeve full",
+    ReasonCode.GATE_SHORT_PREMIUM_REGIME: "Gate: SPY below its trend (no new bull puts / condors)",
+    ReasonCode.REGIME_GATE_CREDIT_OFF: "Menus: bull puts / condors off (SPY below its trend)",
     ReasonCode.OWNER_APPROVE: "Owner approved",
     ReasonCode.OWNER_REJECT: "Owner rejected",
     ReasonCode.AUTO_APPROVE: "Auto-approved",

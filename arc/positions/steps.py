@@ -588,6 +588,7 @@ def _open_leg(
         limit_price,
         live_size_cap,
         market_snapshot,
+        market_trend,
         next_earnings,
         price_structure,
         proposal_betas,
@@ -629,6 +630,7 @@ def _open_leg(
         {t: priced.spot},
         proposal_betas(ctx.conn, [t], _today(ctx)),
         quote_ref_time=priced.quote_ref_times(now),  # E10.2d: paired arm replay
+        trend=market_trend(ctx.conn, settings, now=now),  # D131 (E28.2)
     )
     limit = limit_price(st.net_debit_credit, grid_for(st.legs, market, settings))
     band = band_for(st, limit, market, settings)

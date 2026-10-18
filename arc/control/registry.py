@@ -906,6 +906,49 @@ _STATIC: tuple[Tunable, ...] = (
         "Gate rule earnings_blackout: no new debit entries spanning the next earnings date.",
         Risk.FALSE,
     ),
+    # D131 (E28.2): short-premium regime gate (SPY close vs its SMA).
+    _s(
+        "regime_gate_enabled",
+        Group.RISK,
+        _B,
+        "Gate rule short_premium_regime: no new bull puts / iron condors while SPY closes "
+        "below its moving average (missing or stale SPY input blocks them too). Off = the "
+        "gate without this rule.",
+        Risk.FALSE,
+        ref="D131",
+    ),
+    _s(
+        "regime_gate_ma",
+        Group.RISK,
+        _I,
+        "short_premium_regime: the SPY simple moving average length in sessions (50, 100 or 200).",
+        Risk.ANY,
+        unit="sessions",
+        min=50,
+        max=200,
+        ref="D131",
+    ),
+    _s(
+        "regime_gate_buffer_pct",
+        Group.RISK,
+        _F,
+        "short_premium_regime: threshold = SMA x (1 + buffer). Above 0 blocks while SPY is "
+        "within that share above the SMA; below 0 lets SPY dip that far under it first.",
+        Risk.DOWN,
+        unit="pct",
+        min=-0.05,
+        max=0.05,
+        ref="D131",
+    ),
+    _s(
+        "regime_gate_blocked_kinds",
+        Group.RISK,
+        ValueType.CHOICE,
+        "short_premium_regime: which credit structures it blocks below the SMA.",
+        Risk.ORDER,
+        choices=("bull_put,iron_condor", "bull_put", "iron_condor"),
+        ref="D131",
+    ),
     # -- entries -----------------------------------------------------------------
     _s(
         "data.alpaca_history_feed",
