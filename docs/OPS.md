@@ -3410,3 +3410,51 @@ and chain-liquidity features carry a documented vendor tolerance).
 ("promote, don't copy"); `tests/test_ml_anatomy_golden.py` pins its output, regenerate only
 for an intended formula change with `ARC_REGEN_GOLDEN=1`. ML deps: `uv sync --extra ml`
 (scikit-learn, lightgbm; imported lazily).
+
+## E27.2 Model M1: move & vol distribution forecast (D126)
+
+`arc/ml/m1/` forecasts, per ticker and day, calibrated quantiles {5, 10, 25, 50, 75, 90,
+95}% of the h-session log return and realised vol, h ∈ {5, 10, 21, 42}. Structure
+agnostic; **never a gate input** (import-linter: `arc.gate` may not import `arc.ml`).
+
+- `targets.py`: forward labels from OHLC cut at the dev end (`log_ret_h`, `rv_h`,
+  `max_up_h`/`max_dn_h` in σ units, `move_vs_implied_h`).
+- Baselines live in the feature store (`compute.m1_baseline_frame`): `har_rv_h{h}` (HAR
+  per horizon), `hq_q{p}_h{h}` (trailing 252 standardised h-session returns × HAR vol) and
+  `history_short`; plus HAR-IV and the IV lognormal (`baselines.py`).
+- `train.py`: pooled LightGBM quantile models on a vol-standardised target, walk-forward
+  test 2022 / test 2023 (purge h + 5-session embargo), cross-fitted CQR on the 252
+  sessions before each test cut, and the pre-registered keep rule per target (both years,
+  DM p < 0.05, coverage error ≤ 3 pts) — else that target ships its baseline.
+- `predict.py` is pure (features → quantiles → the published `m1_*` features); the
+  Student-t tail fit also feeds `path_params()` for the MC hook.
+
+      nice -n 10 .venv/bin/arc ml m1 train --data data [--report docs/RESEARCH/ml-m1.md]
+      .venv/bin/arc ml m1 report --model data/ml/models/m1/<version> [--card <path>]
+
+Needs the `ml` extra (`uv sync --extra ml`; CI doesn't sync it, so the booster tests
+skip there). On macOS lightgbm also needs OpenMP: `brew install libomp`. The shipped
+artefact is diagnosed and pre-registered: change `FOLDS`, `LGB_PARAMS`, `NUM_ROUNDS`, the
+keep rule or the CQR scheme only with a new pre-registration (it changes the version).
+
+`train` reads dev only (2020-01 → 2023-12; `HoldoutReadError` past it) and writes
+`data/ml/models/m1/<version>/`: LightGBM text dumps (`lgbm/*.txt`, sha256 in
+`manifest.json`), the manifest (targets, CQR offsets, HAR-IV coefficients, windows,
+config hashes, data digest, code sha), `features.json`, `FEATURE_SCHEMA_VERSION`,
+`eval_*.csv`, `timings.json`, `model_card.md` and `oos_m1_features.parquet`
+(out-of-sample m1 features for 2022–2023, for M2 and the backtest). The version hashes
+the feature schema, data digest, params and protocol, so the same data rebuilds the same
+directory byte-identically. Same resource etiquette as the feature build (no
+`data/backtest/queue.json`, `nice -n 10`, 6 threads). `load_model()` refuses a stale
+feature schema.
+
+**MC hook.** `ExitModelConfig.path_vol = "m1"` moves the paths at `M1PathParams.sigma`
+with Student-t(ν) shocks; `drift_source = "m1_median"` adds M1's median drift. Both apply
+only when the caller passes `m1=` to `model_exits`; otherwise `m1` falls back to
+`realized_forecast`. Defaults are unchanged (and `drift_source` is omitted from config
+dumps at its default, so menu-cache and overlay hashes do not move). The backtest
+selects it per arm (E27.5).
+
+**Stance proxy.** `m1_direction` (+1 / −1 / 0 = sign of the h21 median when |median| >
+0.25 × IQR) and `predict.m1_trend_labels()` (bull / bear / sideways) are the M1 proxy
+for the E7.20 grid; `arc/backtest/stance.py` does not exist yet, so E7.20 registers it.
