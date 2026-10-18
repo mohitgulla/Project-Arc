@@ -816,6 +816,21 @@ _STATIC: tuple[Tunable, ...] = (
         aliases=("per_underlying_cap_reduced",),
         ref="D116",
     ),
+    # D131 (E28.3): portfolio open-risk cap.
+    _s(
+        "max_open_risk_pct",
+        Group.RISK,
+        _F,
+        "Portfolio open-risk cap: deployed max loss (open + in-flight opens) plus the new "
+        "open's max loss as a share of equity. Gate rule open_risk_cap; also the sizing "
+        "headroom. 100% = effectively off.",
+        Risk.UP,
+        unit="pct",
+        min=0.10,
+        max=1.0,
+        hard_ceiling=1.0,
+        ref="D131",
+    ),
     _s(
         "alloc_tier_threshold_pct",
         Group.RISK,

@@ -7603,6 +7603,18 @@
             "title": "Max Loss By Underlying",
             "type": "object"
           },
+          "max_open_risk_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D131 (E28.3): portfolio open-risk cap (gate rule open_risk_cap) as a share of equity; deployed_pct is measured against it. None: not passed or the 100% rollback",
+            "title": "Max Open Risk Pct"
+          },
           "per_underlying_cap": {
             "anyOf": [
               {

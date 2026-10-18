@@ -29,6 +29,10 @@ PRE_D85_ENV: dict[str, str] = {
     # and condors are not refused for the missing SPY regime row (fail closed). The
     # shipped default (on) is tested in tests/test_e282_regime_gate.py.
     "ARC_REGIME_GATE_ENABLED": "false",
+    # D131 (E28.3): the portfolio open-risk cap at its 100% rollback, so the fixture
+    # pipelines' prompts, sizing and Tower goldens stay byte-identical. The shipped 40%
+    # is tested in tests/test_e283_open_risk_cap.py and tests/test_gate_open_risk.py.
+    "ARC_MAX_OPEN_RISK_PCT": "1.0",
 }
 
 

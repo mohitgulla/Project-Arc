@@ -217,6 +217,8 @@ class ReasonCode(StrEnum):
     SIZING_INVALID_INPUT = "sizing:invalid_input"
     SIZING_CASH_CAPPED = "sizing:cash_capped"  # E22.3: fewer contracts to fit settled cash
     SIZING_CASH_ZERO = "sizing:cash_zero"  # E22.3: not one contract fits settled cash
+    SIZING_OPEN_RISK_CAP = "sizing:open_risk_cap"  # D131 (E28.3): no open-risk headroom
+    SIZING_OPEN_RISK_CAPPED = "sizing:open_risk_capped"  # D131 (E28.3): cut to the headroom
     # gate: one code per arc.gate.rules.RuleCode
     GATE_PASS = "gate:pass"
     GATE_STRUCTURE_INVALID = "gate:structure_invalid"
@@ -252,6 +254,7 @@ class ReasonCode(StrEnum):
     GATE_LIVE_SIZE_CAP = "gate:live_size_cap"  # D70 (E11.3)
     GATE_SLEEVE_POSITIONS = "gate:sleeve_max_positions"  # E22.1 (D97)
     GATE_SHORT_PREMIUM_REGIME = "gate:short_premium_regime"  # D131 (E28.2)
+    GATE_OPEN_RISK_CAP = "gate:open_risk_cap"  # D131 (E28.3)
     # approval (E6.1)
     OWNER_APPROVE = "owner_approve"
     OWNER_REJECT = "owner_reject"
@@ -488,6 +491,8 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.SIZING_INVALID_INPUT: "Invalid sizing input",
     ReasonCode.SIZING_CASH_CAPPED: "Size cut to fit settled cash",
     ReasonCode.SIZING_CASH_ZERO: "Not enough settled cash for one contract",
+    ReasonCode.SIZING_OPEN_RISK_CAP: "Portfolio open-risk cap leaves no room for one contract",
+    ReasonCode.SIZING_OPEN_RISK_CAPPED: "Size cut to the portfolio open-risk cap",
     ReasonCode.GATE_PASS: "Gate passed",
     ReasonCode.GATE_STRUCTURE_INVALID: "Gate: invalid structure",
     ReasonCode.GATE_PER_UNDERLYING: "Gate: over the per-underlying limit",
@@ -522,6 +527,7 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.GATE_LIVE_SIZE_CAP: "Gate: live size cap (live gate not met)",
     ReasonCode.GATE_SLEEVE_POSITIONS: "Gate: DTE sleeve full",
     ReasonCode.SLEEVE_FULL: "No menu: DTE sleeve full",
+    ReasonCode.GATE_OPEN_RISK_CAP: "Gate: over the portfolio open-risk cap",
     ReasonCode.GATE_SHORT_PREMIUM_REGIME: "Gate: SPY below its trend (no new bull puts / condors)",
     ReasonCode.REGIME_GATE_CREDIT_OFF: "Menus: bull puts / condors off (SPY below its trend)",
     ReasonCode.OWNER_APPROVE: "Owner approved",

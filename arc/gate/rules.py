@@ -25,7 +25,7 @@ from pydantic import BaseModel, ConfigDict
 
 from arc.account_profiles import BuyingPower, DayTradeRule, ShortLegPolicy
 from arc.gate.band import MAX_BAND_STEPS, PriceBand, as_grid, band_from_nbbo
-from arc.gate.caps import alloc_tier, deployed_max_loss
+from arc.gate.caps import alloc_tier, deployed_max_loss, open_risk
 from arc.gate.delta import MAX_LOSS_DELTA_KINDS, delta_exposure, kind_of
 from arc.gate.ticks import TickGrid, order_grid
 from arc.models import GateDecision, Leg, LegIntent, Proposal, QuoteClock
@@ -67,6 +67,7 @@ __all__ = [
     "check_halt",
     "check_max_open_positions",
     "check_max_gain",
+    "check_open_risk",
     "check_per_underlying",
     "check_short_premium_regime",
     "check_sleeve_positions",
@@ -134,6 +135,8 @@ class RuleCode(StrEnum):
     SLEEVE_POSITIONS = "sleeve_max_positions"
     # D131 (E28.2): SPY below its SMA blocks new bull puts / iron condors
     SHORT_PREMIUM_REGIME = "short_premium_regime"
+    # D131 (E28.3): Σ open + reserved + new max loss <= max_open_risk_pct x equity
+    OPEN_RISK_CAP = "open_risk_cap"
     RULE_ERROR = "rule_error"
 
 
@@ -273,6 +276,29 @@ def check_per_underlying(
             RuleCode.PER_UNDERLYING,
             f"{d.underlying} max loss {total} (existing {existing} + new {d.max_loss_total}) "
             f"> {limit} ({tier.describe()}; equity {account.equity})",
+        )
+    return []
+
+
+def check_open_risk(
+    d: Derived, account: AccountSnapshot, portfolio: Portfolio, config: ArcSettings
+) -> list[Violation]:
+    """D131 (E28.3): deployed max loss + the new open's ≤ ``max_open_risk_pct`` × equity.
+
+    Deployed is :func:`arc.gate.caps.deployed_max_loss` (open positions + max loss
+    reserved by in-flight opens, pre-trade), the E3.7 tier's own sum. Opens only.
+    """
+    if d.max_loss_total is None:
+        return _v(RuleCode.OPEN_RISK_CAP, "max loss is unbounded")
+    risk = open_risk(deployed_max_loss(portfolio), account.equity, config.max_open_risk_pct)
+    if risk.headroom is None:
+        return _v(RuleCode.OPEN_RISK_CAP, f"invalid equity {account.equity}")
+    if d.max_loss_total > risk.headroom:
+        total = risk.deployed + d.max_loss_total
+        return _v(
+            RuleCode.OPEN_RISK_CAP,
+            f"open risk {total} (deployed {risk.deployed} + new {d.max_loss_total}) > "
+            f"{risk.cap_pct * account.equity} ({risk.describe()}; equity {account.equity})",
         )
     return []
 
@@ -1095,7 +1121,8 @@ def evaluate(
     ``closing``: the proposal closes an open position (E6.2 exits). Every leg must
     reduce a held leg (:func:`check_closing`); rules that only limit *opening*
     risk are skipped — daily-loss entry block, max open positions, Greek caps,
-    per-underlying cap, structure whitelist, account profile (D25), wash sale, entry DTE window,
+    per-underlying cap, open-risk cap (D131), structure whitelist, account profile (D25),
+    wash sale, entry DTE window,
     DTE-sleeve slots (E22.1), earnings blackout and the short-premium regime rule
     (D131). The halt, TTL, data freshness, spread/NBBO/tick and band checks still run
     (fail closed). An opens-only halt (E11.4, D73) blocks opens only.
@@ -1138,6 +1165,7 @@ def evaluate(
         risk_d = dd if band is None else worst_case(dd, band, p.sizing.contracts)
         if not closing:
             violations += _run("per_underlying", lambda: check_per_underlying(risk_d, a, pf, c))
+            violations += _run("open_risk", lambda: check_open_risk(risk_d, a, pf, c))
         violations += _run("spread_tick", lambda: check_spread_tick(p, dd, m, c))
         violations += _run("max_gain", lambda: check_max_gain(dd))
         if band is not None:

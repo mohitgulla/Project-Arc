@@ -6,8 +6,9 @@ the account's equity and (cash profiles) settled cash.
 
 * A sleeve's free slots = ``min(sleeve cap - held, global free)``; an uncapped sleeve
   (every single-window profile) has the global ``max_open_positions - held``.
-* ``Free slots: short 3/5, swing 1/5 · settled cash $X · per-name cap $2,500`` is the
-  code-built line in the Research prompt (single window: ``Free slots: n/N``).
+* ``Free slots: short 3/5, swing 1/5 · settled cash $X · per-name cap $2,500 · open risk
+  12% / 40%`` is the code-built line in the Research prompt (single window:
+  ``Free slots: n/N``; the open-risk part, D131, is left out at the 100% rollback).
 * :meth:`FreeSlots.pressure` is the loop's condition for ``max_idle_with_free_slots``:
   a free slot in any sleeve **and** a sleeve with no open today.
 * :meth:`FreeSlots.asked` is how many names Research is asked to rank:
@@ -54,6 +55,10 @@ class FreeSlots(BaseModel):
     settled_cash: Decimal | None = None  # cash_settled profiles only
     options_buying_power: Decimal | None = None  # D129: margin profiles (None = unknown)
     per_name_cap: Decimal
+    # D131 (E28.3): the book's open risk vs max_open_risk_pct (None = not shown: the
+    # 100% rollback, or the caller passed none)
+    open_risk_pct: Decimal | None = None
+    max_open_risk_pct: Decimal | None = None
 
     @property
     def total_free(self) -> int:
@@ -81,7 +86,11 @@ class FreeSlots(BaseModel):
             text += f" \u00b7 settled cash ${self.settled_cash:,.0f}"
         if self.options_buying_power is not None:  # D129
             text += f" \u00b7 buying power ${self.options_buying_power:,.0f}"
-        return text + f" \u00b7 per-name cap ${self.per_name_cap:,.0f}"
+        text += f" \u00b7 per-name cap ${self.per_name_cap:,.0f}"
+        if self.max_open_risk_pct is not None:  # D131 (E28.3)
+            dep = "n/a" if self.open_risk_pct is None else f"{self.open_risk_pct:.0%}"
+            text += f" \u00b7 open risk {dep} / {self.max_open_risk_pct:.0%}"
+        return text
 
 
 def free_slots(
@@ -94,11 +103,14 @@ def free_slots(
     settled_cash: Decimal | None = None,
     options_buying_power: Decimal | None = None,
     opens_today: Mapping[str, int] | None = None,
+    open_risk_pct: Decimal | None = None,
+    max_open_risk_pct: Decimal | None = None,
 ) -> FreeSlots:
     """Count each sleeve's free slots like the gate (unknown entry DTE fills every sleeve).
 
     ``settled_cash`` renders on cash profiles, ``options_buying_power`` (D129) on margin
-    profiles; pass only the one the profile uses.
+    profiles; pass only the one the profile uses. ``max_open_risk_pct`` (D131) adds
+    ``· open risk X% / 40%`` (``open_risk_pct`` None renders ``n/a``).
     """
     global_free = max(max_open_positions - len(entry_dtes), 0)
     today = opens_today or {}
@@ -116,4 +128,6 @@ def free_slots(
         settled_cash=settled_cash,
         options_buying_power=options_buying_power,
         per_name_cap=per_name_cap,
+        open_risk_pct=open_risk_pct,
+        max_open_risk_pct=max_open_risk_pct,
     )

@@ -384,6 +384,13 @@ class GreeksSection(BaseModel):
     )
     max_alloc_pct_base: float | None = Field(default=None, description="D116 base tier")
     max_alloc_pct_reduced: float | None = Field(default=None, description="D116 reduced tier")
+    max_open_risk_pct: float | None = Field(
+        default=None,
+        description=(
+            "D131 (E28.3): portfolio open-risk cap (gate rule open_risk_cap) as a share of "
+            "equity; deployed_pct is measured against it. None: not passed or the 100% rollback"
+        ),
+    )
     theta: GreekAdvisory | None = Field(
         default=None, description="D87: Θ, $ per day (uncapped; advisory band only)"
     )
@@ -1452,6 +1459,7 @@ def _greeks_section(
     max_alloc_pct_reduced: float | None = None,
     alloc_tier_threshold_pct: float | None = None,
     reserved_max_loss: Decimal = Decimal(0),
+    max_open_risk_pct: float | None = None,
 ) -> GreeksSection:
     advisory = advisory or GreekAdvisorySettings()
     g = _greeks(
@@ -1490,6 +1498,9 @@ def _greeks_section(
         alloc_tier_threshold_pct=alloc_tier_threshold_pct,
         max_alloc_pct_base=max_alloc_pct,
         max_alloc_pct_reduced=min(tier_cfg.max_alloc_pct_reduced, max_alloc_pct),
+        max_open_risk_pct=(
+            max_open_risk_pct if max_open_risk_pct is not None and max_open_risk_pct < 1 else None
+        ),
         theta=_advisory(g.theta, g.equity, advisory.theta, cost_only=True),
         gamma=_advisory(_dollar_gamma(monitor), g.equity, advisory.gamma),
     )
@@ -1623,6 +1634,7 @@ def load_overview(
     max_alloc_pct_reduced: float | None = None,
     alloc_tier_threshold_pct: float | None = None,
     buying_power_kind: BuyingPowerKind | None = None,
+    max_open_risk_pct: float | None = None,
 ) -> OverviewResponse:
     """Every Overview section read in one pass as of *now* (SELECT only).
 
@@ -1666,6 +1678,7 @@ def load_overview(
             max_alloc_pct_reduced=max_alloc_pct_reduced,
             alloc_tier_threshold_pct=alloc_tier_threshold_pct,
             reserved_max_loss=_reserved(conn, now_et),
+            max_open_risk_pct=max_open_risk_pct,
         ),
         proposals=_proposal_rows(conn, now_et),
         proposals_since=now_et - PROPOSAL_WINDOW,
