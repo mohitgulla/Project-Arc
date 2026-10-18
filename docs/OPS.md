@@ -691,7 +691,7 @@ The plugin shells out to the CLI; the CLI owns every rule.
   Never tunable: `ARC_ENV`, gate code, secrets, paths, `config_version`.
   `!arc config` lists every key grouped (account, universe, risk, entries incl. each
   profile's DTE window, exits, positions, execution, costs, approvals, routines);
-  categorical keys show their options inline, e.g. `account_profile = cash_debit
+  categorical keys show their options inline, e.g. `account_profile = margin
   (options: cash_long_only | cash_debit | margin)`.
 - **Adding a knob** (any card): add the `ArcSettings` field / YAML path to the registry,
   or list it in `NOT_EXPOSED` with a reason. `tests/test_control.py::
@@ -1881,8 +1881,12 @@ The treatment arm is the same trading loop on its own paper account
   Analyst gets it as the `## Regime panel` context section (`regime-panel.log`).
 - The arm sizes and gates from its virtual account (`VirtualBroker`): equity
   moves only with its own fills/marks, buying power = min(broker, virtual −
-  legacy), and under a cash profile only settled cash (T+1) counts. Control's
-  account profile (debit-only, day-trade limit, D32 budget) applies unchanged.
+  legacy), and under a cash profile only settled cash (T+1) counts. Under a margin
+  profile (D129) the arm's options buying power is that figure less the collateral
+  its own open structures hold (credit spreads: width × 100; debit spreads: 0, the
+  debit already left cash), logged as `collateral` on `experiments.virtual_account`.
+  Control's account profile (D128: margin by default; day-trade limit, D32 budget)
+  applies unchanged.
 - Shared inputs: Sweep/sources run once, in control. The arm reuses control's
   steps before the fork step (the first step its overlay changes; never later
   than `propose`) and replays control's market tape (`market_tape`). Every arm
@@ -2681,11 +2685,23 @@ key. Code: `arc/ingest/market_movers.py`; handler `market_movers_source`.
 
 ### 7.1 Required status check: `check`
 
-`.github/workflows/ci.yml` job `check` (job id and `name:` both `check`) runs
-`uv sync --locked` + `make check` (lock-check, lint, format, pip-audit, full suite,
-gate at 100% branch coverage). It is **the** required status check on `main`. Keep the
-name stable: branch protection matches checks by name, so renaming the job quietly
-removes the requirement.
+`.github/workflows/ci.yml` job `check` (job id and `name:` both `check`) is **the**
+required status check on `main`. Since D134 it runs no tests itself: it waits on the
+parallel jobs that together do what `make check` does and goes green only when every
+one of them succeeded (`if: always()`, so a failed part gives a red `check`, never a
+skipped one):
+
+- `static`: `make lock-check lint fmt`
+- `tests (1/3)` … `tests (3/3)`: `make test-rest` with `ARC_TEST_SHARD=<i>/3`. Each test
+  lands in exactly one shard by a crc32 of its node id (`tests/ci_shard.py`).
+- `gate`: `make test-gate` (100% branch coverage of `arc.gate`)
+- `slow`: `make test-slow` (the seeded Monte Carlo tests marked `slow`)
+- `audit`: `make audit` (pip-audit)
+
+Locally `make check` still runs all of it in one go (`ARC_TEST_SHARD` unset = no
+sharding). Keep the `check` name stable: branch protection matches checks by name, so
+renaming the job quietly removes the requirement. To add or remove shards, change
+both `matrix.shard` and the `/3` in `ARC_TEST_SHARD`.
 
 Merge rules:
 
@@ -2765,8 +2781,10 @@ Regime is context and a Research/backtest input only; it is never a gate input
 A deterministic drop between Research and Quant (`arc/pipeline/steps.py`
 `_anti_chase_filter`; the rule is `arc.features.technicals.is_stretched`, pure). After
 Research ranks and after the E5.9 portfolio drops, a **bullish/bearish idea that the
-account profile can only structure as long premium** (long call/put, debit vertical:
-`cash_debit`, `cash_long_only`) is dropped when its move is already stretched:
+account profile can structure as long premium** (long call/put, debit vertical) is checked.
+On `cash_debit` / `cash_long_only` a stretched idea is dropped; on `margin` (D128) it is kept
+for its credit spreads only (journaled `stretched_debit_only`, `shortlist.credit_only`, still
+put on the pullback watch). The rule:
 
 - D78 rule (`anti_chase.combine: all`): `stretch_atr` = (close − SMA20) / ATR14 ≥ 2.5
   **and** RSI14 ≥ 75. Bears mirror it (≤ −2.5 and RSI ≤ 25). The inputs are the
@@ -2811,6 +2829,15 @@ Backtest: `arc backtest rank ... --entry-filter anti_chase|anti_chase_vwap`
 split-adjusted daily OHLC, cached in `<data-dir>/underlying_ohlc/` (fetched from Alpaca
 unless `--offline`). The VWAP arm reads the daily bar's VWAP at the decision close.
 Verdict and caveats: `docs/RESEARCH/anti-chase-backtest.md`.
+
+The cache never refetches a date it already holds, so backtests see a stable series. To
+replace a known-bad or revised range on purpose (E27.1a), dry-run first, then apply; the
+write backs up `<SYM>.parquet` to `<SYM>.parquet.bak-pre-<tag>-<YYYYmmdd-HHMMSS>` (refused
+when that file exists), logs each row before → after (`backtest.ohlc_refresh_row`), never
+deletes a cached date the source no longer returns, and a second run reports 0 changes:
+
+    .venv/bin/arc backtest ohlc refresh --tickers AMD --from 2026-10-05 --to 2026-10-09 --dry-run
+    .venv/bin/arc backtest ohlc refresh --tickers AMD --from 2026-10-05 --to 2026-10-09 --backup-tag e27.1a
 
 ### 5.37a Breakeven in ATR terms + the realism filter (E16.5, D76; filter off)
 
@@ -2916,19 +2943,27 @@ Commands (rehearse on a scratch `--db`):
   gate's own count (worst band price × 100 + fees). Opens in one run share the cash
   in rank order. Journal `sizing:cash_capped` (fewer contracts) or `sizing:cash_zero`
   (not even one). The gate's settled-cash rule is unchanged and stays the final check.
+- **Margin (D129).** On `margin` profiles the same fit runs against Alpaca's
+  `options_buying_power` with the gate's `account_profile_buying_power` need per
+  contract (band-worst max loss + fees); the sizing journal payload carries
+  `fit_basis: options_buying_power`, and the free-slots line reads
+  `… · buying power $20,065 · per-name cap …`. The gate rule needs
+  `max loss + fees ≤ options buying power` and fails closed when the figure is
+  unknown. Example on the live numbers: a 5-wide bull put × 2 for a 0.85 credit
+  needs $415 × 2 + $0.20 = $830.20 of a $20,065 options buying power; a closed
+  structure frees it (`rejected_for = buying_power`).
 - **Loop.** See `loop.max_idle_with_free_slots` above (`loop_forced_free_slots`).
 
 
 ## E22.4 switch-on: DTE sleeves live on the cash profiles (D97)
 
-`config/account_profiles.yaml` gives `cash_debit` and `cash_long_only` two entry-DTE
-sleeves instead of one 30-60 window (`margin` is unchanged: global 30-45):
+`config/account_profiles.yaml` gives every shipped profile two entry-DTE sleeves instead
+of one window (D97 on the cash profiles; D128 put them on `margin`, the default, too):
 
 | Profile | Sleeve | Entry DTE | Slots | Exit policy |
 |---|---|---|---|---|
-| `cash_debit`, `cash_long_only` | `short` | 10-35 (D118; was 10-29) | 5 | `config/exits.yaml` `sleeves.short` |
-| `cash_debit`, `cash_long_only` | `swing` | 36-60 (D118; was 30-60) | 5 | the kind policy (D23/D78) |
-| `margin` | `default` | 30-45 (global) | `max_open_positions` | the kind policy |
+| `margin`, `cash_debit`, `cash_long_only` | `short` | 10-35 (D118; was 10-29) | 5 | `config/exits.yaml` `sleeves.short` (debit kinds; credit kinds use the kind policy) |
+| `margin`, `cash_debit`, `cash_long_only` | `swing` | 36-60 (D118; was 30-60) | 5 | the kind policy (D23/D78) |
 
 DTE 36 belongs to `swing` (D118); a position's sleeve is fixed by its **entry** DTE. Short-sleeve
 debit exits (`vertical_debit`, `long_call`, `long_put`): take profit 40% of the debit,
@@ -2938,7 +2973,8 @@ keeps take profit 60%, a 75% EOD-only stop, lock 0.50 → 0.20 and close at 7 DT
 
 Baked defaults: `max_open_positions` 10 (was 8) and `dedupe.executed_cooldown` 2
 sessions (was 5). Rollback without a PR: `!arc config set
-profiles.cash_debit.sleeves.short.max_positions 0` closes the short sleeve to new opens
+profiles.margin.sleeves.short.max_positions 0` (or `profiles.cash_debit...` on the cash
+profile) closes the short sleeve to new opens
 (held short-sleeve positions keep their exit block). The `sleeves.short` exit values
 are not registry keys; changing them is a PR to `config/exits.yaml`.
 
@@ -2992,8 +3028,9 @@ Check: `arc routines run levels --db <scratch copy> --no-slack`, then
 ## E23.1 range-edge entry filter for sideways regimes (D98)
 
 **What it does.** After Research ranks (and after anti-chase), each bullish/bearish idea
-whose account profile structures it as **long premium only** (`cash_debit`; not `margin`,
-whose credit spreads already sell the range) is checked when its `regime.current` is in
+whose account profile can structure it as **long premium** (D128: on `margin`, whose credit
+spreads already sell the range, the idea is kept and only its debit structures leave the
+menu, journaled `mid_range_debit_only`) is checked when its `regime.current` is in
 `range_edges.regimes` (default `[sideways]`). A bullish idea is kept only from the bottom
 of its range (position ≤ `bull_max_pos` 0.35), a bearish one only from the top (≥
 `bear_min_pos` 0.65). Anything else, the wrong edge included, is dropped as
@@ -3340,3 +3377,96 @@ marks the rung `stopped`. To work the queue by hand (e.g. after a pause), with t
 ending N minutes from now and the event lines printed instead of posted:
 
     .venv/bin/arc backtest study night --minutes 60 [--slack]
+
+
+## E27.1 ML feature store (D126)
+
+One point-in-time feature library for the ML programme. `arc/ml/features/compute.py` holds
+every formula (pure, no I/O); two adapters build the same inputs:
+
+- `adapters/history.py`: `data/underlying_ohlc`, `data/option_stats/daily`,
+  `option_stats/earnings_events.parquet`, the PIT universe membership and
+  `config/backtest/macro_calendar_2020_2026.yaml`.
+- `adapters/live.py`: `data/arc.db` read-only. Daily bars from `market_tape` (the loop's
+  recorded `history_bars` 1Day payloads; per date a SIP-feed payload beats the feed-less
+  spot reads on the IEX quote feed, E27.1a, then the newest wins), IV30 from `iv_daily` (`IvStore.series`), ATM
+  spread and session volume from the last `chain_snapshot` of each ET session, the Finnhub
+  calendar from `raw_docs` (`earn_src = 2`; reaction day = report day for bmo, next session
+  otherwise), open structures for the portfolio group.
+
+The registry (`registry.py`) lists every feature with its group, window, sources,
+`available_live` and null policy. `FEATURE_SCHEMA_VERSION` hashes the registry and the bytes
+of `compute.py`, so any formula or spec edit changes it; `require_schema()` refuses a
+mismatch. Features with `available_live = False` (IV60, front IV, term slope, 25-delta skew
+and wings, two-sided %, OI, PIT-universe breadth/dispersion/correlation) stay in research
+panels but are dropped by `default_model_features()`. Free-tier OI days carry
+`oi_missing = 1` and NaN OI, never a stale value. Credit/rates is not in v1: nothing live
+stores HYG/TLT daily bars.
+
+Every window is window-local (ATR14 = 14-session mean true range, drawdown vs the rolling
+252-session high, flip age capped at 120), so a ~300-session live read and a 2019→ history
+read give the same number.
+
+    .venv/bin/arc ml features list [--json]
+    .venv/bin/arc ml features build --universe c500 --from 2020-01-02 --to 2026-10-09
+    .venv/bin/arc ml features parity --day 2026-10-09 --sessions 5 --tickers AAPL,MU,NVDA,SPY
+
+`build` writes `data/ml/features/v<schema>/date=<d>.parquet` (one panel per session) plus
+`manifest.json`; it is resumable (existing dates are skipped, writes are atomic) and a schema
+change starts a new `v<schema>` directory. Run it outside 21:30–08:30 ET or with no
+`data/backtest/queue.json`, under `nice -n 10`. `parity` exits 1 when a feature is over its
+tolerance (`arc/ml/features/parity.py`: price/market/calendar features exact to 1e-9; IV
+and chain-liquidity features carry a documented vendor tolerance).
+
+`scripts/loss_anatomy_features.py` (E7.18) now imports its formulas from `compute.py`
+("promote, don't copy"); `tests/test_ml_anatomy_golden.py` pins its output, regenerate only
+for an intended formula change with `ARC_REGEN_GOLDEN=1`. ML deps: `uv sync --extra ml`
+(scikit-learn, lightgbm; imported lazily).
+
+## E27.2 Model M1: move & vol distribution forecast (D126)
+
+`arc/ml/m1/` forecasts, per ticker and day, calibrated quantiles {5, 10, 25, 50, 75, 90,
+95}% of the h-session log return and realised vol, h ∈ {5, 10, 21, 42}. Structure
+agnostic; **never a gate input** (import-linter: `arc.gate` may not import `arc.ml`).
+
+- `targets.py`: forward labels from OHLC cut at the dev end (`log_ret_h`, `rv_h`,
+  `max_up_h`/`max_dn_h` in σ units, `move_vs_implied_h`).
+- Baselines live in the feature store (`compute.m1_baseline_frame`): `har_rv_h{h}` (HAR
+  per horizon), `hq_q{p}_h{h}` (trailing 252 standardised h-session returns × HAR vol) and
+  `history_short`; plus HAR-IV and the IV lognormal (`baselines.py`).
+- `train.py`: pooled LightGBM quantile models on a vol-standardised target, walk-forward
+  test 2022 / test 2023 (purge h + 5-session embargo), cross-fitted CQR on the 252
+  sessions before each test cut, and the pre-registered keep rule per target (both years,
+  DM p < 0.05, coverage error ≤ 3 pts) — else that target ships its baseline.
+- `predict.py` is pure (features → quantiles → the published `m1_*` features); the
+  Student-t tail fit also feeds `path_params()` for the MC hook.
+
+      nice -n 10 .venv/bin/arc ml m1 train --data data [--report docs/RESEARCH/ml-m1.md]
+      .venv/bin/arc ml m1 report --model data/ml/models/m1/<version> [--card <path>]
+
+Needs the `ml` extra (`uv sync --extra ml`; CI doesn't sync it, so the booster tests
+skip there). On macOS lightgbm also needs OpenMP: `brew install libomp`. The shipped
+artefact is diagnosed and pre-registered: change `FOLDS`, `LGB_PARAMS`, `NUM_ROUNDS`, the
+keep rule or the CQR scheme only with a new pre-registration (it changes the version).
+
+`train` reads dev only (2020-01 → 2023-12; `HoldoutReadError` past it) and writes
+`data/ml/models/m1/<version>/`: LightGBM text dumps (`lgbm/*.txt`, sha256 in
+`manifest.json`), the manifest (targets, CQR offsets, HAR-IV coefficients, windows,
+config hashes, data digest, code sha), `features.json`, `FEATURE_SCHEMA_VERSION`,
+`eval_*.csv`, `timings.json`, `model_card.md` and `oos_m1_features.parquet`
+(out-of-sample m1 features for 2022–2023, for M2 and the backtest). The version hashes
+the feature schema, data digest, params and protocol, so the same data rebuilds the same
+directory byte-identically. Same resource etiquette as the feature build (no
+`data/backtest/queue.json`, `nice -n 10`, 6 threads). `load_model()` refuses a stale
+feature schema.
+
+**MC hook.** `ExitModelConfig.path_vol = "m1"` moves the paths at `M1PathParams.sigma`
+with Student-t(ν) shocks; `drift_source = "m1_median"` adds M1's median drift. Both apply
+only when the caller passes `m1=` to `model_exits`; otherwise `m1` falls back to
+`realized_forecast`. Defaults are unchanged (and `drift_source` is omitted from config
+dumps at its default, so menu-cache and overlay hashes do not move). The backtest
+selects it per arm (E27.5).
+
+**Stance proxy.** `m1_direction` (+1 / −1 / 0 = sign of the h21 median when |median| >
+0.25 × IQR) and `predict.m1_trend_labels()` (bull / bear / sideways) are the M1 proxy
+for the E7.20 grid; `arc/backtest/stance.py` does not exist yet, so E7.20 registers it.

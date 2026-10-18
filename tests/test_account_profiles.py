@@ -133,11 +133,12 @@ def proposal(s: Structure, contracts: int = 2, **kw: object) -> Proposal:
     return Proposal(**base)  # type: ignore[arg-type]
 
 
-def acct(cash: str | None = "100000") -> AccountSnapshot:
+def acct(cash: str | None = "100000", obp: str | None = "100000") -> AccountSnapshot:
     return AccountSnapshot(
         equity=D("100000"),
         last_equity=D("100000"),
         settled_cash=None if cash is None else D(cash),
+        options_buying_power=None if obp is None else D(obp),
         as_of=NOW - dt.timedelta(seconds=5),
     )
 
@@ -197,25 +198,31 @@ class TestProfilesConfig:
         assert set(lo.allowed_kinds) == {MK.LONG_CALL, MK.LONG_PUT}
         m = p.get("margin")
         assert m.allow_short_legs is ShortLegPolicy.ANY and not m.require_net_debit
+        assert m.buying_power is BuyingPower.MARGIN
+        # D128: a superset of cash_debit (credit first, then its debit structures)
+        assert m.strategies_for("bullish") == ["bull_put", "bull_call_debit", "long_call"]
+        assert m.strategies_for("bearish") == ["bear_call", "bear_put_debit", "long_put"]
         assert m.strategies_for("neutral") == ["iron_condor"]
+        assert set(cd.allowed_kinds) < set(m.allowed_kinds)
+        assert m.sleeves == cd.sleeves
         assert (m.dte_min, m.dte_max) == (None, None)
         assert "net debit only" in cd.summary() and "settled cash" in cd.summary()
         assert "no short legs" in lo.summary()
         assert "net debit" not in m.summary()
 
-    def test_paper_default_is_cash_debit(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_default_is_margin(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("ARC_ACCOUNT_PROFILE", raising=False)
         s = ArcSettings(_env_file=None)  # type: ignore[call-arg]
-        assert DEFAULT_ACCOUNT_PROFILE == "cash_debit"
-        assert s.account_profile == "cash_debit"
-        assert s.profile.name == "cash_debit"
+        assert DEFAULT_ACCOUNT_PROFILE == "margin"  # D128 (was cash_debit, D25)
+        assert s.account_profile == "margin"
+        assert s.profile.name == "margin"
         assert s.entry_dte_window == (10, 60)  # D97/D118: union of short 10-35 + swing 36-60
 
     def test_env_switch_needs_no_code_change(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("ARC_ACCOUNT_PROFILE", "margin")
+        monkeypatch.setenv("ARC_ACCOUNT_PROFILE", "cash_long_only")
         s = ArcSettings(_env_file=None)  # type: ignore[call-arg]
-        assert s.profile.name == "margin"
-        assert s.entry_dte_window == (s.dte_min, s.dte_max)
+        assert s.profile.name == "cash_long_only"
+        assert s.profile.strategies_for("bullish") == ["long_call"]
 
     def test_new_profile_from_yaml_only(self, tmp_path: Path) -> None:
         """A profile added in YAML is selectable and enforced with no code change."""
@@ -408,8 +415,56 @@ class TestGateAccountProfile:
         unknown = gate(bull_call(), cfg(), acct(None))
         assert codes(unknown) == {RuleCode.ACCOUNT_CASH}
         assert "settled cash unknown" in unknown.violations[0]
-        # margin profile: no cash check at all
+        # margin profile: no settled-cash check (D129 checks options buying power instead)
         assert gate(bull_call(), cfg("margin"), acct("1")).passed
+
+    def test_margin_options_buying_power(self) -> None:
+        """D129: on margin, need = band-worst max loss + fees <= options buying power."""
+        m = cfg("margin")
+        # bull call: max loss $400 x 2 contracts = $800 + fees 0.05 x 2 legs x 2 = $0.20
+        assert gate(bull_call(), m, acct(obp="800.20")).passed
+        d = gate(bull_call(), m, acct(obp="800.19"))
+        assert codes(d) == {RuleCode.ACCOUNT_BP}
+        assert d.violations[0].startswith(
+            "account_profile_buying_power: needs $800.20 (max loss 800.00 for 2 contract(s) + fees)"
+            " > options buying power $800.19"
+        )
+        unknown = gate(bull_call(), m, acct(obp=None))
+        assert codes(unknown) == {RuleCode.ACCOUNT_BP}
+        assert "options buying power unknown (margin profile)" in unknown.violations[0]
+        # a credit spread needs its (width - credit) x 100 max loss, not the premium:
+        # bull put 565/570 for 0.85 -> $415 x 2 = $830 + $0.20 fees
+        assert gate(bull_put(), m, acct(obp="830.20")).passed
+        assert codes(gate(bull_put(), m, acct(obp="830.19"))) == {RuleCode.ACCOUNT_BP}
+        # cash profiles never run the margin rule, even with buying power unknown
+        assert gate(bull_call(), cfg(), acct("800.20", obp=None)).passed
+
+    def test_margin_rule_uses_band_worst_max_loss(self) -> None:
+        s = bull_call()
+        p = proposal(s, limit_price=D("4.00"))
+        m = MarketSnapshot(
+            quotes=quotes_for(s), next_earnings={"SPY": None}, underlying_spot={"SPY": D("580")}
+        )
+        c = cfg("margin")
+        band = R.proposal_band(p, m, c)
+        assert band.hi > D("4.00")
+        worst = R.worst_case(R.derive(p), band, 2).max_loss_total
+        assert worst is not None and worst > D("800")
+        need = worst + D("0.20")
+        ok = evaluate(p, acct(obp=str(need)), Portfolio(), c, market=m, now=NOW, band=band)
+        assert RuleCode.ACCOUNT_BP not in codes(ok)
+        short = evaluate(
+            p, acct(obp=str(need - D("0.01"))), Portfolio(), c, market=m, now=NOW, band=band
+        )
+        assert RuleCode.ACCOUNT_BP in codes(short)
+
+    def test_margin_rule_skips_an_unbounded_max_loss(self) -> None:
+        """An unbounded structure is already per_underlying's violation; no double report."""
+        s = bull_call()
+        p = proposal(s)
+        d = R.derive(p)._replace(max_loss_total=None)
+        v = R.check_account_profile(p, d, acct(obp=None), cfg("margin"))
+        assert [x.code for x in v] == []
 
     def test_settled_cash_uses_band_worst_price(self) -> None:
         s = bull_call()
@@ -473,15 +528,24 @@ class TestGateAccountProfile:
         )
         assert not (codes(d) & PROFILE_CODES), d.violations
 
-    def test_profile_dte_window_reaches_gate(self) -> None:
-        """cash_debit's 30-60 window (not the global 30-45) is what the gate enforces."""
+    def test_profile_dte_window_reaches_gate(self, tmp_path: Path) -> None:
+        """The profile's window (not the global 30-45) is what the gate enforces.
+
+        D128: margin carries the 10-60 sleeves too; a sleeve-less margin falls back to
+        the global window, so 56 DTE passes the shipped profile and fails that one.
+        """
         far = dt.date(2026, 12, 4)  # 56 DTE
         s = debit_vertical(
             "call", "SPY", far, long_strike=570, long_premium="7", short_strike=580,
             short_premium="3", as_of=AS_OF,
         )  # fmt: skip
+        data = yaml.safe_load(Path("config/account_profiles.yaml").read_text())
+        data["profiles"]["margin"].pop("sleeves")
+        f = tmp_path / "profiles.yaml"
+        f.write_text(yaml.safe_dump(data))
         assert RuleCode.DTE_WINDOW not in codes(gate(s, cfg()))
-        assert RuleCode.DTE_WINDOW in codes(gate(s, cfg("margin")))
+        assert RuleCode.DTE_WINDOW not in codes(gate(s, cfg("margin")))
+        assert RuleCode.DTE_WINDOW in codes(gate(s, cfg("margin", account_profiles_file=f)))
 
 
 @settings(max_examples=60, deadline=None)

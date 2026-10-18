@@ -208,6 +208,10 @@ class TickRules(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+#: D131 (E28.2): SMA lengths the short_premium_regime gate may compare SPY against (the
+#: regime technicals carry sma50 / sma200; 100 is computed from the same daily bars).
+REGIME_GATE_MAS: frozenset[int] = frozenset({50, 100, 200})
+
 #: E20.4 (D85): ArcSettings fields that moved to config/universe.yaml (`active_max`,
 #: `sizes.<tier>`, `floors.<tier>`); passing one is refused, not silently ignored.
 MOVED_UNIVERSE_FIELDS: frozenset[str] = frozenset(
@@ -281,6 +285,14 @@ class ArcSettings(BaseSettings):
             "equity at which the per-underlying cap drops to max_alloc_pct_reduced (60%)."
         ),
     )
+    max_open_risk_pct: Annotated[float, Field(ge=0.10, le=1.0)] = Field(
+        default=0.40,
+        description=(
+            "D131 (E28.3): gate rule open_risk_cap: deployed max loss (open + reserved "
+            "in-flight opens, pre-trade) + the new open's max loss may not exceed this share "
+            "of equity (40%). Sizing fits the headroom. 1.00 = effectively off (rollback)."
+        ),
+    )
     daily_loss_halt_pct: Annotated[float, Field(gt=0.0, le=1.0)] = Field(
         default=0.03,
         description="Daily portfolio loss halt threshold (3%).",
@@ -332,7 +344,7 @@ class ArcSettings(BaseSettings):
         min_length=1,
         description=(
             "ARC_ACCOUNT_PROFILE: a profile in config/account_profiles.yaml "
-            "(margin | cash_debit | cash_long_only). Paper default cash_debit (D25)."
+            "(margin | cash_debit | cash_long_only). Default margin (D128; was cash_debit, D25)."
         ),
     )
     account_profiles_file: Path | None = Field(
@@ -357,6 +369,34 @@ class ArcSettings(BaseSettings):
     earnings_blackout: bool = Field(
         default=True,
         description="Block short premium through earnings unless overridden.",
+    )
+    # D131 (E28.2): gate rule short_premium_regime (market reference SPY vs its SMA).
+    regime_gate_enabled: bool = Field(
+        default=True,
+        description=(
+            "Gate rule short_premium_regime: a new open of a regime_gate_blocked_kinds "
+            "structure fails while SPY's daily close < SMA(regime_gate_ma) x (1 + "
+            "regime_gate_buffer_pct); missing / stale (> 2 sessions) input fails closed for "
+            "those kinds. Off = the pre-D131 gate (rollback)."
+        ),
+    )
+    regime_gate_ma: int = Field(
+        default=200,
+        description="short_premium_regime: the SPY simple moving average length (50, 100, 200).",
+    )
+    regime_gate_buffer_pct: Annotated[float, Field(ge=-0.05, le=0.05)] = Field(
+        default=0.0,
+        description=(
+            "short_premium_regime: the threshold is SMA x (1 + this); > 0 blocks earlier "
+            "(SPY must clear the SMA by this share), < 0 lets SPY dip below it first."
+        ),
+    )
+    regime_gate_blocked_kinds: Literal["bull_put,iron_condor", "bull_put", "iron_condor"] = Field(
+        default="bull_put,iron_condor",
+        description=(
+            "short_premium_regime: the structures it blocks below the SMA (bull put = a put "
+            "credit vertical). Bear calls, debit kinds and closes always pass."
+        ),
     )
     max_open_positions: Annotated[int, Field(ge=1)] = Field(
         default=10,  # D97: was 8 (cash profiles: short 5 + swing 5 sleeve slots)
@@ -938,6 +978,25 @@ class ArcSettings(BaseSettings):
         default=5.0,
         description="Target wing width in dollars between short and long strikes.",
     )
+    # D131 (E28.1): credit wings as a share of spot, fitted to the per-underlying cap.
+    scanner_wing_mode: Literal["pct_spot", "dollars"] = Field(
+        default="pct_spot",
+        description=(
+            "Credit wing selection. pct_spot = the widest listed strike gap <= "
+            "scanner_wing_pct_spot x spot whose 1-contract max loss (+ entry costs) fits the "
+            "per-underlying cap; dollars = the pre-D131 wing nearest scanner_wing_width."
+        ),
+    )
+    scanner_wing_pct_spot: Annotated[float, Field(ge=0.01, le=0.10)] = Field(
+        default=0.05,
+        description="pct_spot wing mode: the widest credit wing as a share of spot (D131: 5%).",
+    )
+    scanner_min_credit_width: Annotated[float, Field(ge=0.0, le=0.40)] = Field(
+        default=0.10,
+        description=(
+            "Drop credit structures whose mid credit / width is below this (0 = off; D131)."
+        ),
+    )
     # Debit strategies (D25, E3.4): long-leg band and debit-vertical short band.
     scanner_long_delta_min: Annotated[float, Field(gt=0.0, lt=1.0)] = Field(
         default=0.40, description="Lower bound of the long-leg |delta| band (debit strategies)."
@@ -1378,6 +1437,15 @@ class ArcSettings(BaseSettings):
         """E7.13: a precedence list names each source once."""
         if len(set(v)) != len(v):
             msg = f"iv_series_sources lists a source twice: {v}"
+            raise ValueError(msg)
+        return v
+
+    @field_validator("regime_gate_ma")
+    @classmethod
+    def _regime_gate_ma(cls, v: int) -> int:
+        """D131 (E28.2): only the SMAs the regime technicals carry."""
+        if v not in REGIME_GATE_MAS:
+            msg = f"regime_gate_ma must be one of {sorted(REGIME_GATE_MAS)}, got {v}"
             raise ValueError(msg)
         return v
 

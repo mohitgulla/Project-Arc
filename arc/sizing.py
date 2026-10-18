@@ -24,7 +24,16 @@ E22.3 (D97, D25): on a ``cash_settled`` profile the caller passes ``cash_availab
 worst band price x 100 + fees). Contracts are then also capped at
 ``floor(cash_available / cash_per_contract)`` (``cash_capped``; ``cash_zero`` when not
 even one fits), so sizing stops proposing an order the gate's cash rule would reject.
-``cash_available=None`` (margin profiles, backtests) leaves sizing as before.
+D129: on a ``margin`` profile the same two inputs carry Alpaca's options buying power
+and the gate's ``account_profile_buying_power`` need for one unit (band-worst max
+loss + fees), so the fit covers both buying-power rules. ``cash_available=None``
+(backtests, unbounded max loss) leaves sizing as before.
+
+D131 (E28.3): ``open_risk_headroom`` is the max loss the portfolio open-risk cap still
+allows (:func:`arc.gate.caps.open_risk`, ``max_open_risk_pct`` × equity − deployed).
+Contracts are then also capped at ``floor(headroom / max_loss_per_contract)``
+(``open_risk_capped``; ``open_risk_cap`` when not even one fits), so sizing never
+proposes an order the gate's ``open_risk_cap`` rule would reject. ``None`` = no fit.
 
 Pure function: no I/O, no LLM, Decimal arithmetic throughout.
 """
@@ -56,6 +65,8 @@ SizingCode = Literal[
     "live_capped",
     "cash_capped",
     "cash_zero",
+    "open_risk_capped",
+    "open_risk_cap",
 ]
 
 
@@ -77,6 +88,11 @@ class SizingResult(BaseModel):
         ge=0,
         description="E22.3: floor(cash available / cash per contract); None = no cash fit",
     )
+    open_risk_contracts: int | None = Field(
+        None,
+        ge=0,
+        description="D131: floor(open-risk headroom / max loss); None = no open-risk fit",
+    )
     reason: str = Field("", description="Why there is no trade (contracts == 0)")
     code: SizingCode = Field("ok", description="Stable outcome code for the decision journal")
 
@@ -95,15 +111,18 @@ def size_contracts(
     cash_available: Decimal | None = None,
     cash_per_contract: Decimal | None = None,
     cap_label: str | None = None,
+    open_risk_headroom: Decimal | None = None,
 ) -> SizingResult:
     """Apply D18 against the per-underlying budget still free (see module doc).
 
     ``max_loss_per_contract`` is dollars per one structure unit. ``cash_available`` /
-    ``cash_per_contract`` (E22.3, ``cash_settled`` profiles only) add the cash fit.
+    ``cash_per_contract`` (E22.3 settled cash; D129 options buying power) add the
+    buying-power fit; ``open_risk_headroom`` (D131) the portfolio open-risk fit.
     """
     suggestion = max(int(suggestion), 0)
     existing = max(Decimal(existing_max_loss), Decimal(0))
     cash_cap: int | None = None
+    risk_cap: int | None = None
 
     def none(code: SizingCode, reason: str, cap: int = 0) -> SizingResult:
         return SizingResult(
@@ -114,6 +133,7 @@ def size_contracts(
             pct_equity=0.0,
             existing_max_loss=existing,
             cash_contracts=cash_cap,
+            open_risk_contracts=risk_cap,
             reason=reason,
             code=code,
         )
@@ -147,6 +167,18 @@ def size_contracts(
         return none("risk_zero", "Risk suggested 0 contracts", cap)
     contracts = min(suggestion, cap)
     code: SizingCode = "capped" if contracts < suggestion else "ok"
+    if open_risk_headroom is not None:
+        room = max(Decimal(open_risk_headroom), Decimal(0))
+        risk_cap = int((room / max_loss_per_contract).to_integral_value(rounding=ROUND_FLOOR))
+        if risk_cap < 1:
+            return none(
+                "open_risk_cap",
+                f"portfolio open-risk cap leaves ${room} of max loss; one contract needs "
+                f"${max_loss_per_contract}",
+                cap,
+            )
+        if risk_cap < contracts:
+            contracts, code = risk_cap, "open_risk_capped"
     if cash_available is not None:
         if cash_per_contract is None or cash_per_contract <= 0:
             return none(
@@ -157,7 +189,7 @@ def size_contracts(
         if cash_cap < 1:
             return none(
                 "cash_zero",
-                f"settled cash ${free} left does not cover one contract "
+                f"buying power ${free} left does not cover one contract "
                 f"(${cash_per_contract} incl. fees)",
                 cap,
             )
@@ -172,6 +204,7 @@ def size_contracts(
         pct_equity=float(total / equity),
         existing_max_loss=existing,
         cash_contracts=cash_cap,
+        open_risk_contracts=risk_cap,
         code=code,
     )
 

@@ -41,10 +41,12 @@ from arc.backtest.sim import (
     SimTicker,
     ViewSpec,
     build_view,
+    market_trends,
     run_sim,
     sim_ticker_job,
 )
 from arc.config import ArcSettings  # noqa: TC001 - pydantic field
+from arc.gate.inputs import MarketTrend  # noqa: TC001 - pydantic field
 from arc.scanner.rank import Ranker  # noqa: TC001 - pydantic field
 
 if TYPE_CHECKING:
@@ -275,6 +277,9 @@ class SimBuild(BaseModel):
     per_profile: dict[str, ArcSettings]
     rankers: dict[str, list[Ranker]]
     build_s: float
+    #: D131 (E28.2): SPY close vs its SMA per session for short_premium_regime; None =
+    #: the rule is off or no SPY closes in the data dir (rule not applied, logged).
+    trends: dict[dt.date, MarketTrend] | None = None
 
 
 def build_sim(
@@ -342,6 +347,7 @@ def build_sim(
     }
     built = build_tickers(names, spec=spec, workers=workers, job_kw=job_kw)
     sessions = sorted({d for r in built.values() for d in r.closes.index if d >= start})
+    trends = _market_trends(data_dir, settings, sessions, start, end)
     return SimBuild(
         built=built,
         sessions=sessions,
@@ -351,7 +357,37 @@ def build_sim(
         per_profile=per_profile,
         rankers=rk,
         build_s=time.monotonic() - t0,
+        trends=trends,
     )
+
+
+#: D131 (E28.2): calendar days of SPY history read before the walk's start (SMA warm-up).
+_TREND_WARMUP_DAYS = 400
+
+
+def _market_trends(
+    data_dir: Path,
+    settings: ArcSettings,
+    sessions: Sequence[dt.date],
+    start: dt.date,
+    end: dt.date,
+) -> dict[dt.date, MarketTrend] | None:
+    """D131 (E28.2): SPY's point-in-time close vs SMA(``regime_gate_ma``) per session.
+
+    Read offline from the data dir's cached daily closes. ``None`` when the rule is
+    off or no SPY closes are cached (the walk then does not apply the rule; logged so
+    a report never silently drops it).
+    """
+    if not settings.regime_gate_enabled:
+        return None
+    from arc.backtest.underlying import UnderlyingStore, load_closes
+
+    lo = start - dt.timedelta(days=_TREND_WARMUP_DAYS)
+    closes = load_closes(UnderlyingStore(data_dir), "SPY", lo, end)
+    if closes.empty:
+        log.warning("backtest.sim.regime_gate_no_spy", data_dir=str(data_dir))
+        return None
+    return market_trends(closes, settings.regime_gate_ma, sessions)
 
 
 def walk(b: SimBuild, *, profile: str, ranker: Ranker, cfg: RankingFile, end: dt.date) -> SimRun:
@@ -369,6 +405,7 @@ def walk(b: SimBuild, *, profile: str, ranker: Ranker, cfg: RankingFile, end: dt
         sessions=b.sessions,
         end=end,
         aliases=MomentumConfig().share_class_aliases,
+        trends=b.trends,
     )
 
 

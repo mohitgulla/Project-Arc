@@ -16,8 +16,9 @@ What each step does:
 ``quant`` (LLM, frontier tier)
     Runs the deterministic chain scanner (E2.3) for each shortlisted ticker with
     the strategies the account profile (D25, ``config/account_profiles.yaml``)
-    maps the stance to: ``margin`` bullish → bull put, bearish → bear call,
-    neutral → iron condor; ``cash_debit`` bullish → bull call debit + long call,
+    maps the stance to: ``margin`` (the D128 default) bullish → bull put + bull call
+    debit + long call, bearish → bear call + bear put debit + long put, neutral →
+    iron condor; ``cash_debit`` bullish → bull call debit + long call,
     bearish → bear put debit + long put, neutral → no trade (journaled
     ``profile:no_neutral_structure``). It offers
     the Quant a menu of priced structures. The Quant may only pick from the
@@ -57,6 +58,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 import structlog
 from pydantic import BaseModel, ValidationError
 
+from arc.account_profiles import BuyingPower
 from arc.context.kinds import (
     NOTE_SECTION_MAX,
     CandidatePayload,
@@ -78,8 +80,16 @@ from arc.context.store import ContextStore
 from arc.control.effective import cost_model as cost_config
 from arc.control.effective import exit_config, ranking_config, scanner_filters
 from arc.exits import ExitSummary, model_exits, realized_vol_forecast
-from arc.gate.caps import AllocTier, alloc_tier, deployed_max_loss
+from arc.gate.caps import (
+    AllocTier,
+    OpenRisk,
+    alloc_tier,
+    deployed_max_loss,
+    open_risk,
+    tier_open_risk,
+)
 from arc.gate.delta import kind_of
+from arc.gate.rules import regime_blocked_kinds, regime_gate_closed
 from arc.ingest.llm import ScalpLLMError
 from arc.ingest.scalp import extract_json_object
 from arc.iv.store import safe_store as safe_iv_store
@@ -156,6 +166,7 @@ from arc.pipeline.market import (
     live_gate_status,
     live_size_cap,
     market_snapshot,
+    market_trend,
     next_earnings,
     price_structure,
     proposal_betas,
@@ -190,7 +201,7 @@ from arc.structures import parse_occ
 from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Collection, Mapping, Sequence
 
     import pandas as pd
 
@@ -201,7 +212,7 @@ if TYPE_CHECKING:
     from arc.context.store import ContextEntry, ContextSnapshot
     from arc.exits import ExitConfig, ExitModelResult
     from arc.gate.band import PriceBand
-    from arc.gate.inputs import Portfolio
+    from arc.gate.inputs import AccountSnapshot, MarketTrend, Portfolio
     from arc.personas.schemas import PoolItem
     from arc.pipeline.env import PipelineEnv
     from arc.pipeline.market import PricedStructure
@@ -605,8 +616,37 @@ def portfolio_alloc_tier(portfolio: Portfolio, equity: Decimal, settings: ArcSet
     return alloc_tier(deployed_max_loss(portfolio), equity, settings)
 
 
-def _cap_text(tier: AllocTier) -> str:
-    return f"{tier.pct:.0%} of equity max loss per underlying ({tier.describe()})"
+def portfolio_open_risk(portfolio: Portfolio, equity: Decimal, settings: ArcSettings) -> OpenRisk:
+    """D131 (E28.3): the book's open risk vs ``max_open_risk_pct`` (the gate's own
+    computation, so sizing and ``open_risk_cap`` always agree)."""
+    return open_risk(deployed_max_loss(portfolio), equity, settings.max_open_risk_pct)
+
+
+def _cap_text(tier: AllocTier, settings: ArcSettings, equity: Decimal) -> str:
+    """The per-underlying tier phrase + (D131) ``, open risk X% / 40%`` (same deployed)."""
+    risk = tier_open_risk(tier, equity, settings.max_open_risk_pct)
+    return f"{tier.pct:.0%} of equity max loss per underlying ({tier.describe()}){risk.clause()}"
+
+
+def _wing_cap_dollars(ctx: JobContext, env: PipelineEnv) -> float | None:
+    """D131 (E28.1): the per-underlying cap in $ the ``pct_spot`` credit wing must fit:
+    the E3.7 tier (:func:`book_alloc_tier`, the gate's own helper) x equity.
+
+    ``None`` under the ``dollars`` wing (nothing fetched, the pre-D131 path) or when
+    the account cannot be read (logged; the wing is then the widest gap within
+    ``scanner_wing_pct_spot`` and the gate's ``per_underlying_limit`` stays the authority).
+    """
+    settings = ctx.settings
+    if settings.scanner_wing_mode != "pct_spot":
+        return None
+    try:
+        info, positions = _account_inputs(ctx, env)
+    except Exception as exc:  # noqa: BLE001 - a broker hiccup must not sink the menus
+        log.warning("pipeline.wing_cap_unavailable", error=str(exc))
+        return None
+    tier = book_alloc_tier(ctx.conn, positions, info.equity, settings, now=ctx.now)
+    cap = tier.pct * info.equity
+    return float(cap) if cap > 0 else None
 
 
 def _portfolio_summary(
@@ -619,7 +659,8 @@ def _portfolio_summary(
     text = (
         f"Equity ${info.equity:,.2f}. {len(roots)} open option position(s)"
         + (f" on {', '.join(roots)}" if roots else "")
-        + f". Max {settings.max_open_positions} positions, {_cap_text(tier)}."
+        + f". Max {settings.max_open_positions} positions, "
+        + f"{_cap_text(tier, settings, info.equity)}."
     )
     return text, info.equity
 
@@ -1326,8 +1367,8 @@ def _portfolio_filter(
     return out, dropped, rejected
 
 
-#: Scanner strategies that collect premium: a stance the profile maps to any of them is
-#: not "long premium only", so the anti-chase filter leaves it alone (E16.3).
+#: Scanner strategies that collect premium. D128: a stretched / mid-range idea whose
+#: stance maps to any of them keeps only these on its Quant menu.
 _CREDIT_STRATEGY_NAMES = frozenset({"bull_put", "bear_call", "iron_condor"})
 
 
@@ -1337,6 +1378,9 @@ class _AntiChase:
 
     kept: list[ResearchRankedItem]
     dropped: Counter[str] = dataclasses.field(default_factory=Counter)
+    # D128: stretched ideas the profile can also trade as a credit spread: kept, with
+    # their debit structures removed from the Quant menu (``ShortlistPayload.credit_only``)
+    credit_only: list[ResearchRankedItem] = dataclasses.field(default_factory=list)
     rejected: list[tuple[ResearchRankedItem, str]] = dataclasses.field(default_factory=list)
     # ticker -> the verdict (every directional long-premium idea checked)
     verdicts: dict[str, Any] = dataclasses.field(default_factory=dict)
@@ -1349,6 +1393,16 @@ def _long_premium_only(stance: str, settings: ArcSettings) -> bool:
     """The profile maps *stance* to debit structures only (long calls/puts, debit verticals)."""
     names = settings.profile.strategies_for(stance)
     return bool(names) and not (set(names) & _CREDIT_STRATEGY_NAMES)
+
+
+def _has_long_premium(stance: str, settings: ArcSettings) -> bool:
+    """D128: the profile maps *stance* to at least one debit structure."""
+    return bool(set(settings.profile.strategies_for(stance)) - _CREDIT_STRATEGY_NAMES)
+
+
+def _has_credit(stance: str, settings: ArcSettings) -> bool:
+    """D128: the profile maps *stance* to at least one credit structure."""
+    return bool(set(settings.profile.strategies_for(stance)) & _CREDIT_STRATEGY_NAMES)
 
 
 def _vwap_feed_plan(
@@ -1445,8 +1499,10 @@ def _anti_chase_filter(
     """E16.3 (D76/D78): drop directional long-premium ideas whose move is stretched.
 
     Runs after Research ranks (and after the E5.9 portfolio drops), before Quant.
-    Only a bullish/bearish idea the account profile can structure as long premium
-    only is checked (a credit-capable stance and neutral ideas pass untouched). The
+    Every bullish/bearish idea the account profile can structure as long premium is
+    checked; neutral ideas pass untouched. D128: when the profile can also trade the
+    stance as a credit spread (``margin``), a stretched idea is kept and only its debit
+    structures leave the menu (``credit_only``); otherwise the idea is dropped. The
     rule is :func:`arc.features.technicals.is_stretched` on the ``regime`` entry's
     technicals. Missing technicals keep the idea (journaled ``technicals_missing``).
     With ``anti_chase.vwap`` on, each checked idea also costs one 5-min bars request
@@ -1461,7 +1517,7 @@ def _anti_chase_filter(
     take = _alpaca_take(ctx, env) if cfg.vwap else None
     for item in kept:
         stance = item.stance.strip().lower()
-        if stance not in ("bullish", "bearish") or not _long_premium_only(stance, ctx.settings):
+        if stance not in ("bullish", "bearish") or not _has_long_premium(stance, ctx.settings):
             res.kept.append(item.model_copy(update={"rank": len(res.kept) + 1}))
             continue
         entry = snap.latest("regime", item.ticker)
@@ -1479,7 +1535,11 @@ def _anti_chase_filter(
         if vwap_feed is not None and verdict.status != "not_directional":
             verdict = verdict.model_copy(update={"vwap_feed": vwap_feed})
         res.verdicts[item.ticker] = verdict
-        if verdict.stretched:
+        if verdict.stretched and _has_credit(stance, ctx.settings):
+            # D128: only the debit structures chase; the credit spread stays on the menu
+            res.dropped[ReasonCode.STRETCHED_DEBIT_ONLY.value] += 1
+            res.credit_only.append(item)
+        elif verdict.stretched:
             res.dropped[ReasonCode.STRETCHED_ENTRY.value] += 1
             res.rejected.append((item, ReasonCode.STRETCHED_ENTRY.value))
             continue
@@ -1500,6 +1560,19 @@ def _journal_anti_chase(j: Recorder, chase: _AntiChase, call_id: str | None) -> 
             Choice.REJECTED,
             ReasonCode.STRETCHED_ENTRY,
             reason_text=f"{item.stance}: {v.text()}",
+            confidence=item.confidence,
+            persona_call_id=call_id,
+            payload={"idea": item.model_dump(mode="json"), "anti_chase": v.model_dump(mode="json")},
+        )
+    for item in chase.credit_only:  # D128: kept; its debit structures leave the menu
+        v = chase.verdicts[item.ticker]
+        j.add(
+            JournalPersona.RESEARCH,
+            Stage.SHORTLIST,
+            item.ticker,
+            Choice.NOTED,
+            ReasonCode.STRETCHED_DEBIT_ONLY,
+            reason_text=f"{item.stance}: {v.text()}; debit skipped, credit kept",
             confidence=item.confidence,
             persona_call_id=call_id,
             payload={"idea": item.model_dump(mode="json"), "anti_chase": v.model_dump(mode="json")},
@@ -1532,6 +1605,8 @@ class _RangeEdges:
 
     kept: list[ResearchRankedItem]
     dropped: Counter[str] = dataclasses.field(default_factory=Counter)
+    # D128: mid-range ideas kept for their credit structures only (see _AntiChase)
+    credit_only: list[ResearchRankedItem] = dataclasses.field(default_factory=list)
     rejected: list[tuple[ResearchRankedItem, str]] = dataclasses.field(default_factory=list)
     # ticker -> the verdict (every directional long-premium idea in a ranged regime)
     verdicts: dict[str, Any] = dataclasses.field(default_factory=dict)
@@ -1548,9 +1623,11 @@ def _range_edge_filter(
 ) -> _RangeEdges:
     """E23.1 (D98): drop directional long-premium ideas from the middle of a sideways range.
 
-    Runs after the anti-chase filter (an idea it dropped never reaches here). Only a
-    bullish/bearish idea the account profile structures as long premium only, whose
-    ``regime`` entry's ``regime.current`` is in ``range_edges.regimes``, is checked; the
+    Runs after the anti-chase filter (an idea it dropped never reaches here). A
+    bullish/bearish idea the account profile can structure as long premium, whose
+    ``regime`` entry's ``regime.current`` is in ``range_edges.regimes``, is checked
+    (D128: on a profile with a credit spread for the stance, a mid-range idea is kept
+    and only its debit structures leave the menu, ``credit_only``); the
     rule is :func:`arc.features.technicals.is_mid_range` on that entry's technicals.
     Missing data or a too-narrow range keeps the idea (a filter, not a gate).
     Survivors are re-ranked 1..n. Deterministic: no LLM, no network, never a gate input.
@@ -1565,7 +1642,7 @@ def _range_edge_filter(
         label = ((entry.payload.get("regime") or {}).get("current")) if entry else None
         if (
             stance not in ("bullish", "bearish")
-            or not _long_premium_only(stance, ctx.settings)
+            or not _has_long_premium(stance, ctx.settings)
             or not isinstance(label, str)
             or label.strip().lower() not in rule.regimes
         ):
@@ -1575,7 +1652,11 @@ def _range_edge_filter(
         tech = TechnicalFeatures.model_validate(raw) if raw is not None else None
         verdict = is_mid_range(tech, label, stance, rule)
         res.verdicts[item.ticker] = verdict
-        if verdict.mid_range:
+        if verdict.mid_range and _has_credit(stance, ctx.settings):
+            # D128: a mid-range directional debit has no edge; a credit spread sells the range
+            res.dropped[ReasonCode.MID_RANGE_DEBIT_ONLY.value] += 1
+            res.credit_only.append(item)
+        elif verdict.mid_range:
             res.dropped[ReasonCode.MID_RANGE_ENTRY.value] += 1
             res.rejected.append((item, ReasonCode.MID_RANGE_ENTRY.value))
             continue
@@ -1606,6 +1687,22 @@ def _journal_range_edges(
             Choice.REJECTED,
             ReasonCode.MID_RANGE_ENTRY,
             reason_text=f"{item.stance} in {v.regime}: {v.text()}",
+            confidence=item.confidence,
+            persona_call_id=call_id,
+            payload={
+                "idea": item.model_dump(mode="json"),
+                "range_edges": v.model_dump(mode="json"),
+            },
+        )
+    for item in edges.credit_only:  # D128: kept; its debit structures leave the menu
+        v = edges.verdicts[item.ticker]
+        j.add(
+            JournalPersona.RESEARCH,
+            Stage.SHORTLIST,
+            item.ticker,
+            Choice.NOTED,
+            ReasonCode.MID_RANGE_DEBIT_ONLY,
+            reason_text=f"{item.stance} in {v.regime}: {v.text()}; debit skipped, credit kept",
             confidence=item.confidence,
             persona_call_id=call_id,
             payload={
@@ -1901,7 +1998,9 @@ def _pullback_add(
     cfg = ctx.routines.pullback_watch
     drop_session = add_sessions(_today(ctx), 0)
     added = 0
-    for item, _ in chase.rejected:
+    # D128: a credit-only idea goes on watch too, so its debit structures return
+    # once the stretch resets
+    for item in [*(i for i, _ in chase.rejected), *chase.credit_only]:
         stance = item.stance.strip().lower()
         if stance not in ("bullish", "bearish") or (item.ticker, stance) in live:
             continue
@@ -2236,12 +2335,13 @@ def _opens_today_by_sleeve(ctx: JobContext) -> dict[str, int]:
 
 
 def _free_slots(ctx: JobContext, env: PipelineEnv) -> FreeSlots | None:
-    """E22.3 (D97): free slots per sleeve, settled cash and the per-name cap, or ``None``.
+    """E22.3 (D97): free slots per sleeve, buying power and the per-name cap, or ``None``.
 
+    The buying-power figure is settled cash on cash profiles and Alpaca's options
+    buying power on margin profiles (D129).
     ``None`` when the broker legs cannot be grouped (logged); Research then gets no
     free-slots line and the loop keeps its plain ``max_idle``.
     """
-    from arc.account_profiles import BuyingPower
     from arc.pipeline.market import open_entry_dtes, settled_cash
 
     settings = ctx.settings
@@ -2251,16 +2351,23 @@ def _free_slots(ctx: JobContext, env: PipelineEnv) -> FreeSlots | None:
     except PortfolioError as exc:
         log.warning("pipeline.free_slots_unavailable", error=str(exc))
         return None
-    cash = settled_cash(info) if settings.profile.buying_power is BuyingPower.CASH_SETTLED else None
+    is_cash = settings.profile.buying_power is BuyingPower.CASH_SETTLED
+    cash = settled_cash(info) if is_cash else None
+    # D129: margin profiles show Alpaca's options buying power (None = unknown)
+    obp = None if is_cash else info.options_buying_power
+    tier = book_alloc_tier(ctx.conn, positions, info.equity, settings, now=ctx.now)
+    risk = tier_open_risk(tier, info.equity, settings.max_open_risk_pct)  # D131 (E28.3)
     slots = free_slots(
         settings.entry_sleeves,
         dtes,
         max_open_positions=settings.max_open_positions,
         single=not settings.profile.has_sleeves,
-        per_name_cap=book_alloc_tier(ctx.conn, positions, info.equity, settings, now=ctx.now).pct
-        * info.equity,
+        per_name_cap=tier.pct * info.equity,
         settled_cash=cash,
+        options_buying_power=obp,
         opens_today=_opens_today_by_sleeve(ctx),
+        open_risk_pct=risk.deployed_pct,
+        max_open_risk_pct=risk.cap_pct if risk.shown else None,
     )
     ctx.record_input("free_slots", "db", slots.model_dump(mode="json"))
     return slots
@@ -2938,6 +3045,10 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
             *(s.card_line() for s in stale),
         ],
         pool_counts=IdeaPool([i for i in pool.items if i.ticker in cands], pool.capped).counts(),
+        credit_only=sorted(
+            {i.ticker for i in (chase.credit_only if chase is not None else [])}
+            | {i.ticker for i in (edges.credit_only if edges is not None else [])}
+        ),
         exit_watchlist_counts=(
             {
                 "hold": len(pctx.positions) - sum(w.action == "review" for w in watch_items),
@@ -3139,8 +3250,8 @@ def _menu_entry(
     extra: dict[str, Any] = {}
     if sleeve is not None:
         extra["sleeve"] = sleeve
-    if rank_key is not None:
-        extra = {
+    if rank_key is not None:  # D128: update, not replace (kept the sleeve tag dropped)
+        extra |= {
             "rank_measure": rank_key.measure,
             "rank_key": rank_key.value,
         }
@@ -3271,6 +3382,11 @@ class _QuantMenus:
     sleeve_of: dict[int, str] = dataclasses.field(default_factory=dict)
     sleeve_counts: dict[str, dict[str, int]] = dataclasses.field(default_factory=dict)
     no_chain_code: dict[str, ReasonCode] = dataclasses.field(default_factory=dict)
+    # D131 (E28.2): why the short-premium regime gate is closed this run (None = open or
+    # off), its market input, and the tickers whose menus lost the blocked kinds.
+    regime_off: str | None = None
+    regime_trend: MarketTrend | None = None
+    regime_dropped: list[str] = dataclasses.field(default_factory=list)
 
 
 def _be_filter(
@@ -3363,6 +3479,31 @@ def _journal_be_filter(j: Recorder, m: _QuantMenus, call_id: str | None = None) 
         )
 
 
+def _journal_regime_gate(j: Recorder, m: _QuantMenus, settings: ArcSettings) -> None:
+    """D131 (E28.2): one ``regime_gate_credit_off`` session row when the gate took the
+    blocked kinds off this run's menus (nothing when the gate is open, off, or no menu
+    offered a blocked kind)."""
+    if m.regime_off is None or not m.regime_dropped:
+        return
+    t = m.regime_trend
+    j.add(
+        JournalPersona.QUANT,
+        Stage.STRUCTURE,
+        SESSION_SUBJECT,
+        Choice.NOTED,
+        ReasonCode.REGIME_GATE_CREDIT_OFF,
+        reason_text=f"short-premium regime gate: {m.regime_off}; "
+        f"{settings.regime_gate_blocked_kinds} taken off the menus",
+        payload={
+            "why": m.regime_off,
+            "blocked_kinds": sorted(regime_blocked_kinds(settings)),
+            "tickers": m.regime_dropped,
+            "market_trend": None if t is None else t.model_dump(mode="json"),
+            "buffer_pct": settings.regime_gate_buffer_pct,
+        },
+    )
+
+
 def _sleeve_slots(ctx: JobContext, env: PipelineEnv) -> list[SleeveSlots]:
     """E22.2 (D97): each sleeve's occupancy (open positions by entry DTE vs its cap).
 
@@ -3402,7 +3543,12 @@ def _menu_levels(
     return out
 
 
-def _quant_menus(ctx: JobContext, env: PipelineEnv, items: list[ResearchRankedItem]) -> _QuantMenus:
+def _quant_menus(
+    ctx: JobContext,
+    env: PipelineEnv,
+    items: list[ResearchRankedItem],
+    credit_only: Collection[str] = (),
+) -> _QuantMenus:
     """Scan each item's chain into a menu (with the E2.4 exit model per structure).
 
     E22.2 (D97): a profile with DTE sleeves gets one menu per (ticker, open sleeve):
@@ -3436,6 +3582,17 @@ def _quant_menus(ctx: JobContext, env: PipelineEnv, items: list[ResearchRankedIt
         for s in m.sleeves_full:
             log.info("pipeline.sleeve_full", sleeve=s.sleeve.name, held=s.held)
     r = settings.scanner_risk_free_rate
+    # D131 (E28.1): the per-underlying cap the pct_spot credit wing fits (None = dollars)
+    cap_dollars = _wing_cap_dollars(ctx, env) if items else None
+    # D131 (E28.2): the gate's short_premium_regime rule, applied to the menus up front so
+    # Quant is never shown a structure the gate will refuse (the gate stays the authority)
+    blocked: frozenset[str] = frozenset()
+    if settings.regime_gate_enabled and items:
+        m.regime_trend = market_trend(ctx.conn, settings, now=ctx.now)
+        m.regime_off = regime_gate_closed(m.regime_trend, settings, ctx.now)
+        if m.regime_off is not None:
+            blocked = regime_blocked_kinds(settings)
+            log.info("pipeline.regime_gate_credit_off", why=m.regime_off, kinds=sorted(blocked))
 
     def cut(
         ticker: str, stance: str, cands: list[ScanCandidate], spot: float, rv: float | None
@@ -3487,6 +3644,8 @@ def _quant_menus(ctx: JobContext, env: PipelineEnv, items: list[ResearchRankedIt
 
     for item in items:
         strategies = _strategies(item.stance, settings)
+        if item.ticker in credit_only:  # D128: anti-chase / range edges kept credit only
+            strategies = [s for s in strategies if s.value in _CREDIT_STRATEGY_NAMES]
         if not strategies:
             no_profile.append((item.ticker, item.stance))
             log.info(
@@ -3497,6 +3656,19 @@ def _quant_menus(ctx: JobContext, env: PipelineEnv, items: list[ResearchRankedIt
                 reason=_profile_reason(item.stance).value,
             )
             continue
+        if blocked:  # D131 (E28.2): SPY below its SMA: no bull puts / iron condors
+            kept = [st for st in strategies if st.value not in blocked]
+            if len(kept) < len(strategies):
+                m.regime_dropped.append(item.ticker)
+            if not kept:
+                no_chain.append(item.ticker)
+                m.no_chain_code[item.ticker] = ReasonCode.REGIME_GATE_CREDIT_OFF
+                no_chain_why[item.ticker] = (
+                    f"short-premium regime gate: {m.regime_off}; the {item.stance} stance has "
+                    "no other structure under this profile"
+                )
+                continue
+            strategies = kept
         if open_sleeves is not None and not open_sleeves:
             no_chain.append(item.ticker)
             m.no_chain_code[item.ticker] = ReasonCode.SLEEVE_FULL
@@ -3513,6 +3685,7 @@ def _quant_menus(ctx: JobContext, env: PipelineEnv, items: list[ResearchRankedIt
                 top=top,
                 # E2.6 (D116): None (off) = the pre-E2.6 strike selection
                 liquidity_rank=liquidity_rank_from(ctx.routines.scanner.liquidity_rank),
+                cap_dollars=cap_dollars,
             )
             history = iv_store.series(item.ticker, until=today) if iv_store is not None else {}
             res = scan(
@@ -3530,9 +3703,22 @@ def _quant_menus(ctx: JobContext, env: PipelineEnv, items: list[ResearchRankedIt
             no_chain.append(item.ticker)
             no_chain_why[item.ticker] = f"scan failed: {exc}"[:500]
             continue
+        if res.dropped is not None and any(res.dropped.values()):  # D131 (E28.1)
+            log.info(
+                "pipeline.credit_rules_dropped",
+                ticker=item.ticker,
+                cap_dollars=cap_dollars,
+                **res.dropped,
+            )
         if not res.candidates:
             no_chain.append(item.ticker)
             no_chain_why[item.ticker] = "scanner found no structure passing its filters"
+            if res.dropped is not None and any(res.dropped.values()):
+                no_chain_why[item.ticker] += (
+                    f" (credit rules dropped: {res.dropped['wing_cap_unfit']} short(s) with no "
+                    f"wing fitting the per-underlying cap, {res.dropped['credit_width_floor']} "
+                    "structure(s) below the credit/width floor)"
+                )
             continue
         spots[item.ticker] = res.spot
         rv = _realized_vol(ctx.snapshot, item.ticker)
@@ -3662,10 +3848,11 @@ def quant_open(ctx: JobContext, env: PipelineEnv) -> JobResult:
         return JobResult(summary="empty shortlist; no structures", metrics={"structures": 0})
 
     today = _today(ctx)
-    m = _quant_menus(ctx, env, shortlist.budgeted())
+    m = _quant_menus(ctx, env, shortlist.budgeted(), shortlist.credit_only)
     summaries, menus, chains, spots = m.summaries, m.menus, m.chains, m.spots
     no_chain, no_chain_why, no_profile = m.no_chain, m.no_chain_why, m.no_profile
     _journal_be_filter(j, m)  # E16.5: nothing unless scanner.max_be_atr is set
+    _journal_regime_gate(j, m, settings)  # D131 (E28.2): nothing while SPY is above its SMA
 
     def journal_no_chain(call_id: str | None = None) -> None:
         for t in no_chain:
@@ -3977,7 +4164,7 @@ def quant_revise(ctx: JobContext, env: PipelineEnv) -> JobResult:
     passthrough = [q for q in first.structures if verdict.get(q.ticker, "accept") == "accept"]
     rejected_t = sorted(t for t, v in verdict.items() if v == "reject")
     items = [i for i in shortlist.budgeted() if i.ticker in revise_set]
-    m = _quant_menus(ctx, env, items)
+    m = _quant_menus(ctx, env, items, shortlist.credit_only)
     menus, summaries = m.menus, m.summaries
     today = _today(ctx)
     inputs = {
@@ -4142,9 +4329,25 @@ def quant_revise(ctx: JobContext, env: PipelineEnv) -> JobResult:
 # ---------------------------------------------------------------------------
 
 
+def _risk_cap(budget_left: Decimal, headroom: Decimal | None, max_loss: Decimal) -> int:
+    """Risk's per-structure cap: the per-underlying budget left, and (D131) the open-risk
+    headroom when the cap is on, each over one contract's max loss (floored)."""
+    room = budget_left if headroom is None else min(budget_left, headroom)
+    return int(room // max_loss)
+
+
 def _risk_rules(
-    settings: ArcSettings, caps: Mapping[tuple[str, str], int], tier: AllocTier
+    settings: ArcSettings,
+    caps: Mapping[tuple[str, str], int],
+    tier: AllocTier,
+    risk: OpenRisk | None = None,
 ) -> list[str]:
+    # D131 (E28.3): the open-risk headroom also bounds the count (left out at 100%)
+    headroom = (
+        f", floor(open-risk headroom ${risk.headroom:,.0f} / max_loss) ({risk.describe()})"
+        if risk is not None and risk.shown and risk.headroom is not None
+        else ""
+    )
     return [
         _profile_rule(settings),
         "Exactly one assessment per proposed structure, with ticker and structure_type "
@@ -4153,7 +4356,8 @@ def _risk_rules(
         "policy (take profit / stop / DTE exit); positions will be managed, so weigh the "
         "managed PoP, net EV and stop probability.",
         "sizing_suggestion is advisory. The pipeline trades min(your suggestion, "
-        f"floor({tier.pct:.0%} × equity / max_loss); {tier.describe()}); caps per structure: "
+        f"floor({tier.pct:.0%} × equity / max_loss); {tier.describe()}{headroom}); "
+        "caps per structure: "
         + ", ".join(f"{t} {k}: {n}" for (t, k), n in sorted(caps.items()))
         + ". Suggest 0 to decline a trade.",
     ]
@@ -4239,11 +4443,14 @@ def risk_open(ctx: JobContext, env: PipelineEnv) -> JobResult:
         "expirations": sorted({s.legs[0].expiry for s in structures.structures}),
     }
     tier = portfolio_alloc_tier(portfolio, info.equity, settings)  # D116
+    risk = portfolio_open_risk(portfolio, info.equity, settings)  # D131 (E28.3)
+    headroom = risk.headroom if risk.shown else None
     budget = tier.pct * info.equity
     caps = {
-        (s.ticker, s.structure_type): int(
-            max(budget - existing_max_loss(portfolio, s.ticker), Decimal(0))
-            // Decimal(str(s.max_loss))
+        (s.ticker, s.structure_type): _risk_cap(
+            max(budget - existing_max_loss(portfolio, s.ticker), Decimal(0)),
+            headroom,
+            Decimal(str(s.max_loss)),
         )
         for s in structures.structures
         if s.max_loss
@@ -4254,7 +4461,7 @@ def risk_open(ctx: JobContext, env: PipelineEnv) -> JobResult:
         "account_equity": float(info.equity),
         "scan_date": today.isoformat(),
         "entry_terms": entry_terms(settings).model_dump(mode="json"),
-        "rules": _risk_rules(settings, caps, tier),
+        "rules": _risk_rules(settings, caps, tier, risk),
     }
     # E13.9: Risk also gives a verdict per structure.
     prompt_key = "risk_open"
@@ -4389,6 +4596,7 @@ def risk_open(ctx: JobContext, env: PipelineEnv) -> JobResult:
             cap_pct=tier.pct,
             existing_max_loss=existing_max_loss(portfolio, a.ticker),
             cap_label=tier.describe(),
+            open_risk_headroom=headroom,  # D131 (E28.3)
         )
         for a in kept
     }
@@ -4472,16 +4680,57 @@ def cash_per_contract(st: Any, band: PriceBand, settings: ArcSettings) -> Decima
     The gate's ``account_profile_settled_cash`` need for one contract: the band's
     worst price × 100 plus ``gate_fee_per_leg_contract`` × legs (ratio-weighted).
     """
+    return max(band.hi, Decimal(0)) * 100 + _fees_per_contract(st, settings)
+
+
+def _fees_per_contract(st: Any, settings: ArcSettings) -> Decimal:
+    """``gate_fee_per_leg_contract`` × ratio-weighted legs, as the gate counts fees."""
     legs = sum(leg.ratio for leg in st.legs)
-    fee = Decimal(str(settings.gate_fee_per_leg_contract)) * Decimal(legs)
-    return max(band.hi, Decimal(0)) * 100 + fee
+    return Decimal(str(settings.gate_fee_per_leg_contract)) * Decimal(legs)
+
+
+def buying_power_per_contract(st: Any, band: PriceBand, settings: ArcSettings) -> Decimal | None:
+    """D129: options buying power one structure unit needs, as the gate counts it.
+
+    The gate's ``account_profile_buying_power`` need for one contract: the band-worst
+    max loss (:func:`worst_loss_per_contract`) plus fees. ``None`` when the max loss
+    is unbounded (sizing already rejects that; no fit is applied).
+    """
+    worst = worst_loss_per_contract(st, band)
+    if worst is None:
+        return None
+    return worst + _fees_per_contract(st, settings)
+
+
+def fit_per_contract(st: Any, band: PriceBand, settings: ArcSettings) -> Decimal | None:
+    """The per-contract need of the active profile's buying-power rule (D25 / D129)."""
+    if settings.profile.buying_power is BuyingPower.CASH_SETTLED:
+        return cash_per_contract(st, band, settings)
+    return buying_power_per_contract(st, band, settings)
+
+
+def fit_basis(settings: ArcSettings) -> str:
+    """Journal label of the figure sizing fits contracts to (D129)."""
+    if settings.profile.buying_power is BuyingPower.CASH_SETTLED:
+        return "settled_cash"
+    return "options_buying_power"
+
+
+def fit_available(account: AccountSnapshot, settings: ArcSettings) -> Decimal | None:
+    """The account figure sizing fits to: settled cash (cash profiles) or options
+    buying power (margin, D129). ``None`` = unknown (the gate then fails closed)."""
+    if settings.profile.buying_power is BuyingPower.CASH_SETTLED:
+        return account.settled_cash
+    return account.options_buying_power
 
 
 def cash_fit_enabled(settings: ArcSettings) -> bool:
-    """E22.3: sizing fits contracts to settled cash only on ``cash_settled`` profiles."""
-    from arc.account_profiles import BuyingPower
+    """E22.3 / D129: sizing fits contracts to the profile's buying-power figure.
 
-    return settings.profile.buying_power is BuyingPower.CASH_SETTLED
+    ``cash_settled`` profiles fit to settled cash; ``margin`` profiles (D129) fit to
+    options buying power. Every known profile fits, so this is ``True`` for both.
+    """
+    return settings.profile.buying_power in (BuyingPower.CASH_SETTLED, BuyingPower.MARGIN)
 
 
 class GateSecretMissingError(RuntimeError):
@@ -4684,6 +4933,8 @@ _SIZING_REASONS = {
     "invalid_input": ReasonCode.SIZING_INVALID_INPUT,
     "cash_capped": ReasonCode.SIZING_CASH_CAPPED,  # E22.3: fewer contracts to fit cash
     "cash_zero": ReasonCode.SIZING_CASH_ZERO,  # E22.3: not one contract fits settled cash
+    "open_risk_capped": ReasonCode.SIZING_OPEN_RISK_CAPPED,  # D131 (E28.3)
+    "open_risk_cap": ReasonCode.SIZING_OPEN_RISK_CAP,  # D131 (E28.3): no headroom
 }
 
 
@@ -4829,6 +5080,7 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
         spot_max_spread_pct=settings.spot_max_spread_pct,
     )
     earnings = next_earnings(ctx.conn, list(by_ticker), _today(ctx))
+    trend = market_trend(ctx.conn, settings, now=now)  # D131 (E28.2): None when off
     switch = HaltSwitch(HaltRepo(ctx.conn))
     exits = exit_config(settings)  # D26: exits/costs yaml + control-panel overrides
     cost_model = cost_config(settings)
@@ -4838,9 +5090,12 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
     lines: list[str] = []
     passed = proposals = 0
     by_sleeve: Counter[str] = Counter()  # E22.2 (D97): proposals per DTE sleeve
-    # E22.3 (D97/D25): settled cash still free in this run (cash_settled profiles; None =
-    # no cash fit). First come within a run, in Research rank order; no per-sleeve split.
-    cash_left: Decimal | None = account.settled_cash if cash_fit_enabled(settings) else None
+    # E22.3 (D97/D25) / D129: buying power still free in this run (settled cash on cash
+    # profiles, options buying power on margin; None = unknown or no fit). First come
+    # within a run, in Research rank order; no per-sleeve split.
+    cash_left: Decimal | None = (
+        fit_available(account, settings) if cash_fit_enabled(settings) else None
+    )
 
     def skip(t: str, key: str, code: ReasonCode, text: str, **payload: Any) -> None:
         skipped[key] += 1
@@ -5019,22 +5274,27 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
             {t: priced.spot},
             proposal_betas(ctx.conn, [t], now.astimezone(ET).date()),
             quote_ref_time=priced.quote_ref_times(now),  # E10.2d: paired arm replay
+            trend=trend,
         )
         limit = limit_price(st.net_debit_credit, grid_for(st.legs, market, settings))
         # D24: the gate checks the whole price band; size at its worst price (D18).
         band = band_for(st, limit, market, settings)
-        per_cash = cash_per_contract(st, band, settings) if cash_left is not None else None
+        # D129: the per-contract need of the profile's buying-power rule; None when the
+        # max loss is unbounded (margin), so no fit is applied (sizing rejects it anyway).
+        per_cash = fit_per_contract(st, band, settings) if cash_left is not None else None
         # D116: the tier from the in-run book (earlier passes in this run count as deployed)
         tier = portfolio_alloc_tier(portfolio, info.equity, settings)
+        risk = portfolio_open_risk(portfolio, info.equity, settings)  # D131 (E28.3)
         size = size_contracts(
             suggestion=a.sizing_suggestion,
             max_loss_per_contract=worst_loss_per_contract(st, band),
             equity=info.equity,
             cap_pct=tier.pct,
             existing_max_loss=existing_max_loss(portfolio, t),  # S-7: remaining budget
-            cash_available=cash_left,  # E22.3: settled cash left after this run's opens
+            cash_available=cash_left if per_cash is not None else None,  # E22.3 / D129
             cash_per_contract=per_cash,
             cap_label=tier.describe(),
+            open_risk_headroom=risk.headroom if risk.shown else None,  # D131 (E28.3)
         )
         live_cap = live_size_cap(settings, account)  # D70: None in paper / gate met
         size = apply_live_cap(size, live_cap, info.equity)
@@ -5049,11 +5309,17 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
             "deployed": str(tier.deployed),
             "deployed_pct": float(tier.deployed_pct) if tier.deployed_pct is not None else None,
         }
+        if risk.shown:  # D131 (E28.3): the open-risk fit's inputs
+            sizing_payload["max_open_risk_pct"] = float(risk.cap_pct)
+            sizing_payload["open_risk_headroom"] = (
+                None if risk.headroom is None else str(risk.headroom)
+            )
         if live_cap is not None:
             sizing_payload["live_cap"] = live_cap
-        if cash_left is not None:  # E22.3: the cash fit's inputs
+        if cash_left is not None:  # E22.3 / D129: the buying-power fit's inputs
             sizing_payload["cash_available"] = str(cash_left)
-            sizing_payload["cash_per_contract"] = str(per_cash)
+            sizing_payload["cash_per_contract"] = None if per_cash is None else str(per_cash)
+            sizing_payload["fit_basis"] = fit_basis(settings)
         if settings.profile.has_sleeves:  # E22.1 (D97): the open's entry-DTE sleeve
             sizing_payload["sleeve"] = sleeve.name if sleeve is not None else None
         if not size.trade:
@@ -5180,6 +5446,11 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
             reason_text=(
                 f"min(Risk {size.suggestion}, cap {size.cap_contracts}"
                 + (f", cash {size.cash_contracts}" if size.cash_contracts is not None else "")
+                + (
+                    f", open risk {size.open_risk_contracts}"
+                    if size.open_risk_contracts is not None
+                    else ""
+                )
                 + (f", live cap {live_cap}" if live_cap is not None else "")
                 + f") = {size.contracts}"
             ),
@@ -5270,7 +5541,7 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
                 kind_of(st.legs),  # D116: the gate's own delta-cap unit
             )
             if cash_left is not None and per_cash is not None:
-                # E22.3: the next open in this run sizes against the cash still free.
+                # E22.3 / D129: the next open in this run sizes against what is still free.
                 cash_left = cash_after(cash_left, per_cash, size.contracts)
     sleeve_metrics: dict[str, int] = {}
     if settings.profile.has_sleeves:  # E22.2 (D97): opens per sleeve (0s included)

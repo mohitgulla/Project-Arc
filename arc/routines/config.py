@@ -901,8 +901,10 @@ class AntiChaseSettings(BaseModel):
     after Research ranks and before Quant prices, a bullish / bearish idea whose
     account profile maps it to long premium only (``cash_debit`` / ``cash_long_only``
     debit structures) is dropped when its move is already stretched, journaled
-    ``stretched_entry`` with the numbers that tripped it. Neutral ideas and any idea
-    the profile could structure as a credit spread are never filtered. Missing
+    ``stretched_entry`` with the numbers that tripped it. D128: when the profile also
+    has a credit spread for the stance (``margin``), the idea is kept with only its
+    debit structures removed from the menu (``stretched_debit_only``). Neutral ideas
+    are never filtered. Missing
     technicals keep the idea (journaled ``technicals_missing``): an optional filter,
     not a safety rule. Exits are untouched. The rule itself is
     :func:`arc.features.technicals.is_stretched`.
@@ -1203,7 +1205,9 @@ class RangeEdgesSettings(BaseModel):
     After Research ranks (and after anti-chase), a bullish / bearish idea whose account
     profile maps it to long premium only, in a regime listed in ``regimes``, is kept only
     from the right edge of its range: bullish at position <= ``bull_max_pos``, bearish at
-    >= ``bear_min_pos``; otherwise dropped as ``mid_range_entry``. ``levels:
+    >= ``bear_min_pos``; otherwise dropped as ``mid_range_entry`` (D128: on a profile with
+    a credit spread for the stance, kept with only its debit structures removed from the
+    menu, ``mid_range_debit_only``). ``levels:
     value_area`` (default) reads the E23.0 volume-profile ``vp_pos`` (outside the value
     area counts as that edge); ``high_low`` reads the 20-session ``range_pos_20d``. A
     missing value area falls back to ``high_low`` (journaled ``vp_missing``); missing

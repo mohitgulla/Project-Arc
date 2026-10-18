@@ -100,6 +100,7 @@ def gate(s: Structure, config: ArcSettings, portfolio: Portfolio | None = None) 
         equity=D("100000"),
         last_equity=D("100000"),
         settled_cash=D("100000"),
+        options_buying_power=D("100000"),
         as_of=NOW - dt.timedelta(seconds=5),
     )
     return evaluate(
@@ -274,8 +275,10 @@ class TestSettings:
         ]
         assert s.exit_block_for_dte(45) is None
 
-    def test_margin_uses_global_window(self) -> None:
-        s = cfg(profile="margin")
+    def test_sleeveless_margin_uses_global_window(self) -> None:
+        from tests.legacy_profiles import legacy_margin_settings
+
+        s = legacy_margin_settings()  # D128: shipped margin has sleeves
         assert s.entry_dte_window == (s.dte_min, s.dte_max)
         assert s.entry_sleeves[0].name == "default"
 

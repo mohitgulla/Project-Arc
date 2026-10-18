@@ -39,6 +39,12 @@ arc = "arc.cli:main"
 research = [
     "scikit-learn>=1.9.1",
 ]
+# E27.1 (D126): the ML outcome-model programme. `arc/ml` imports these lazily; the live
+# scorer (E27.4) needs only lightgbm + numpy at runtime. `uv sync --extra ml`.
+ml = [
+    "scikit-learn>=1.9.1",
+    "lightgbm>=4.5",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -118,6 +124,7 @@ forbidden_modules = [
     "arc.iv",  # E4.12 (D55): IV history is context only, never a gate input
     "arc.features.regime",  # E17.1 (D77): the regime is context, never a gate input
     "arc.features.technicals",  # E16.2 (D76): chart indicators are context, never gate inputs
+    "arc.ml",  # E27.2 (D126): ML forecasts (M1, M2) are never gate inputs
 ]
 
 # E4.12 / D55: IV history reads market data only; it never trades or calls an LLM.

@@ -59,7 +59,14 @@ def _cfg():  # noqa: ANN202 - RankingFile
     from arc.backtest.ranking import load_ranking_file
 
     cfg = load_ranking_file()
-    bt = cfg.backtest.model_copy(update={"n_paths": 200, "stance": "none"})
+    # D131 (E28.1): the sim tests were worked out on the pre-D131 credit menu (nearest 2%
+    # wing, no floor); the shipped widest-fit wing is tested in test_e281_credit_wings.py.
+    legacy = {"width_pct": 0.02, "wing_fit": "nearest", "wing_cap": None, "min_credit_width": 0.0}
+    menus = {
+        p: [m.model_copy(update=legacy) if m.wing_fit == "widest" else m for m in ms]
+        for p, ms in cfg.backtest.menus.items()
+    }
+    bt = cfg.backtest.model_copy(update={"n_paths": 200, "stance": "none", "menus": menus})
     return cfg.model_copy(
         update={
             "backtest": bt,

@@ -147,12 +147,18 @@ def test_e75b_overlay_is_live_shaped_and_tilted() -> None:
     for prof, specs in cfg.backtest.menus.items():
         assert all(m.expiry_mode is ExpiryMode.ALL for m in specs), prof
         # same kinds and anchor deltas as the E7.5 menu: only the expiry shape changes
-        # (E7.19: the base menu is expiry_mode all + max_expiries_per_sleeve 3; the
+        # (D131: the base margin credit menu moved to the widest-fit 5% wing; this
+        # historical overlay keeps its own pre-D131 wing, so the wing fields are excluded.
+        # E7.19: the base menu is expiry_mode all + max_expiries_per_sleeve 3; the
         # E7.5b overlay keeps every expiration, uncapped)
-        shape = {"expiry_mode", "max_expiries_per_sleeve"}
         assert all(m.max_expiries_per_sleeve is None for m in specs), prof
-        strip = [m.model_dump(exclude=shape) for m in specs]
-        assert strip == [m.model_dump(exclude=shape) for m in base.backtest.menus[prof]]
+        wing = {"expiry_mode", "max_expiries_per_sleeve", "width_pct", "wing_fit", "wing_cap",
+                "min_credit_width"}  # fmt: skip
+        strip = [m.model_dump(exclude=wing) for m in specs]
+        want = [m.model_dump(exclude=wing) for m in base.backtest.menus[prof]]
+        if prof == "margin":  # D128 added cash_debit's debit kinds; the overlay pins credit
+            want = want[:1]
+        assert strip == want
     assert {Ranker.MANAGED_NET_EV_TILTED, Ranker.RORC_DAY_TILTED} <= set(cfg.ranking.rankers)
     assert cfg.ranking.filters == base.ranking.filters
 

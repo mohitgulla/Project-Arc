@@ -804,6 +804,19 @@
           "description": "The sector ETF behind rs_sector_20d",
           "title": "Sector Etf"
         },
+        "sma100": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "D131 (E28.2): short_premium_regime's SMA100",
+          "title": "Sma100"
+        },
         "sma20": {
           "anyOf": [
             {
@@ -1156,7 +1169,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "Regime + vol features for one underlying (E4.3).\n\nv4 (E16.2, D76): ``technicals`` (defaulted ``None``), so v3 rows still validate.\nv5 (E23.0, D98): ``technicals`` gains the volume-profile / OI-wall fields (all\ndefaulted ``None``), so v4 rows still validate.\nv6 (E23.1, D98): ``technicals.range_pos_20d`` (defaulted ``None``), so v5 rows\nstill validate.",
+  "description": "Regime + vol features for one underlying (E4.3).\n\nv4 (E16.2, D76): ``technicals`` (defaulted ``None``), so v3 rows still validate.\nv5 (E23.0, D98): ``technicals`` gains the volume-profile / OI-wall fields (all\ndefaulted ``None``), so v4 rows still validate.\nv6 (E23.1, D98): ``technicals.range_pos_20d`` (defaulted ``None``), so v5 rows\nstill validate.\nv7 (E28.2, D131): ``technicals.sma100`` (defaulted ``None``), so v6 rows still\nvalidate (the short_premium_regime gate's SPY SMA100 input).",
   "properties": {
     "as_of": {
       "description": "Session date (ET); uses data up to that close only",

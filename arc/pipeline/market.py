@@ -24,11 +24,19 @@ import structlog
 from pydantic import BaseModel, ConfigDict, Field
 
 from arc.betas.store import betas_used
-from arc.context.ttl import from_db
+from arc.context.ttl import from_db, to_db
 from arc.data.base import DEFAULT_SPOT_MAX_SPREAD_PCT, market_spot
 from arc.gate.band import as_grid
 from arc.gate.delta import delta_exposure, kind_of
-from arc.gate.inputs import AccountSnapshot, ClosedLot, MarketSnapshot, Portfolio, Position, Quote
+from arc.gate.inputs import (
+    AccountSnapshot,
+    ClosedLot,
+    MarketSnapshot,
+    MarketTrend,
+    Portfolio,
+    Position,
+    Quote,
+)
 from arc.models import Greeks, Leg, LegIntent
 from arc.scanner.iv import atm_iv
 from arc.store.execution import reserved_open_max_loss
@@ -63,6 +71,7 @@ __all__ = [
     "live_gate_status",
     "live_size_cap",
     "market_snapshot",
+    "market_trend",
     "next_earnings",
     "opened_today_symbols",
     "price_structure",
@@ -139,6 +148,7 @@ def account_snapshot(
         equity=info.equity,
         last_equity=baseline.value if baseline is not None else Decimal(0),
         settled_cash=settled_cash(info),
+        options_buying_power=info.options_buying_power,  # D129: as reported; None = unknown
         orders_used_today=orders_used_today,
         day_trades_used=day_trades_used,
         live_gate_met=live_gate_met,
@@ -207,6 +217,55 @@ def next_earnings(
         elif t in ETF_UNDERLYINGS:
             out[t] = None
     return out
+
+
+#: D131 (E28.2): the market reference whose close vs SMA drives short_premium_regime.
+MARKET_TREND_TICKER = "SPY"
+
+
+def market_trend(
+    conn: sqlite3.Connection,
+    settings: ArcSettings,
+    *,
+    now: _dt.datetime,
+    ticker: str = MARKET_TREND_TICKER,
+) -> MarketTrend | None:
+    """D131 (E28.2): *ticker*'s latest daily close vs ``SMA(regime_gate_ma)``, for the gate.
+
+    Read from the newest stored ``regime`` entry for *ticker* visible at *now*
+    (``valid_from <= now``, active **or expired**: a regime entry expires at the
+    close, and the gate judges staleness itself from the bar date). Its
+    ``technicals`` give ``close``, ``sma<ma>`` and ``bar_date``. ``None`` when
+    ``regime_gate_enabled`` is off (nothing read: the pre-D131 snapshot), when no such
+    entry exists, or when it carries no positive close / SMA (e.g. a pre-v7 row for
+    ``regime_gate_ma`` 100): the gate then fails closed for the blocked kinds only.
+    """
+    if not settings.regime_gate_enabled:
+        return None
+    row = conn.execute(
+        """SELECT payload FROM context_entries
+           WHERE kind = 'regime' AND subject = ? AND status IN ('active', 'expired')
+             AND valid_from <= ?
+           ORDER BY valid_from DESC, created_at DESC, rowid DESC LIMIT 1""",
+        (ticker, to_db(now)),
+    ).fetchone()
+    if row is None:
+        log.info("pipeline.market_trend_missing", ticker=ticker, reason="no regime entry")
+        return None
+    tech = json.loads(row[0]).get("technicals") or {}
+    ma = settings.regime_gate_ma
+    close, sma, bar = tech.get("close"), tech.get(f"sma{ma}"), tech.get("bar_date")
+    ok = all(isinstance(v, int | float) and not isinstance(v, bool) and v > 0 for v in (close, sma))
+    if not ok or not bar:
+        log.info("pipeline.market_trend_missing", ticker=ticker, reason=f"no close/sma{ma}")
+        return None
+    return MarketTrend(
+        ticker=ticker,
+        close=Decimal(str(close)),
+        ma=ma,
+        sma=Decimal(str(sma)),
+        as_of=_dt.date.fromisoformat(str(bar)),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -834,6 +893,7 @@ def market_snapshot(
     betas: Mapping[str, float] | None = None,
     *,
     quote_ref_time: Mapping[str, _dt.datetime] | None = None,
+    trend: MarketTrend | None = None,
 ) -> MarketSnapshot:
     """Gate quotes for the legs. A contract without a quote timestamp is left out (fails closed).
 
@@ -843,7 +903,8 @@ def market_snapshot(
     D66: ``penny_program`` carries each contract's ``ppind`` (None = unknown).
     *quote_ref_time* (E10.2d): per leg replayed from a paired arm's tape, the paired
     chain's clock (:meth:`PricedStructure.quote_ref_times`); the gate ages those
-    quotes against it.
+    quotes against it. *trend* (D131, E28.2): :func:`market_trend`, the input of the
+    gate's ``short_premium_regime`` rule (``None`` = unknown; opens only).
     """
     quotes: dict[str, Quote] = {}
     for sym, c in contracts.items():
@@ -863,6 +924,7 @@ def market_snapshot(
         underlying_beta=beta_map,
         penny_program={sym: c.penny_program for sym, c in contracts.items()},
         quote_ref_time={s: t for s, t in (quote_ref_time or {}).items() if s in quotes},
+        market_trend=trend,
     )
 
 

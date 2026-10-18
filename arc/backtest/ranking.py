@@ -82,6 +82,7 @@ from arc.backtest.strategies import (
     LegPick,
     StrategyKind,
     StrategySpec,
+    WingFit,
     pick_expirations,
     select_legs,
 )
@@ -181,6 +182,11 @@ class MenuSpec(BaseModel):
         "DTE window (one sleeve): the ones nearest the window's low end, middle and high end "
         "for 3 (arc.backtest.strategies.capped_expirations); None = every expiration",
     )
+    # D131 (E28.1): the live pct_spot credit wing + credit/width floor (credit kinds only;
+    # defaults = the pre-D131 sim). See StrategySpec.
+    wing_fit: WingFit = "nearest"
+    wing_cap: float | None = Field(None, gt=0.0)
+    min_credit_width: float = Field(0.0, ge=0.0, le=0.40)
 
     def specs(
         self, dte_min: int, dte_max: int, exit_block: str | None = None
@@ -197,6 +203,9 @@ class MenuSpec(BaseModel):
                 expiry_mode=self.expiry_mode,
                 max_expiries=self.max_expiries_per_sleeve,
                 exit_block=exit_block,
+                wing_fit=self.wing_fit,
+                wing_cap=self.wing_cap,
+                min_credit_width=self.min_credit_width,
             )
             for k in self.kinds
             for d in self.deltas
@@ -571,6 +580,9 @@ def build_menu(
             ml = float(structure.max_loss)
             evp = _ev_proxy(picks, spot, iv, r, structure.dte, cost)
             credit = entry_mid < 0
+            cw = (-entry_mid / width) if credit and width else None
+            if cw is not None and spec.min_credit_width > 0 and cw < spec.min_credit_width:
+                continue  # D131 (E28.1): the scanner's credit/width floor
             out.append(
                 Candidate(
                     underlying=underlying,
@@ -582,7 +594,7 @@ def build_menu(
                         key=key,
                         credit=credit,
                         vertical=len(picks) == 2,
-                        credit_width=(-entry_mid / width) if credit and width else None,
+                        credit_width=cw,
                         debit_width=(width / entry_mid)
                         if (not credit) and width and len(picks) == 2 and entry_mid > 0
                         else None,

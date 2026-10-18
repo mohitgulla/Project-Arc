@@ -3,12 +3,41 @@
     "schemas": {
       "AccountSplit": {
         "additionalProperties": false,
-        "description": "D87: how much of the account is free cash vs held in open positions.",
+        "description": "D87: how much of the account is free cash vs held in open positions.\n\nD129: on a margin profile the figure that matters for new trades is\n``options_buying_power`` (``available``); ``collateral`` is what the broker holds\nagainst open spreads and ``in_positions`` (equity \u2212 cash) can go negative when\nshort premium dominates. ``stock_buying_power`` is the 4\u00d7 stock-only figure.",
         "properties": {
           "at": {
             "format": "date-time",
             "title": "At",
             "type": "string"
+          },
+          "available": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D129: what new trades can open with: options buying power on margin, cash on a cash-settled profile",
+            "title": "Available"
+          },
+          "buying_power_kind": {
+            "anyOf": [
+              {
+                "enum": [
+                  "margin",
+                  "cash_settled"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D129: the effective account profile's buying-power kind",
+            "title": "Buying Power Kind"
           },
           "cash": {
             "description": "Broker cash: available to open new debit trades",
@@ -27,6 +56,19 @@
             ],
             "description": "cash / equity (fraction)",
             "title": "Cash Pct"
+          },
+          "collateral": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D129: max(cash \u2212 options buying power, 0): what the broker holds against open spreads (None when options buying power is unknown)",
+            "title": "Collateral"
           },
           "equity": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
@@ -51,6 +93,19 @@
             ],
             "description": "Broker options buying power (cash account: = cash)",
             "title": "Options Buying Power"
+          },
+          "stock_buying_power": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D129: raw broker buying_power (4\u00d7 on margin); stock-only, display only",
+            "title": "Stock Buying Power"
           }
         },
         "required": [
@@ -5390,7 +5445,8 @@
             "default": "iv",
             "enum": [
               "iv",
-              "realized_forecast"
+              "realized_forecast",
+              "m1"
             ],
             "title": "Path Vol Source",
             "type": "string"
@@ -7546,6 +7602,18 @@
             },
             "title": "Max Loss By Underlying",
             "type": "object"
+          },
+          "max_open_risk_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D131 (E28.3): portfolio open-risk cap (gate rule open_risk_cap) as a share of equity; deployed_pct is measured against it. None: not passed or the 100% rollback",
+            "title": "Max Open Risk Pct"
           },
           "per_underlying_cap": {
             "anyOf": [

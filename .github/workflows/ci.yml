@@ -11,13 +11,13 @@ permissions:
   contents: read
 
 jobs:
-  # Required status check on main (docs/OPS.md §7). Keep the job id and name `check`
-  # stable: branch protection matches it by name, and renaming it silently drops the rule.
-  check:
-    name: check
+  # D134: `make check` is split across parallel jobs; `check` only aggregates them.
+  # Same coverage as `make check` (lock-check, lint, format, pip-audit via the `audit`
+  # job, every test once), about half the wall time.
+  static:
+    name: static
     runs-on: ubuntu-latest
     steps:
-      # Actions are pinned to full-length commit SHAs (release tag in the trailing comment).
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
@@ -31,8 +31,94 @@ jobs:
       - name: Install dependencies (fails if uv.lock is stale)
         run: uv sync --locked
 
-      - name: make check
-        run: make check
+      - name: lock-check, lint, format
+        run: make lock-check lint fmt
+
+  # The non-gate suite, hashed by test node id into 3 shards (tests/ci_shard.py).
+  # Change the shard count in both `matrix.shard` and ARC_TEST_SHARD's `/3`.
+  tests:
+    name: tests (${{ matrix.shard }}/3)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    env:
+      ARC_TEST_SHARD: ${{ matrix.shard }}/3
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install dependencies (fails if uv.lock is stale)
+        run: uv sync --locked
+
+      - name: make test-rest (one shard)
+        run: make test-rest
+
+  gate:
+    name: gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install dependencies (fails if uv.lock is stale)
+        run: uv sync --locked
+
+      - name: make test-gate (100% branch coverage of arc.gate)
+        run: make test-gate
+
+  slow:
+    name: slow
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install dependencies (fails if uv.lock is stale)
+        run: uv sync --locked
+
+      - name: make test-slow (seeded Monte Carlo)
+        run: make test-slow
+
+  # Required status check on main (docs/OPS.md §7). Keep the job id and name `check`
+  # stable: branch protection matches it by name, and renaming it silently drops the rule.
+  # `if: always()` so a failed or cancelled part reports a red `check`, never a skipped one.
+  check:
+    name: check
+    if: always()
+    needs: [static, tests, gate, slow, audit]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every part of make check passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "static tests gate slow audit: $RESULTS"
+          for r in $RESULTS; do
+            if [ "$r" != "success" ]; then exit 1; fi
+          done
 
   # D86 (E21.1, revising D44 / E10.7): fails only when a PR changes a config leaf an
   # open experiment (spec in config/experiments/live/ without a verdict) tests, unless it

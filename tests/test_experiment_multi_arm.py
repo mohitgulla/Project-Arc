@@ -174,7 +174,8 @@ def test_committed_specs_are_all_covered() -> None:
     # K=3 A/A, spec v3) is committed until `arc experiment adopt` adds owner-approved
     # Analyst proposals. No committed spec is v1 any more (the v1 copies are fixtures).
     assert {f"{p.relative_to(REPO)}" for p in LIVE.glob("*.yaml")} == {
-        "config/experiments/live/xp1_aa_k3.yaml"
+        "config/experiments/live/xp1_aa_k3.yaml",
+        "config/experiments/live/xp2_aa_margin.yaml",  # D130: the margin A/A restart
     }
     assert not [p for p in V1_HASHES if p.startswith("config/")]
 

@@ -135,6 +135,8 @@ class ReasonCode(StrEnum):
     NOT_STRUCTURED = "not_structured"  # E5.7: no structure and no reason from Quant
     OVER_BUDGET = "over_budget"  # E5.7: ranked beyond pipeline_max_shortlist
     SLEEVE_FULL = "sleeve_full"  # E22.2 (D97): a DTE sleeve with no free slot, no menu
+    # D131 (E28.2): SPY below its SMA: bull puts / iron condors taken off the menus
+    REGIME_GATE_CREDIT_OFF = "regime_gate_credit_off"
     # account profile (D25): the profile maps the stance to no structure
     PROFILE_NO_NEUTRAL = "profile:no_neutral_structure"
     PROFILE_NO_STRUCTURE = "profile:no_structure"
@@ -168,6 +170,10 @@ class ReasonCode(StrEnum):
     VWAP_MISSING = "vwap_missing"  # anti_chase.vwap on, intraday fetch failed: daily rule only
     # E23.1 (D98): the deterministic range-edge entry filter (personas.range_edges)
     MID_RANGE_ENTRY = "mid_range_entry"  # sideways regime, long premium from mid-range
+    # D128: on a profile with credit spreads for the stance (margin), a stretched /
+    # mid-range idea keeps its credit structures; only the debit ones leave the menu
+    STRETCHED_DEBIT_ONLY = "stretched_debit_only"
+    MID_RANGE_DEBIT_ONLY = "mid_range_debit_only"
     RANGE_TOO_NARROW = "range_too_narrow"  # range < min_range_atr x ATR14: rule skipped, kept
     VP_MISSING = "vp_missing"  # levels value_area, no value area: 20d high/low used
     # E23.2 (D98): the pullback watch for anti-chase drops (personas.pullback_watch)
@@ -211,6 +217,8 @@ class ReasonCode(StrEnum):
     SIZING_INVALID_INPUT = "sizing:invalid_input"
     SIZING_CASH_CAPPED = "sizing:cash_capped"  # E22.3: fewer contracts to fit settled cash
     SIZING_CASH_ZERO = "sizing:cash_zero"  # E22.3: not one contract fits settled cash
+    SIZING_OPEN_RISK_CAP = "sizing:open_risk_cap"  # D131 (E28.3): no open-risk headroom
+    SIZING_OPEN_RISK_CAPPED = "sizing:open_risk_capped"  # D131 (E28.3): cut to the headroom
     # gate: one code per arc.gate.rules.RuleCode
     GATE_PASS = "gate:pass"
     GATE_STRUCTURE_INVALID = "gate:structure_invalid"
@@ -240,10 +248,13 @@ class ReasonCode(StrEnum):
     GATE_ACCOUNT_NET_DEBIT = "gate:account_profile_net_debit"
     GATE_ACCOUNT_SHORT_LEG = "gate:account_profile_short_leg"
     GATE_ACCOUNT_CASH = "gate:account_profile_settled_cash"
+    GATE_ACCOUNT_BP = "gate:account_profile_buying_power"  # D129
     GATE_ORDER_BUDGET = "gate:order_budget"
     GATE_DAY_TRADES = "gate:account_profile_day_trades"
     GATE_LIVE_SIZE_CAP = "gate:live_size_cap"  # D70 (E11.3)
     GATE_SLEEVE_POSITIONS = "gate:sleeve_max_positions"  # E22.1 (D97)
+    GATE_SHORT_PREMIUM_REGIME = "gate:short_premium_regime"  # D131 (E28.2)
+    GATE_OPEN_RISK_CAP = "gate:open_risk_cap"  # D131 (E28.3)
     # approval (E6.1)
     OWNER_APPROVE = "owner_approve"
     OWNER_REJECT = "owner_reject"
@@ -445,6 +456,8 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.TECHNICALS_MISSING: "Technical filter skipped: no technicals",
     ReasonCode.VWAP_MISSING: "VWAP check skipped: no intraday bars",
     ReasonCode.MID_RANGE_ENTRY: "Skipped: mid-range entry in a sideways market",
+    ReasonCode.STRETCHED_DEBIT_ONLY: "Debit structures skipped (move stretched); credit kept",
+    ReasonCode.MID_RANGE_DEBIT_ONLY: "Debit structures skipped (mid-range); credit kept",
     ReasonCode.RANGE_TOO_NARROW: "Range check skipped: range too narrow",
     ReasonCode.VP_MISSING: "Range check used the 20-day high/low: no value area",
     ReasonCode.PULLBACK_WATCH_ADDED: "Stretched idea put on pullback watch",
@@ -478,6 +491,8 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.SIZING_INVALID_INPUT: "Invalid sizing input",
     ReasonCode.SIZING_CASH_CAPPED: "Size cut to fit settled cash",
     ReasonCode.SIZING_CASH_ZERO: "Not enough settled cash for one contract",
+    ReasonCode.SIZING_OPEN_RISK_CAP: "Portfolio open-risk cap leaves no room for one contract",
+    ReasonCode.SIZING_OPEN_RISK_CAPPED: "Size cut to the portfolio open-risk cap",
     ReasonCode.GATE_PASS: "Gate passed",
     ReasonCode.GATE_STRUCTURE_INVALID: "Gate: invalid structure",
     ReasonCode.GATE_PER_UNDERLYING: "Gate: over the per-underlying limit",
@@ -506,11 +521,15 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.GATE_ACCOUNT_NET_DEBIT: "Gate: account profile needs a net debit",
     ReasonCode.GATE_ACCOUNT_SHORT_LEG: "Gate: account profile forbids this short leg",
     ReasonCode.GATE_ACCOUNT_CASH: "Gate: not enough settled cash",
+    ReasonCode.GATE_ACCOUNT_BP: "Gate: not enough options buying power",
     ReasonCode.GATE_ORDER_BUDGET: "Gate: daily order budget",
     ReasonCode.GATE_DAY_TRADES: "Gate: day-trade limit of the account profile",
     ReasonCode.GATE_LIVE_SIZE_CAP: "Gate: live size cap (live gate not met)",
     ReasonCode.GATE_SLEEVE_POSITIONS: "Gate: DTE sleeve full",
     ReasonCode.SLEEVE_FULL: "No menu: DTE sleeve full",
+    ReasonCode.GATE_OPEN_RISK_CAP: "Gate: over the portfolio open-risk cap",
+    ReasonCode.GATE_SHORT_PREMIUM_REGIME: "Gate: SPY below its trend (no new bull puts / condors)",
+    ReasonCode.REGIME_GATE_CREDIT_OFF: "Menus: bull puts / condors off (SPY below its trend)",
     ReasonCode.OWNER_APPROVE: "Owner approved",
     ReasonCode.OWNER_REJECT: "Owner rejected",
     ReasonCode.AUTO_APPROVE: "Auto-approved",

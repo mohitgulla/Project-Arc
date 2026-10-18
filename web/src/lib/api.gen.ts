@@ -613,6 +613,11 @@ export interface components {
         /**
          * AccountSplit
          * @description D87: how much of the account is free cash vs held in open positions.
+         *
+         *     D129: on a margin profile the figure that matters for new trades is
+         *     ``options_buying_power`` (``available``); ``collateral`` is what the broker holds
+         *     against open spreads and ``in_positions`` (equity − cash) can go negative when
+         *     short premium dominates. ``stock_buying_power`` is the 4× stock-only figure.
          */
         AccountSplit: {
             /**
@@ -620,6 +625,16 @@ export interface components {
              * Format: date-time
              */
             at: string;
+            /**
+             * Available
+             * @description D129: what new trades can open with: options buying power on margin, cash on a cash-settled profile
+             */
+            available?: string | null;
+            /**
+             * Buying Power Kind
+             * @description D129: the effective account profile's buying-power kind
+             */
+            buying_power_kind?: ("margin" | "cash_settled") | null;
             /**
              * Cash
              * @description Broker cash: available to open new debit trades
@@ -630,6 +645,11 @@ export interface components {
              * @description cash / equity (fraction)
              */
             cash_pct?: number | null;
+            /**
+             * Collateral
+             * @description D129: max(cash − options buying power, 0): what the broker holds against open spreads (None when options buying power is unknown)
+             */
+            collateral?: string | null;
             /** Equity */
             equity: string;
             /**
@@ -642,6 +662,11 @@ export interface components {
              * @description Broker options buying power (cash account: = cash)
              */
             options_buying_power?: string | null;
+            /**
+             * Stock Buying Power
+             * @description D129: raw broker buying_power (4× on margin); stock-only, display only
+             */
+            stock_buying_power?: string | null;
         };
         /**
          * ActivityEntry
@@ -2915,7 +2940,7 @@ export interface components {
              * @default iv
              * @enum {string}
              */
-            path_vol_source: "iv" | "realized_forecast";
+            path_vol_source: "iv" | "realized_forecast" | "m1";
             policy: components["schemas"]["ExitPolicy"];
             /**
              * Pop Std Error
@@ -3771,6 +3796,11 @@ export interface components {
             max_loss_by_underlying?: {
                 [key: string]: string;
             };
+            /**
+             * Max Open Risk Pct
+             * @description D131 (E28.3): portfolio open-risk cap (gate rule open_risk_cap) as a share of equity; deployed_pct is measured against it. None: not passed or the 100% rollback
+             */
+            max_open_risk_pct?: number | null;
             /**
              * Per Underlying Cap
              * @description active tier's cap × equity (gate rule, D116)

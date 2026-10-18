@@ -93,8 +93,8 @@ from arc.backtest.ranking import (
 from arc.backtest.sim_config import SimSettings
 from arc.backtest.strategies import StrategyKind, StrategySpec
 from arc.exits.policy import ExitReason, check_rules, lock_fires, resolve_rules
-from arc.gate.caps import alloc_pct_for, deployed_max_loss
-from arc.gate.inputs import AccountSnapshot, MarketSnapshot, Portfolio, Position
+from arc.gate.caps import alloc_pct_for, deployed_max_loss, open_risk
+from arc.gate.inputs import AccountSnapshot, MarketSnapshot, MarketTrend, Portfolio, Position
 from arc.gate.rules import (
     Derived,
     check_daily_loss,
@@ -102,11 +102,13 @@ from arc.gate.rules import (
     check_earnings_blackout,
     check_max_gain,
     check_max_open_positions,
+    check_open_risk,
     check_per_underlying,
+    check_short_premium_regime,
     check_sleeve_positions,
     price_ceiling,
 )
-from arc.models import Proposal
+from arc.models import Proposal, Structure
 from arc.pricing.bs import price_vectorized
 from arc.scanner.rank import Ranker, RankFilters, passes_filters, rank, sort_key
 from arc.sizing import size_contracts
@@ -142,6 +144,7 @@ __all__ = [
     "active_list",
     "capacity_cap",
     "momentum_scores",
+    "market_trends",
     "run_sim",
     "sim_outcome",
     "sim_ticker_from_chains",
@@ -157,6 +160,9 @@ GATE_RULES_APPLIED: tuple[str, ...] = (
     "check_daily_loss",
     "check_max_gain",
     "check_earnings_blackout",
+    "check_short_premium_regime (D131: SPY close vs its point-in-time SMA, when the walk "
+    "loads SPY)",
+    "check_open_risk (D131: open-risk cap on the held book; sizing fits its headroom)",
     "cash_settled fit (check_account_profile's cash sub-check; cash_settled profiles)",
     "check_sleeve_positions (sleeve_max_positions; E7.19, sleeve profiles)",
     "check_dte_window (through the sleeve windows; E7.19, sleeve profiles)",
@@ -193,6 +199,8 @@ SKIP_REASONS: tuple[str, ...] = (
     "new_risk_cap",
     "sleeve_full",
     "gate_dte_window",
+    "gate_short_premium_regime",
+    "gate_open_risk_cap",
 )
 #: E7.19: exit labels of the intraday-rule daily-range proxy (trades.csv exit_reason).
 PROXY_EXITS: dict[str, str] = {"stop": "stop_intraday_proxy", "profit_lock": "lock_intraday_proxy"}
@@ -1168,6 +1176,42 @@ def _blackout(c: Candidate, d: Derived, info: DayInfo, settings: ArcSettings) ->
     return bool(check_earnings_blackout(proposal, d, market, settings, now))
 
 
+def market_trends(
+    closes: pd.Series, ma: int, sessions: Sequence[dt.date], *, ticker: str = "SPY"
+) -> dict[dt.date, MarketTrend]:
+    """D131 (E28.2): the market reference's close vs ``SMA(ma)`` per session, point in time.
+
+    Each session's SMA is the mean of the *ma* closes on or before it (no look-ahead);
+    a session without a close of its own or fewer than *ma* closes gets no entry, so
+    the rule fails closed that day for the blocked kinds, like the live gate.
+    """
+    s = closes.dropna().sort_index()
+    sma = s.rolling(ma, min_periods=ma).mean()
+    out: dict[dt.date, MarketTrend] = {}
+    for d in sessions:
+        if d not in s.index or pd.isna(sma.get(d)):
+            continue
+        out[d] = MarketTrend(
+            ticker=ticker,
+            close=Decimal(str(round(float(s[d]), 4))),
+            ma=ma,
+            sma=Decimal(str(round(float(sma[d]), 4))),
+            as_of=d,
+        )
+    return out
+
+
+def _regime_blocked(
+    c: Candidate, d: Derived, trend: MarketTrend | None, settings: ArcSettings
+) -> bool:
+    """The live ``short_premium_regime`` rule on one sim open (decided at the close)."""
+    legs = _legs(c.picks, c.underlying)
+    proposal = Proposal.model_construct(structure=Structure.model_construct(legs=legs))
+    now = dt.datetime.combine(c.day, dt.time(16, 0), tzinfo=ET)
+    market = MarketSnapshot(market_trend=trend)
+    return bool(check_short_premium_regime(proposal, d, market, settings, now))
+
+
 def _trade_row(
     *,
     ranker: str,
@@ -1276,11 +1320,16 @@ def run_sim(
     starting_equity: float | None = None,
     aliases: Mapping[str, str] | None = None,
     momentum: Mapping[dt.date, list[str]] | None = None,
+    trends: Mapping[dt.date, MarketTrend] | None = None,
 ) -> SimRun:
     """Walk *sessions*; open on decision sessions ≤ *end* (see the module docstring).
 
     *tickers* order never matters: names are always handled in sorted order and the
     cross-name pool is sorted by (ranker key, liquidity desc, symbol, key).
+
+    *trends* (D131, E28.2): :func:`market_trends` for the ``short_premium_regime``
+    rule (a session missing from it fails closed for the blocked kinds). ``None`` =
+    the walk was built without the market reference: the rule is not applied.
     """
     from arc.account_profiles import BuyingPower
 
@@ -1350,6 +1399,7 @@ def run_sim(
                 rows=rows,
                 trend=trend,
                 vol=vol,
+                regime=None if trends is None else (trends.get(day),),
             )
             open_ = open_ + opened
         eq[day] = start_eq + realised + unrealised(day)
@@ -1400,8 +1450,13 @@ def _decide(
     rows: list[dict[str, object]],
     trend: Mapping[str, pd.Series],
     vol: Mapping[str, pd.Series],
+    regime: tuple[MarketTrend | None] | None = None,
 ) -> list[_Pos]:
-    """One decision session: funnel → pool → open. Returns the new positions."""
+    """One decision session: funnel → pool → open. Returns the new positions.
+
+    *regime*: ``(today's market trend or None,)`` applies ``short_premium_regime``;
+    ``None`` skips the rule (no market reference loaded).
+    """
     infos = {t: i for t in names if (i := tickers[t].days.get(day)) is not None}
     eligible = [t for t in names if t in infos and infos[t].eligible]
     funnel["eligible"] = len(eligible)
@@ -1515,13 +1570,17 @@ def _decide(
                 continue
         mlu = Decimal(str(round(ml_unit, 2)))
         existing = sum((p.max_loss for p in held if p.underlying == t), Decimal(0))
+        deployed = deployed_max_loss(portfolio)
+        # D131 (E28.3): sizing fits the open-risk headroom, as the live quant.open does
+        risk = open_risk(deployed, account_eq, settings.max_open_risk_pct)
         size = size_contracts(
             suggestion=10**6,
             max_loss_per_contract=mlu,
             equity=account_eq,
             # D116: the tiered cap from the held book, as check_per_underlying computes it
-            cap_pct=alloc_pct_for(deployed_max_loss(portfolio), account_eq, settings),
+            cap_pct=alloc_pct_for(deployed, account_eq, settings),
             existing_max_loss=Decimal(0) if legacy else existing,
+            open_risk_headroom=None if legacy or not risk.shown else risk.headroom,
         )
         if not size.trade:
             skip(day, t, "sizing", c.inputs.key, size.code)
@@ -1550,11 +1609,17 @@ def _decide(
             skip(day, t, "gate_per_underlying", c.inputs.key)
             continue
         if not legacy:
+            if check_open_risk(d, account, portfolio, settings):
+                skip(day, t, "gate_open_risk_cap", c.inputs.key)
+                continue
             if check_max_gain(d):
                 skip(day, t, "gate_max_gain", c.inputs.key)
                 continue
             if sim.earnings_blackout and _blackout(c, d, tickers[t].days[day], settings):
                 skip(day, t, "blackout", c.inputs.key)
+                continue
+            if regime is not None and _regime_blocked(c, d, regime[0], settings):
+                skip(day, t, "gate_short_premium_regime", c.inputs.key)
                 continue
         cash_used = max(out.entry_debit, 0.0) * MULT * n + out.open_fees * n
         if cash_settled and cash_used > equity - sum(p.cash_used for p in held):

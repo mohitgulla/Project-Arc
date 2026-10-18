@@ -1,0 +1,35 @@
+# D130 calibration A/A on the margin profile (owner 2026-10-17, #project-arc
+# 1792259619.964319). Restart of XP-1 (stopped, owner) after D128 switched the default
+# account profile to `margin` and `pipeline.menu_measure` to `managed_net_ev_full`
+# mid-run: XP-1's first three sessions ran on cash_debit, so its sigma blended two
+# regimes. Same design as XP-1 (D108): the flat control arm XP-2:control and three
+# identical treatments t1..t3 run production's config on the shared experiment
+# account, every arm flat at production's t0 equity; any Ti - C difference is noise.
+# Starts only after D129 (margin buying-power gate + arm collateral) is on main.
+# Pre-registered with the D122 SPY-adjusted analysis XP-1 was amended to.
+spec_version: 3
+id: XP-2
+title: K=3 A/A calibration on the margin profile, control arm plus three identical treatments
+hypothesis: >
+  Four arms running production's config (margin profile, managed_net_ev_full menu) on
+  the shared experiment account, all started flat at production's t0 equity, produce
+  Ti - C paired daily net P&L differences with mean 0; their standard deviation sets
+  the MDE that later A/B experiments are sized for.
+area: other
+kind: aa
+arms:
+  control:
+    overlay: {}
+  treatments:
+    t1:
+      overlay: {}
+    t2:
+      overlay: {}
+    t3:
+      overlay: {}
+analysis:
+  covariates: [spy_ret]
+  hac_lag: 5
+min_sessions: 10
+max_sessions: 10
+proposed_by: owner

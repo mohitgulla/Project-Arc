@@ -66,10 +66,12 @@ def overview(  # noqa: PLR0913 - one query parameter per control
         max_alloc_pct=settings.max_alloc_pct,
         max_alloc_pct_reduced=settings.max_alloc_pct_reduced,
         alloc_tier_threshold_pct=settings.alloc_tier_threshold_pct,
+        max_open_risk_pct=settings.max_open_risk_pct,  # D131 (E28.3)
         stale_after=monitor_stale_after(conn),
         activity_hours=hours,
         greek_advisory=routines.tower.overview.greek_advisory,
         sleeves=named_sleeves(settings),
+        buying_power_kind=settings.profile.buying_power.value,
     )
     if scope.is_arm:
         tick = _latest_heartbeat(control, "tick")

@@ -25,11 +25,12 @@ from pydantic import BaseModel, ConfigDict
 
 from arc.account_profiles import BuyingPower, DayTradeRule, ShortLegPolicy
 from arc.gate.band import MAX_BAND_STEPS, PriceBand, as_grid, band_from_nbbo
-from arc.gate.caps import alloc_tier, deployed_max_loss
+from arc.gate.caps import alloc_tier, deployed_max_loss, open_risk
 from arc.gate.delta import MAX_LOSS_DELTA_KINDS, delta_exposure, kind_of
 from arc.gate.ticks import TickGrid, order_grid
 from arc.models import GateDecision, Leg, LegIntent, Proposal, QuoteClock
 from arc.models import StructureKind as ModelKind
+from arc.pricing.bs import OptionKind
 from arc.structures import (
     classify,
     is_defined_risk,
@@ -37,14 +38,15 @@ from arc.structures import (
     net_debit_credit,
     parse_occ,
 )
-from arc.utils.calendar import ET
+from arc.utils.calendar import ET, sessions_between
 
 if TYPE_CHECKING:
     from arc.config import ArcSettings
-    from arc.gate.inputs import AccountSnapshot, MarketSnapshot, Portfolio
+    from arc.gate.inputs import AccountSnapshot, MarketSnapshot, MarketTrend, Portfolio
 
 __all__ = [
     "CAPACITY_CODES",
+    "REGIME_MAX_AGE_SESSIONS",
     "CapacityRejection",
     "Derived",
     "RuleCode",
@@ -65,7 +67,9 @@ __all__ = [
     "check_halt",
     "check_max_open_positions",
     "check_max_gain",
+    "check_open_risk",
     "check_per_underlying",
+    "check_short_premium_regime",
     "check_sleeve_positions",
     "check_spread_tick",
     "check_structure_whitelist",
@@ -79,6 +83,9 @@ __all__ = [
     "proposal_band",
     "proposal_hash",
     "quote_clock",
+    "regime_blocked_kinds",
+    "regime_gate_closed",
+    "short_premium_kind",
 ]
 
 _ZERO = Decimal(0)
@@ -117,6 +124,7 @@ class RuleCode(StrEnum):
     ACCOUNT_NET_DEBIT = "account_profile_net_debit"
     ACCOUNT_SHORT_LEG = "account_profile_short_leg"
     ACCOUNT_CASH = "account_profile_settled_cash"
+    ACCOUNT_BP = "account_profile_buying_power"  # D129: margin options buying power
     # D32 daily options order budget (E6.5)
     ORDER_BUDGET = "order_budget"
     # E10.2 day-trade limit of the account profile (PDT / good-faith parity)
@@ -125,6 +133,10 @@ class RuleCode(StrEnum):
     LIVE_SIZE_CAP = "live_size_cap"
     # E22.1 (D97): open positions per entry-DTE sleeve
     SLEEVE_POSITIONS = "sleeve_max_positions"
+    # D131 (E28.2): SPY below its SMA blocks new bull puts / iron condors
+    SHORT_PREMIUM_REGIME = "short_premium_regime"
+    # D131 (E28.3): Σ open + reserved + new max loss <= max_open_risk_pct x equity
+    OPEN_RISK_CAP = "open_risk_cap"
     RULE_ERROR = "rule_error"
 
 
@@ -264,6 +276,29 @@ def check_per_underlying(
             RuleCode.PER_UNDERLYING,
             f"{d.underlying} max loss {total} (existing {existing} + new {d.max_loss_total}) "
             f"> {limit} ({tier.describe()}; equity {account.equity})",
+        )
+    return []
+
+
+def check_open_risk(
+    d: Derived, account: AccountSnapshot, portfolio: Portfolio, config: ArcSettings
+) -> list[Violation]:
+    """D131 (E28.3): deployed max loss + the new open's ≤ ``max_open_risk_pct`` × equity.
+
+    Deployed is :func:`arc.gate.caps.deployed_max_loss` (open positions + max loss
+    reserved by in-flight opens, pre-trade), the E3.7 tier's own sum. Opens only.
+    """
+    if d.max_loss_total is None:
+        return _v(RuleCode.OPEN_RISK_CAP, "max loss is unbounded")
+    risk = open_risk(deployed_max_loss(portfolio), account.equity, config.max_open_risk_pct)
+    if risk.headroom is None:
+        return _v(RuleCode.OPEN_RISK_CAP, f"invalid equity {account.equity}")
+    if d.max_loss_total > risk.headroom:
+        total = risk.deployed + d.max_loss_total
+        return _v(
+            RuleCode.OPEN_RISK_CAP,
+            f"open risk {total} (deployed {risk.deployed} + new {d.max_loss_total}) > "
+            f"{risk.cap_pct * account.equity} ({risk.describe()}; equity {account.equity})",
         )
     return []
 
@@ -697,6 +732,12 @@ def check_account_profile(
       band's worst case (:func:`worst_case`) so every ladder step fits. Fees are the
       conservative ``gate_fee_per_leg_contract`` × legs × contracts. Unknown settled
       cash fails closed.
+    * ``margin`` (D129): ``max_loss_total + fees <= options buying power``. Alpaca
+      reduces ``options_buying_power`` by a defined-risk spread's max loss (credit:
+      (width − credit) × 100; debit: the debit paid), so the band-worst
+      ``max_loss_total`` is the collateral the order needs. An unbounded max loss is
+      already a ``per_underlying_limit`` violation and is not re-reported here.
+      Unknown options buying power fails closed.
 
     A settings object whose profile is unresolved raises, so :func:`evaluate`
     reports ``rule_error`` (fail closed).
@@ -729,12 +770,21 @@ def check_account_profile(
                 RuleCode.ACCOUNT_SHORT_LEG,
                 f"uncovered short leg(s) under profile {prof.name}: {', '.join(bare)}",
             )
+    n = proposal.sizing.contracts
+    units = sum(leg.ratio for leg in legs) * n
+    fees = _d(config.gate_fee_per_leg_contract) * Decimal(units)
+    if prof.buying_power is BuyingPower.MARGIN and d.max_loss_total is not None:
+        need = d.max_loss_total + fees
+        if account.options_buying_power is None:
+            out += _v(RuleCode.ACCOUNT_BP, "options buying power unknown (margin profile)")
+        elif need > account.options_buying_power:
+            out += _v(
+                RuleCode.ACCOUNT_BP,
+                f"needs ${need} (max loss {d.max_loss_total} for {n} contract(s) + fees) "
+                f"> options buying power ${account.options_buying_power}",
+            )
     if prof.buying_power is BuyingPower.CASH_SETTLED:
-        n = proposal.sizing.contracts
-        units = sum(leg.ratio for leg in legs) * n
-        need = max(d.limit_price, _ZERO) * _HUNDRED * n + _d(
-            config.gate_fee_per_leg_contract
-        ) * Decimal(units)
+        need = max(d.limit_price, _ZERO) * _HUNDRED * n + fees
         if account.settled_cash is None:
             out += _v(RuleCode.ACCOUNT_CASH, "settled cash unknown (cash_settled profile)")
         elif need > account.settled_cash:
@@ -839,6 +889,88 @@ def check_earnings_blackout(
     return []
 
 
+#: D131 (E28.2): a market_trend older than this many sessions is stale (fails closed).
+REGIME_MAX_AGE_SESSIONS = 2
+
+
+def short_premium_kind(proposal: Proposal, d: Derived) -> str | None:
+    """``bull_put`` / ``iron_condor`` / ``bear_call`` for a credit structure, else ``None``.
+
+    From the gate's own classification (:attr:`Derived.kind`) and the legs' option
+    type: a credit vertical of puts is a bull put, of calls a bear call.
+    """
+    if d.kind is ModelKind.IRON_CONDOR:
+        return "iron_condor"
+    if d.kind is not ModelKind.VERTICAL_CREDIT:
+        return None
+    puts = {parse_occ(leg.occ_symbol).kind is OptionKind.PUT for leg in proposal.structure.legs}
+    return "bull_put" if puts == {True} else "bear_call"
+
+
+def regime_blocked_kinds(config: ArcSettings) -> frozenset[str]:
+    """The short-premium kinds rule ``short_premium_regime`` blocks below the SMA."""
+    return frozenset(config.regime_gate_blocked_kinds.split(","))
+
+
+def regime_gate_closed(
+    trend: MarketTrend | None, config: ArcSettings, now: dt.datetime
+) -> str | None:
+    """D131 (E28.2): why the short-premium regime gate is closed now, or ``None`` (open).
+
+    Closed when the market reference's close is below ``SMA(regime_gate_ma) x (1 +
+    regime_gate_buffer_pct)``, or when that input is missing, for another SMA length,
+    dated after ``now`` or older than :data:`REGIME_MAX_AGE_SESSIONS` sessions (fail
+    closed: the detail starts with ``regime input missing``). Ignores
+    ``regime_gate_enabled``; the pipeline's pre-gate menu filter shares it.
+    """
+    ma = config.regime_gate_ma
+    if trend is None or trend.ma != ma:
+        return f"regime input missing: no market close vs SMA{ma}"
+    today = now.astimezone(ET).date()
+    if trend.as_of > today:
+        return f"regime input missing: {trend.ticker} close dated {trend.as_of.isoformat()}"
+    age = len(sessions_between(trend.as_of + dt.timedelta(days=1), today))
+    if age > REGIME_MAX_AGE_SESSIONS:
+        return (
+            f"regime input missing: {trend.ticker} close of {trend.as_of.isoformat()} is "
+            f"stale ({age} sessions; max {REGIME_MAX_AGE_SESSIONS})"
+        )
+    buffer = config.regime_gate_buffer_pct
+    threshold = trend.sma * (1 + _d(buffer))
+    if trend.close < threshold:
+        scaled = f" x (1 {buffer:+.2%}) = {threshold:.2f}" if buffer else ""
+        return (
+            f"{trend.ticker} close {trend.close} < SMA{ma} {trend.sma:.2f}{scaled} "
+            f"on {trend.as_of.isoformat()}"
+        )
+    return None
+
+
+def check_short_premium_regime(
+    proposal: Proposal,
+    d: Derived,
+    market: MarketSnapshot,
+    config: ArcSettings,
+    now: dt.datetime,
+) -> list[Violation]:
+    """D131 (E28.2): no new bull put / iron condor while SPY closes below its SMA.
+
+    Fails when ``regime_gate_enabled``, the structure's kind is in
+    ``regime_gate_blocked_kinds`` and :func:`regime_gate_closed` gives a reason
+    (below the SMA, or the input is missing / stale: fail closed for those kinds only).
+    Bear calls, debit kinds and closes (the rule never runs for a close) pass.
+    """
+    if not config.regime_gate_enabled:
+        return []
+    kind = short_premium_kind(proposal, d)
+    if kind is None or kind not in regime_blocked_kinds(config):
+        return []
+    why = regime_gate_closed(market.market_trend, config, now)
+    if why is None:
+        return []
+    return _v(RuleCode.SHORT_PREMIUM_REGIME, f"{why}: no new {kind}")
+
+
 def check_max_open_positions(portfolio: Portfolio, config: ArcSettings) -> list[Violation]:
     """Open positions + this one ≤ ``max_open_positions``."""
     n = len(portfolio.positions) + 1
@@ -927,14 +1059,15 @@ def _run(name: str, rule: Rule) -> list[Violation]:
 # position were closed to free room. Everything else (halt, band, profile, data) is
 # not fixable by reallocating, so it never qualifies.
 CAPACITY_CODES: frozenset[RuleCode] = frozenset(
-    {RuleCode.PER_UNDERLYING, RuleCode.MAX_POSITIONS, RuleCode.ACCOUNT_CASH}
+    {RuleCode.PER_UNDERLYING, RuleCode.MAX_POSITIONS, RuleCode.ACCOUNT_CASH, RuleCode.ACCOUNT_BP}
 )
 
 
 class CapacityRejection(StrEnum):
     """Typed ``rejected_for`` reason of a capacity-only gate failure (E6.4)."""
 
-    BUYING_POWER = "buying_power"  # settled cash (D25 cash_debit) or per-underlying budget
+    # settled cash (D25 cash_debit), options buying power (D129 margin) or per-underlying budget
+    BUYING_POWER = "buying_power"
     PORTFOLIO_CAP = "portfolio_cap"  # max open positions
     # D32: the daily order budget is used up. Typed like the capacity reasons so the
     # audit rows carry it, but closing a position frees no orders (it costs some), so
@@ -988,11 +1121,11 @@ def evaluate(
     ``closing``: the proposal closes an open position (E6.2 exits). Every leg must
     reduce a held leg (:func:`check_closing`); rules that only limit *opening*
     risk are skipped — daily-loss entry block, max open positions, Greek caps,
-    per-underlying cap, structure whitelist, account profile (D25), wash sale, entry DTE window,
-    DTE-sleeve slots (E22.1) and
-    earnings blackout. The halt, TTL, data freshness, spread/NBBO/tick and band
-    checks still run (fail closed). An opens-only halt (E11.4, D73) blocks opens
-    only.
+    per-underlying cap, open-risk cap (D131), structure whitelist, account profile (D25),
+    wash sale, entry DTE window,
+    DTE-sleeve slots (E22.1), earnings blackout and the short-premium regime rule
+    (D131). The halt, TTL, data freshness, spread/NBBO/tick and band checks still run
+    (fail closed). An opens-only halt (E11.4, D73) blocks opens only.
 
     ``close_max_steps`` (E11.4, D73): the band step ceiling for a *close* inside
     the expiry guard's closing window (``expiry_guard.steps``). Ignored for opens
@@ -1032,6 +1165,7 @@ def evaluate(
         risk_d = dd if band is None else worst_case(dd, band, p.sizing.contracts)
         if not closing:
             violations += _run("per_underlying", lambda: check_per_underlying(risk_d, a, pf, c))
+            violations += _run("open_risk", lambda: check_open_risk(risk_d, a, pf, c))
         violations += _run("spread_tick", lambda: check_spread_tick(p, dd, m, c))
         violations += _run("max_gain", lambda: check_max_gain(dd))
         if band is not None:
@@ -1049,6 +1183,9 @@ def evaluate(
             violations += _run("dte_window", lambda: check_dte_window(dd, c, now))
             violations += _run("sleeve_positions", lambda: check_sleeve_positions(pf, dd, c, now))
             violations += _run("earnings", lambda: check_earnings_blackout(p, dd, m, c, now))
+            violations += _run(
+                "short_premium_regime", lambda: check_short_premium_regime(p, dd, m, c, now)
+            )
 
     return GateDecision(
         proposal_hash=proposal_hash(p),

@@ -91,6 +91,39 @@ def _add_scan_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--delta", type=_delta, default=None, help="Target short |delta|: 20 or 0.20")
     p.add_argument("--width", type=float, default=None, help="Wing width in dollars")
     p.add_argument(
+        "--wing-mode",
+        choices=["pct_spot", "dollars"],
+        default=None,
+        help="D131: credit wing mode (default scanner_wing_mode). pct_spot = the widest strike "
+        "gap <= --wing-pct of spot whose 1-lot max loss fits the cap; dollars = --width",
+    )
+    p.add_argument(
+        "--wing-pct",
+        type=float,
+        default=None,
+        help="D131: pct_spot wing as a share of spot, 0.01-0.10 (default scanner_wing_pct_spot)",
+    )
+    p.add_argument(
+        "--min-credit-width",
+        type=float,
+        default=None,
+        help="D131: drop credit structures with credit/width below this, 0-0.40; 0 = off "
+        "(default scanner_min_credit_width)",
+    )
+    p.add_argument(
+        "--equity",
+        type=float,
+        default=None,
+        help="D131: account equity for the pct_spot wing's cap (the per-underlying cap of an "
+        "empty book: max_alloc_pct x equity); none = no cap fit",
+    )
+    p.add_argument(
+        "--cap-dollars",
+        type=float,
+        default=None,
+        help="D131: per-underlying cap in $ for the pct_spot wing (overrides --equity)",
+    )
+    p.add_argument(
         "--strategy",
         action="append",
         choices=[s.value for s in ScanStrategy],
@@ -338,6 +371,10 @@ def _make_parser() -> argparse.ArgumentParser:
     from arc.betas.cli import add_betas_parser
 
     add_betas_parser(sub)
+
+    from arc.ml.cli import add_ml_parser
+
+    add_ml_parser(sub)
 
     from arc.ingest.market_health_cli import add_market_health_parser
 
@@ -704,6 +741,14 @@ def _chains(args: argparse.Namespace) -> int:
             )
             return 2
     iv_conn = _chains_iv_conn(args)
+    cap = args.cap_dollars
+    if cap is None and args.equity is not None:
+        from decimal import Decimal
+
+        from arc.gate.caps import alloc_pct_for
+
+        eq = Decimal(str(args.equity))
+        cap = float(alloc_pct_for(Decimal(0), eq, settings) * eq)  # empty book: base tier
     try:
         params = ScanParams.from_settings(
             settings,
@@ -711,6 +756,10 @@ def _chains(args: argparse.Namespace) -> int:
             dte_max=dte[1],
             target_delta=args.delta,
             wing_width=args.width,
+            wing_mode=args.wing_mode,
+            wing_pct_spot=args.wing_pct,
+            min_credit_width=args.min_credit_width,
+            cap_dollars=cap,
             strategies=strategies,
             rank_by=None if measure or args.rank_by == "scanner" else args.rank_by,
             top=pool,
@@ -804,6 +853,19 @@ def _chains(args: argparse.Namespace) -> int:
         )
         lines.append(f"  contracts {fr.total} -> liquid {fr.kept}  rejected {fr.rejected}")
         lines.append("  " + _fmt_inputs(r.inputs))
+        if r.dropped is not None:  # D131 (E28.1)
+            p = r.params
+            wing = (
+                f"wing ≤ {p.wing_pct_spot:.0%} of spot (${p.wing_pct_spot * r.spot:.2f})"
+                + ("" if p.cap_dollars is None else f", 1-lot max loss ≤ cap ${p.cap_dollars:,.0f}")
+                if p.wing_mode == "pct_spot"
+                else f"wing ${p.wing_width:g}"
+            )
+            lines.append(
+                f"  credit rules: {wing}; floor cr/w ≥ {p.min_credit_width:g}  dropped: "
+                f"wing_cap_unfit {r.dropped['wing_cap_unfit']} · "
+                f"credit_width_floor {r.dropped['credit_width_floor']}"
+            )
         if not r.candidates:
             lines.append("  no candidates")
         if measure is not None:
@@ -1135,6 +1197,11 @@ def main(argv: list[str] | None = None) -> int:
 
         _log_to_stderr()
         return run_betas(args)
+    if args.command == "ml":
+        from arc.ml.cli import run_ml
+
+        _log_to_stderr()
+        return run_ml(args)
     if args.command == "market-health":
         from arc.ingest.market_health_cli import run_market_health
 

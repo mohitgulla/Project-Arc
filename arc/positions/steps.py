@@ -588,6 +588,7 @@ def _open_leg(
         limit_price,
         live_size_cap,
         market_snapshot,
+        market_trend,
         next_earnings,
         price_structure,
         proposal_betas,
@@ -595,9 +596,11 @@ def _open_leg(
     from arc.pipeline.steps import (
         band_for,
         cash_fit_enabled,
-        cash_per_contract,
         existing_max_loss,
+        fit_available,
+        fit_per_contract,
         portfolio_alloc_tier,
+        portfolio_open_risk,
         worst_loss_per_contract,
     )
     from arc.sizing import apply_live_cap, size_contracts
@@ -628,11 +631,15 @@ def _open_leg(
         {t: priced.spot},
         proposal_betas(ctx.conn, [t], _today(ctx)),
         quote_ref_time=priced.quote_ref_times(now),  # E10.2d: paired arm replay
+        trend=market_trend(ctx.conn, settings, now=now),  # D131 (E28.2)
     )
     limit = limit_price(st.net_debit_credit, grid_for(st.legs, market, settings))
     band = band_for(st, limit, market, settings)
-    cash_fit = cash_fit_enabled(settings)  # E22.3 (D97): fit a cash-account open to cash
+    # E22.3 (D97) / D129: fit the open to settled cash (cash profiles) or options
+    # buying power (margin); None per contract = unbounded max loss, no fit.
+    per_fit = fit_per_contract(st, band, settings) if cash_fit_enabled(settings) else None
     tier = portfolio_alloc_tier(portfolio, info.equity, settings)
+    risk = portfolio_open_risk(portfolio, info.equity, settings)  # D131 (E28.3)
     size = size_contracts(
         suggestion=int(src["suggestion"]),
         max_loss_per_contract=worst_loss_per_contract(st, band),
@@ -640,8 +647,9 @@ def _open_leg(
         cap_pct=tier.pct,  # D116: the gate's tier for this book
         existing_max_loss=existing_max_loss(portfolio, t),
         cap_label=tier.describe(),
-        cash_available=account.settled_cash if cash_fit else None,
-        cash_per_contract=cash_per_contract(st, band, settings) if cash_fit else None,
+        cash_available=fit_available(account, settings) if per_fit is not None else None,
+        cash_per_contract=per_fit,
+        open_risk_headroom=risk.headroom if risk.shown else None,
     )
     # D70: a live swap open is clamped like any live open (closes never are).
     size = apply_live_cap(size, live_size_cap(settings, account), info.equity)

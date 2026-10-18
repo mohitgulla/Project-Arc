@@ -1,7 +1,8 @@
 """Account profiles (PLAN D25; card E3.4): what the trading account can actually do.
 
-The real-money account is expected to have **no margin**, so paper trading runs
-the same constraint by default (``cash_debit``). Every profile is declared in
+The default is ``margin`` (D128, 2026-10-17): credit and debit structures on the
+broker's margin buying power. ``cash_debit`` (D25's no-margin default until then)
+and ``cash_long_only`` stay one switch away. Every profile is declared in
 ``config/account_profiles.yaml`` and selected by ``ARC_ACCOUNT_PROFILE``;
 switching profiles needs no code change.
 
@@ -87,8 +88,8 @@ __all__ = [
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_PROFILES_PATH = REPO_ROOT / "config" / "account_profiles.yaml"
-# D25: paper mimics the expected no-margin real-money account first.
-DEFAULT_ACCOUNT_PROFILE = "cash_debit"
+# D128 (was cash_debit under D25): margin, a superset of cash_debit's structures.
+DEFAULT_ACCOUNT_PROFILE = "margin"
 
 StrategyName = Literal[
     "bull_put",

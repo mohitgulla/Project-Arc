@@ -284,7 +284,11 @@ class TestMandatory:
         conn, env, sid = _book()
         _, risk = _personas(env, sid, research=_watch(sid, "hold"), quant_rec="hold",
                             risk_reply=_verdict(sid, "hold", "thesis_intact"))  # fmt: skip
-        settings = _settings()
+        from tests.legacy_profiles import legacy_margin_file
+
+        # pre-D128 sleeve-less margin: the 35-DTE call exits on its kind policy, not the
+        # D97 short-sleeve block
+        settings = _settings(account_profiles_file=legacy_margin_file())
         # the fixture call has 35 DTE; a 40-day DTE exit fires the mandatory floor
         settings._yaml_overrides = {"exits": {("kinds", "long_call", "close_at_dte"): 40}}  # noqa: SLF001
         conn, report = _run(settings, _routines(), env, conn=conn)

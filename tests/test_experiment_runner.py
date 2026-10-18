@@ -20,6 +20,7 @@ from arc.experiments.paired import attach_arms, paired_view
 from arc.experiments.runner import ArmStartError, arm_stores, start_arms
 from arc.experiments.virtual import (
     open_account,
+    open_collateral,
     record_fills,
     replay,
     rows,
@@ -226,7 +227,9 @@ def _gate_rows(c: sqlite3.Connection) -> list[dict[str, object]]:
     ]
 
 
-@pytest.mark.parametrize("profile", [None, "cash_debit"])
+# D128: the default profile (formerly the None case) is margin now; the canned bullish
+# Quant reply picks the fixture SPY debit spread off a cash_debit menu, so only that runs.
+@pytest.mark.parametrize("profile", ["cash_debit"])
 def test_arm_paired_late_gates_replayed_quotes_as_control_did(
     control: Path, tmp_path: Path, profile: str | None
 ) -> None:
@@ -258,6 +261,10 @@ def test_arm_paired_late_gates_replayed_quotes_as_control_did(
     r = svc.set("entries.net_ev_floor_live", "off", actor=owner, source="slack")
     assert r.pending is not None
     svc.confirm(r.pending.code, actor=owner, source="slack")
+    # D128: the canned Quant reply picks the debit spread off the control-ranked menu
+    r = svc.set("menu_measure", "control", actor=owner, source="slack")
+    if r.pending is not None:
+        svc.confirm(r.pending.code, actor=owner, source="slack")
     conn.close()
     prof = ["--profile", profile] if profile else []
     assert _arc("propose", "--fixtures", "--fixture-set", "bullish", *prof, "--db",
@@ -442,6 +449,90 @@ def test_legacy_reservation_never_usable_until_released() -> None:
         replay(rows(c, AID), as_of=NOW.date()), _paper(), [], cash_settlement=True
     )
     assert info.buying_power == 9600
+
+
+def _open_structure(
+    c: sqlite3.Connection,
+    sid: str,
+    structure: object,
+    entry_net: str,
+    n: int = 1,
+    status: str = "open",
+) -> None:
+    c.execute("PRAGMA foreign_keys = OFF")  # no proposals row: the collateral reads only this table
+    c.execute(
+        """INSERT INTO open_structures (id, ticker, open_proposal_hash, candidate_id,
+               structure_json, contracts, entry_net, opened_at, status)
+           VALUES (?, 'SPY', ?, 'c1', ?, ?, ?, ?, ?)""",
+        (sid, "h-" + sid, structure.model_dump_json(), n, entry_net, NOW.isoformat(), status),  # type: ignore[attr-defined]
+    )  # fmt: skip
+
+
+def test_open_collateral_reserves_credit_width_and_nothing_for_debits() -> None:
+    """D129: what Alpaca's options buying power holds beyond the premium that left cash."""
+    from tests.test_account_profiles import bull_call, bull_put
+
+    c = _db()
+    assert open_collateral(c) == 0
+    # debit spread (max loss $400 = the $4.00 debit): the debit already left cash -> 0
+    _open_structure(c, "os-d", bull_call(), "4.00", n=2)
+    assert open_collateral(c) == 0
+    # credit spread 565/570 for 0.85 (max loss $415): $415 + $85 credit = width x 100
+    _open_structure(c, "os-c", bull_put(), "-0.85", n=3)
+    assert open_collateral(c) == D("1500.00")
+    # a closed structure holds nothing; an unbounded one (max_loss None) is skipped
+    _open_structure(c, "os-x", bull_put(), "-0.85", n=9, status="closed")
+    unbounded = bull_put().model_copy(update={"max_loss": None})
+    _open_structure(c, "os-u", unbounded, "-0.85", n=9)
+    assert open_collateral(c) == D("1500.00")
+
+
+def test_virtual_account_reserves_collateral_from_buying_power() -> None:
+    """D129: a margin arm's options buying power is spendable cash minus collateral."""
+    c = _db()
+    open_account(c, AID, t0_equity=D(10000), legacy={}, at=NOW)
+    # a 5-wide bull put x 3 filled for 0.85: cash rose by $255, collateral is $1,500
+    record_fills(c, AID, [_fill("sell", "0.85", NOW + dt.timedelta(minutes=5), "o1", qty=3)])
+    state = replay(rows(c, AID), as_of=NOW.date())
+    assert state.cash == D(10255)
+    info = virtual_account(state, _paper(), [], cash_settlement=False, collateral=D(1500))
+    assert info.cash == D(10255)  # the credit is in cash ...
+    assert info.options_buying_power == D(8755)  # ... but the max loss is held
+    assert info.buying_power == D(8755)
+    # the broker's own figure still caps it, and collateral never goes below 0
+    small = _paper("5000")
+    assert virtual_account(
+        state, small, [], cash_settlement=False, collateral=D(1500)
+    ).options_buying_power == D(8755)
+    tiny = virtual_account(state, _paper(), [], cash_settlement=False, collateral=D(99999))
+    assert tiny.options_buying_power == 0 and tiny.buying_power == 0
+    # no collateral: unchanged from before D129
+    assert virtual_account(state, _paper(), [], cash_settlement=False).options_buying_power == D(
+        10255
+    )
+
+
+def test_virtual_broker_account_applies_the_arms_open_collateral() -> None:
+    """VirtualBroker.account() reads the arm store's open structures (its own conn)."""
+    from arc.experiments.virtual import VirtualBroker
+    from tests.test_account_profiles import bull_put
+
+    class _Inner:
+        def account(self) -> AccountInfo:
+            return _paper()
+
+        def positions(self) -> list[BrokerPosition]:
+            return []
+
+        def fills(self, since: dt.datetime) -> list[Fill]:
+            return []
+
+    c = _db()
+    open_account(c, AID, t0_equity=D(10000), legacy={}, at=NOW)
+    _open_structure(c, "os-c", bull_put(), "-0.85", n=2)
+    vb = VirtualBroker(_Inner(), c, arm_id=AID, t0=NOW, cash_settlement=False, now=lambda: NOW)  # type: ignore[arg-type]
+    info = vb.account()
+    assert info.cash == D(10000) and info.options_buying_power == D(9000)
 
 
 # --- overlay reaches the consumers ----------------------------------------------------

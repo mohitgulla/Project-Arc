@@ -736,10 +736,20 @@ def test_rank_menu_by_flag(
             for t, c in json.loads(chains).items()
         }
 
-    _, _, off = _recording_fixture_run(settings, routines)
+    # rank_menu_by is the pre-E7.5b reorder under the control measure (D128 ships
+    # managed_net_ev_full, which ranks the pool itself), so both runs pin control, on
+    # the pre-D128 single-window margin (one menu per ticker, no per-sleeve cut)
+    from tests.legacy_profiles import legacy_margin_settings
+
+    settings = legacy_margin_settings()
     cfg = load_exit_config()
-    on_cfg = cfg.model_copy(
-        update={"pipeline": cfg.pipeline.model_copy(update={"rank_menu_by": by})}
+    ctl = cfg.model_copy(
+        update={"pipeline": cfg.pipeline.model_copy(update={"menu_measure": "control"})}
+    )
+    monkeypatch.setattr(steps, "exit_config", lambda _settings=None: ctl)
+    _, _, off = _recording_fixture_run(settings, routines)
+    on_cfg = ctl.model_copy(
+        update={"pipeline": ctl.pipeline.model_copy(update={"rank_menu_by": by})}
     )
     monkeypatch.setattr(steps, "exit_config", lambda _settings=None: on_cfg)
     _, _, on = _recording_fixture_run(settings, routines)
@@ -1083,8 +1093,15 @@ def test_propose_sizes_against_existing_exposure_and_keeps_realloc_source(
 
 
 def _net_ev_floor_off(s: ArcSettings) -> None:
-    """D26 override: ranking.filters.live = false (the E6.4a live Net EV floor off)."""
+    """D26 override: ranking.filters.live = false (the E6.4a live Net EV floor off).
+
+    Also pins the pre-D128 control menu: the canned Quant reply picks the fixture SPY
+    debit spread by its place on that menu (see tests/legacy_profiles.py).
+    """
+    from tests.legacy_profiles import pin_control_menu
+
     s._yaml_overrides = {"ranking": {("ranking", "filters", "live"): False}}  # noqa: SLF001
+    pin_control_menu(s)
 
 
 def test_live_net_ev_floor_drops_negative_ev_structure(
@@ -1093,8 +1110,11 @@ def test_live_net_ev_floor_drops_negative_ev_structure(
 ) -> None:
     """E6.4a: the fixture debit spread's managed Net EV is negative after costs, so the
     live propose step rejects it with the typed `net_ev_floor` reason (no proposal)."""
+    from tests.legacy_profiles import pin_control_menu
+
     monkeypatch.delenv("ARC_GATE_SECRET", raising=False)
     s = ArcSettings(_env_file=None, account_profile="cash_debit")  # type: ignore[call-arg]
+    pin_control_menu(s)
     conn, report = fixture_run(s, routines, fixture_set="bullish")
     assert report.proposals == []
     (row,) = conn.execute(

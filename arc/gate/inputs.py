@@ -58,6 +58,14 @@ class AccountSnapshot(_Frozen):
             "None = unknown, which fails the cash_settled profile check closed."
         ),
     )
+    options_buying_power: Decimal | None = Field(
+        None,
+        description=(
+            "D129: Alpaca's `options_buying_power` as reported (margin profiles). Open "
+            "defined-risk spreads already reduce it by their max loss. None = unknown, "
+            "which fails the margin profile's buying-power check closed."
+        ),
+    )
     orders_used_today: int | None = Field(
         None,
         ge=0,
@@ -187,6 +195,21 @@ class Quote(_Frozen):
     as_of: dt.datetime
 
 
+class MarketTrend(_Frozen):
+    """D131 (E28.2): the market reference's daily close vs its simple moving average.
+
+    Built outside the gate (:func:`arc.pipeline.market.market_trend`) from the stored
+    ``regime`` technicals of the market reference (SPY); the gate's
+    ``short_premium_regime`` rule only compares the numbers.
+    """
+
+    ticker: str = Field(..., description="Market reference, e.g. 'SPY'")
+    close: Decimal = Field(..., gt=0, description="Latest daily close used, dollars")
+    ma: int = Field(..., ge=1, description="SMA length in sessions (regime_gate_ma)")
+    sma: Decimal = Field(..., gt=0, description="Simple moving average of `ma` daily closes")
+    as_of: dt.date = Field(..., description="Session date of the close (the bar date)")
+
+
 class MarketSnapshot(_Frozen):
     """Quotes and calendar facts the gate checks the proposal against."""
 
@@ -233,5 +256,12 @@ class MarketSnapshot(_Frozen):
             "control quote, every quote the arm fetched live on a tape miss) is measured "
             "against `now` (wall clock). The account snapshot is always measured against "
             "`now`: an arm's virtual account is its own, fetched at the arm's clock."
+        ),
+    )
+    market_trend: MarketTrend | None = Field(
+        None,
+        description=(
+            "D131 (E28.2): the market reference's close vs SMA(regime_gate_ma) for rule "
+            "short_premium_regime. None = unknown: fails closed for the blocked kinds only."
         ),
     )

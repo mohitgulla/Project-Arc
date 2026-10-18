@@ -9,6 +9,7 @@ import pytest
 import yaml
 
 from arc.universe.config import DEFAULT_UNIVERSE_CONFIG
+from tests.ci_shard import current_shard, shard_of
 from tests.hermes_env import refresh_alpaca_env
 from tests.pre_d85_env import PRE_D85_ENV
 
@@ -20,6 +21,20 @@ if TYPE_CHECKING:
 def pytest_configure(config: pytest.Config) -> None:
     """~/.hermes/.env wins over stale inherited ALPACA_* keys (see tests/hermes_env.py)."""
     refresh_alpaca_env()
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """D134: under ``ARC_TEST_SHARD=i/n`` (CI), keep only this shard's tests."""
+    shard = current_shard()
+    if shard is None:
+        return
+    i, n = shard
+    keep, drop = [], []
+    for item in items:
+        (keep if shard_of(item.nodeid, n) == i else drop).append(item)
+    if drop:
+        config.hook.pytest_deselected(items=drop)
+        items[:] = keep
 
 
 @pytest.fixture(autouse=True)

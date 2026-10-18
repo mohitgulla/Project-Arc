@@ -816,6 +816,21 @@ _STATIC: tuple[Tunable, ...] = (
         aliases=("per_underlying_cap_reduced",),
         ref="D116",
     ),
+    # D131 (E28.3): portfolio open-risk cap.
+    _s(
+        "max_open_risk_pct",
+        Group.RISK,
+        _F,
+        "Portfolio open-risk cap: deployed max loss (open + in-flight opens) plus the new "
+        "open's max loss as a share of equity. Gate rule open_risk_cap; also the sizing "
+        "headroom. 100% = effectively off.",
+        Risk.UP,
+        unit="pct",
+        min=0.10,
+        max=1.0,
+        hard_ceiling=1.0,
+        ref="D131",
+    ),
     _s(
         "alloc_tier_threshold_pct",
         Group.RISK,
@@ -906,6 +921,49 @@ _STATIC: tuple[Tunable, ...] = (
         "Gate rule earnings_blackout: no new debit entries spanning the next earnings date.",
         Risk.FALSE,
     ),
+    # D131 (E28.2): short-premium regime gate (SPY close vs its SMA).
+    _s(
+        "regime_gate_enabled",
+        Group.RISK,
+        _B,
+        "Gate rule short_premium_regime: no new bull puts / iron condors while SPY closes "
+        "below its moving average (missing or stale SPY input blocks them too). Off = the "
+        "gate without this rule.",
+        Risk.FALSE,
+        ref="D131",
+    ),
+    _s(
+        "regime_gate_ma",
+        Group.RISK,
+        _I,
+        "short_premium_regime: the SPY simple moving average length in sessions (50, 100 or 200).",
+        Risk.ANY,
+        unit="sessions",
+        min=50,
+        max=200,
+        ref="D131",
+    ),
+    _s(
+        "regime_gate_buffer_pct",
+        Group.RISK,
+        _F,
+        "short_premium_regime: threshold = SMA x (1 + buffer). Above 0 blocks while SPY is "
+        "within that share above the SMA; below 0 lets SPY dip that far under it first.",
+        Risk.DOWN,
+        unit="pct",
+        min=-0.05,
+        max=0.05,
+        ref="D131",
+    ),
+    _s(
+        "regime_gate_blocked_kinds",
+        Group.RISK,
+        ValueType.CHOICE,
+        "short_premium_regime: which credit structures it blocks below the SMA.",
+        Risk.ORDER,
+        choices=("bull_put,iron_condor", "bull_put", "iron_condor"),
+        ref="D131",
+    ),
     # -- entries -----------------------------------------------------------------
     _s(
         "data.alpaca_history_feed",
@@ -992,6 +1050,43 @@ _STATIC: tuple[Tunable, ...] = (
         min=1.0,
         max=25.0,
         hard_ceiling=25.0,
+    ),
+    _s(
+        "wing_mode",
+        Group.ENTRIES,
+        ValueType.CHOICE,
+        "Credit wing selection: pct_spot = the widest strike gap up to wing_pct_spot of spot whose "
+        "1-contract max loss fits the per-underlying cap; dollars = the fixed wing_width.",
+        Risk.ANY,
+        field="scanner_wing_mode",
+        choices=("pct_spot", "dollars"),
+        ref="D131",
+    ),
+    _s(
+        "wing_pct_spot",
+        Group.ENTRIES,
+        _F,
+        "pct_spot wing mode: the widest credit wing as a share of spot (wider = larger max loss "
+        "per contract, still within the per-underlying cap).",
+        Risk.UP,
+        field="scanner_wing_pct_spot",
+        unit="pct",
+        min=0.01,
+        max=0.10,
+        hard_ceiling=0.10,
+        ref="D131",
+    ),
+    _s(
+        "min_credit_width",
+        Group.ENTRIES,
+        _F,
+        "Credit-quality floor: drop credit spreads and condors whose credit / width is below "
+        "this (0 = off).",
+        Risk.DOWN,
+        field="scanner_min_credit_width",
+        min=0.0,
+        max=0.40,
+        ref="D131",
     ),
     _s(
         "pipeline_scan_top",

@@ -116,17 +116,30 @@ def test_margin_nearest_book_matches_pre_e719_main(tmp_path: Path) -> None:
     )
 
 
+def _single_window(s: ArcSettings) -> ArcSettings:
+    """*s* with its entry-DTE sleeves removed (a one-window profile)."""
+    return s.model_copy(
+        update={"account_profile_spec": s.profile.model_copy(update={"sleeves": None})}
+    )
+
+
 def test_single_window_profile_is_one_default_sleeve() -> None:
-    m = _settings("margin")
-    assert sleeve_windows(m, m.entry_dte_window) == [
-        sleeve_windows(m, m.entry_dte_window)[0].model_copy()
-    ]
+    # margin gained the cash_debit sleeves in D128, so drop them for a one-window profile
+    m = _single_window(_settings("margin"))
+    assert [x.name for x in m.entry_sleeves] == [DEFAULT_SLEEVE]
+    (w,) = sleeve_windows(m, m.entry_dte_window)
+    assert (w.name, (w.dte_min, w.dte_max), w.exit_block) == (
+        DEFAULT_SLEEVE,
+        m.entry_dte_window,
+        None,
+    )
     (w,) = sleeve_windows(m, (20, 45))
     assert (w.name, w.dte_min, w.dte_max, w.exit_block) == (DEFAULT_SLEEVE, 20, 45, None)
-    # an explicit override keeps a sleeve profile on one window too
+    # an explicit override keeps a sleeve profile on one window too (the golden's path)
     c = _settings("cash_debit")
     (o,) = sleeve_windows(c, (20, 45), override=True)
     assert o.name == DEFAULT_SLEEVE
+    assert [x.name for x in sleeve_windows(_settings("margin"), (10, 60))] == ["short", "swing"]
 
 
 # ---------------------------------------------------------------------------

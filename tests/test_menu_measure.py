@@ -365,10 +365,12 @@ def _run(
     profiles_file: Path | None = None,
     *,
     liquidity_rank: bool = False,
+    credit_rules: bool = False,
     **pipeline: object,
 ) -> Any:
     """E2.6 (D116): *liquidity_rank* off by default, so the E7.5b goldens keep pinning the
-    pre-E2.6 menus (off = byte-identical); ``True`` runs the shipped config."""
+    pre-E2.6 menus (off = byte-identical); ``True`` runs the shipped config. D131 (E28.1):
+    *credit_rules* likewise: off = the rollback (``dollars`` wing, floor 0)."""
     from arc.routines.config import load_routines
     from tests import test_pipeline as tp
 
@@ -380,6 +382,8 @@ def _run(
         monkeypatch.setattr(steps, "exit_config", lambda _settings=None: on)
     monkeypatch.delenv("ARC_GATE_SECRET", raising=False)
     kw: dict[str, Any] = {} if profiles_file is None else {"account_profiles_file": profiles_file}
+    if not credit_rules:
+        kw |= {"scanner_wing_mode": "dollars", "scanner_min_credit_width": 0.0}
     s = ArcSettings(_env_file=None, account_profile=profile, **kw)  # type: ignore[call-arg]
     routines = load_routines()
     if not liquidity_rank:
@@ -387,6 +391,13 @@ def _run(
         sc = routines.scanner.model_copy(update={"liquidity_rank": lr})
         routines = routines.model_copy(update={"scanner": sc})
     return tp._recording_fixture_run(s, routines)
+
+
+def legacy_margin_file(tmp_path: Path) -> Path:
+    """The pre-D128 margin profile the E7.5b goldens were captured on (credit only, 30-45)."""
+    from tests.legacy_profiles import write_legacy_margin
+
+    return write_legacy_margin(tmp_path / "account_profiles_legacy_margin.yaml")
 
 
 @pytest.mark.parametrize("profile", ["margin", "cash_debit"])
@@ -404,8 +415,9 @@ def test_control_menu_is_identical_to_main(
     from tests.test_gate_sleeves import single_window_file
 
     want = json.loads(GOLDEN.read_text())[profile]
-    pf = single_window_file(tmp_path) if profile == "cash_debit" else None
-    _, _, prompts = _run(profile, monkeypatch, profiles_file=pf)
+    pf = single_window_file(tmp_path) if profile == "cash_debit" else legacy_margin_file(tmp_path)
+    # D128 ships managed_net_ev_full; the golden pins the control menu
+    _, _, prompts = _run(profile, monkeypatch, profiles_file=pf, menu_measure="control")
     got = _quant_chains(prompts["quant"])
     assert_json_close(got, want)
     for chain in got.values():
@@ -414,7 +426,7 @@ def test_control_menu_is_identical_to_main(
 
 
 def test_control_ignores_tilt_and_pool(monkeypatch: pytest.MonkeyPatch) -> None:
-    _, _, base = _run("cash_debit", monkeypatch)
+    _, _, base = _run("cash_debit", monkeypatch, menu_measure="control")
     _, _, knobs = _run(
         "cash_debit", monkeypatch, menu_measure="control", direction_tilt=0.5, menu_pool_max=40
     )
@@ -423,9 +435,12 @@ def test_control_ignores_tilt_and_pool(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.parametrize("measure", ["rorc_day_full", "managed_net_ev_full", "rorc_day_tilted"])
 def test_full_measure_ranks_the_pool_before_the_cut(
-    measure: str, monkeypatch: pytest.MonkeyPatch
+    measure: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    _, _, prompts = _run("margin", monkeypatch, menu_measure=measure, direction_tilt=0.25)
+    pf = legacy_margin_file(tmp_path)  # one window: one cut per ticker
+    _, _, prompts = _run(
+        "margin", monkeypatch, profiles_file=pf, menu_measure=measure, direction_tilt=0.25
+    )
     chains = _quant_chains(prompts["quant"])
     field = {"rorc_day_full": "rorc_day", "managed_net_ev_full": "managed_net_ev"}.get(measure)
     for t, chain in chains.items():
@@ -475,10 +490,24 @@ def test_tilt_never_reaches_card_or_floor(monkeypatch: pytest.MonkeyPatch) -> No
 # ---------------------------------------------------------------------------
 
 
-def test_exits_yaml_ships_control() -> None:
+def test_exits_yaml_ships_managed_net_ev_full() -> None:
+    """D128: one dollar key for credit and debit (owner, XP waived); no tilt."""
     p = load_exit_config().pipeline
-    assert (p.menu_measure, p.direction_tilt, p.menu_pool_max) == ("control", 0.0, 20)
+    assert (p.menu_measure, p.direction_tilt, p.menu_pool_max) == ("managed_net_ev_full", 0.0, 20)
     assert p.rank_menu_by == "scanner"
+
+
+def test_shipped_margin_menu_mixes_credit_and_debit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """D128: under the shipped margin + managed_net_ev_full, a directional menu is ranked
+    on one key across credit and debit kinds (no credit-first group)."""
+    _, _, prompts = _run("margin", monkeypatch)
+    chains = _quant_chains(prompts["quant"])
+    kinds: set[bool] = set()
+    for chain in chains.values():
+        for row in chain["menu"]:
+            assert row["rank_measure"] == "managed_net_ev_full"
+            kinds.add(row["credit_width"] is None)
+    assert kinds == {True, False}  # both debit and credit structures reach Quant
 
 
 def test_registry_bounds() -> None:

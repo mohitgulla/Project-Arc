@@ -68,6 +68,7 @@ __all__ = [
     "fill_ref",
     "legacy_reservations",
     "open_account",
+    "open_collateral",
     "order_symbol",
     "record_fills",
     "release_legacy",
@@ -412,6 +413,38 @@ def closed_legacy(control: sqlite3.Connection, ids: Iterable[str]) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Collateral of the arm's own open structures (D129)
+# ---------------------------------------------------------------------------
+
+
+def open_collateral(arm: sqlite3.Connection) -> Decimal:
+    """Options buying power the arm's own open structures hold (D129).
+
+    Alpaca reduces ``options_buying_power`` by a defined-risk structure's max loss
+    while the arm's virtual cash only moved by the premium. The difference is what
+    the virtual account must still reserve, per structure:
+    ``contracts × (max_loss_unit − entry_net × 100)`` where ``max_loss_unit`` is
+    ``Structure.max_loss`` (dollars per unit) and ``entry_net`` the per-share fill
+    (+ debit / − credit). A debit spread (max loss = the debit) reserves 0, as the
+    debit already left cash; a credit spread reserves width × 100 (its
+    (width − credit) × 100 max loss plus the credit that came in). Structures whose
+    max loss is unknown are skipped; negatives are floored at 0.
+    """
+    from arc.models import Structure
+
+    total = Decimal(0)
+    for r in arm.execute(
+        "SELECT structure_json, contracts, entry_net FROM open_structures WHERE status = 'open'"
+    ):
+        st = Structure.model_validate_json(r[0])
+        if st.max_loss is None:
+            continue
+        per_unit = st.max_loss - Decimal(str(r[2])) * MULTIPLIER
+        total += max(per_unit, Decimal(0)) * int(r[1])
+    return total.quantize(Decimal("0.01"))
+
+
+# ---------------------------------------------------------------------------
 # The account the trading code sees
 # ---------------------------------------------------------------------------
 
@@ -430,6 +463,7 @@ def virtual_account(
     positions: Sequence[BrokerPosition],
     *,
     cash_settlement: bool,
+    collateral: Decimal = Decimal(0),
 ) -> AccountInfo:
     """The arm's account: virtual equity and buying power capped by both books.
 
@@ -437,10 +471,16 @@ def virtual_account(
     buying power is the *settled* virtual cash, so the gate's ``cash_settled`` rule
     (via :func:`arc.pipeline.market.settled_cash`) rejects opens that would spend
     unsettled proceeds.
+
+    ``collateral`` (D129, :func:`open_collateral`): options buying power the arm's
+    own open structures hold beyond the premium that left cash. It is taken off
+    ``buying_power`` and ``options_buying_power`` (never below 0), so a margin arm's
+    gate rule and sizing fit see what Alpaca would report for the arm alone.
     """
     marks = [_signed_value(p) for p in positions if p.asset_class == "us_option"]
     equity = state.cash + sum((m for m in marks if m is not None), Decimal(0))
     spend = state.spendable
+    free = max(spend - collateral, Decimal(0))
     nmbp = state.settled if cash_settlement else spend
     last = state.cash_start_of_day
     by_symbol = {p.symbol: p for p in positions}
@@ -452,14 +492,14 @@ def virtual_account(
     return AccountInfo(
         account_id=broker.account_id,
         equity=equity,
-        buying_power=min(broker.buying_power, spend),
+        buying_power=min(broker.buying_power, free),
         cash=spend,
         currency=broker.currency,
         options_buying_power=min(
             broker.options_buying_power
             if broker.options_buying_power is not None
             else broker.buying_power,
-            spend,
+            free,
         ),
         non_marginable_buying_power=min(
             broker.non_marginable_buying_power
@@ -603,11 +643,13 @@ class VirtualBroker:
 
     def account(self) -> AccountInfo:
         state = self.sync()
+        collateral = open_collateral(self.conn)  # D129: the arm's own open structures
         info = virtual_account(
             state,
             self.inner.account(),
             self.positions(),
             cash_settlement=self.cash_settlement,
+            collateral=collateral,
         )
         log.info(
             "experiments.virtual_account",
@@ -616,6 +658,8 @@ class VirtualBroker:
             spendable=str(state.spendable),
             settled=str(state.settled),
             legacy_reserved=str(state.legacy_reserved),
+            collateral=str(collateral),
+            options_buying_power=str(info.options_buying_power),
         )
         return info
 

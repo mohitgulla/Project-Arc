@@ -1,9 +1,11 @@
-"""E7.19 (D125) golden: the margin book with ``expiry_mode: nearest`` is unchanged.
+"""E7.19 (D125) golden: a single-window margin book with ``expiry_mode: nearest`` is unchanged.
 
-A single-window profile (margin) is one implicit ``default`` sleeve, so the sleeve
-work must leave its book exactly as before. ``python -m tests.sim_margin_golden
+A single-window profile is one implicit ``default`` sleeve, so the sleeve work must
+leave its book exactly as before. margin carries the cash_debit sleeves since D128, so
+the run passes an explicit (20, 45) window, the one-window path (``sleeve_windows``
+``override``). ``python -m tests.sim_margin_golden
 --write`` regenerates ``tests/fixtures/sim_margin_golden.csv``; it was generated on
-main before E7.19 (commit c5ff79c) from the live-shaped walk
+main without E7.19 (regenerated at 0a333be6, after D128/D131) from the live-shaped walk
 (:func:`arc.backtest.sim.sim_ticker_from_chains` + :func:`arc.backtest.sim.run_sim`)
 on the synthetic two-name history of ``tests/backtest_data_fixtures``. The file holds
 the ``trades.csv`` text main wrote for that run. The test compares the parsed rows
