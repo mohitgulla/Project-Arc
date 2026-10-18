@@ -2685,11 +2685,23 @@ key. Code: `arc/ingest/market_movers.py`; handler `market_movers_source`.
 
 ### 7.1 Required status check: `check`
 
-`.github/workflows/ci.yml` job `check` (job id and `name:` both `check`) runs
-`uv sync --locked` + `make check` (lock-check, lint, format, pip-audit, full suite,
-gate at 100% branch coverage). It is **the** required status check on `main`. Keep the
-name stable: branch protection matches checks by name, so renaming the job quietly
-removes the requirement.
+`.github/workflows/ci.yml` job `check` (job id and `name:` both `check`) is **the**
+required status check on `main`. Since D134 it runs no tests itself: it waits on the
+parallel jobs that together do what `make check` does and goes green only when every
+one of them succeeded (`if: always()`, so a failed part gives a red `check`, never a
+skipped one):
+
+- `static`: `make lock-check lint fmt`
+- `tests (1/3)` … `tests (3/3)`: `make test-rest` with `ARC_TEST_SHARD=<i>/3`. Each test
+  lands in exactly one shard by a crc32 of its node id (`tests/ci_shard.py`).
+- `gate`: `make test-gate` (100% branch coverage of `arc.gate`)
+- `slow`: `make test-slow` (the seeded Monte Carlo tests marked `slow`)
+- `audit`: `make audit` (pip-audit)
+
+Locally `make check` still runs all of it in one go (`ARC_TEST_SHARD` unset = no
+sharding). Keep the `check` name stable: branch protection matches checks by name, so
+renaming the job quietly removes the requirement. To add or remove shards, change
+both `matrix.shard` and the `/3` in `ARC_TEST_SHARD`.
 
 Merge rules:
 
