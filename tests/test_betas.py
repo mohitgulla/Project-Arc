@@ -236,7 +236,9 @@ def _ctx(conn: sqlite3.Connection, tickers: list[str]) -> JobContext:
 
 def test_betas_handler(conn: sqlite3.Connection) -> None:
     res = betas_source(_ctx(conn, ["MU", "THIN"]), market=_Bars(), take=lambda: None)
-    assert res.summary == f"5 betas vs SPY for {DAY} · SPY 1.00 · 1 too few days (THIN)"
+    assert res.summary == (
+        f"5 betas vs SPY for {DAY} · SPY 1.00 · 1 too few days (THIN) · 10 pair correlations"
+    )
     assert res.metrics["rows"] == 5 and res.metrics["alpaca_calls"] == 5
     assert {r["ticker"] for r in latest_rows(conn)} == {"MU", "THIN", "SPY", "QQQ", "IWM"}
 
@@ -249,7 +251,9 @@ def test_betas_handler_partial_and_total_failure(conn: sqlite3.Connection) -> No
             return super().history_bars(symbol, start, end)
 
     res = betas_source(_ctx(conn, ["MU"]), market=_Down(), take=lambda: None)
-    assert res.metrics["errors"] == 3 and res.summary.endswith("· 3 errors")  # MU, QQQ, IWM
+    assert res.metrics["errors"] == 3 and res.summary.endswith(
+        "· 3 errors · 0 pair correlations"
+    )  # MU, QQQ, IWM
 
     class _NoBench(_Bars):
         def history_bars(self, symbol, start, end, timeframe="1Day", feed=None):  # noqa: ANN001, ANN201

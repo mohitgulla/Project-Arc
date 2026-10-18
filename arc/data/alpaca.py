@@ -17,7 +17,7 @@ from typing import Any
 
 import structlog
 from alpaca.common.exceptions import APIError
-from alpaca.data.enums import DataFeed, OptionsFeed
+from alpaca.data.enums import Adjustment, DataFeed, OptionsFeed
 from alpaca.data.historical.option import OptionHistoricalDataClient
 from alpaca.data.historical.stock import StockHistoricalDataClient
 from alpaca.data.requests import (
@@ -246,8 +246,14 @@ class AlpacaMarketData:
         secret_key: str | None = None,
         read_retry: ReadRetryPolicy | None = None,
         rate_bucket: Any = None,
+        bars_adjustment: str | None = None,
     ) -> None:
+        """*bars_adjustment* (E28.4): ``raw`` / ``split`` / ``dividend`` / ``all`` for every
+        :meth:`history_bars` read; ``None`` sends none (Alpaca's default, raw). The
+        ``betas`` reference job reads ``all`` (split/dividend-adjusted returns); option
+        code keeps raw closes, since strikes are raw prices."""
         api_key, secret_key = _get_keys(api_key, secret_key)
+        self._bars_adjustment = None if bars_adjustment is None else Adjustment(bars_adjustment)
         if data_feed is None or options_feed is None:
             settings = get_settings()
             data_feed = data_feed or settings.alpaca_data_feed
@@ -549,12 +555,16 @@ class AlpacaMarketData:
         tf: TimeFrame,
         feed: DataFeed,
     ) -> Any:
+        extra: dict[str, Any] = {}
+        if getattr(self, "_bars_adjustment", None) is not None:
+            extra["adjustment"] = self._bars_adjustment
         req = StockBarsRequest(
             symbol_or_symbols=symbol,
             start=start_at,
             end=max(end_at, start_at),
             timeframe=tf,
             feed=feed,
+            **extra,
         )
         return self._stock_client.get_stock_bars(req)
 

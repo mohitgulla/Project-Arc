@@ -1212,13 +1212,15 @@ def betas_source(
     Covers the active list + open underlyings (+ today's candidates) and SPY/QQQ/IWM.
     No context kind is written (``writes: []``): the gate inputs, portfolio_context,
     the monitor and the Tower read the table through ``arc.betas.store.betas_used``.
+    E28.4 (D131): the same closes give every pair's 60-session return correlation ->
+    ``correlations`` (read through ``arc.betas.corr_store.corr_matrix``).
     """
-    from arc.betas.refresh import refresh_betas
+    from arc.betas.refresh import BARS_ADJUSTMENT, refresh_betas
 
     if market is None:  # pragma: no cover - live Alpaca (integration)
         from arc.data.alpaca import AlpacaMarketData
 
-        market = AlpacaMarketData()
+        market = AlpacaMarketData(bars_adjustment=BARS_ADJUSTMENT)
     if take is None:  # pragma: no cover - live shared Alpaca data budget
         from arc.ingest.finnhub import DbRateLimiter
         from arc.iv.alpaca_history import RATE_STATE_KEY
@@ -1248,6 +1250,7 @@ def betas_source(
             + (f" · SPY {spy:.2f}" if spy is not None else "")
             + (f" · {len(few)} too few days ({', '.join(few[:5])})" if few else "")
             + (f" · {len(res.errors)} errors" if res.errors else "")
+            + f" · {len(res.corr_rows)} pair correlations"
         ),
         metrics=res.metrics(),
     )
