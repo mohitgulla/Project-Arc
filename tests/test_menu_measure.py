@@ -365,10 +365,12 @@ def _run(
     profiles_file: Path | None = None,
     *,
     liquidity_rank: bool = False,
+    credit_rules: bool = False,
     **pipeline: object,
 ) -> Any:
     """E2.6 (D116): *liquidity_rank* off by default, so the E7.5b goldens keep pinning the
-    pre-E2.6 menus (off = byte-identical); ``True`` runs the shipped config."""
+    pre-E2.6 menus (off = byte-identical); ``True`` runs the shipped config. D131 (E28.1):
+    *credit_rules* likewise: off = the rollback (``dollars`` wing, floor 0)."""
     from arc.routines.config import load_routines
     from tests import test_pipeline as tp
 
@@ -380,6 +382,8 @@ def _run(
         monkeypatch.setattr(steps, "exit_config", lambda _settings=None: on)
     monkeypatch.delenv("ARC_GATE_SECRET", raising=False)
     kw: dict[str, Any] = {} if profiles_file is None else {"account_profiles_file": profiles_file}
+    if not credit_rules:
+        kw |= {"scanner_wing_mode": "dollars", "scanner_min_credit_width": 0.0}
     s = ArcSettings(_env_file=None, account_profile=profile, **kw)  # type: ignore[call-arg]
     routines = load_routines()
     if not liquidity_rank:

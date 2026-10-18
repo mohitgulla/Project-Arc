@@ -641,6 +641,8 @@ class TestCli:
             [
                 "chains", "SPY", "--dte", "30-45", "--delta", "20", "--fixture", "spy",
                 "--db", str(tmp_path / "arc.db"), "--top", "3", "--profile", "margin",
+                # D131: the pre-E28.1 wing / no floor (the rollback) keeps this table
+                "--wing-mode", "dollars", "--min-credit-width", "0",
             ]
         )  # fmt: skip
         out = capsys.readouterr().out

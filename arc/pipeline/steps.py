@@ -611,6 +611,27 @@ def _cap_text(tier: AllocTier) -> str:
     return f"{tier.pct:.0%} of equity max loss per underlying ({tier.describe()})"
 
 
+def _wing_cap_dollars(ctx: JobContext, env: PipelineEnv) -> float | None:
+    """D131 (E28.1): the per-underlying cap in $ the ``pct_spot`` credit wing must fit:
+    the E3.7 tier (:func:`book_alloc_tier`, the gate's own helper) x equity.
+
+    ``None`` under the ``dollars`` wing (nothing fetched, the pre-D131 path) or when
+    the account cannot be read (logged; the wing is then the widest gap within
+    ``scanner_wing_pct_spot`` and the gate's ``per_underlying_limit`` stays the authority).
+    """
+    settings = ctx.settings
+    if settings.scanner_wing_mode != "pct_spot":
+        return None
+    try:
+        info, positions = _account_inputs(ctx, env)
+    except Exception as exc:  # noqa: BLE001 - a broker hiccup must not sink the menus
+        log.warning("pipeline.wing_cap_unavailable", error=str(exc))
+        return None
+    tier = book_alloc_tier(ctx.conn, positions, info.equity, settings, now=ctx.now)
+    cap = tier.pct * info.equity
+    return float(cap) if cap > 0 else None
+
+
 def _portfolio_summary(
     ctx: JobContext, env: PipelineEnv, settings: ArcSettings
 ) -> tuple[str, Decimal]:
@@ -3510,6 +3531,8 @@ def _quant_menus(
         for s in m.sleeves_full:
             log.info("pipeline.sleeve_full", sleeve=s.sleeve.name, held=s.held)
     r = settings.scanner_risk_free_rate
+    # D131 (E28.1): the per-underlying cap the pct_spot credit wing fits (None = dollars)
+    cap_dollars = _wing_cap_dollars(ctx, env) if items else None
 
     def cut(
         ticker: str, stance: str, cands: list[ScanCandidate], spot: float, rv: float | None
@@ -3589,6 +3612,7 @@ def _quant_menus(
                 top=top,
                 # E2.6 (D116): None (off) = the pre-E2.6 strike selection
                 liquidity_rank=liquidity_rank_from(ctx.routines.scanner.liquidity_rank),
+                cap_dollars=cap_dollars,
             )
             history = iv_store.series(item.ticker, until=today) if iv_store is not None else {}
             res = scan(
@@ -3606,9 +3630,22 @@ def _quant_menus(
             no_chain.append(item.ticker)
             no_chain_why[item.ticker] = f"scan failed: {exc}"[:500]
             continue
+        if res.dropped is not None and any(res.dropped.values()):  # D131 (E28.1)
+            log.info(
+                "pipeline.credit_rules_dropped",
+                ticker=item.ticker,
+                cap_dollars=cap_dollars,
+                **res.dropped,
+            )
         if not res.candidates:
             no_chain.append(item.ticker)
             no_chain_why[item.ticker] = "scanner found no structure passing its filters"
+            if res.dropped is not None and any(res.dropped.values()):
+                no_chain_why[item.ticker] += (
+                    f" (credit rules dropped: {res.dropped['wing_cap_unfit']} short(s) with no "
+                    f"wing fitting the per-underlying cap, {res.dropped['credit_width_floor']} "
+                    "structure(s) below the credit/width floor)"
+                )
             continue
         spots[item.ticker] = res.spot
         rv = _realized_vol(ctx.snapshot, item.ticker)

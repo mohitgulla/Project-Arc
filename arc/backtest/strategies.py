@@ -24,19 +24,30 @@ from __future__ import annotations
 import datetime as dt  # noqa: TC003 — pydantic fields
 import math
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 if TYPE_CHECKING:
     import pandas as pd
+
+WingFit = Literal["nearest", "widest"]
 
 __all__ = [
     "ExpiryMode",
     "LegPick",
     "StrategyKind",
     "StrategySpec",
+    "WingFit",
     "nan_if_none",
     "pick_expirations",
     "select_legs",
@@ -75,6 +86,30 @@ class StrategySpec(BaseModel):
     width_pct: float = Field(0.02, gt=0.0, description="Wing width as a fraction of spot")
     expiry_mode: ExpiryMode = ExpiryMode.NEAREST
     min_volume: float = Field(1.0, ge=0.0, description="Min session volume on every leg")
+    # D131 (E28.1) sim parity, credit kinds only. Defaults = the pre-D131 selection and
+    # are left out of dumps, so menu-cache keys and labels of existing specs don't move.
+    wing_fit: WingFit = Field(
+        "nearest",
+        description="nearest = the strike nearest width_pct x spot (within [0.5, 2]x); "
+        "widest = the widest gap <= width_pct x spot whose 1-lot max loss at mid fits wing_cap",
+    )
+    wing_cap: float | None = Field(
+        None, gt=0.0, description="widest: 1-contract max loss cap ($); None = no cap fit"
+    )
+    min_credit_width: float = Field(
+        0.0, ge=0.0, le=0.40, description="Drop credit structures with credit/width below (0=off)"
+    )
+
+    @model_serializer(mode="wrap")
+    def _drop_legacy(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        out: dict[str, Any] = handler(self)
+        if out.get("wing_fit") == "nearest":
+            out.pop("wing_fit", None)
+        if out.get("wing_cap") is None:
+            out.pop("wing_cap", None)
+        if out.get("min_credit_width") == 0.0:
+            out.pop("min_credit_width", None)
+        return out
 
     @model_validator(mode="after")
     def _window(self) -> StrategySpec:
@@ -86,6 +121,11 @@ class StrategySpec(BaseModel):
     @property
     def label(self) -> str:
         w = "" if self.kind in SINGLE_KINDS else f"_w{self.width_pct * 100:g}"
+        if self.kind in CREDIT_KINDS:  # D131: only non-default credit rules show
+            if self.wing_fit == "widest":
+                w += "max" if self.wing_cap is None else f"max{self.wing_cap:g}"
+            if self.min_credit_width > 0:
+                w += f"_cw{self.min_credit_width:g}"
         return f"{self.kind}_d{round(self.delta * 100)}{w}_dte{self.dte_min}-{self.dte_max}"
 
 
@@ -174,12 +214,32 @@ def _wing(
     return cand.loc[i]
 
 
+def _widest_wing(
+    side_chain: pd.DataFrame, a: pd.Series, *, above: bool, max_gap: float, cap: float | None
+) -> pd.Series | None:
+    """D131 (E28.1) sim parity with ``arc.scanner.scan.select_wing`` (``pct_spot``): the
+    widest strike gap ``<= max_gap`` beyond the anchor whose 1-contract max loss at mid,
+    ``(gap - credit) x 100``, fits *cap* (None = no cap fit) and prices as a credit."""
+    k = float(a["strike"])
+    gap = (side_chain["strike"] - k) if above else (k - side_chain["strike"])
+    cand = side_chain[(gap > 0) & (gap <= max_gap + 1e-9)]
+    short_mid = float(a["mid"])
+    for i in (gap[cand.index]).sort_values(ascending=False).index:
+        credit = short_mid - float(cand.loc[i, "mid"])
+        if credit <= 0:
+            continue
+        if cap is None or (float(gap[i]) - credit) * 100.0 <= cap:
+            return cand.loc[i]
+    return None
+
+
 def _vertical(
     side_chain: pd.DataFrame, spec: StrategySpec, spot: float, *, wing_above: bool
 ) -> list[LegPick] | None:
     """Short the anchor, buy the wing. Wing direction alone fixes debit vs credit.
 
     E7.10: a quoted chain (``sellable`` column) never sells a zero-bid contract.
+    D131: a credit kind under ``wing_fit: widest`` takes :func:`_widest_wing`.
     """
     shortable = side_chain[side_chain["sellable"]] if "sellable" in side_chain else side_chain
     a = _anchor(shortable, spec)
@@ -187,7 +247,10 @@ def _vertical(
         return None
     width = spec.width_pct * spot
     k = float(a["strike"])
-    w = _wing(side_chain, k, k + width if wing_above else k - width, wing_above, width)
+    if spec.wing_fit == "widest" and spec.kind in CREDIT_KINDS:
+        w = _widest_wing(side_chain, a, above=wing_above, max_gap=width, cap=spec.wing_cap)
+    else:
+        w = _wing(side_chain, k, k + width if wing_above else k - width, wing_above, width)
     if w is None:
         return None
     return [_pick(w, +1), _pick(a, -1)]
