@@ -104,6 +104,8 @@ class RegimePayload(FeatureSnapshot):
     defaulted ``None``), so v4 rows still validate.
     v6 (E23.1, D98): ``technicals.range_pos_20d`` (defaulted ``None``), so v5 rows
     still validate.
+    v7 (E28.2, D131): ``technicals.sma100`` (defaulted ``None``), so v6 rows still
+    validate (the short_premium_regime gate's SPY SMA100 input).
     """
 
     model_config = _FORBID
@@ -1014,7 +1016,7 @@ KINDS: Mapping[str, KindSpec] = _registry(
     KindSpec("raw_doc_ref", RawDocRefPayload),
     KindSpec("channel_brief", ChannelBriefPayload),
     KindSpec("candidate", CandidatePayload, schema_version=4),  # E23.2: origin
-    KindSpec("regime", RegimePayload, schema_version=6),  # E23.1 (D98): range_pos_20d
+    KindSpec("regime", RegimePayload, schema_version=7),  # E28.2 (D131): sma100
     KindSpec("shortlist", ShortlistPayload, schema_version=7),  # D128: credit_only
     KindSpec("structures", StructuresPayload, schema_version=4),  # E18.1: profit_lock
     KindSpec("risk_review", RiskReviewPayload, schema_version=2),  # E13.9: verdicts

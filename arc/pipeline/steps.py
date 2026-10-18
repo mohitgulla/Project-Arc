@@ -82,6 +82,7 @@ from arc.control.effective import exit_config, ranking_config, scanner_filters
 from arc.exits import ExitSummary, model_exits, realized_vol_forecast
 from arc.gate.caps import AllocTier, alloc_tier, deployed_max_loss
 from arc.gate.delta import kind_of
+from arc.gate.rules import regime_blocked_kinds, regime_gate_closed
 from arc.ingest.llm import ScalpLLMError
 from arc.ingest.scalp import extract_json_object
 from arc.iv.store import safe_store as safe_iv_store
@@ -158,6 +159,7 @@ from arc.pipeline.market import (
     live_gate_status,
     live_size_cap,
     market_snapshot,
+    market_trend,
     next_earnings,
     price_structure,
     proposal_betas,
@@ -203,7 +205,7 @@ if TYPE_CHECKING:
     from arc.context.store import ContextEntry, ContextSnapshot
     from arc.exits import ExitConfig, ExitModelResult
     from arc.gate.band import PriceBand
-    from arc.gate.inputs import AccountSnapshot, Portfolio
+    from arc.gate.inputs import AccountSnapshot, MarketTrend, Portfolio
     from arc.personas.schemas import PoolItem
     from arc.pipeline.env import PipelineEnv
     from arc.pipeline.market import PricedStructure
@@ -3361,6 +3363,11 @@ class _QuantMenus:
     sleeve_of: dict[int, str] = dataclasses.field(default_factory=dict)
     sleeve_counts: dict[str, dict[str, int]] = dataclasses.field(default_factory=dict)
     no_chain_code: dict[str, ReasonCode] = dataclasses.field(default_factory=dict)
+    # D131 (E28.2): why the short-premium regime gate is closed this run (None = open or
+    # off), its market input, and the tickers whose menus lost the blocked kinds.
+    regime_off: str | None = None
+    regime_trend: MarketTrend | None = None
+    regime_dropped: list[str] = dataclasses.field(default_factory=list)
 
 
 def _be_filter(
@@ -3453,6 +3460,31 @@ def _journal_be_filter(j: Recorder, m: _QuantMenus, call_id: str | None = None) 
         )
 
 
+def _journal_regime_gate(j: Recorder, m: _QuantMenus, settings: ArcSettings) -> None:
+    """D131 (E28.2): one ``regime_gate_credit_off`` session row when the gate took the
+    blocked kinds off this run's menus (nothing when the gate is open, off, or no menu
+    offered a blocked kind)."""
+    if m.regime_off is None or not m.regime_dropped:
+        return
+    t = m.regime_trend
+    j.add(
+        JournalPersona.QUANT,
+        Stage.STRUCTURE,
+        SESSION_SUBJECT,
+        Choice.NOTED,
+        ReasonCode.REGIME_GATE_CREDIT_OFF,
+        reason_text=f"short-premium regime gate: {m.regime_off}; "
+        f"{settings.regime_gate_blocked_kinds} taken off the menus",
+        payload={
+            "why": m.regime_off,
+            "blocked_kinds": sorted(regime_blocked_kinds(settings)),
+            "tickers": m.regime_dropped,
+            "market_trend": None if t is None else t.model_dump(mode="json"),
+            "buffer_pct": settings.regime_gate_buffer_pct,
+        },
+    )
+
+
 def _sleeve_slots(ctx: JobContext, env: PipelineEnv) -> list[SleeveSlots]:
     """E22.2 (D97): each sleeve's occupancy (open positions by entry DTE vs its cap).
 
@@ -3533,6 +3565,15 @@ def _quant_menus(
     r = settings.scanner_risk_free_rate
     # D131 (E28.1): the per-underlying cap the pct_spot credit wing fits (None = dollars)
     cap_dollars = _wing_cap_dollars(ctx, env) if items else None
+    # D131 (E28.2): the gate's short_premium_regime rule, applied to the menus up front so
+    # Quant is never shown a structure the gate will refuse (the gate stays the authority)
+    blocked: frozenset[str] = frozenset()
+    if settings.regime_gate_enabled and items:
+        m.regime_trend = market_trend(ctx.conn, settings, now=ctx.now)
+        m.regime_off = regime_gate_closed(m.regime_trend, settings, ctx.now)
+        if m.regime_off is not None:
+            blocked = regime_blocked_kinds(settings)
+            log.info("pipeline.regime_gate_credit_off", why=m.regime_off, kinds=sorted(blocked))
 
     def cut(
         ticker: str, stance: str, cands: list[ScanCandidate], spot: float, rv: float | None
@@ -3596,6 +3637,19 @@ def _quant_menus(
                 reason=_profile_reason(item.stance).value,
             )
             continue
+        if blocked:  # D131 (E28.2): SPY below its SMA: no bull puts / iron condors
+            kept = [st for st in strategies if st.value not in blocked]
+            if len(kept) < len(strategies):
+                m.regime_dropped.append(item.ticker)
+            if not kept:
+                no_chain.append(item.ticker)
+                m.no_chain_code[item.ticker] = ReasonCode.REGIME_GATE_CREDIT_OFF
+                no_chain_why[item.ticker] = (
+                    f"short-premium regime gate: {m.regime_off}; the {item.stance} stance has "
+                    "no other structure under this profile"
+                )
+                continue
+            strategies = kept
         if open_sleeves is not None and not open_sleeves:
             no_chain.append(item.ticker)
             m.no_chain_code[item.ticker] = ReasonCode.SLEEVE_FULL
@@ -3779,6 +3833,7 @@ def quant_open(ctx: JobContext, env: PipelineEnv) -> JobResult:
     summaries, menus, chains, spots = m.summaries, m.menus, m.chains, m.spots
     no_chain, no_chain_why, no_profile = m.no_chain, m.no_chain_why, m.no_profile
     _journal_be_filter(j, m)  # E16.5: nothing unless scanner.max_be_atr is set
+    _journal_regime_gate(j, m, settings)  # D131 (E28.2): nothing while SPY is above its SMA
 
     def journal_no_chain(call_id: str | None = None) -> None:
         for t in no_chain:
@@ -4983,6 +5038,7 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
         spot_max_spread_pct=settings.spot_max_spread_pct,
     )
     earnings = next_earnings(ctx.conn, list(by_ticker), _today(ctx))
+    trend = market_trend(ctx.conn, settings, now=now)  # D131 (E28.2): None when off
     switch = HaltSwitch(HaltRepo(ctx.conn))
     exits = exit_config(settings)  # D26: exits/costs yaml + control-panel overrides
     cost_model = cost_config(settings)
@@ -5176,6 +5232,7 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
             {t: priced.spot},
             proposal_betas(ctx.conn, [t], now.astimezone(ET).date()),
             quote_ref_time=priced.quote_ref_times(now),  # E10.2d: paired arm replay
+            trend=trend,
         )
         limit = limit_price(st.net_debit_credit, grid_for(st.legs, market, settings))
         # D24: the gate checks the whole price band; size at its worst price (D18).

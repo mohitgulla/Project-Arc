@@ -25,6 +25,10 @@ PRE_D85_ENV: dict[str, str] = {
     # wing + 0.10 floor are tested in tests/test_e281_credit_wings.py.
     "ARC_SCANNER_WING_MODE": "dollars",
     "ARC_SCANNER_MIN_CREDIT_WIDTH": "0.0",
+    # D131 (E28.2): the short-premium regime gate off, so the fixture pipelines' bull puts
+    # and condors are not refused for the missing SPY regime row (fail closed). The
+    # shipped default (on) is tested in tests/test_e282_regime_gate.py.
+    "ARC_REGIME_GATE_ENABLED": "false",
 }
 
 
