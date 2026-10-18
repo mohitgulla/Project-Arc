@@ -2818,6 +2818,15 @@ split-adjusted daily OHLC, cached in `<data-dir>/underlying_ohlc/` (fetched from
 unless `--offline`). The VWAP arm reads the daily bar's VWAP at the decision close.
 Verdict and caveats: `docs/RESEARCH/anti-chase-backtest.md`.
 
+The cache never refetches a date it already holds, so backtests see a stable series. To
+replace a known-bad or revised range on purpose (E27.1a), dry-run first, then apply; the
+write backs up `<SYM>.parquet` to `<SYM>.parquet.bak-pre-<tag>-<YYYYmmdd-HHMMSS>` (refused
+when that file exists), logs each row before → after (`backtest.ohlc_refresh_row`), never
+deletes a cached date the source no longer returns, and a second run reports 0 changes:
+
+    .venv/bin/arc backtest ohlc refresh --tickers AMD --from 2026-10-05 --to 2026-10-09 --dry-run
+    .venv/bin/arc backtest ohlc refresh --tickers AMD --from 2026-10-05 --to 2026-10-09 --backup-tag e27.1a
+
 ### 5.37a Breakeven in ATR terms + the realism filter (E16.5, D76; filter off)
 
 `be_atr = |BE − spot| / (ATR14 × √DTE)`: how far a breakeven sits from spot in the
@@ -3367,7 +3376,8 @@ every formula (pure, no I/O); two adapters build the same inputs:
   `option_stats/earnings_events.parquet`, the PIT universe membership and
   `config/backtest/macro_calendar_2020_2026.yaml`.
 - `adapters/live.py`: `data/arc.db` read-only. Daily bars from `market_tape` (the loop's
-  recorded `history_bars` 1Day payloads), IV30 from `iv_daily` (`IvStore.series`), ATM
+  recorded `history_bars` 1Day payloads; per date a SIP-feed payload beats the feed-less
+  spot reads on the IEX quote feed, E27.1a, then the newest wins), IV30 from `iv_daily` (`IvStore.series`), ATM
   spread and session volume from the last `chain_snapshot` of each ET session, the Finnhub
   calendar from `raw_docs` (`earn_src = 2`; reaction day = report day for bmo, next session
   otherwise), open structures for the portfolio group.
