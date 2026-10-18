@@ -412,7 +412,7 @@ def cluster_matrix(
     """D131 (E28.5): the stored correlation matrix the cluster cap reads *today*.
 
     ``None`` when ``cluster_cap_enabled`` is off (nothing read). A missing or stale
-    store gives an empty matrix: every pair is then unknown and the rule counts it.
+    store gives an empty matrix: every pair is then unknown and the rule ignores it.
     """
     if not settings.cluster_cap_enabled:
         return None
@@ -425,8 +425,8 @@ def cluster_correlations(
     """D131 (E28.5): ``MarketSnapshot.correlations`` for an open on *ticker*.
 
     *ticker*'s stored correlation with each other name in *open_names*, keyed by
-    :func:`arc.gate.cluster.corr_key`; unknown pairs are left out (the gate counts
-    them). ``{}`` without a matrix (rule off).
+    :func:`arc.gate.cluster.corr_key`; unknown pairs are left out (the gate treats
+    them as not correlated). ``{}`` without a matrix (rule off).
     """
     if matrix is None:
         return {}
@@ -968,7 +968,7 @@ def market_snapshot(
     quotes against it. *trend* (D131, E28.2): :func:`market_trend`, the input of the
     gate's ``short_premium_regime`` rule (``None`` = unknown; opens only).
     *correlations* (D131, E28.5): :func:`cluster_correlations`, the input of the gate's
-    ``cluster_cap`` rule (``None`` / missing pairs = unknown, counted; opens only).
+    ``cluster_cap`` rule (``None`` / missing pairs = unknown, not counted; opens only).
     """
     quotes: dict[str, Quote] = {}
     for sym, c in contracts.items():

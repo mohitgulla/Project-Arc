@@ -55,12 +55,12 @@ def test_corr_key_is_sorted_and_upper() -> None:
     assert corr_key("qqq", "AAPL") == "AAPL|QQQ" == corr_key("AAPL", "qqq")
 
 
-def test_cluster_check_counts_above_threshold_and_missing() -> None:
+def test_cluster_check_counts_above_threshold_not_missing() -> None:
     c = {corr_key("NVDA", "AMD"): 0.85, corr_key("NVDA", "KO"): 0.2}
     chk = cluster_check("nvda", ["AMD", "KO", "AVGO", "NVDA"], c, threshold=0.7, max_names=2)
-    assert chk == ClusterCheck("NVDA", ("AMD", "AVGO"), ("AVGO",), 2, 0.7)
-    assert chk.blocked
-    assert chk.describe() == "AMD, AVGO (no correlation stored for AVGO: counted)"
+    assert chk == ClusterCheck("NVDA", ("AMD",), 2, 0.7)  # AVGO: no data = not correlated
+    assert not chk.blocked
+    assert chk.describe() == "AMD"
 
 
 def test_cluster_check_ignores_same_ticker_and_dedupes() -> None:
@@ -130,11 +130,11 @@ def test_negative_correlation_is_not_a_cluster() -> None:
     assert check(book("QQQ", "IWM"), corrs(QQQ=-0.95, IWM=0.9)) == []
 
 
-def test_missing_pair_counts_and_is_named() -> None:
-    [v] = check(book("QQQ", "IWM"), corrs(QQQ=0.9))
-    assert v.detail.endswith("IWM, QQQ (no correlation stored for IWM: counted)")
-    [v] = check(book("QQQ", "IWM"), {})  # rule on with no data: every pair counts
-    assert "no correlation stored for IWM, QQQ" in v.detail
+def test_missing_pair_is_not_correlated() -> None:
+    assert check(book("QQQ", "IWM"), corrs(QQQ=0.9)) == []  # IWM unknown: not a peer
+    assert check(book("QQQ", "IWM"), {}) == []  # rule on with no data: nothing blocks
+    [v] = check(book("QQQ", "IWM", "DIA"), corrs(QQQ=0.9, IWM=0.8))  # DIA unknown
+    assert v.detail.endswith(": IWM, QQQ")
 
 
 def test_reserved_in_flight_opens_count() -> None:
@@ -177,7 +177,7 @@ def test_rule_fails_iff_peers_reach_max(
     miss = [f"M{i}" for i in range(n_missing)]
     c = {corr_key("SPY", t): 0.9 for t in hi} | {corr_key("SPY", t): 0.3 for t in lo}
     out = check(book(*hi, *lo, *miss), c, cluster_cap_max_names=max_names)
-    assert bool(out) == (n_corr + n_missing >= max_names)
+    assert bool(out) == (n_corr >= max_names)  # missing pairs never count
 
 
 # ---------------------------------------------------------------------------
@@ -186,8 +186,14 @@ def test_rule_fails_iff_peers_reach_max(
 
 
 def test_evaluate_runs_the_rule_for_opens() -> None:
-    blocked = run(portfolio=book("QQQ", "IWM"), config=cfg(), market=mkt(correlations={}))
+    blocked = run(
+        portfolio=book("QQQ", "IWM"),
+        config=cfg(),
+        market=mkt(correlations=corrs(QQQ=0.9, IWM=0.9)),
+    )
     assert any(v.startswith("cluster_cap:") for v in blocked.violations)
+    no_data = run(portfolio=book("QQQ", "IWM"), config=cfg(), market=mkt(correlations={}))
+    assert not any(v.startswith("cluster_cap:") for v in no_data.violations)
     ok = run(
         portfolio=book("QQQ", "IWM"),
         config=cfg(),
@@ -203,9 +209,18 @@ def test_evaluate_exempts_closes() -> None:
         legs={SP: -2, LP: 2},
         positions=[Position(underlying=n, max_loss=D("100")) for n in ("QQQ", "IWM", "SPY")],
     )
-    close = evaluate(make_proposal(), acct(), held, cfg(), market=mkt(), now=NOW, closing=True)
+    close = evaluate(
+        make_proposal(),
+        acct(),
+        held,
+        cfg(),
+        market=mkt(correlations=corrs(QQQ=0.9, IWM=0.9)),
+        now=NOW,
+        closing=True,
+    )
     assert not any(v.startswith("cluster_cap:") for v in close.violations)
-    opening = evaluate(make_proposal(), acct(), held, cfg(), market=mkt(), now=NOW)
+    m = mkt(correlations=corrs(QQQ=0.9, IWM=0.9))
+    opening = evaluate(make_proposal(), acct(), held, cfg(), market=m, now=NOW)
     assert any(v.startswith("cluster_cap:") for v in opening.violations)
 
 

@@ -280,6 +280,6 @@ class MarketSnapshot(_Frozen):
             "D131 (E28.5): 60-session daily log-return correlations for rule cluster_cap, "
             "keyed by arc.gate.rules.corr_key ('AAA|BBB', upper-case, sorted). Built outside "
             "the gate (arc.pipeline.market.cluster_correlations) from the stored "
-            "`correlations` table. A missing pair counts as correlated (fails closed)."
+            "`correlations` table. A missing pair counts as not correlated."
         ),
     )

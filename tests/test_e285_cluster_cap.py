@@ -124,14 +124,27 @@ class TestMarketHelpers:
 
 
 def _fixture_run(
-    monkeypatch: pytest.MonkeyPatch, *, enabled: bool, book: list[str], max_names: int = 1
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    enabled: bool,
+    book: list[str],
+    max_names: int = 1,
+    correlated: bool = False,
 ) -> Any:
-    """The fixture propose run with *book* as the open names (no stored correlations:
-    every pair unknown, so each name in *book* counts as a cluster peer)."""
+    """The fixture propose run with *book* as the open names. With *correlated*, every
+    pair of a new name with a *book* name reads corr 0.9 (a cluster peer); otherwise no
+    correlations are stored and (owner, D131) unknown pairs count as not correlated."""
     import arc.pipeline.steps as steps
+    from arc.gate.cluster import corr_key
     from tests.test_menu_measure import _run
 
     monkeypatch.setattr(steps, "book_underlyings", lambda *_a, **_k: list(book))
+    if correlated:
+        monkeypatch.setattr(
+            steps,
+            "cluster_correlations",
+            lambda _m, t, names: {corr_key(t, n): 0.9 for n in names if n.upper() != t.upper()},
+        )
     monkeypatch.setenv("ARC_CLUSTER_CAP_ENABLED", "true" if enabled else "false")
     monkeypatch.setenv("ARC_CLUSTER_CAP_MAX_NAMES", str(max_names))
     return _run("margin", monkeypatch, menu_measure="control")
@@ -163,13 +176,13 @@ def test_pipeline_off_and_empty_book_are_identical(monkeypatch: pytest.MonkeyPat
 
 
 def test_pipeline_full_cluster_drops_every_menu(monkeypatch: pytest.MonkeyPatch) -> None:
-    """One unknown-correlation open name and max 1: every new name is blocked."""
+    """One correlated open name and max 1: every new name is blocked."""
     c_base, _, base = _fixture_run(monkeypatch, enabled=False, book=["ZZZ"])
     names = _quant_tickers(base)
     assert names
-    conn, report, prompts = _fixture_run(monkeypatch, enabled=True, book=["ZZZ"])
+    conn, report, prompts = _fixture_run(monkeypatch, enabled=True, book=["ZZZ"], correlated=True)
     assert "Correlation cluster cap" in prompts["research"]
-    assert "ZZZ (no correlation stored for ZZZ: counted)" in prompts["research"]
+    assert "(cluster: ZZZ)" in prompts["research"]
     rows = _cluster_rows(conn)
     assert {r["subject"] for r in rows} >= names
     assert all(r["choice"] == "no_trade" for r in rows)
@@ -226,11 +239,22 @@ def test_pit_corr_matches_pit_matrix() -> None:
     assert pit.correlations(days[20], "AAA", ["BBB"]) == {}  # < 40 returns: unknown
 
 
-def test_sim_rule_blocks_the_correlated_second_name(tmp_path: Path) -> None:
-    """AAA and ZZZ trade identical prices (corr 1.0): with max 1, the walk opens one."""
+def test_sim_rule_blocks_the_correlated_second_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AAA and ZZZ read corr 1.0 at every session: with max 1, the walk opens one.
+
+    The fixture walk has < 40 returns before its decision days, so the point-in-time
+    pair is pinned to 1.0 here (unknown pairs no longer count; see the next test)."""
+    import arc.backtest.sim as sim
+    from arc.gate.cluster import corr_key
     from tests import test_backtest_sim as tb
     from tests.test_e282_regime_gate import _Factory
 
+    def _all_correlated(_self: object, _day: object, ticker: str, others: Any) -> Any:
+        return {corr_key(ticker, o): 1.0 for o in others if o.upper() != ticker.upper()}
+
+    monkeypatch.setattr(sim._PitCorr, "correlations", _all_correlated)
     view = tb.view.__wrapped__(_Factory(tmp_path))  # type: ignore[attr-defined]
     tickers = {t: tb._ticker(view, t) for t in ("AAA", "ZZZ")}
     off = tb._run(tickers, settings=tb._settings("margin", cluster_cap_enabled=False))
@@ -248,3 +272,31 @@ def test_sim_rule_blocks_the_correlated_second_name(tmp_path: Path) -> None:
     assert roomy.skip_counts["gate_cluster_cap"] == 0
     assert len(roomy.trades) == len(off.trades)
     json.dumps(dict(on.skip_counts))  # reportable
+
+
+def test_pipeline_unknown_correlation_blocks_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Owner (D131 revision): no stored correlation = not correlated. Rule on, max 1, one
+    open name with no data: prompts identical to rule off, no cluster rows."""
+    c_off, _, off = _fixture_run(monkeypatch, enabled=False, book=["ZZZ"])
+    c_on, _, on = _fixture_run(monkeypatch, enabled=True, book=["ZZZ"])
+    assert off.keys() == on.keys()
+    for persona in off:
+        assert off[persona] == on[persona], persona
+    assert _cluster_rows(c_on) == []
+
+
+def test_sim_unknown_correlation_blocks_nothing(tmp_path: Path) -> None:
+    """Owner (D131 revision): the fixture walk has too few returns for any pair, so every
+    pair is unknown and (not correlated) the rule never skips, even at max 1."""
+    from tests import test_backtest_sim as tb
+    from tests.test_e282_regime_gate import _Factory
+
+    view = tb.view.__wrapped__(_Factory(tmp_path))  # type: ignore[attr-defined]
+    tickers = {t: tb._ticker(view, t) for t in ("AAA", "ZZZ")}
+    off = tb._run(tickers, settings=tb._settings("margin", cluster_cap_enabled=False))
+    on = tb._run(
+        tickers,
+        settings=tb._settings("margin", cluster_cap_enabled=True, cluster_cap_max_names=1),
+    )
+    assert on.skip_counts["gate_cluster_cap"] == 0
+    assert len(on.trades) == len(off.trades)

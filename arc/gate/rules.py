@@ -314,7 +314,7 @@ def check_cluster_cap(
 
     Counts the open positions' and reserved in-flight opens' *other* underlyings whose
     60-session return correlation with the new open's underlying is above
-    ``cluster_cap_corr_threshold``; a missing pair counts (fail closed). Fails when
+    ``cluster_cap_corr_threshold``; a missing pair does not count. Fails when
     that count reaches ``cluster_cap_max_names``. Opens only; off when
     ``cluster_cap_enabled`` is false (rollback). See :mod:`arc.gate.cluster`.
     """
