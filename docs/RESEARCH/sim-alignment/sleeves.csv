@@ -1,4 +1,22 @@
 book,variant,profile,class,sleeve,n,net,per_risk,win,mean_dte_entry,mean_days_held,exit_mix
+c500_dev,new,margin,All,default,509,-14976.0,-0.0271,0.721,37.1,21.0,take_profit:330 dte_exit:113 stop:57 expiry:9
+c500_dev,new,margin,Stocks,default,150,-11597.0,-0.0614,0.707,36.4,21.7,take_profit:92 dte_exit:36 stop:17 expiry:5
+c500_dev,new,margin,ETFs,default,359,-3379.0,-0.0093,0.727,37.4,20.7,take_profit:238 dte_exit:77 stop:40 expiry:4
+c500_dev,new,cash_debit,All,short,513,-53453.0,-0.1196,0.359,19.9,4.4,stop_intraday_proxy:246 take_profit:185 stop:40 lock_intraday_proxy:34 dte_exit:5 profit_lock:2 expiry:1
+c500_dev,new,cash_debit,All,swing,166,28489.0,0.1548,0.554,46.4,15.8,take_profit:90 stop:59 lock_intraday_proxy:10 dte_exit:4 profit_lock:3
+c500_dev,new,cash_debit,Stocks,short,361,-34163.0,-0.1051,0.371,18.5,4.2,stop_intraday_proxy:163 take_profit:135 stop:37 lock_intraday_proxy:20 dte_exit:5 profit_lock:1
+c500_dev,new,cash_debit,Stocks,swing,74,1297.0,0.017,0.541,45.4,14.8,take_profit:40 stop:28 lock_intraday_proxy:3 dte_exit:2 profit_lock:1
+c500_dev,new,cash_debit,ETFs,short,152,-19290.0,-0.1583,0.329,23.3,5.0,stop_intraday_proxy:83 take_profit:50 lock_intraday_proxy:14 stop:3 profit_lock:1 expiry:1
+c500_dev,new,cash_debit,ETFs,swing,92,27192.0,0.2519,0.565,47.2,16.6,take_profit:50 stop:31 lock_intraday_proxy:7 dte_exit:2 profit_lock:2
+c500_dev,new_noproxy,margin,All,default,509,-14976.0,-0.0271,0.721,37.1,21.0,take_profit:330 dte_exit:113 stop:57 expiry:9
+c500_dev,new_noproxy,margin,Stocks,default,150,-11597.0,-0.0614,0.707,36.4,21.7,take_profit:92 dte_exit:36 stop:17 expiry:5
+c500_dev,new_noproxy,margin,ETFs,default,359,-3379.0,-0.0093,0.727,37.4,20.7,take_profit:238 dte_exit:77 stop:40 expiry:4
+c500_dev,new_noproxy,cash_debit,All,short,570,-40246.0,-0.0579,0.428,19.8,5.4,stop:285 take_profit:240 profit_lock:34 dte_exit:8 expiry:3
+c500_dev,new_noproxy,cash_debit,All,swing,202,15287.0,0.0389,0.51,45.6,15.7,take_profit:96 stop:82 profit_lock:18 dte_exit:6
+c500_dev,new_noproxy,cash_debit,Stocks,short,412,-22964.0,-0.0435,0.444,18.7,5.3,stop:200 take_profit:181 profit_lock:20 dte_exit:8 expiry:3
+c500_dev,new_noproxy,cash_debit,Stocks,swing,103,-1049.0,-0.0057,0.505,44.5,15.5,take_profit:47 stop:42 profit_lock:9 dte_exit:5
+c500_dev,new_noproxy,cash_debit,ETFs,short,158,-17282.0,-0.1029,0.386,22.9,5.7,stop:85 take_profit:59 profit_lock:14
+c500_dev,new_noproxy,cash_debit,ETFs,swing,99,16336.0,0.0787,0.515,46.8,16.0,take_profit:49 stop:40 profit_lock:9 dte_exit:1
 c125_dev,new,margin,All,default,529,-16079.0,-0.0259,0.724,37.2,21.1,take_profit:337 dte_exit:117 stop:65 expiry:10
 c125_dev,new,margin,Stocks,default,176,-2874.0,-0.0124,0.773,36.9,21.3,take_profit:117 dte_exit:34 stop:19 expiry:6
 c125_dev,new,margin,ETFs,default,353,-13205.0,-0.0339,0.7,37.4,21.0,take_profit:220 dte_exit:83 stop:46 expiry:4

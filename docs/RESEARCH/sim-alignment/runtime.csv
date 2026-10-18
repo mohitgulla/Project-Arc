@@ -1,5 +1,7 @@
 book,variant,git,build_s,walk_s,total_s,peak_rss_mb,cache_hit_rate
 c500_dev,old,ae3cf19,1293.5,8.4,1302.0,1944.8,1.0
+c500_dev,new,e1aa20e,18525.4,12.7,18538.2,3810.4,0.2776196163336998
+c500_dev,new_noproxy,e1aa20e,1857.9,12.6,1870.5,3818.5,1.0
 c125_dev,old,ae3cf19,534.7,7.1,541.8,1944.8,1.0
 c125_dev,new,f5f1da0,16823.3,4.5,16827.8,2409.4,0.041880814520850955
 c125_dev,new_noproxy,f5f1da0,700.1,4.3,704.4,1884.0,1.0

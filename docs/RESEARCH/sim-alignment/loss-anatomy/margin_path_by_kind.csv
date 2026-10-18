@@ -1,0 +1,5 @@
+kind,n,losers_05R,loss_from_losers,median_mae_R,median_mfe_R,loser_median_session_to_m05R,stops,stops_were_p03R_first,stop_mean_R,stop_overshoot_R,stops_gap_through,gap_through_loss,gap_through_overshoot_R,drift_overshoot_R,tp_rate,tp_median_days
+all,509,97,-83637.0,-0.13,0.15,13.0,57,0.09,-0.91,0.16,5,-4226.0,0.24,0.15,0.65,15.0
+bear_call,34,4,-3085.0,-0.16,0.2,8.0,2,0.0,-0.86,0.11,0,0.0,,0.11,0.76,8.0
+bull_put,221,21,-21844.0,-0.04,0.08,11.5,14,0.0,-0.87,0.12,1,-971.0,0.14,0.12,0.82,10.0
+iron_condor,254,72,-58708.0,-0.31,0.24,15.0,41,0.12,-0.93,0.18,4,-3255.0,0.26,0.17,0.48,24.0

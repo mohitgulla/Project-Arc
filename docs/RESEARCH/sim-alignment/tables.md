@@ -15,6 +15,18 @@ sleeve-aligned sim; `new_noproxy` = the same with `intraday_proxy: none`.
 | c500_dev | old | cash_debit | All | 674 | -24,926 | 73.86 | -99.7 | 99.87 | 0.493 | -0.0392 | -0.1005 | -0.0512 | 13,084 | 13,900 | 466 | -24,926 | 9,956 | -0.0392 | 0.493 |
 | c500_dev | old | cash_debit | Stocks | 428 |  |  |  |  |  |  |  |  |  |  |  | -32,286 | -8,178 | -0.0747 | 0.502 |
 | c500_dev | old | cash_debit | ETFs | 246 |  |  |  |  |  |  |  |  |  |  |  | 7,360 | 18,133 | 0.0361 | 0.476 |
+| c500_dev | new | margin | All | 509 | -14,976 | 10,024 | -59.9 | 80.15 | 0.721 | -0.0271 | 0.0118 | -0.0277 | 13,282 | 14,623 | 8,633 | -14,976 | 11,530 | -0.0271 | 0.721 |
+| c500_dev | new | margin | Stocks | 150 |  |  |  |  |  |  |  |  |  |  |  | -11,597 | 2,508 | -0.0614 | 0.707 |
+| c500_dev | new | margin | ETFs | 359 |  |  |  |  |  |  |  |  |  |  |  | -3,379 | 9,022 | -0.0093 | 0.727 |
+| c500_dev | new | cash_debit | All | 679 | -24,964 | 36.49 | -99.85 | 99.92 | 0.406 | -0.0396 | -0.0165 | -0.1113 | 8,530 | 65 | 41 | -24,964 | 45,756 | -0.0396 | 0.406 |
+| c500_dev | new | cash_debit | Stocks | 435 |  |  |  |  |  |  |  |  |  |  |  | -32,866 | 10,753 | -0.0819 | 0.4 |
+| c500_dev | new | cash_debit | ETFs | 244 |  |  |  |  |  |  |  |  |  |  |  | 7,902 | 35,003 | 0.0344 | 0.418 |
+| c500_dev | new_noproxy | margin | All | 509 | -14,976 | 10,024 | -59.9 | 80.15 | 0.721 | -0.0271 | 0.0118 | -0.0277 | 13,282 | 14,623 | 8,633 | -14,976 | 11,530 | -0.0271 | 0.721 |
+| c500_dev | new_noproxy | margin | Stocks | 150 |  |  |  |  |  |  |  |  |  |  |  | -11,597 | 2,508 | -0.0614 | 0.707 |
+| c500_dev | new_noproxy | margin | ETFs | 359 |  |  |  |  |  |  |  |  |  |  |  | -3,379 | 9,022 | -0.0093 | 0.727 |
+| c500_dev | new_noproxy | cash_debit | All | 772 | -24,959 | 40.68 | -99.84 | 99.95 | 0.449 | -0.0229 | 0.0181 | -0.0785 | 19,942 | 224 | 44 | -24,959 | 81,056 | -0.0229 | 0.449 |
+| c500_dev | new_noproxy | cash_debit | Stocks | 515 |  |  |  |  |  |  |  |  |  |  |  | -24,013 | 49,744 | -0.0337 | 0.456 |
+| c500_dev | new_noproxy | cash_debit | ETFs | 257 |  |  |  |  |  |  |  |  |  |  |  | -946 | 31,312 | -0.0025 | 0.436 |
 | c125_dev | old | margin | All | 435 | -22,895 | 2,105 | -91.58 | 92.79 | 0.685 | -0.0526 | -0.0544 | -0.0808 | 20,243 | 16,242 | 6,059 | -22,895 | -6,980 | -0.0526 | 0.685 |
 | c125_dev | old | margin | Stocks | 123 |  |  |  |  |  |  |  |  |  |  |  | -4,307 | 2,857 | -0.0297 | 0.691 |
 | c125_dev | old | margin | ETFs | 312 |  |  |  |  |  |  |  |  |  |  |  | -18,588 | -9,837 | -0.064 | 0.683 |
@@ -41,6 +53,10 @@ sleeve-aligned sim; `new_noproxy` = the same with `intraday_proxy: none`.
 |---|---|---|---|---|---|---|---|---|
 | c500_dev | old | margin | -17,739 | -17,739 | -0 | 6,270 | 2023-04-13 | 0 |
 | c500_dev | old | cash_debit | -24,926 | -24,926 | -0 | 73.86 | 2023-12-04 | 0 |
+| c500_dev | new | margin | -14,976 | -14,976 | -0 | 6,062 | 2023-04-13 | 0 |
+| c500_dev | new | cash_debit | -24,964 | -24,964 | -0 | 36.49 | 2023-08-31 | 0 |
+| c500_dev | new_noproxy | margin | -14,976 | -14,976 | -0 | 6,062 | 2023-04-13 | 0 |
+| c500_dev | new_noproxy | cash_debit | -24,959 | -24,959 | -0 | 40.68 | 2023-08-31 | 0 |
 | c125_dev | old | margin | -22,895 | -22,895 | -0 | 2,011 | 2023-11-16 | 0 |
 | c125_dev | old | cash_debit | -24,892 | -24,892 | -0 | 107.9 | 2023-10-02 | 0 |
 | c125_dev | new | margin | -16,079 | -16,079 | -0 | 5,749 | 2023-06-15 | 0 |
@@ -53,6 +69,24 @@ sleeve-aligned sim; `new_noproxy` = the same with `intraday_proxy: none`.
 
 | book | variant | profile | class | sleeve | n | net | per_risk | win | mean_dte_entry | mean_days_held | exit_mix |
 |---|---|---|---|---|---|---|---|---|---|---|---|
+| c500_dev | new | margin | All | default | 509 | -14,976 | -0.0271 | 0.721 | 37.1 | 21 | take_profit:330 dte_exit:113 stop:57 expiry:9 |
+| c500_dev | new | margin | Stocks | default | 150 | -11,597 | -0.0614 | 0.707 | 36.4 | 21.7 | take_profit:92 dte_exit:36 stop:17 expiry:5 |
+| c500_dev | new | margin | ETFs | default | 359 | -3,379 | -0.0093 | 0.727 | 37.4 | 20.7 | take_profit:238 dte_exit:77 stop:40 expiry:4 |
+| c500_dev | new | cash_debit | All | short | 513 | -53,453 | -0.1196 | 0.359 | 19.9 | 4.4 | stop_intraday_proxy:246 take_profit:185 stop:40 lock_intraday_proxy:34 dte_exit:5 profit_lock:2 expiry:1 |
+| c500_dev | new | cash_debit | All | swing | 166 | 28,489 | 0.1548 | 0.554 | 46.4 | 15.8 | take_profit:90 stop:59 lock_intraday_proxy:10 dte_exit:4 profit_lock:3 |
+| c500_dev | new | cash_debit | Stocks | short | 361 | -34,163 | -0.1051 | 0.371 | 18.5 | 4.2 | stop_intraday_proxy:163 take_profit:135 stop:37 lock_intraday_proxy:20 dte_exit:5 profit_lock:1 |
+| c500_dev | new | cash_debit | Stocks | swing | 74 | 1,297 | 0.017 | 0.541 | 45.4 | 14.8 | take_profit:40 stop:28 lock_intraday_proxy:3 dte_exit:2 profit_lock:1 |
+| c500_dev | new | cash_debit | ETFs | short | 152 | -19,290 | -0.1583 | 0.329 | 23.3 | 5 | stop_intraday_proxy:83 take_profit:50 lock_intraday_proxy:14 stop:3 profit_lock:1 expiry:1 |
+| c500_dev | new | cash_debit | ETFs | swing | 92 | 27,192 | 0.2519 | 0.565 | 47.2 | 16.6 | take_profit:50 stop:31 lock_intraday_proxy:7 dte_exit:2 profit_lock:2 |
+| c500_dev | new_noproxy | margin | All | default | 509 | -14,976 | -0.0271 | 0.721 | 37.1 | 21 | take_profit:330 dte_exit:113 stop:57 expiry:9 |
+| c500_dev | new_noproxy | margin | Stocks | default | 150 | -11,597 | -0.0614 | 0.707 | 36.4 | 21.7 | take_profit:92 dte_exit:36 stop:17 expiry:5 |
+| c500_dev | new_noproxy | margin | ETFs | default | 359 | -3,379 | -0.0093 | 0.727 | 37.4 | 20.7 | take_profit:238 dte_exit:77 stop:40 expiry:4 |
+| c500_dev | new_noproxy | cash_debit | All | short | 570 | -40,246 | -0.0579 | 0.428 | 19.8 | 5.4 | stop:285 take_profit:240 profit_lock:34 dte_exit:8 expiry:3 |
+| c500_dev | new_noproxy | cash_debit | All | swing | 202 | 15,287 | 0.0389 | 0.51 | 45.6 | 15.7 | take_profit:96 stop:82 profit_lock:18 dte_exit:6 |
+| c500_dev | new_noproxy | cash_debit | Stocks | short | 412 | -22,964 | -0.0435 | 0.444 | 18.7 | 5.3 | stop:200 take_profit:181 profit_lock:20 dte_exit:8 expiry:3 |
+| c500_dev | new_noproxy | cash_debit | Stocks | swing | 103 | -1,049 | -0.0057 | 0.505 | 44.5 | 15.5 | take_profit:47 stop:42 profit_lock:9 dte_exit:5 |
+| c500_dev | new_noproxy | cash_debit | ETFs | short | 158 | -17,282 | -0.1029 | 0.386 | 22.9 | 5.7 | stop:85 take_profit:59 profit_lock:14 |
+| c500_dev | new_noproxy | cash_debit | ETFs | swing | 99 | 16,336 | 0.0787 | 0.515 | 46.8 | 16 | take_profit:49 stop:40 profit_lock:9 dte_exit:1 |
 | c125_dev | new | margin | All | default | 529 | -16,079 | -0.0259 | 0.724 | 37.2 | 21.1 | take_profit:337 dte_exit:117 stop:65 expiry:10 |
 | c125_dev | new | margin | Stocks | default | 176 | -2,874 | -0.0124 | 0.773 | 36.9 | 21.3 | take_profit:117 dte_exit:34 stop:19 expiry:6 |
 | c125_dev | new | margin | ETFs | default | 353 | -13,205 | -0.0339 | 0.7 | 37.4 | 21 | take_profit:220 dte_exit:83 stop:46 expiry:4 |
@@ -81,6 +115,18 @@ sleeve-aligned sim; `new_noproxy` = the same with `intraday_proxy: none`.
 | c500_dev | old | margin | [36, 46) | 398 | -19,017 | -0.0476 |
 | c500_dev | old | cash_debit | [21, 36) | 279 | -38,502 | -0.1464 |
 | c500_dev | old | cash_debit | [36, 46) | 395 | 13,576 | 0.0364 |
+| c500_dev | new | margin | [21, 36) | 202 | -3,130 | -0.0154 |
+| c500_dev | new | margin | [36, 46) | 307 | -11,846 | -0.0339 |
+| c500_dev | new | cash_debit | [10, 21) | 248 | -30,606 | -0.1385 |
+| c500_dev | new | cash_debit | [21, 36) | 265 | -22,846 | -0.1012 |
+| c500_dev | new | cash_debit | [36, 46) | 91 | 6,834 | 0.0697 |
+| c500_dev | new | cash_debit | [46, 61) | 75 | 21,655 | 0.2518 |
+| c500_dev | new_noproxy | margin | [21, 36) | 202 | -3,130 | -0.0154 |
+| c500_dev | new_noproxy | margin | [36, 46) | 307 | -11,846 | -0.0339 |
+| c500_dev | new_noproxy | cash_debit | [10, 21) | 291 | -11,666 | -0.0309 |
+| c500_dev | new_noproxy | cash_debit | [21, 36) | 279 | -28,580 | -0.0898 |
+| c500_dev | new_noproxy | cash_debit | [36, 46) | 119 | 21,869 | 0.1002 |
+| c500_dev | new_noproxy | cash_debit | [46, 61) | 83 | -6,583 | -0.0377 |
 | c125_dev | old | margin | [21, 36) | 70 | -3,854 | -0.0574 |
 | c125_dev | old | margin | [36, 46) | 365 | -19,040 | -0.0517 |
 | c125_dev | old | cash_debit | [21, 36) | 217 | -16,881 | -0.1001 |
@@ -112,6 +158,26 @@ sleeve-aligned sim; `new_noproxy` = the same with `intraday_proxy: none`.
 | c500_dev | old | cash_debit | profit_lock | 38 | 0.056 | -2,240 |
 | c500_dev | old | cash_debit | stop | 291 | 0.432 | -238,503 |
 | c500_dev | old | cash_debit | take_profit | 311 | 0.461 | 227,699 |
+| c500_dev | new | margin | dte_exit | 113 | 0.222 | -27,471 |
+| c500_dev | new | margin | expiry | 9 | 0.018 | 2,589 |
+| c500_dev | new | margin | stop | 57 | 0.112 | -63,862 |
+| c500_dev | new | margin | take_profit | 330 | 0.648 | 73,768 |
+| c500_dev | new | cash_debit | dte_exit | 9 | 0.013 | -1,299 |
+| c500_dev | new | cash_debit | expiry | 1 | 0.001 | 585 |
+| c500_dev | new | cash_debit | lock_intraday_proxy | 44 | 0.065 | -7,609 |
+| c500_dev | new | cash_debit | profit_lock | 5 | 0.007 | -663 |
+| c500_dev | new | cash_debit | stop | 99 | 0.146 | -71,775 |
+| c500_dev | new | cash_debit | stop_intraday_proxy | 246 | 0.362 | -125,595 |
+| c500_dev | new | cash_debit | take_profit | 275 | 0.405 | 181,393 |
+| c500_dev | new_noproxy | margin | dte_exit | 113 | 0.222 | -27,471 |
+| c500_dev | new_noproxy | margin | expiry | 9 | 0.018 | 2,589 |
+| c500_dev | new_noproxy | margin | stop | 57 | 0.112 | -63,862 |
+| c500_dev | new_noproxy | margin | take_profit | 330 | 0.648 | 73,768 |
+| c500_dev | new_noproxy | cash_debit | dte_exit | 14 | 0.018 | -5,053 |
+| c500_dev | new_noproxy | cash_debit | expiry | 3 | 0.004 | -5,858 |
+| c500_dev | new_noproxy | cash_debit | profit_lock | 52 | 0.067 | -6,865 |
+| c500_dev | new_noproxy | cash_debit | stop | 367 | 0.475 | -350,366 |
+| c500_dev | new_noproxy | cash_debit | take_profit | 336 | 0.435 | 343,182 |
 | c125_dev | old | margin | dte_exit | 73 | 0.168 | -18,713 |
 | c125_dev | old | margin | expiry | 7 | 0.016 | -1,835 |
 | c125_dev | old | margin | stop | 77 | 0.177 | -59,464 |
@@ -148,6 +214,10 @@ sleeve-aligned sim; `new_noproxy` = the same with `intraday_proxy: none`.
 |---|---|---|---|---|---|---|
 | c500_dev | old | margin | 0 | 0 | 3561 | 5688 |
 | c500_dev | old | cash_debit | 0 | 0 | 4877 | 14416 |
+| c500_dev | new | margin | 0 | 0 | 5695 | 6585 |
+| c500_dev | new | cash_debit | 1149 | 0 | 6550 | 9181 |
+| c500_dev | new_noproxy | margin | 0 | 0 | 5695 | 6585 |
+| c500_dev | new_noproxy | cash_debit | 1735 | 0 | 8484 | 11648 |
 | c125_dev | old | margin | 0 | 0 | 2810 | 6987 |
 | c125_dev | old | cash_debit | 0 | 0 | 2743 | 11385 |
 | c125_dev | new | margin | 0 | 0 | 6797 | 6730 |
@@ -161,6 +231,8 @@ sleeve-aligned sim; `new_noproxy` = the same with `intraday_proxy: none`.
 | book | variant | git | build_s | walk_s | total_s | peak_rss_mb | cache_hit_rate |
 |---|---|---|---|---|---|---|---|
 | c500_dev | old | ae3cf19 | 1,294 | 8.4 | 1,302 | 1,945 | 1 |
+| c500_dev | new | e1aa20e | 18,525 | 12.7 | 18,538 | 3,810 | 0.2776 |
+| c500_dev | new_noproxy | e1aa20e | 1,858 | 12.6 | 1,870 | 3,818 | 1 |
 | c125_dev | old | ae3cf19 | 534.7 | 7.1 | 541.8 | 1,945 | 1 |
 | c125_dev | new | f5f1da0 | 16,823 | 4.5 | 16,828 | 2,409 | 0.04188 |
 | c125_dev | new_noproxy | f5f1da0 | 700.1 | 4.3 | 704.4 | 1,884 | 1 |

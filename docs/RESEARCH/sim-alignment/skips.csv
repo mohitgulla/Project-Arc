@@ -1,6 +1,10 @@
 book,variant,profile,sleeve_full,gate_dte_window,gate_max_open_positions,gate_daily_loss
 c500_dev,old,margin,0,0,3561,5688
 c500_dev,old,cash_debit,0,0,4877,14416
+c500_dev,new,margin,0,0,5695,6585
+c500_dev,new,cash_debit,1149,0,6550,9181
+c500_dev,new_noproxy,margin,0,0,5695,6585
+c500_dev,new_noproxy,cash_debit,1735,0,8484,11648
 c125_dev,old,margin,0,0,2810,6987
 c125_dev,old,cash_debit,0,0,2743,11385
 c125_dev,new,margin,0,0,6797,6730

@@ -1,101 +1,168 @@
 # E7.19 · Sim alignment: both entry-DTE sleeves — re-baseline (D125)
 
-Status: C125 dev books done 2026-10-17; C500 dev books running (this file is updated
-when they land). Generated tables: [sim-alignment/tables.md](sim-alignment/tables.md)
-(`scripts/sim_alignment_report.py`); the E7.18 report re-run on the new books:
-`sim-alignment/loss-anatomy/` (`scripts/loss_anatomy.py --runs-dir
-data/backtest/runs/baseline_d125 report --out docs/RESEARCH/sim-alignment`).
+Status: done 2026-10-17. Generated tables: [sim-alignment/tables.md](sim-alignment/tables.md)
+(`scripts/sim_alignment_report.py`). The E7.18 report re-run on the new books is
+[sim-alignment/loss-anatomy/tables.md](sim-alignment/loss-anatomy/tables.md), produced by
+`scripts/loss_anatomy.py --runs-dir data/backtest/runs/baseline_d125 {runs,features,report --out docs/RESEARCH/sim-alignment}`
+(the same code path, pointed at the new runs dir).
 
-Books: `data/backtest/runs/baseline_d125/<book>` (the incumbent for every later study)
-and `<book>_noproxy` (same sim, `intraday_proxy: none`). Same window, data end,
-universes, rankers and seeds as E7.18 (`data/backtest/runs/anatomy/`, the "old" book:
-one expiration nearest the middle of the profile's DTE envelope).
+Books: `data/backtest/runs/baseline_d125/<book>` is **the incumbent for every later
+study**; `<book>_noproxy` is the same sim with `intraday_proxy: none`. Same window
+(dev 2020-01-01 → 2023-12-29), data end, universes, rankers (`credit_width` /
+`debit_width`) and seeds as E7.18 (`data/backtest/runs/anatomy/`, the "old" book).
+C500 dev is primary, C125 dev the check, as in E7.18.
 
 ## What changed in the sim
 
 | | old (pre-D125) | new (D125) |
 |---|---|---|
-| expirations | one, nearest the envelope middle (cash_debit: every trade 31–45 DTE) | every expiry in each sleeve window, capped at 3 (low end, middle, high end) |
-| cash_debit sleeves | none | short 10–35 and swing 36–60, each its own menu, slot cap and exit block |
+| expirations | one, nearest the envelope middle (every cash_debit trade 21–45 DTE) | every expiry in each sleeve window, capped at 3 (low end, middle, high end) |
+| cash_debit sleeves | none | short 10–35 and swing 36–60: own menu, slot cap (`sleeve_max_positions`) and exit block |
 | short-sleeve exits | the kind policy (TP 0.60, stop 0.75 EOD) | the `short` block (TP 0.40, stop 0.50 **intraday**, close 3 DTE, lock 0.30/0.10 intraday) |
-| intraday-flagged rules | EOD marks only | also checked at session d's underlying high/low (sticky-strike reprice), stop-first |
-| margin | one window 21–45 | one implicit `default` sleeve 21–45, every expiry (cap 3) |
+| intraday-flagged rules | EOD marks only | also checked at session d's underlying high/low (sticky-strike reprice, spread paid), stop-first |
+| margin | one window 21–45, nearest expiry | one implicit `default` sleeve 21–45, every expiry (cap 3) |
 
-## C125 dev: old vs new (both profiles, All)
+## Old vs new books (All)
 
-| profile | book | trades | net | max DD | per-$-risk | win | net at mid |
-|---|---|---|---|---|---|---|---|
-| margin | old | 435 | −$22,895 | 92.8 % | −0.053 | 0.685 | −$6,980 |
-| margin | **new** | 529 | −$16,079 | 81.2 % | −0.026 | 0.724 | +$6,814 |
-| cash_debit | old | 485 | −$24,892 | 99.8 % | −0.068 | 0.507 | −$480 |
-| cash_debit | **new** | 343 | −$24,955 | 99.8 % | −0.136 | 0.420 | −$4,686 |
-| cash_debit | new, proxy off | 567 | −$24,942 | 99.9 % | −0.054 | 0.466 | +$26,126 |
+| book | profile | variant | trades | net | max DD | per-$-risk | win | net at mid |
+|---|---|---|---|---|---|---|---|---|
+| C500 | margin | old | 480 | −$17,739 | 78.7 % | −0.038 | 0.706 | −$547 |
+| C500 | margin | **new** | 509 | −$14,976 | 80.2 % | −0.027 | 0.721 | +$11,530 |
+| C500 | cash_debit | old | 674 | −$24,926 | 99.9 % | −0.039 | 0.493 | +$9,956 |
+| C500 | cash_debit | **new** | 679 | −$24,964 | 99.9 % | −0.040 | 0.406 | +$45,756 |
+| C500 | cash_debit | new, proxy off | 772 | −$24,959 | 99.95 % | −0.023 | 0.449 | +$81,056 |
+| C125 | margin | old | 435 | −$22,895 | 92.8 % | −0.053 | 0.685 | −$6,980 |
+| C125 | margin | **new** | 529 | −$16,079 | 81.2 % | −0.026 | 0.724 | +$6,814 |
+| C125 | cash_debit | old | 485 | −$24,892 | 99.8 % | −0.068 | 0.507 | −$480 |
+| C125 | cash_debit | **new** | 343 | −$24,955 | 99.8 % | −0.136 | 0.420 | −$4,686 |
+| C125 | cash_debit | new, proxy off | 567 | −$24,942 | 99.9 % | −0.054 | 0.466 | +$26,126 |
 
-Σ pnl = Δequity on every book (diff 0.00, 0 open at the end); equity never below $0
-(cash_debit floors at $45 — it is ruined in every variant, so its $ net is censored at
-−$25K and per-$-risk is the comparable measure). Stocks/ETFs splits: tables.md `books`.
+- Σ pnl = Δequity on every book (diff $0.00, 0 open at the end), and equity never goes
+  below $0 ([reconcile.csv](sim-alignment/reconcile.csv)).
+- Cash is never negative. Every open is refused (`cash` skip) when its cash use exceeds
+  equity minus the cash already held by open positions.
+- Every cash_debit variant is ruined (equity < $110). Its $ net is censored at −$25K, so
+  per-$-risk and the sleeve split are the comparable measures. The new C500 cash_debit
+  book is ruined sooner: $65 at 2021-12-31 against $13,900 in the old book.
+- Margin is identical with the proxy on and off: all of its rules are EOD-only.
+- Stocks/ETFs splits are in tables.md `books`.
 
-## Per-sleeve split (C125, cash_debit, new)
+## Per-sleeve split (cash_debit, new)
 
-| sleeve | n | net | per-$-risk | win | mean DTE at entry | mean days held | exits |
-|---|---|---|---|---|---|---|---|
-| short (10–35) | 252 | −$23,951 | −0.199 | 0.377 | 19.1 | 4.2 | proxy stop 128, TP 95, EOD stop 20, proxy lock 6 |
-| swing (36–60) | 91 | −$1,004 | −0.016 | 0.538 | 46.3 | 13.5 | TP 50, stop 33, proxy lock 6 |
+| book | sleeve | n | net | per-$-risk | win | mean DTE at entry | mean days held | exits |
+|---|---|---|---|---|---|---|---|---|
+| C500 | short 10–35 | 513 | −$53,453 | −0.120 | 0.359 | 19.9 | 4.4 | proxy stop 246, TP 185, EOD stop 40, proxy lock 34 |
+| C500 | swing 36–60 | 166 | +$28,489 | +0.155 | 0.554 | 46.4 | 15.8 | TP 90, stop 59, proxy lock 10 |
+| C125 | short 10–35 | 252 | −$23,951 | −0.199 | 0.377 | 19.1 | 4.2 | proxy stop 128, TP 95, EOD stop 20, proxy lock 6 |
+| C125 | swing 36–60 | 91 | −$1,004 | −0.016 | 0.538 | 46.3 | 13.5 | TP 50, stop 33, proxy lock 6 |
 
-Proxy off: short 402 trades −$30,001 (−0.108), swing 165 trades +$5,059 (+0.028).
-`sleeve_full` skipped 1,100 sleeve-full opens (1,189 proxy off).
+With the proxy off:
 
-## DTE-bucket distribution (C125, cash_debit)
+| book | sleeve | n | net | per-$-risk |
+|---|---|---|---|---|
+| C500 | short | 570 | −$40,246 | −0.058 |
+| C500 | swing | 202 | +$15,287 | +0.039 |
+| C125 | short | 402 | −$30,001 | −0.108 |
+| C125 | swing | 165 | +$5,059 | +0.028 |
 
-| entry DTE | old n | old per-risk | new n | new net | new per-risk |
-|---|---|---|---|---|---|
-| 10–20 | 0 | | 135 | −$22,904 | −0.347 |
-| 21–35 | 217 | −0.100 | 117 | −$1,047 | −0.019 |
-| 36–45 | 268 | −0.040 | 52 | +$1,050 | +0.042 |
-| 46–60 | 0 | | 39 | −$2,054 | −0.052 |
+**The short sleeve is the loss on both universes, with and without the proxy; the swing
+sleeve is flat to positive.**
 
-Both sleeves are populated (acceptance 2). Margin: 200 trades at 21–35 (+$3,891,
-+0.019) and 329 at 36–45 (−$19,971, −0.048).
+`sleeve_full` skips: C500 1,149 (1,735 proxy off), C125 1,100 (1,189 proxy off).
 
-## Exit mix (C125, cash_debit)
+## DTE-bucket distribution (cash_debit)
 
-old: stop 43 %, TP 48 %, lock 4.5 %, DTE exit 4 %. new: TP 42 %, **proxy stop 37 %**,
-EOD stop 15.5 %, proxy lock 3.5 %. Proxy off: stop 46 %, TP 46 %, lock 6 %.
+| entry DTE | C500 old n / per-risk | C500 new n / net / per-risk | C125 new n / per-risk |
+|---|---|---|---|
+| 10–20 | 0 | 248 / −$30,606 / −0.139 | 135 / −0.347 |
+| 21–35 | 279 / −0.146 | 265 / −$22,846 / −0.101 | 117 / −0.019 |
+| 36–45 | 395 / +0.036 | 91 / +$6,834 / +0.070 | 52 / +0.042 |
+| 46–60 | 0 | 75 / +$21,655 / +0.252 | 39 / −0.052 |
 
-## Intraday proxy on/off (C125, cash_debit)
+- Both sleeves are populated (acceptance 2;
+  `sim-alignment/loss-anatomy/cash_debit_by_dte_bucket.csv`).
+- The old one-expiry book already showed the same split: its 21–35 entries were the
+  loss and its 36–45 entries the gain.
+- Margin (C500 new) has 202 trades at 21–35 (−0.015) and 307 at 36–45 (−0.034).
 
-The proxy changes the short sleeve most: on, 128 of 252 short trades stop out on the
-day's range (median hold 4 sessions); off, the same rules wait for an EOD breach and
-the book takes 567 trades instead of 343, because with the proxy on it is nearly ruined
-by mid-2020 (equity $2,750 on 2020-06-30 vs $9,891 off) and sizing then blocks most
-opens — per-$-risk −0.136 on vs −0.054 off. Net at mid moves from
-+$26.1K (off) to −$4.7K (on): the proxy books the stop at the extreme with the spread
-paid, where the EOD book often sees the price come back. The proxy is stop-first and so
-over-states stops on whipsaw days (a day that touched both TP and stop books the stop);
-read the on/off pair as a bracket on the live short sleeve, not a point estimate.
-Margin is identical on/off (its rules are all EOD-only).
+## Exit mix (cash_debit, C500)
+
+| exit | old | new | new, proxy off |
+|---|---|---|---|
+| take profit | 46 % | 40.5 % | 43.5 % |
+| stop (EOD) | 43 % | 14.6 % | 47.5 % |
+| stop (intraday proxy) | — | 36.2 % | — |
+| profit lock (EOD / proxy) | 5.6 % | 0.7 % / 6.5 % | 6.7 % |
+| DTE exit / expiry | 5 % | 1.5 % | 2.2 % |
+
+## Intraday proxy on/off
+
+- The proxy changes the short sleeve the most. With it on, 246 of the 513 C500 short
+  trades stop out on the day's range. The sleeve's mean hold is 4.4 sessions.
+- With the proxy off, the same rules wait for an EOD breach. Per-$-risk on C500 goes from
+  −0.040 (on) to −0.023 (off), and net at mid from +$45.8K (on) to +$81.1K (off).
+- The proxy books the stop at the day's extreme and pays the spread there, while the EOD
+  book often sees the price come back by the close.
+- The proxy is stop-first, so it overstates stops on whipsaw days: a day that touched
+  both TP and stop books the stop. Read the on/off pair as a bracket on the live short
+  sleeve, not as a point estimate.
 
 ## Run times and peak RSS
 
-| book | build | walk | peak RSS | cache hit |
+| book | build | walk | peak RSS | menu-cache hit |
 |---|---|---|---|---|
-| C125 new (cold menus, 6 workers, host shared with another card's tests) | 16,823 s | 4.5 s | 2,409 MB | 4 % |
-| C125 new, proxy off (warm menus) | 700 s | 4.3 s | 1,884 MB | 100 % |
+| C500 new (cold menus, 10 workers) | 18,525 s (5.1 h) | 12.7 s | 3,810 MB | 28 % |
+| C500 new, proxy off (warm) | 1,858 s | 12.6 s | 3,819 MB | 100 % |
+| C500 old (E7.18, warm) | 1,294 s | 8.4 s | 1,945 MB | 100 % |
+| C125 new (cold menus, 6 workers, host shared with another card's tests) | 16,823 s (4.7 h) | 4.5 s | 2,409 MB | 4 % |
+| C125 new, proxy off (warm) | 700 s | 4.3 s | 1,884 MB | 100 % |
 | C125 old (E7.18, warm) | 535 s | 7.1 s | 1,945 MB | 100 % |
 
-Size check (menu build, C125, 20 sessions from 2021-03-01): margin nearest 133 s → all
-285 s (2.1×) → cap 3 281 s; cash_debit nearest 154 s → all 783 s (5.1×) → cap 3 694 s
-(4.5×). Recorded in D125.
+The menus are now cached, so a study that only changes ranking, portfolio or exit
+settings re-runs C500 in about 30 minutes.
 
-## E7.18 headline findings on the new books
+Size check (menu build, C125, 20 sessions from 2021-03-01):
 
-_Filled from `sim-alignment/loss-anatomy/` when the C500 books land (C500 is E7.18's
-primary book)._
+| profile | nearest | all expiries | cap 3 |
+|---|---|---|---|
+| margin | 133 s | 285 s (2.1×) | 281 s |
+| cash_debit | 154 s | 783 s (5.1×) | 694 s (4.5×) |
+
+These numbers are recorded in D125.
+
+## E7.18 headline findings on the new books (C500 primary, C125 check)
+
+| # | E7.18 finding | on the new books | verdict |
+|---|---|---|---|
+| 1 | Cost, not direction: margin flat at mid (−$547), cash_debit positive at mid (+$9,956) | margin at mid **+$11,530** (slippage $25,734); cash_debit at mid **+$45,756** (slippage $69,012) | **holds, stronger**: both books are positive at mid and lose on cost; slippage rose 55 % (margin) and doubled (cash_debit) |
+| 2 | Margin loses on ETFs, cash_debit on stocks | margin: broad-equity ETFs flip to +$3,088 and **stocks now lose −$11,597** (−0.061); commodity/international ETFs still lose. cash_debit stocks −$32,866 (−0.082), ETFs positive | **changed for margin** (the loss moved from ETFs to stocks); holds for cash_debit |
+| 3 | Losses cluster at regime turns | margin flips ≤10s −$19,355 (−0.116) vs +0.011 rest, C125 −0.075; cash_debit flips −$29,997 (**−0.216**) vs +0.010 rest, C125 −0.335 | **holds**, stronger for cash_debit |
+| 4 | Bleed is short-dated debit (long puts, bear puts) and margin condors / bull puts | cash_debit long put −0.470, bear put −0.262, **bull call now −$22,807 (−0.075)**, long call +$38,362 (+0.185). Margin condors −$17,464 (−0.070); **bull puts now flat** (−$140) | holds for puts and condors; **changed** for margin bull puts (no longer a bleed) and cash_debit bull calls (a larger loss) |
+| 5 | Losers declare early; 2021–22 is where the equity went; margin long holds lose | margin ≥29-session holds −$23,648 (−0.162); cash_debit 2021 −$22,059 (−0.187), and the book is ruined by the end of 2021 (2022–23 have 12 trades) | **holds**; the cash_debit ruin is earlier |
+| 6 | Correlated stacking: same-cluster q5−q1 −0.166 R margin, −0.198 R cash_debit | margin +0.002 (C125 −0.036); cash_debit −0.065 (C125 −0.087) | **weaker**: the sign survives for cash_debit, but the effect is a third of its size; margin's effect is gone (it already flipped on C125 in E7.18) |
+| 7 | Features barely predict losers (AUC 0.586 margin / 0.494 cash_debit) | AUC 0.575 margin / 0.527 cash_debit (only one fold: the book is ruined by 2022) | **holds** |
+
+The missing-information rows also moved:
+
+- **EOD stop overshoot** fell from $24,967 to $6,981 on cash_debit. The proxy now books
+  most short-sleeve stops intraday, which is the point of the proxy.
+- **Earnings held through** by cash_debit stocks fell from −$22,318 (n 49) to −$2,027
+  (n 16). Shorter holds cross fewer earnings dates.
+- **FOMC/CPI** for margin flipped from −$13,408 to +$1,615 (C500). C125 still shows
+  −0.099, so the finding is unsettled.
+
+Ranked candidates from E7.18 that these results change: the macro-event blackout
+(margin) no longer holds on C500, and the debit earnings blackout loses most of its
+evidence. The spread cap and the cluster cap still rest on findings 1 and 6 (the cluster
+cap now on weaker evidence) and need re-testing on this incumbent book.
 
 ## Caveats
 
-- Same as E7.18 (dev period only, C500 survivorship, stance proxy, inferred earnings).
-- The proxy reprices at the EOD IV (sticky strike) and ignores the intraday IV move,
-  path order within the day and quote width at the extreme.
-- cash_debit is ruined in every variant, so $ comparisons stop at the floor; compare
-  per-$-risk and the sleeve split.
+- The E7.18 caveats still apply: dev period only, C500 survivorship, the stance proxy,
+  and inferred earnings dates.
+- The proxy reprices at the EOD IV (sticky strike). It ignores the intraday IV move, the
+  order of moves within the day, and the quote width at the extreme. It is stop-first.
+- cash_debit is ruined in every variant, so $ comparisons stop at the floor. Compare
+  per-$-risk and the sleeve split instead.
+- Every study verdict recorded before D125 ran on the one-expiry sim
+  (`docs/RESEARCH/backtest-baseline.md`).
