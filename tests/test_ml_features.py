@@ -313,7 +313,8 @@ def test_registry_unique_and_groups() -> None:
     r = reg.registry()
     assert len(r) == len(reg.FEATURES)
     assert {f.group for f in reg.FEATURES} == {
-        "ticker_price", "ticker_options", "market", "calendar", "event", "portfolio", "candidate"
+        "ticker_price", "ticker_options", "market", "calendar", "event", "portfolio", "candidate",
+        "model",
     }  # fmt: skip
     with pytest.raises(ValueError, match="extra"):
         reg.FeatureSpec.model_validate({**reg.FEATURES[0].model_dump(), "bogus": 1})

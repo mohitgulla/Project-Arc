@@ -72,6 +72,7 @@ __all__ = [
     "EvCosts",
     "ExitModelResult",
     "ExitSummary",
+    "M1PathParams",
     "ManagedStats",
     "SimLeg",
     "SimOutcome",
@@ -98,6 +99,22 @@ _REASON_CODE = {
     ExitReason.PROFIT_LOCK: 4,
 }
 _FORBID = ConfigDict(extra="forbid", frozen=True)
+
+
+@dataclass(frozen=True)
+class M1PathParams:
+    """M1's path distribution for one candidate (E27.2, :func:`arc.ml.m1.predict.path_params`).
+
+    *sigma*: annualised realised-vol forecast the paths move at; *drift*: the annual
+    drift that puts the paths' median log return at M1's median; *nu*: Student-t degrees
+    of freedom of the daily shocks (scaled to unit variance), matched to M1's tail ratio;
+    *horizon*: the M1 horizon (sessions) the numbers came from.
+    """
+
+    sigma: float
+    drift: float
+    nu: float
+    horizon: int = 21
 
 
 # ---------------------------------------------------------------------------
@@ -202,7 +219,7 @@ class ExitModelResult(BaseModel):
     r: float
     iv_used: float = Field(..., description="Vol the marks are priced at (ATM IV)")
     path_vol: float = Field(..., description="Vol the underlying paths move at")
-    path_vol_source: Literal["iv", "realized_forecast"] = "iv"
+    path_vol_source: Literal["iv", "realized_forecast", "m1"] = "iv"
     vrp: float | None = Field(
         None, description="ATM IV − realised-vol forecast (None = no forecast)"
     )
@@ -423,6 +440,7 @@ def simulate(
     path_vol: float | None = None,
     peak_pnl: float | None = None,
     drift: float | None = None,
+    shock_nu: float | None = None,
 ) -> SimOutcome:
     """Run the policy over ``cfg.n_paths`` daily GBM paths from *spot* to expiry (*dte* days).
 
@@ -437,6 +455,10 @@ def simulate(
     *drift* (E7.5b, D79) is the annual drift the underlying paths move at (``None`` =
     *r*). Marks stay priced at *r*: a drift only moves the paths, it is a ranking
     scenario, never the pricing measure.
+
+    *shock_nu* (E27.2, M1 paths) draws the daily shocks from a Student-t with that many
+    degrees of freedom, scaled to unit variance, instead of a normal (``None`` = normal;
+    the default path's random stream is unchanged).
     """
     if dte < 1:
         msg = "the exit model needs dte >= 1"
@@ -444,11 +466,17 @@ def simulate(
     if spot <= 0 or iv <= 0 or (path_vol is not None and path_vol <= 0):
         msg = "spot, iv and path_vol must be > 0"
         raise ValueError(msg)
+    if shock_nu is not None and shock_nu <= 2:  # noqa: PLR2004
+        msg = "shock_nu must be > 2 (finite variance)"
+        raise ValueError(msg)
     n = cfg.n_paths
     rng = np.random.default_rng(cfg.seed)
     sig = iv_path(iv, dte, cfg.iv_model)
     dt = 1.0 / 365.0
-    z = rng.standard_normal((n, dte))
+    if shock_nu is None:
+        z = rng.standard_normal((n, dte))
+    else:
+        z = rng.standard_t(shock_nu, (n, dte)) * math.sqrt((shock_nu - 2.0) / shock_nu)
     step_sig = sig[:dte] if path_vol is None else np.full(dte, path_vol)  # vol over day d → d+1
     mu = r if drift is None else drift
     log_ret = (mu - 0.5 * step_sig**2) * dt + step_sig * math.sqrt(dt) * z
@@ -691,6 +719,7 @@ def model_exits(
     spreads: Mapping[str, float] | None = None,
     realized_vol: float | None = None,
     drift: float | None = None,
+    m1: M1PathParams | None = None,
 ) -> ExitModelResult:
     """Static (hold to expiry) vs managed (under *policy*) PoP and EV for *structure*.
 
@@ -702,14 +731,24 @@ def model_exits(
     *drift* (E7.5b, D79) moves the paths at that annual drift instead of *r*
     (:func:`simulate`); only the menu ranker passes one. The card, the D41 Net EV
     floor and the gate always use the untilted (``drift=None``) result.
+    *m1* (E27.2): with ``cfg.path_vol == "m1"`` the paths move at ``m1.sigma`` with
+    Student-t(``m1.nu``) shocks, and with ``cfg.drift_source == "m1_median"`` at
+    ``m1.drift`` (an explicit *drift* still wins). Without *m1*, ``"m1"`` behaves as
+    ``"realized_forecast"``. Selected per backtest arm; the live default is unchanged.
     """
     cost = cost or load_cost_model()
     cfg = cfg or ExitModelConfig()
     legs = sim_legs(structure, cost, spreads)
     rules = resolve_rules(structure, policy)
     dte = structure.dte
-    use_rv = realized_vol is not None and cfg.path_vol == "realized_forecast"
-    pvol = realized_vol if use_rv and realized_vol is not None else iv
+    use_m1 = m1 is not None and cfg.path_vol == "m1" and m1.sigma > 0
+    use_rv = not use_m1 and realized_vol is not None and cfg.path_vol in ("realized_forecast", "m1")
+    if use_m1 and m1 is not None:
+        pvol = m1.sigma
+        if drift is None and cfg.drift_source == "m1_median":
+            drift = m1.drift
+    else:
+        pvol = realized_vol if use_rv and realized_vol is not None else iv
     out = simulate(
         legs,
         rules,
@@ -719,8 +758,9 @@ def model_exits(
         dte=dte,
         cost=cost,
         cfg=cfg,
-        path_vol=pvol if use_rv else None,
+        path_vol=pvol if (use_rv or use_m1) else None,
         drift=drift,
+        shock_nu=m1.nu if use_m1 and m1 is not None else None,
     )
 
     entry_mid = rules.entry_net
@@ -788,7 +828,7 @@ def model_exits(
         r=r,
         iv_used=iv,
         path_vol=pvol,
-        path_vol_source="realized_forecast" if use_rv else "iv",
+        path_vol_source="m1" if use_m1 else ("realized_forecast" if use_rv else "iv"),
         vrp=None if realized_vol is None else round(iv - realized_vol, 4),
         rorc_day=_rorc_day(managed.net_ev, structure, managed.expected_days_held),
         iv_model=cfg.iv_model,

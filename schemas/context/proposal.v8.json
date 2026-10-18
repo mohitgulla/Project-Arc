@@ -104,7 +104,8 @@
           "default": "iv",
           "enum": [
             "iv",
-            "realized_forecast"
+            "realized_forecast",
+            "m1"
           ],
           "title": "Path Vol Source",
           "type": "string"

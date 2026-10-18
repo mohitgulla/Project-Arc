@@ -2940,7 +2940,7 @@ export interface components {
              * @default iv
              * @enum {string}
              */
-            path_vol_source: "iv" | "realized_forecast";
+            path_vol_source: "iv" | "realized_forecast" | "m1";
             policy: components["schemas"]["ExitPolicy"];
             /**
              * Pop Std Error

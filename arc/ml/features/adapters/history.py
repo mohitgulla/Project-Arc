@@ -30,10 +30,10 @@ if TYPE_CHECKING:
 
 REPO = Path(__file__).resolve().parents[4]
 MACRO_FILE = REPO / "config" / "backtest" / "macro_calendar_2020_2026.yaml"
-#: Sessions of history read before the first requested date (longest window: the
-#: 252-row HAR fit + its 21-session target + the 22-session regressors, and the v2 vol
-#: percentile's 252 values of rv20).
-WARMUP_SESSIONS = 300
+#: Sessions of history read before the first requested date (longest window: the M1
+#: 42-session HAR fit, 252 rows + its 42-session target + the 22-session regressors, and
+#: the historical-quantile baseline's 252 standardised 42-session returns over rv20).
+WARMUP_SESSIONS = 330
 #: Calendar days of exchange sessions kept after the last date (sessions to events).
 FORWARD_DAYS = 400
 

@@ -1,0 +1,267 @@
+<!doctype html><html data-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Arc Tower · Experiments › Model (mock)</title>
+<style>
+/*
+ * Control tower design tokens: docs/TOWER_DESIGN.md §2 (D35). The single source of every
+ * colour, radius, spacing and type size. Components use them through Tailwind
+ * (tailwind.config.ts) or var(--token); never a raw hex value.
+ *
+ * Themes switch on [data-theme] (on <html>, or on any subtree: /kitchen-sink renders
+ * each component in both themes side by side).
+ */
+
+:root,
+[data-theme="dark"] {
+  --bg-page: #00080f;
+  --bg-sidebar: #030d19;
+  --bg-card: #02101c;
+  --bg-header: #041322;
+  --bg-control: #041a2e;
+  --bg-hover: #0c2135;
+  --border: #112943;
+  --border-input: #2a5d92;
+  --track: #112943;
+  --text-primary: #d0dbe5;
+  --text-title: #ffffff;
+  --text-secondary: #7089aa;
+  --text-muted: #567799;
+  --accent: #6aa7f8;
+  --accent-bar: #3787f7;
+  --accent-slate: #365c8b;
+  --range-active: #2a3a5c;
+  --range-active-text: #ffffff;
+  --pos: #0bbb00;
+  --pos-text: #41af24;
+  --pos-bg: #103621;
+  --neg: #ee0000;
+  --neg-text: #e52329;
+  --neg-bg: #3a1821;
+  --warn: #ff7f02;
+  --now-label: #ffffff;
+  --now-label-text: #00080f;
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  --bg-page: #f5f7fa;
+  --bg-sidebar: #ffffff;
+  --bg-card: #ffffff;
+  --bg-header: #ffffff;
+  --bg-control: #eef2f7;
+  --bg-hover: #e9eef5;
+  --border: #e3e8ef;
+  --border-input: #b9c7da;
+  --track: #e3e8ef;
+  --text-primary: #0b1524;
+  --text-title: #0b1524;
+  --text-secondary: #4a5a70;
+  --text-muted: #7a8797;
+  --accent: #2f7cf6;
+  --accent-bar: #2f7cf6;
+  --accent-slate: #a9bbd3;
+  --range-active: #dce6f5;
+  --range-active-text: #0b1524;
+  --pos: #1a9e2c;
+  --pos-text: #177f24;
+  --pos-bg: #e3f5e6;
+  --neg: #d9232b;
+  --neg-text: #b8161d;
+  --neg-bg: #fbe5e6;
+  --warn: #e56f00;
+  --now-label: #0b1524;
+  --now-label-text: #ffffff;
+  color-scheme: light;
+}
+
+/* Series extras and shape/spacing/type: identical in both themes. */
+:root,
+[data-theme] {
+  --series-1: #a34ff6;
+  --series-2: #e0ac25;
+  --series-3: #ea1bc6;
+  --series-4: #49cccb;
+  --series-5: #b9c0cc;
+
+  --r-card: 12px;
+  --r-control: 8px;
+  --r-pill: 6px;
+  --r-full: 999px;
+  --r-label: 4px;
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-6: 24px;
+  --s-8: 32px;
+  --s-10: 40px;
+  --sidebar-w: 260px;
+  --rail-w: 56px;
+  --tabbar-h: 56px;
+  --header-h: 46px;
+  --bar-h: 4px;
+  --line-w: 2.5px;
+  --font: Inter, "Nunito Sans", -apple-system, system-ui, sans-serif;
+  --fs-hero: 28px;
+  --fs-stat: 22px;
+  --fs-title: 16px;
+  --fs-body: 14px;
+  --fs-caption: 12px;
+  --fs-micro: 11px;
+  --card-pad: 24px;
+}
+
+@media (max-width: 768px) {
+  :root,
+  [data-theme] {
+    --card-pad: 16px;
+    --fs-hero: var(--fs-stat);
+  }
+}
+
+*{box-sizing:border-box} body{margin:0;background:var(--bg-page);color:var(--text-primary);font:var(--fs-body)/1.45 var(--font);-webkit-font-smoothing:antialiased}
+.shell{display:grid;grid-template-columns:var(--sidebar-w) 1fr;min-height:100vh}
+aside{background:var(--bg-sidebar);border-right:1px solid var(--border);padding:18px 14px}
+.brand{display:flex;gap:8px;align-items:center;font-weight:700;color:var(--text-title);font-size:18px;margin-bottom:20px} .brand i{width:10px;height:10px;border-radius:99px;background:var(--accent)}
+.nav a{display:block;padding:9px 12px;border-radius:var(--r-control);color:var(--text-secondary);text-decoration:none;margin-bottom:2px} .nav a.on{background:var(--bg-hover);color:var(--text-title);font-weight:600}
+main{min-width:0} .top{height:var(--header-h);display:flex;align-items:center;justify-content:space-between;padding:0 24px;border-bottom:1px solid var(--border);background:var(--bg-header)}
+.top h1{font-size:var(--fs-title);margin:0;color:var(--text-title)}
+.wrap{padding:20px 24px 60px;display:grid;gap:16px;max-width:1240px}
+.mock-banner{border:1px dashed var(--warn);color:var(--warn);border-radius:var(--r-control);padding:8px 12px;font-size:var(--fs-caption)}
+.tabs{display:inline-flex;background:var(--bg-control);border-radius:var(--r-control);padding:3px;gap:2px}
+.tabs button,.seg button,.tabs2 button{all:unset;cursor:pointer;padding:6px 14px;border-radius:6px;color:var(--text-secondary);font-weight:600;font-size:var(--fs-caption)}
+.tabs button.on,.seg button.on{background:var(--range-active);color:var(--range-active-text)}
+.tabs button{padding:8px 18px;font-size:var(--fs-body)}
+.seg{display:inline-flex;background:var(--bg-control);border-radius:var(--r-control);padding:2px;margin-bottom:8px}
+.tabs2{display:flex;gap:4px;border-bottom:1px solid var(--border)} .tabs2 button{border-radius:0;padding:8px 12px;border-bottom:2px solid transparent} .tabs2 button.on{color:var(--text-title);border-bottom-color:var(--accent-bar)}
+.strip{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));border:1px solid var(--border);border-radius:var(--r-card);background:var(--bg-card);overflow:hidden}
+.sc{padding:12px 16px;border-left:1px solid var(--border);min-width:0} .sc:first-child{border-left:0}
+.cap{margin:0;color:var(--text-muted);font-size:var(--fs-caption)} .sv{margin:2px 0 0;font-weight:600;color:var(--text-title);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:var(--fs-title)}
+.micro{font-size:var(--fs-micro);color:var(--text-muted)} .muted{color:var(--text-muted)} .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;color:var(--text-secondary)}
+.card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--r-card);padding:var(--card-pad);min-width:0}
+.ch{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;gap:8px} .ch h2{margin:0;font-size:var(--fs-title);color:var(--text-title)} .cx{display:flex;gap:6px;align-items:center}
+.pill{display:inline-flex;align-items:center;white-space:nowrap;border-radius:var(--r-pill);padding:2px 6px;font-size:var(--fs-caption);font-weight:600;background:var(--bg-control);color:var(--text-secondary)}
+.pill.pos{background:var(--pos-bg);color:var(--pos-text)} .pill.warn{background:color-mix(in srgb,var(--warn) 18%,transparent);color:var(--warn)}
+.eyebrow{margin:12px 0 8px;font-size:var(--fs-micro);font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted)} .eyebrow:first-child{margin-top:0}
+.rows{border-top:1px solid var(--border);border-bottom:1px solid var(--border)} .row{padding:16px 8px;display:grid;gap:10px;border-top:1px solid var(--border)} .row:first-child{border-top:0}
+.mrow{cursor:pointer} .mrow:hover{background:var(--bg-hover)} .dim{opacity:.72}
+.rt{display:flex;flex-wrap:wrap;gap:8px;align-items:center} .rt b{color:var(--text-title)} .ml{margin-left:auto;display:flex;gap:8px;align-items:center}
+.act{color:var(--accent);font-size:var(--fs-caption);font-weight:600;letter-spacing:.04em}
+.rs{margin:0;font-size:var(--fs-caption);color:var(--text-secondary)}
+.m3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px} .m3 .v{margin:2px 0 0;font-weight:600;font-variant-numeric:tabular-nums;color:var(--text-primary)}
+.r-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px 32px;font-size:var(--fs-caption)}
+.note{margin:12px 0 0;font-size:var(--fs-micro);color:var(--warn)} .foot{font-size:var(--fs-micro);color:var(--text-muted);margin:0}
+.empty{color:var(--text-secondary);font-size:var(--fs-caption)} code{font-size:11px;background:var(--bg-control);padding:1px 4px;border-radius:4px}
+details summary{cursor:pointer;color:var(--text-secondary);font-weight:600;font-size:var(--fs-caption)}
+.g2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px} .stack{display:grid;gap:16px;align-content:start}
+.split{display:grid;grid-template-columns:1fr 1fr;gap:0 32px}
+.kvl{margin:0;display:grid} .kv{display:grid;grid-template-columns:130px minmax(0,1fr);gap:12px;padding:7px 0;border-top:1px solid var(--border);font-size:var(--fs-caption)} .kv:first-child{border-top:0}
+.kvl.c2{grid-template-columns:1fr 1fr;column-gap:24px} .kvl.c2 .kv:nth-child(2){border-top:0}
+.kv dt{color:var(--text-muted)} .kv dd{margin:0;color:var(--text-primary)}
+.tbl{font-size:var(--fs-caption);font-variant-numeric:tabular-nums} .tbl .th,.tbl .tr{display:grid;gap:10px;align-items:center;padding:7px 0;border-top:1px solid var(--border)} .tbl .th{color:var(--text-muted);border-top:0}
+.keep .th,.keep .tr{grid-template-columns:80px minmax(0,1fr) minmax(0,1fr) 84px} .reg .th,.reg .tr{grid-template-columns:minmax(0,1.4fr) minmax(0,1fr) 60px 64px 60px} .r{text-align:right}
+.pos-t{color:var(--pos-text);font-weight:600} .neg-t{color:var(--neg-text);font-weight:600} .mt{margin-top:10px}
+svg.chart{width:100%;height:auto;display:block} .grid{stroke:var(--border);stroke-width:1} .zero{stroke:var(--border-input);stroke-dasharray:3 3} .diag{stroke:var(--text-muted);stroke-dasharray:4 4}
+.ax{fill:var(--text-muted);font-size:10px} .lab{fill:var(--text-secondary);font-size:11px} .val{fill:var(--text-primary);font-size:11px;font-variant-numeric:tabular-nums}
+.s-lgbm{stroke:var(--accent);stroke-width:2.5} .s-lgbm-dot{fill:var(--accent)} .s-base{stroke:var(--series-5);stroke-width:2} .s-base-dot{fill:var(--series-5)} .s-base-fill{fill:var(--accent-slate)}
+.track{fill:var(--track)} .bar{fill:var(--accent-bar)} .bpos{fill:var(--pos)} .bneg{fill:var(--neg)} .rule{stroke:var(--warn);stroke-dasharray:3 3} .rule-t{fill:var(--warn)} .bar-stroke{stroke:var(--accent);stroke-width:2}
+.legend{display:flex;gap:14px;font-size:var(--fs-micro);color:var(--text-muted);margin:6px 0} .legend i{display:inline-block;width:12px;height:3px;border-radius:2px;margin-right:5px;vertical-align:middle}
+.lg-l{background:var(--accent)} .lg-b{background:var(--series-5)} .lg-d{border-top:1px dashed var(--text-muted);height:0!important}
+.mon,.ev{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;background:var(--border);border:1px solid var(--border);border-radius:var(--r-control);overflow:hidden} .ev{grid-template-columns:repeat(2,minmax(0,1fr))}
+.mc{background:var(--bg-card);padding:10px 12px} .mc .sv{font-size:var(--fs-title)} .mc p{margin:0}
+.tl{display:grid;gap:12px} .tli{display:flex;gap:10px} .tli p{margin:2px 0 0} .dot{width:10px;height:10px;border-radius:99px;border:2px solid var(--border-input);margin-top:4px;flex:none} .dot.on{background:var(--pos);border-color:var(--pos)}
+.dhead{display:grid;gap:8px} .dhead h1{margin:0;font-size:var(--fs-hero);color:var(--text-title)} .dt{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.back{all:unset;cursor:pointer;color:var(--accent);font-size:var(--fs-caption);font-weight:600}
+.ladder{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:4px} .ladder li{display:grid;gap:3px;font-size:var(--fs-caption);position:relative;padding-top:14px}
+.ladder .ld{position:absolute;top:0;left:0;right:0;height:4px;border-radius:99px;background:var(--track)} .ladder li.done .ld{background:var(--pos)} .ladder li.now .ld{background:var(--warn)} .ladder b{color:var(--text-title)}
+.flow{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px} .flow div{color:var(--text-secondary);background:var(--bg-control);border-radius:var(--r-control);padding:10px;font-size:var(--fs-caption)} .flow b{display:block;color:var(--text-title);margin-bottom:2px}
+[hidden]{display:none!important}
+@media (max-width:1100px){ .strip{grid-template-columns:repeat(3,minmax(0,1fr))} .sc:nth-child(4){border-left:0} .sc:nth-child(n+4){border-top:1px solid var(--border)} .g2{grid-template-columns:1fr} }
+@media (max-width:768px){ .shell{grid-template-columns:1fr} aside{display:none} .wrap{padding:12px 12px 80px} .top{padding:0 12px}
+  .strip{grid-template-columns:repeat(2,minmax(0,1fr))} .sc{border-left:0!important;border-top:1px solid var(--border)} .sc:nth-child(-n+2){border-top:0} .sc:nth-child(even){border-left:1px solid var(--border)!important}
+  .split{grid-template-columns:1fr} .m3{grid-template-columns:1fr 1fr;gap:12px} .m3>div:nth-child(3){grid-column:1/-1} .kv{grid-template-columns:104px minmax(0,1fr)} .kvl.c2{grid-template-columns:1fr} .kvl.c2 .kv:nth-child(2){border-top:1px solid var(--border)}
+  .mon{grid-template-columns:1fr 1fr} .ladder{grid-template-columns:repeat(4,minmax(0,1fr));row-gap:12px} .flow{grid-template-columns:1fr 1fr} .row{padding:14px 0}
+  .reg .th,.reg .tr{grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) 56px 56px} .reg .th span:nth-child(3),.reg .tr span:nth-child(3){display:none} }
+</style></head><body>
+<div class="shell"><aside><div class="brand"><i></i>Arc</div><nav class="nav">
+<a>Overview</a><a>Trades</a><a>Positions</a><a>Performance</a><a class="on">Experiments</a><a>Ops</a></nav></aside>
+<main><div class="top"><h1>Experiments</h1><span class="micro">mock · 17 Oct 2026</span></div>
+<div class="wrap">
+<div class="mock-banner">MOCK — not built. Model numbers are real (M1 m1-53833784f276 report, dev years only); ML-1/ML-2 rows and live monitoring are placeholders.</div>
+<div id="list">
+<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px">
+<div class="tabs" id="tabs"><button data-t="live">Live</button><button data-t="backtest">Backtest</button><button data-t="model" class="on">Model</button></div>
+<span class="micro">?tab=live | backtest | model</span></div>
+<div class="tabp" data-p="live" hidden><div class="stack"><div class="strip"><div class="sc"><p class="cap">Live Running</p><div class="sv">0</div><div class="micro">none running</div></div><div class="sc"><p class="cap">Live Decided</p><div class="sv">0</div><div class="micro">0 wins</div></div><div class="sc"><p class="cap">Sessions</p><div class="sv">3 / 10</div><div class="micro">XP-1, stopped</div></div><div class="sc"><p class="cap">Proposed</p><div class="sv">0</div><div class="micro">awaiting approve</div></div><div class="sc"><p class="cap">Arm Capacity</p><div class="sv">3 / 3</div><div class="micro">slots free</div></div><div class="sc"><p class="cap">Next Review</p><div class="sv">Sun</div><div class="micro">weekly audit</div></div></div><section class="card" ><header class="ch"><h2>Live Experiments</h2><div class="cx"><span class="pill neutral">1</span></div></header>
+<p class="eyebrow">Finished · 1</p>
+<div class="rows"><div class="row"><div class="rt"><b>XP-1</b><span class="pill neutral">Stopped · Owner</span><span class="pill neutral">A/A · 3 Variants</span><span class="ml"><span class="pill neutral">3 No Call Yet</span><span class="act">OPEN ↗</span></span></div>
+<p class="rs">Other · K=3 A/A calibration, control arm plus three identical treatments</p>
+<div class="r-grid"><span class="muted">Sessions</span><span class="muted">Best · T2 vs Control · SPY-adjusted</span><span><b>3</b> <span class="muted">/ 10</span></span><span><b>−0.23%/day</b> <span class="micro">[−110.06, +109.61]</span></span></div></div></div>
+<p class="note">Unchanged from today's page, moved under the Live tab. Live rows only.</p></section></div></div>
+<div class="tabp" data-p="backtest" hidden><div class="stack"><div class="strip"><div class="sc"><p class="cap">Backtests Done</p><div class="sv">0 / 0</div><div class="micro">holdout reached</div></div><div class="sc"><p class="cap">Backtest Switches</p><div class="sv">0</div><div class="micro">on Margin holdout</div></div><div class="sc"><p class="cap">Queue</p><div class="sv">0</div><div class="micro">nothing approved</div></div><div class="sc"><p class="cap">Approvals This Week</p><div class="sv">0 / 2</div><div class="micro">per ISO week</div></div><div class="sc"><p class="cap">Retired</p><div class="sv">8</div><div class="micro">history only</div></div><div class="sc"><p class="cap">Tonight</p><div class="sv">Idle</div><div class="micro">next slot 21:30 ET</div></div></div><section class="card" ><header class="ch"><h2>Backtests</h2><div class="cx"><span class="pill neutral">8</span></div></header>
+<p class="empty">No current studies. The weekly audit proposes <code>BT-&lt;n&gt;</code>; nothing runs without <code>approve BT-&lt;n&gt;</code>.</p>
+<details><summary>Retired backtests · 8</summary><p class="micro">History only: the strategy and backtest harness have moved on since these ran.</p></details>
+<p class="note">Unchanged from today's page, moved under the Backtest tab.</p></section></div></div>
+<div class="tabp" data-p="model"><div class="stack"><div class="strip"><div class="sc"><p class="cap">Champions</p><div class="sv">1 / 3</div><div class="micro">M1 · baselines</div></div><div class="sc"><p class="cap">In Shadow</p><div class="sv">0</div><div class="micro">live scoring not on yet</div></div><div class="sc"><p class="cap">ML Studies</p><div class="sv">1 · 1</div><div class="micro">proposed · queued</div></div><div class="sc"><p class="cap">Live Calibration</p><div class="sv">—</div><div class="micro">needs 30 closed trades</div></div><div class="sc"><p class="cap">Feature Drift</p><div class="sv">—</div><div class="micro">no live window yet</div></div><div class="sc"><p class="cap">Tonight</p><div class="sv">Idle</div><div class="micro">shares 21:30 ET slot</div></div></div><section class="card" ><header class="ch"><h2>Models</h2><div class="cx"><span class="pill neutral">3</span></div></header>
+<p class="eyebrow">Production · 1</p>
+<div class="rows">
+<div class="row mrow" onclick="openDetail('m1')" tabindex="0" role="button">
+<div class="rt"><b>M1 · Move &amp; Vol</b><span class="mono micro">m1-53833784f276</span><span class="pill pos">Champion</span><span class="pill neutral">Baselines Shipped</span><span class="ml"><span class="act">OPEN ↗</span></span></div>
+<p class="rs">Calibrated quantiles of each name's log return and realised vol at 5 / 10 / 21 / 42 sessions. Feeds the candidate model and the Monte Carlo path source.</p>
+<div class="m3"><div><p class="cap">Keep Rule</p><p class="v">0 / 8 LightGBM <span class='micro'>baseline kept</span></p></div><div><p class="cap">Beats Baseline</p><p class="v">4 / 8 <span class='micro'>pinball, both years</span></p></div><div><p class="cap">Coverage Error</p><p class="v">40.9 pts <span class='micro'>rv h21 · 2023</span></p></div></div></div>
+</div>
+<p class="eyebrow">Planned · 2</p>
+<div class="rows">
+<div class="row mrow dim">
+<div class="rt"><b>M2 · Candidate Outcome (Credit)</b><span class="mono micro">—</span><span class="pill neutral">Not Trained</span><span class="ml"></span></div>
+<p class="rs">P(win), E[R], P(stop), R quantiles and expected hold per credit candidate, calibrated out-of-fold. Waits for the candidate ledger.</p>
+<div class="m3"><div><p class="cap">Promote Rule</p><p class="v">pre-registered</p></div><div><p class="cap">Baselines</p><p class="v">logistic · managed PoP</p></div><div><p class="cap">Holdout Reads</p><p class="v">0</p></div></div></div>
+<div class="row mrow dim">
+<div class="rt"><b>M2 · Candidate Outcome (Debit)</b><span class="mono micro">—</span><span class="pill neutral">Not Trained</span><span class="ml"></span></div>
+<p class="rs">Same targets for debit candidates. Live history before 19 Oct is debit-only, so this family calibrates first.</p>
+<div class="m3"><div><p class="cap">Promote Rule</p><p class="v">pre-registered</p></div><div><p class="cap">Baselines</p><p class="v">logistic · managed PoP</p></div><div><p class="cap">Holdout Reads</p><p class="v">0</p></div></div></div>
+</div></section><section class="card" ><header class="ch"><h2>ML Studies</h2><div class="cx"><span class="pill neutral">2</span></div></header>
+<div class="rows">
+<div class="row mrow" onclick="openDetail('ml1')" tabindex="0" role="button">
+<div class="rt"><b>ML-1</b><span class="pill warn">Proposed</span><span class="pill neutral">Challenger · M1 rv</span><span class="ml"><span class="pill neutral">Awaiting Approve</span><span class="act">OPEN ↗</span></span></div>
+<p class="rs">LightGBM realised-vol quantiles with a monthly rolling conformal refresh beat HAR-IV on pinball <b>and</b> hold coverage within 3 pts in both test years.</p>
+<div class="m3"><div><p class="cap">Incumbent</p><p class="v">HAR-IV + CQR</p></div><div><p class="cap">Evidence So Far</p><p class="v">cov err 23.8 → 8.5 pts <span class="micro">rv h21 · 2023, post-hoc</span></p></div><div><p class="cap">Cost</p><p class="v">~1 night <span class="micro">54 min train</span></p></div></div></div>
+<div class="row mrow dim">
+<div class="rt"><b>ML-2</b><span class="pill neutral">Queued</span><span class="pill neutral">New Model · M2 Debit</span><span class="ml"><span class="pill neutral">Runs After ML-1</span></span></div>
+<p class="rs">First M2 debit fit on the candidate ledger; promote to shadow only if it beats logistic and managed PoP on log-loss, per-day E[R] IC &gt; 0 (NW t &gt; 2), and the replay beats the incumbent on net and max DD in 2022 and 2023.</p>
+<div class="m3"><div><p class="cap">Incumbent</p><p class="v">managed EV / PoP</p></div><div><p class="cap">Grid</p><p class="v">12 configs</p></div><div><p class="cap">Cost</p><p class="v">~2 nights</p></div></div></div>
+</div>
+<p class="note">ML-1 and ML-2 are illustrative rows for the mock (ML-1's evidence numbers are real, from the M1 report's post-hoc diagnostic).</p></section><section class="card" ><header class="ch"><h2>How ML Studies Run</h2><div class="cx"></div></header><div class="flow">
+<div><b>1 · Propose</b>Weekly audit drafts <code>ML-&lt;n&gt;</code>, ranked in the same backlog as XP and BT</div>
+<div><b>2 · Approve</b><code>approve ML-&lt;n&gt;</code> commits the spec and queues it · <code>drop</code> / <code>stop</code></div>
+<div><b>3 · Run</b>Nightly runner, dev 2022 → 2023 → one holdout read, stops early on a clear dev fail</div>
+<div><b>4 · Verdict</b>Pre-registered rule; pass → Shadow automatically, live scoring with no decision change</div>
+<div><b>5 · Champion</b>Owner only: <code>arc ml promote</code>. Using it to trade still needs an XP or BT arm</div>
+</div></section>
+<p class="foot">Model metrics are out-of-sample on the 2022 and 2023 dev test years unless marked Holdout. They are forecast-quality numbers (loss, coverage, IC), never P&amp;L; P&amp;L effects only appear once a model is used by an XP or BT arm.</p></div></div>
+</div>
+<div id="d-m1" class="stack" hidden><div class="dhead"><button class="back" onclick="closeDetail()">← Models</button>
+<div class="dt"><h1>M1 · Move &amp; Vol</h1><span class="pill pos">Champion</span><span class="pill neutral">Baselines Shipped</span><span class="mono micro">m1-53833784f276</span></div>
+<p class="rs">Calibrated quantiles of each name's next 5–42 sessions. Never a gate input; used as features for the candidate model, the Monte Carlo path source and the stance proxy.</p></div><div class="strip"><div class="sc"><p class="cap">Keep Rule</p><div class="sv">0 / 8</div><div class="micro">targets on LightGBM</div></div><div class="sc"><p class="cap">Vol vs HAR-IV</p><div class="sv">−33%</div><div class="micro">pinball, h21 · 2023</div></div><div class="sc"><p class="cap">Return vs Hist.</p><div class="sv">+16%</div><div class="micro">pinball, h21 · 2023</div></div><div class="sc"><p class="cap">Coverage Error</p><div class="sv">40.9 pts</div><div class="micro">shipped, vol h21 · 2023</div></div><div class="sc"><p class="cap">Rank IC</p><div class="sv">0.88</div><div class="micro">vol h21 · 2023</div></div><div class="sc"><p class="cap">Holdout Reads</p><div class="sv">0</div><div class="micro">dev only</div></div></div><div class="tabs2"><button class="on">Results</button><button>Spec</button><button>Live</button><button>Versions</button></div><div class="g2"><section class="card" ><header class="ch"><h2>Keep Rule</h2><div class="cx"></div></header><div class="tbl keep"><div class="th"><span>Target</span><span>2022</span><span>2023</span><span>Ships</span></div><div class="tr"><span><b>Return</b> h5</span><span><span class="neg-t">+18.1%</span> <span class="micro">p 1</span><br><span class="neg-t">22.8 pts</span></span><span><span class="neg-t">+6.2%</span> <span class="micro">p 1</span><br><span class="neg-t">12.1 pts</span></span><span><span class="pill neutral">Baseline</span></span></div><div class="tr"><span><b>Return</b> h10</span><span><span class="neg-t">+15.6%</span> <span class="micro">p 0.99</span><br><span class="neg-t">25.7 pts</span></span><span><span class="neg-t">+4.2%</span> <span class="micro">p 1</span><br><span class="neg-t">9.3 pts</span></span><span><span class="pill neutral">Baseline</span></span></div><div class="tr"><span><b>Return</b> h21</span><span><span class="neg-t">+21.7%</span> <span class="micro">p 0.98</span><br><span class="neg-t">31.2 pts</span></span><span><span class="neg-t">+16.1%</span> <span class="micro">p 1</span><br><span class="neg-t">19.6 pts</span></span><span><span class="pill neutral">Baseline</span></span></div><div class="tr"><span><b>Return</b> h42</span><span><span class="neg-t">+16.3%</span> <span class="micro">p 0.92</span><br><span class="neg-t">32.4 pts</span></span><span><span class="neg-t">+3.5%</span> <span class="micro">p 0.9</span><br><span class="neg-t">24.2 pts</span></span><span><span class="pill neutral">Baseline</span></span></div><div class="tr"><span><b>Vol</b> h5</span><span><span class="pos-t">−6.6%</span> <span class="micro">p 3.4e-05</span><br><span class="neg-t">5.3 pts</span></span><span><span class="pos-t">−16.1%</span> <span class="micro">p 6.1e-44</span><br><span class="neg-t">8.4 pts</span></span><span><span class="pill neutral">Baseline</span></span></div><div class="tr"><span><b>Vol</b> h10</span><span><span class="pos-t">−11.7%</span> <span class="micro">p 7e-05</span><br><span class="neg-t">11.5 pts</span></span><span><span class="pos-t">−24.2%</span> <span class="micro">p 2.8e-30</span><br><span class="neg-t">11.4 pts</span></span><span><span class="pill neutral">Baseline</span></span></div><div class="tr"><span><b>Vol</b> h21</span><span><span class="pos-t">−7.2%</span> <span class="micro">p 0.00016</span><br><span class="neg-t">24.0 pts</span></span><span><span class="pos-t">−33.0%</span> <span class="micro">p 9.7e-18</span><br><span class="neg-t">23.8 pts</span></span><span><span class="pill neutral">Baseline</span></span></div><div class="tr"><span><b>Vol</b> h42</span><span><span class="pos-t">−8.9%</span> <span class="micro">p 3.5e-05</span><br><span class="neg-t">35.4 pts</span></span><span><span class="pos-t">−32.7%</span> <span class="micro">p 5.1e-14</span><br><span class="neg-t">34.2 pts</span></span><span><span class="pill neutral">Baseline</span></span></div></div><p class="micro mt">Each cell: LightGBM pinball vs baseline (negative = better) with the DM p-value, then coverage error after CQR. Green = passes that half of the rule.</p></section><div class="stack"><section class="card" ><header class="ch"><h2>Coverage</h2><div class="cx"></div></header><div class="seg" data-seg><button class="on">Vol h21</button><button class="">Return h21</button></div>
+<svg viewBox="0 0 460 260" class="chart" role="img" aria-label="coverage"><line x1="40" x2="448" y1="230.0" y2="230.0" class="grid"/><text x="34" y="234.0" class="ax" text-anchor="end">0</text><text x="40.0" y="250" class="ax" text-anchor="middle">0</text><line x1="40" x2="448" y1="175.5" y2="175.5" class="grid"/><text x="34" y="179.5" class="ax" text-anchor="end">25</text><text x="142.0" y="250" class="ax" text-anchor="middle">25</text><line x1="40" x2="448" y1="121.0" y2="121.0" class="grid"/><text x="34" y="125.0" class="ax" text-anchor="end">50</text><text x="244.0" y="250" class="ax" text-anchor="middle">50</text><line x1="40" x2="448" y1="66.5" y2="66.5" class="grid"/><text x="34" y="70.5" class="ax" text-anchor="end">75</text><text x="346.0" y="250" class="ax" text-anchor="middle">75</text><line x1="40" x2="448" y1="12.0" y2="12.0" class="grid"/><text x="34" y="16.0" class="ax" text-anchor="end">100</text><text x="448.0" y="250" class="ax" text-anchor="middle">100</text><line x1="40.0" y1="230.0" x2="448.0" y2="12.0" class="diag"/><polyline class="s-base" fill="none" points="60.4,181.6 80.8,146.8 142.0,86.3 244.0,42.0 346.0,22.6 407.2,15.7 427.6,14.0"/><circle cx="60.4" cy="181.6" r="3" class="s-base-dot"/><circle cx="80.8" cy="146.8" r="3" class="s-base-dot"/><circle cx="142.0" cy="86.3" r="3" class="s-base-dot"/><circle cx="244.0" cy="42.0" r="3" class="s-base-dot"/><circle cx="346.0" cy="22.6" r="3" class="s-base-dot"/><circle cx="407.2" cy="15.7" r="3" class="s-base-dot"/><circle cx="427.6" cy="14.0" r="3" class="s-base-dot"/><polyline class="s-lgbm" fill="none" points="60.4,215.9 80.8,195.2 142.0,143.8 244.0,69.1 346.0,28.8 407.2,17.1 427.6,14.2"/><circle cx="60.4" cy="215.9" r="3" class="s-lgbm-dot"/><circle cx="80.8" cy="195.2" r="3" class="s-lgbm-dot"/><circle cx="142.0" cy="143.8" r="3" class="s-lgbm-dot"/><circle cx="244.0" cy="69.1" r="3" class="s-lgbm-dot"/><circle cx="346.0" cy="28.8" r="3" class="s-lgbm-dot"/><circle cx="407.2" cy="17.1" r="3" class="s-lgbm-dot"/><circle cx="427.6" cy="14.2" r="3" class="s-lgbm-dot"/></svg><div class="legend"><span><i class="lg-l"></i>LightGBM</span><span><i class="lg-b"></i>Baseline</span><span><i class="lg-d"></i>Perfect</span></div>
+<p class="micro">Nominal quantile (x) vs share of outcomes below it (y), 2023, after CQR. Off the diagonal = mis-calibrated; HAR-IV sits 41 pts off at worst, LightGBM 24.</p></section><section class="card" ><header class="ch"><h2>Pinball vs Baseline</h2><div class="cx"></div></header><div class="seg"><button class="on">Vol</button><button>Return</button></div><svg viewBox="0 0 460 160" class="chart" role="img"><line x1="70.0" x2="70.0" y1="6" y2="134" class="grid"/><text x="70.0" y="150" class="ax" text-anchor="middle">−40%</text><line x1="162.5" x2="162.5" y1="6" y2="134" class="grid"/><text x="162.5" y="150" class="ax" text-anchor="middle">−20%</text><line x1="255.0" x2="255.0" y1="6" y2="134" class="zero"/><text x="255.0" y="150" class="ax" text-anchor="middle">0</text><line x1="347.5" x2="347.5" y1="6" y2="134" class="grid"/><text x="347.5" y="150" class="ax" text-anchor="middle">+20%</text><line x1="440.0" x2="440.0" y1="6" y2="134" class="grid"/><text x="440.0" y="150" class="ax" text-anchor="middle">+40%</text><text x="62" y="23" class="lab" text-anchor="end">h5</text><rect x="224.3" y="10" width="30.7" height="8" rx="2" class="bpos" opacity="0.55"><title>test2022 −6.6%</title></rect><rect x="180.5" y="19" width="74.5" height="8" rx="2" class="bpos" opacity="1"><title>test2023 −16.1%</title></rect><text x="62" y="53" class="lab" text-anchor="end">h10</text><rect x="200.8" y="40" width="54.2" height="8" rx="2" class="bpos" opacity="0.55"><title>test2022 −11.7%</title></rect><rect x="143.0" y="49" width="112.0" height="8" rx="2" class="bpos" opacity="1"><title>test2023 −24.2%</title></rect><text x="62" y="83" class="lab" text-anchor="end">h21</text><rect x="221.8" y="70" width="33.2" height="8" rx="2" class="bpos" opacity="0.55"><title>test2022 −7.2%</title></rect><rect x="102.6" y="79" width="152.4" height="8" rx="2" class="bpos" opacity="1"><title>test2023 −33.0%</title></rect><text x="62" y="113" class="lab" text-anchor="end">h42</text><rect x="213.7" y="100" width="41.3" height="8" rx="2" class="bpos" opacity="0.55"><title>test2022 −8.9%</title></rect><rect x="103.7" y="109" width="151.3" height="8" rx="2" class="bpos" opacity="1"><title>test2023 −32.7%</title></rect></svg>
+<div class="legend"><span><i class="lg-l" style="opacity:.55"></i>2022</span><span><i class="lg-l"></i>2023</span></div>
+<p class="micro">LightGBM pinball loss vs the baseline per horizon. Left = LightGBM better. Vol wins everywhere; return loses everywhere.</p></section></div></div><div class="g2"><section class="card" ><header class="ch"><h2>Feature Importance</h2><div class="cx"></div></header><div class="seg"><button class="on">Vol h21</button><button>Return h21</button></div>
+<svg viewBox="0 0 460 266" class="chart" role="img"><text x="142" y="18" class="lab" text-anchor="end">iv30_over_har</text><rect x="150" y="8" width="250" height="12" rx="3" class="track"/><rect x="150" y="8" width="250.0" height="12" rx="3" class="bar"/><text x="408" y="18" class="val">25.3%</text><text x="142" y="44" class="lab" text-anchor="end">vix_proxy_pct_252</text><rect x="150" y="34" width="250" height="12" rx="3" class="track"/><rect x="150" y="34" width="78.8" height="12" rx="3" class="bar"/><text x="408" y="44" class="val">8.0%</text><text x="142" y="70" class="lab" text-anchor="end">iv_pct</text><rect x="150" y="60" width="250" height="12" rx="3" class="track"/><rect x="150" y="60" width="62.2" height="12" rx="3" class="bar"/><text x="408" y="70" class="val">6.3%</text><text x="142" y="96" class="lab" text-anchor="end">spy_dist_ma200</text><rect x="150" y="86" width="250" height="12" rx="3" class="track"/><rect x="150" y="86" width="53.7" height="12" rx="3" class="bar"/><text x="408" y="96" class="val">5.4%</text><text x="142" y="122" class="lab" text-anchor="end">vrp20</text><rect x="150" y="112" width="250" height="12" rx="3" class="track"/><rect x="150" y="112" width="42.1" height="12" rx="3" class="bar"/><text x="408" y="122" class="val">4.3%</text><text x="142" y="148" class="lab" text-anchor="end">har_rv_h21</text><rect x="150" y="138" width="250" height="12" rx="3" class="track"/><rect x="150" y="138" width="29.0" height="12" rx="3" class="bar"/><text x="408" y="148" class="val">2.9%</text><text x="142" y="174" class="lab" text-anchor="end">spy_dd_252</text><rect x="150" y="164" width="250" height="12" rx="3" class="track"/><rect x="150" y="164" width="29.0" height="12" rx="3" class="bar"/><text x="408" y="174" class="val">2.9%</text><text x="142" y="200" class="lab" text-anchor="end">vix_proxy</text><rect x="150" y="190" width="250" height="12" rx="3" class="track"/><rect x="150" y="190" width="26.1" height="12" rx="3" class="bar"/><text x="408" y="200" class="val">2.6%</text><text x="142" y="226" class="lab" text-anchor="end">spy_trend_z</text><rect x="150" y="216" width="250" height="12" rx="3" class="track"/><rect x="150" y="216" width="24.9" height="12" rx="3" class="bar"/><text x="408" y="226" class="val">2.5%</text><text x="142" y="252" class="lab" text-anchor="end">sess_to_fomc</text><rect x="150" y="242" width="250" height="12" rx="3" class="track"/><rect x="150" y="242" width="22.5" height="12" rx="3" class="bar"/><text x="408" y="252" class="val">2.3%</text></svg>
+<p class="micro">Gain share of the final model, summed over the 7 quantile models. Permutation importance on the test folds behind the toggle.</p></section><div class="stack"><section class="card" ><header class="ch"><h2>Rolling Calibration</h2><div class="cx"></div></header><svg viewBox="0 0 460 156" class="chart" role="img"><line x1="70.0" x2="70.0" y1="4" y2="132" class="grid"/><text x="70.0" y="148" class="ax" text-anchor="middle">0</text><line x1="155.0" x2="155.0" y1="4" y2="132" class="grid"/><text x="155.0" y="148" class="ax" text-anchor="middle">10</text><line x1="240.0" x2="240.0" y1="4" y2="132" class="grid"/><text x="240.0" y="148" class="ax" text-anchor="middle">20</text><line x1="325.0" x2="325.0" y1="4" y2="132" class="grid"/><text x="325.0" y="148" class="ax" text-anchor="middle">30</text><line x1="410.0" x2="410.0" y1="4" y2="132" class="grid"/><text x="410.0" y="148" class="ax" text-anchor="middle">40</text><line x1="95.5" x2="95.5" y1="4" y2="132" class="rule"/><text x="99.5" y="12" class="ax rule-t">3-pt rule</text><text x="62" y="20" class="lab" text-anchor="end">h5</text><rect x="70" y="8" width="71.4" height="8" rx="2" class="s-base-fill"/><rect x="70" y="18" width="21.1" height="8" rx="2" class="bar"/><text x="147.4" y="22" class="val">8.4 → 2.5</text><text x="62" y="50" class="lab" text-anchor="end">h10</text><rect x="70" y="38" width="97.3" height="8" rx="2" class="s-base-fill"/><rect x="70" y="48" width="20.3" height="8" rx="2" class="bar"/><text x="173.3" y="52" class="val">11.4 → 2.4</text><text x="62" y="80" class="lab" text-anchor="end">h21</text><rect x="70" y="68" width="202.6" height="8" rx="2" class="s-base-fill"/><rect x="70" y="78" width="72.6" height="8" rx="2" class="bar"/><text x="278.6" y="82" class="val">23.8 → 8.5</text><text x="62" y="110" class="lab" text-anchor="end">h42</text><rect x="70" y="98" width="291.1" height="8" rx="2" class="s-base-fill"/><rect x="70" y="108" width="86.2" height="8" rx="2" class="bar"/><text x="367.1" y="112" class="val">34.2 → 10.1</text></svg><div class="legend"><span><i class="lg-b"></i>Once-a-year CQR</span><span><i class="lg-l"></i>Monthly rolling CQR</span></div><p class="micro">LightGBM vol coverage error, 2023. Post-hoc diagnostic, not the keep rule: the case for ML-1.</p></section><section class="card" ><header class="ch"><h2>Weakest Regimes</h2><div class="cx"></div></header><div class="tbl reg"><div class="th"><span>Regime</span><span>Target</span><span class="r">n</span><span class="r">vs Base</span><span class="r">Cov Err</span></div><div class="tr"><span>Spy Trend · Bull</span><span>Return h42 · 2022</span><span class="r">11,069</span><span class="r neg-t">+34%</span><span class="r">43 pts</span></div><div class="tr"><span>Spy Trend · Bear</span><span>Return h21 · 2022</span><span class="r">24,029</span><span class="r neg-t">+36%</span><span class="r">32 pts</span></div><div class="tr"><span>Earnings In H · No</span><span>Return h42 · 2022</span><span class="r">47,969</span><span class="r neg-t">+25%</span><span class="r">37 pts</span></div><div class="tr"><span>Earnings In H · No</span><span>Return h21 · 2022</span><span class="r">72,981</span><span class="r neg-t">+30%</span><span class="r">34 pts</span></div><div class="tr"><span>Class · ETF</span><span>Return h42 · 2022</span><span class="r">22,294</span><span class="r neg-t">+24%</span><span class="r">38 pts</span></div></div></section></div></div><section class="card" ><header class="ch"><h2>Spec</h2><div class="cx"></div></header><div class="split"><dl class="kvl c1"><div class="kv"><dt>Purpose</dt><dd>Per-name distribution of the next 5–42 sessions: direction-free move and vol</dd></div><div class="kv"><dt>Targets</dt><dd>log return · realised vol · excursions · move vs implied</dd></div><div class="kv"><dt>Horizons</dt><dd>5 · 10 · 21 · 42 sessions</dd></div><div class="kv"><dt>Quantiles</dt><dd>5 · 10 · 25 · 50 · 75 · 90 · 95</dd></div><div class="kv"><dt>Universe</dt><dd>481 names · 459,990 rows</dd></div><div class="kv"><dt>Train Window</dt><dd>2020-07-01 → 2023-12-31</dd></div><div class="kv"><dt>Validation</dt><dd>walk-forward · test 2022, 2023 · purge on label end</dd></div><div class="kv"><dt>Holdout Reads</dt><dd>0 <span class='micro'>2024 → today untouched</span></dd></div></dl><dl class="kvl c1"><div class="kv"><dt>Challenger</dt><dd>LightGBM quantile, pooled, no ticker id</dd></div><div class="kv"><dt>Baselines</dt><dd>historical quantiles (return) · HAR-IV (vol)</dd></div><div class="kv"><dt>Calibration</dt><dd>conformal (CQR) per level, fitted on 2023</dd></div><div class="kv"><dt>Params</dt><dd>300 rounds · lr 0.05 · 31 leaves · min leaf 1000</dd></div><div class="kv"><dt>Features</dt><dd>85 <span class='micro'>Ticker Price 57 · Ticker Options 9 · Market 8 · Calendar 7 · Event 4</span></dd></div><div class="kv"><dt>Keep Rule</dt><dd>beats baseline (DM p &lt; 0.05) and coverage error ≤ 3 pts, both years</dd></div><div class="kv"><dt>Seed</dt><dd>20261017 · deterministic</dd></div><div class="kv"><dt>Lineage</dt><dd><span class='mono'>schema 45ba7c64e725 · data 19b0c6288a2d17ff · code a81d753de9</span></dd></div></dl></div></section><div class="g2"><section class="card" ><header class="ch"><h2>Live Monitoring</h2><div class="cx"><span class="pill neutral">Shadow Off</span></div></header><div class="mon"><div class="mc"><p class="cap">Live Coverage</p><p class="sv">—</p><p class="micro">starts with live shadow scoring</p></div><div class="mc"><p class="cap">Feature Drift (PSI)</p><p class="sv">—</p><p class="micro">warn &gt; 0.25 · top 5 named</p></div><div class="mc"><p class="cap">Score Drift</p><p class="sv">—</p><p class="micro">live vs backtest, same month</p></div><div class="mc"><p class="cap">Parity</p><p class="sv">—</p><p class="micro">history vs live adapter, daily</p></div><div class="mc"><p class="cap">Scored</p><p class="sv">—</p><p class="micro">% of menu candidates</p></div><div class="mc"><p class="cap">Offset Age</p><p class="sv">—</p><p class="micro">days since last CQR refit</p></div></div><p class='micro'>Filled by nightly refresh and <code>arc ml monitor</code> once live shadow scoring ships. Shows n and CI, and "Insufficient" below 30.</p></section><div class="stack"><section class="card" ><header class="ch"><h2>Versions</h2><div class="cx"></div></header><div class="tl">
+<div class="tli"><span class="dot on"></span><div><b class="mono">m1-53833784f276</b> <span class="pill pos">Champion</span><p class="micro">17 Oct · baselines shipped on all 8 targets · 54 min train</p></div></div>
+<div class="tli"><span class="dot"></span><div><b class="mono">m1-c7acc7dfb7b7</b> <span class="pill neutral">Retired</span><p class="micro">17 Oct · first run, superseded the same day</p></div></div>
+</div></section><section class="card" ><header class="ch"><h2>Cost</h2><div class="cx"></div></header><dl class="kvl c2"><div class="kv"><dt>Train</dt><dd>54 min <span class='micro'>walk-forward 37 · final 12</span></dd></div><div class="kv"><dt>Predict One Session</dt><dd>0.08 s <span class='micro'>469 names</span></dd></div><div class="kv"><dt>All-LightGBM Path</dt><dd>1.19 s</dd></div><div class="kv"><dt>Size</dt><dd>53.2 MB <span class='micro'>56 boosters</span></dd></div></dl></section></div></div></div>
+<div id="d-ml1" class="stack" hidden><div class="dhead"><button class="back" onclick="closeDetail()">← Models</button>
+<div class="dt"><h1>ML-1</h1><span class="pill warn">Proposed</span><span class="pill neutral">Challenger · M1 rv</span></div>
+<p class="rs">Rolling-calibrated LightGBM vol quantiles vs the shipped HAR-IV baseline.</p></div><section class="card" ><header class="ch"><h2>Status</h2><div class="cx"></div></header><ol class="ladder"><li class="done"><span class="ld"></span><b>Proposed</b><span class="micro">weekly audit · 18 Oct</span></li><li class="now"><span class="ld"></span><b>Approved</b><span class="micro">approve ML-1</span></li><li class=""><span class="ld"></span><b>Dev 2022</b><span class="micro">fold fit</span></li><li class=""><span class="ld"></span><b>Dev 2023</b><span class="micro">fold fit</span></li><li class=""><span class="ld"></span><b>Verdict</b><span class="micro">keep rule</span></li><li class=""><span class="ld"></span><b>Holdout</b><span class="micro">one read</span></li><li class=""><span class="ld"></span><b>Shadow</b><span class="micro">auto on pass</span></li><li class=""><span class="ld"></span><b>Champion</b><span class="micro">owner only</span></li></ol><p class="micro mt">Reply <code>approve ML-1</code> in #arc-analyst to queue it; <code>drop ML-1</code> to close it.</p></section><div class="g2"><section class="card" ><header class="ch"><h2>Spec</h2><div class="cx"></div></header><dl class="kvl c1"><div class="kv"><dt>Hypothesis</dt><dd>LightGBM rv quantiles + monthly rolling CQR beat HAR-IV + CQR on pinball and hold coverage ≤ 3 pts, 2022 and 2023</dd></div><div class="kv"><dt>Family</dt><dd>M1 · realised vol, h 5 / 10 / 21 / 42</dd></div><div class="kv"><dt>Incumbent</dt><dd>m1-53833784f276 (HAR-IV + once-a-year CQR)</dd></div><div class="kv"><dt>Challenger</dt><dd>same features and params; offsets refit monthly on the last 252 sessions, purge h + 5</dd></div><div class="kv"><dt>Decision Rule</dt><dd>pre-registered keep rule, unchanged · DM p &lt; 0.05 and cov err ≤ 3 pts, both years</dd></div><div class="kv"><dt>Grid</dt><dd>1 config · no hyper-parameter search</dd></div><div class="kv"><dt>Holdout</dt><dd>one read after the dev verdict is committed</dd></div><div class="kv"><dt>If It Passes</dt><dd>registers as candidate → shadow; champion needs <code>arc ml promote</code></dd></div><div class="kv"><dt>Spec File</dt><dd><span class='mono'>config/ml_studies/ML-1.yaml</span></dd></div></dl></section><section class="card" ><header class="ch"><h2>Why Now</h2><div class="cx"></div></header><div class="ev"><div class="mc"><p class="cap">Vol h5 · 2023</p><p class="sv">8.4 → 2.5</p><p class="micro">cov err pts · pinball −17% vs HAR-IV</p></div><div class="mc"><p class="cap">Vol h10 · 2023</p><p class="sv">11.4 → 2.4</p><p class="micro">cov err pts · pinball −26% vs HAR-IV</p></div><div class="mc"><p class="cap">Vol h21 · 2023</p><p class="sv">23.8 → 8.5</p><p class="micro">cov err pts · pinball −40% vs HAR-IV</p></div><div class="mc"><p class="cap">Vol h42 · 2023</p><p class="sv">34.2 → 10.1</p><p class="micro">cov err pts · pinball −46% vs HAR-IV</p></div></div>
+<p class="micro">From the M1 report's post-hoc diagnostic: why the audit proposed this. Coverage still misses the 3-pt line at h21/h42, so a fail is a live possibility.</p></section></div></div>
+</div></main></div>
+<script>
+const tabs=document.querySelectorAll('#tabs button');
+function setTab(t){tabs.forEach(b=>b.classList.toggle('on',b.dataset.t===t));document.querySelectorAll('.tabp').forEach(p=>p.hidden=p.dataset.p!==t);history.replaceState(null,'','#'+t)}
+tabs.forEach(b=>b.onclick=()=>setTab(b.dataset.t));
+function openDetail(id){document.getElementById('list').hidden=true;document.querySelectorAll('[id^=d-]').forEach(d=>d.hidden=d.id!=='d-'+id);scrollTo(0,0)}
+function closeDetail(){document.querySelectorAll('[id^=d-]').forEach(d=>d.hidden=true);document.getElementById('list').hidden=false}
+document.querySelectorAll('.seg,.tabs2').forEach(s=>s.querySelectorAll('button').forEach(b=>b.onclick=()=>{s.querySelectorAll('button').forEach(x=>x.classList.remove('on'));b.classList.add('on')}));
+const h=location.hash.slice(1); if(h==='m1'||h==='ml1') openDetail(h); else if(h) setTab(h);
+</script></body></html>

@@ -43,9 +43,10 @@ def add_exits_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     m.add_argument("--as-of", type=dt.date.fromisoformat, default=None, help="YYYY-MM-DD")
     m.add_argument(
         "--path-vol",
-        choices=["realized_forecast", "iv"],
+        choices=["realized_forecast", "iv", "m1"],
         default=None,
-        help="Paths at the realised-vol forecast (mean HV20/HV60, config default) or at IV",
+        help="Paths at the realised-vol forecast (mean HV20/HV60, config default) or at IV; "
+        "'m1' needs M1 path params, so here it behaves as realized_forecast",
     )
     m.add_argument(
         "--no-compare", action="store_true", help="Skip the 2x-credit / no-stop comparison rows"
