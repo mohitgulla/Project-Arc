@@ -1,4 +1,4 @@
-.PHONY: check test test-rest test-gate lint fmt audit lock-check web web-check web-api web-e2e
+.PHONY: check test test-rest test-gate test-slow lint fmt audit lock-check web web-check web-api web-e2e
 
 check: lock-check lint fmt audit test
 
@@ -29,14 +29,20 @@ GATE_TESTS := tests/test_gate.py tests/test_halt.py tests/test_gate_token.py \
 	tests/test_gate_sleeves.py tests/test_gate_caps.py tests/test_gate_delta.py \
 	tests/test_gate_regime.py tests/test_gate_open_risk.py
 
-# Full suite: every test file runs exactly once.
-test: test-rest test-gate
+# Full suite: every test runs exactly once.
+test: test-rest test-gate test-slow
 
 # Tests marked `serial` assert a wall-clock budget, which CPU contention from parallel
 # workers can break, so they run alone after the parallel pass.
+# CI (D134) runs test-rest split over parallel jobs via ARC_TEST_SHARD=<i>/<n>
+# (tests/ci_shard.py); unset, it runs everything.
 test-rest:
-	uv run pytest -n $(PYTEST_WORKERS) -m "not serial" $(addprefix --ignore=,$(GATE_TESTS))
-	uv run pytest -m serial $(addprefix --ignore=,$(GATE_TESTS))
+	uv run pytest -n $(PYTEST_WORKERS) -m "not serial and not slow" $(addprefix --ignore=,$(GATE_TESTS))
+	uv run pytest -m "serial and not slow" $(addprefix --ignore=,$(GATE_TESTS))
+
+# Seeded Monte Carlo simulations (`slow` marker, E25.7/E25.9). Own CI job (D134).
+test-slow:
+	uv run pytest -n $(PYTEST_WORKERS) -m "slow and not serial" $(addprefix --ignore=,$(GATE_TESTS))
 
 test-gate:
 	uv run pytest -n $(PYTEST_WORKERS) $(GATE_TESTS) \
