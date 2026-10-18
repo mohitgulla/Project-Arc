@@ -3422,6 +3422,11 @@ agnostic; **never a gate input** (import-linter: `arc.gate` may not import `arc.
       nice -n 10 .venv/bin/arc ml m1 train --data data [--report docs/RESEARCH/ml-m1.md]
       .venv/bin/arc ml m1 report --model data/ml/models/m1/<version> [--card <path>]
 
+Needs the `ml` extra (`uv sync --extra ml`; CI doesn't sync it, so the booster tests
+skip there). On macOS lightgbm also needs OpenMP: `brew install libomp`. The shipped
+artefact is diagnosed and pre-registered: change `FOLDS`, `LGB_PARAMS`, `NUM_ROUNDS`, the
+keep rule or the CQR scheme only with a new pre-registration (it changes the version).
+
 `train` reads dev only (2020-01 → 2023-12; `HoldoutReadError` past it) and writes
 `data/ml/models/m1/<version>/`: LightGBM text dumps (`lgbm/*.txt`, sha256 in
 `manifest.json`), the manifest (targets, CQR offsets, HAR-IV coefficients, windows,

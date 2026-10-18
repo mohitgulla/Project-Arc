@@ -84,6 +84,10 @@ log = structlog.get_logger(__name__)
 
 TRAIN_START = dt.date(2020, 7, 1)
 EMBARGO = 5
+#: Bump on any change to the evaluation or calibration code (it changes the version):
+#: 2 = equal-row evaluation, realised-scale lognormal fallback, final offsets from the
+#: last 252 dev sessions of fold-2023 OOS residuals.
+PROTOCOL_REV = 2
 CAL_SESSIONS = 252
 TEST_YEARS: tuple[int, ...] = (2022, 2023)
 KEEP_P = 0.05
@@ -696,6 +700,7 @@ def data_digest(df: pd.DataFrame, features: Sequence[str]) -> str:
 
 def protocol_hash() -> str:
     body = {
+        "rev": PROTOCOL_REV,
         "train_start": str(TRAIN_START),
         "embargo": EMBARGO,
         "cal_sessions": CAL_SESSIONS,
