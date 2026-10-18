@@ -77,7 +77,7 @@ from arc.backtest.ranking import (
 from arc.backtest.sim_config import SimSettings
 from arc.backtest.strategies import StrategyKind, StrategySpec
 from arc.exits.policy import check_rules, resolve_rules
-from arc.gate.caps import alloc_pct_for, deployed_max_loss
+from arc.gate.caps import alloc_pct_for, deployed_max_loss, open_risk
 from arc.gate.inputs import AccountSnapshot, MarketSnapshot, MarketTrend, Portfolio, Position
 from arc.gate.rules import (
     Derived,
@@ -85,6 +85,7 @@ from arc.gate.rules import (
     check_earnings_blackout,
     check_max_gain,
     check_max_open_positions,
+    check_open_risk,
     check_per_underlying,
     check_short_premium_regime,
     price_ceiling,
@@ -140,6 +141,7 @@ GATE_RULES_APPLIED: tuple[str, ...] = (
     "check_earnings_blackout",
     "check_short_premium_regime (D131: SPY close vs its point-in-time SMA, when the walk "
     "loads SPY)",
+    "check_open_risk (D131: open-risk cap on the held book; sizing fits its headroom)",
     "cash_settled fit (check_account_profile's cash sub-check; cash_settled profiles)",
 )
 #: Live rules the walk does not apply, and why (also in every report).
@@ -172,6 +174,7 @@ SKIP_REASONS: tuple[str, ...] = (
     "exit_delayed",
     "new_risk_cap",
     "gate_short_premium_regime",
+    "gate_open_risk_cap",
 )
 
 
@@ -1251,13 +1254,17 @@ def _decide(
         ml_unit = out.trade.max_loss
         mlu = Decimal(str(round(ml_unit, 2)))
         existing = sum((p.max_loss for p in held if p.underlying == t), Decimal(0))
+        deployed = deployed_max_loss(portfolio)
+        # D131 (E28.3): sizing fits the open-risk headroom, as the live quant.open does
+        risk = open_risk(deployed, account_eq, settings.max_open_risk_pct)
         size = size_contracts(
             suggestion=10**6,
             max_loss_per_contract=mlu,
             equity=account_eq,
             # D116: the tiered cap from the held book, as check_per_underlying computes it
-            cap_pct=alloc_pct_for(deployed_max_loss(portfolio), account_eq, settings),
+            cap_pct=alloc_pct_for(deployed, account_eq, settings),
             existing_max_loss=Decimal(0) if legacy else existing,
+            open_risk_headroom=None if legacy or not risk.shown else risk.headroom,
         )
         if not size.trade:
             skip(day, t, "sizing", c.inputs.key, size.code)
@@ -1286,6 +1293,9 @@ def _decide(
             skip(day, t, "gate_per_underlying", c.inputs.key)
             continue
         if not legacy:
+            if check_open_risk(d, account, portfolio, settings):
+                skip(day, t, "gate_open_risk_cap", c.inputs.key)
+                continue
             if check_max_gain(d):
                 skip(day, t, "gate_max_gain", c.inputs.key)
                 continue

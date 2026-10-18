@@ -1448,6 +1448,7 @@
     "max_loss_by_underlying": {
      "SPY": "20.00"
     },
+    "max_open_risk_pct": null,
     "per_underlying_cap": "5025.000",
     "theta": {
      "high_pct": 0.0025,

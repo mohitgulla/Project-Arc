@@ -25,7 +25,7 @@ import structlog
 import yaml
 from pydantic import ConfigDict
 
-from arc.gate.caps import AllocTier, alloc_tier, deployed_max_loss
+from arc.gate.caps import AllocTier, OpenRisk, alloc_tier, deployed_max_loss
 from arc.gate.delta import delta_exposure, kind_of
 from arc.models import Greeks, Stance, Structure
 from arc.positions.evaluate import PositionReview
@@ -351,19 +351,42 @@ def _alloc_tier(
     return alloc_tier(deployed, equity, settings)
 
 
-def _alloc_thresholds(tier: AllocTier) -> dict[str, float]:
-    """``thresholds`` keys for the active tier (``max_alloc_pct`` is the active cap)."""
-    return {
+def _alloc_thresholds(tier: AllocTier, settings: ArcSettings) -> dict[str, float]:
+    """``thresholds`` keys for the active tier (``max_alloc_pct`` is the active cap).
+
+    D131 (E28.3): plus ``max_open_risk_pct`` / ``open_risk_pct`` (the tier's own deployed
+    sum / equity) while the open-risk cap is below its 100% rollback.
+    """
+    out = {
         "max_alloc_pct": float(tier.pct),
         "alloc_tier_threshold_pct": float(tier.threshold_pct),
         "alloc_deployed_pct": float(tier.deployed_pct) if tier.deployed_pct is not None else 0.0,
         "alloc_tier_reduced": 1.0 if tier.tier == "reduced" else 0.0,
     }
+    risk = _tier_open_risk(tier, settings)
+    if risk.shown:
+        out["max_open_risk_pct"] = float(risk.cap_pct)
+        out["open_risk_pct"] = float(risk.deployed_pct) if risk.deployed_pct is not None else 0.0
+    return out
 
 
-def cap_phrase(tier: AllocTier) -> str:
-    """``15% of equity max loss per underlying (15% tier, deployed 7% < 60%)``."""
-    return f"{tier.pct:.0%} of equity max loss per underlying ({tier.describe()})"
+def _tier_open_risk(tier: AllocTier, settings: ArcSettings) -> OpenRisk:
+    """D131: the open-risk view of the tier's deployed sum (display only: no headroom)."""
+    return OpenRisk(
+        cap_pct=Decimal(str(settings.max_open_risk_pct)),
+        deployed=tier.deployed,
+        deployed_pct=tier.deployed_pct,
+        headroom=None,
+    )
+
+
+def cap_phrase(tier: AllocTier, risk: OpenRisk | None = None) -> str:
+    """``15% of equity max loss per underlying (15% tier, deployed 7% < 60%)``.
+
+    D131 (E28.3): with *risk*, ``…(15% tier, deployed 7% < 60%), open risk 7% / 40%``.
+    """
+    clause = "" if risk is None else risk.clause()
+    return f"{tier.pct:.0%} of equity max loss per underlying ({tier.describe()}){clause}"
 
 
 def _ctx_cap_phrase(pc: PortfolioContext, settings: ArcSettings) -> str:
@@ -378,7 +401,17 @@ def _ctx_cap_phrase(pc: PortfolioContext, settings: ArcSettings) -> str:
         deployed_pct=Decimal(str(th.get("alloc_deployed_pct", 0.0))),
         threshold_pct=Decimal(str(th["alloc_tier_threshold_pct"])),
     )
-    return cap_phrase(tier)
+    risk = (
+        OpenRisk(
+            cap_pct=Decimal(str(th["max_open_risk_pct"])),
+            deployed=Decimal(0),
+            deployed_pct=Decimal(str(th.get("open_risk_pct", 0.0))),
+            headroom=None,
+        )
+        if "max_open_risk_pct" in th
+        else None
+    )
+    return cap_phrase(tier, risk)
 
 
 def build_portfolio_context(
@@ -453,7 +486,7 @@ def build_portfolio_context(
     }
     if not rows:
         thresholds |= _alloc_thresholds(
-            _alloc_tier(conn, settings, info.equity, portfolio, Decimal(0), now)
+            _alloc_tier(conn, settings, info.equity, portfolio, Decimal(0), now), settings
         )
         return PortfolioContext(as_of=now, empty=True, account=account, thresholds=thresholds)
 
@@ -631,7 +664,7 @@ def build_portfolio_context(
         flags.append("vega_near_cap")
     # D116: the active per-underlying tier (the gate's own helper, same deployed sum)
     tier = _alloc_tier(conn, settings, info.equity, portfolio, Decimal(str(total)), now)
-    thresholds |= _alloc_thresholds(tier)
+    thresholds |= _alloc_thresholds(tier, settings)
     cap_usd = float(tier.pct) * equity
     at_cap = sorted(t for t, v in by_under.items() if cap_usd > 0 and v >= cap_usd * 0.999)
 
@@ -686,7 +719,8 @@ def empty_portfolio_line(
     tier = tier or alloc_tier(Decimal(0), Decimal(str(info.equity)), settings)
     return (
         f"Portfolio: no open positions. Equity ${_f(info.equity):,.2f}. Max "
-        f"{settings.max_open_positions} positions, {cap_phrase(tier)}."
+        f"{settings.max_open_positions} positions, "
+        f"{cap_phrase(tier, _tier_open_risk(tier, settings))}."
     )
 
 

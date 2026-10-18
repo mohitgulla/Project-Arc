@@ -285,6 +285,14 @@ class ArcSettings(BaseSettings):
             "equity at which the per-underlying cap drops to max_alloc_pct_reduced (60%)."
         ),
     )
+    max_open_risk_pct: Annotated[float, Field(ge=0.10, le=1.0)] = Field(
+        default=0.40,
+        description=(
+            "D131 (E28.3): gate rule open_risk_cap: deployed max loss (open + reserved "
+            "in-flight opens, pre-trade) + the new open's max loss may not exceed this share "
+            "of equity (40%). Sizing fits the headroom. 1.00 = effectively off (rollback)."
+        ),
+    )
     daily_loss_halt_pct: Annotated[float, Field(gt=0.0, le=1.0)] = Field(
         default=0.03,
         description="Daily portfolio loss halt threshold (3%).",

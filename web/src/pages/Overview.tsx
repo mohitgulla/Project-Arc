@@ -756,6 +756,12 @@ function GreeksCard({ o, monitorS, caps }: { o: Overview; monitorS?: number; cap
                 {formatPercent(o.greeks.alloc_tier_threshold_pct)})
               </p>
             )}
+            {o.greeks.deployed_pct != null && o.greeks.max_open_risk_pct != null && (
+              <p className="tabular-nums" data-testid="open-risk">
+                Open risk {formatPercent(o.greeks.deployed_pct)} / {formatPercent(o.greeks.max_open_risk_pct)} of
+                equity
+              </p>
+            )}
             {byUnderlying.length === 0 ? (
               <p className="text-muted">No open structures.</p>
             ) : (

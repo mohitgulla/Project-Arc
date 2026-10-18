@@ -600,6 +600,7 @@ def _open_leg(
         fit_available,
         fit_per_contract,
         portfolio_alloc_tier,
+        portfolio_open_risk,
         worst_loss_per_contract,
     )
     from arc.sizing import apply_live_cap, size_contracts
@@ -638,6 +639,7 @@ def _open_leg(
     # buying power (margin); None per contract = unbounded max loss, no fit.
     per_fit = fit_per_contract(st, band, settings) if cash_fit_enabled(settings) else None
     tier = portfolio_alloc_tier(portfolio, info.equity, settings)
+    risk = portfolio_open_risk(portfolio, info.equity, settings)  # D131 (E28.3)
     size = size_contracts(
         suggestion=int(src["suggestion"]),
         max_loss_per_contract=worst_loss_per_contract(st, band),
@@ -647,6 +649,7 @@ def _open_leg(
         cap_label=tier.describe(),
         cash_available=fit_available(account, settings) if per_fit is not None else None,
         cash_per_contract=per_fit,
+        open_risk_headroom=risk.headroom if risk.shown else None,
     )
     # D70: a live swap open is clamped like any live open (closes never are).
     size = apply_live_cap(size, live_size_cap(settings, account), info.equity)

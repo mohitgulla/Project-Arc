@@ -3797,6 +3797,11 @@ export interface components {
                 [key: string]: string;
             };
             /**
+             * Max Open Risk Pct
+             * @description D131 (E28.3): portfolio open-risk cap (gate rule open_risk_cap) as a share of equity; deployed_pct is measured against it. None: not passed or the 100% rollback
+             */
+            max_open_risk_pct?: number | null;
+            /**
              * Per Underlying Cap
              * @description active tier's cap × equity (gate rule, D116)
              */

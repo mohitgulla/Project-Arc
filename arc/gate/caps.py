@@ -16,6 +16,10 @@ The reduced tier is never above the base tier: an orphaned (pre-D116) override t
 lowered ``max_alloc_pct`` under ``max_alloc_pct_reduced`` caps both tiers at it.
 Missing or non-positive equity takes the reduced tier (fail closed; the gate rule
 also fails such a proposal outright).
+
+D131 (E28.3): :func:`open_risk` reads the same ``deployed`` sum for the portfolio
+open-risk cap (rule ``open_risk_cap``: deployed + new max loss ≤ ``max_open_risk_pct``
+× equity), so the tier, the cap, sizing, prompts and the Tower share one number.
 """
 
 from __future__ import annotations
@@ -26,7 +30,16 @@ from typing import TYPE_CHECKING, Literal, NamedTuple, Protocol
 if TYPE_CHECKING:
     from arc.gate.inputs import Portfolio
 
-__all__ = ["AllocTier", "TierConfig", "alloc_pct_for", "alloc_tier", "deployed_max_loss"]
+__all__ = [
+    "AllocTier",
+    "OpenRisk",
+    "TierConfig",
+    "alloc_pct_for",
+    "alloc_tier",
+    "deployed_max_loss",
+    "open_risk",
+    "tier_open_risk",
+]
 
 _ZERO = Decimal(0)
 
@@ -91,3 +104,55 @@ def alloc_tier(deployed: Decimal, equity: Decimal, cfg: TierConfig) -> AllocTier
 def alloc_pct_for(deployed: Decimal, equity: Decimal, cfg: TierConfig) -> Decimal:
     """The active per-underlying cap, as a share of equity."""
     return alloc_tier(deployed, equity, cfg).pct
+
+
+# ---------------------------------------------------------------------------
+# D131 (E28.3): portfolio open-risk cap
+# ---------------------------------------------------------------------------
+
+
+class OpenRisk(NamedTuple):
+    """The book's open risk against ``max_open_risk_pct`` (D131, rule ``open_risk_cap``).
+
+    ``deployed`` is :func:`deployed_max_loss` (open + reserved in-flight opens,
+    pre-trade), the same number the E3.7 tier reads. ``headroom`` is the max loss a new
+    open may still add (floored at 0); ``None`` when equity is unknown or non-positive
+    (the rule then fails closed and sizing proposes nothing).
+    """
+
+    cap_pct: Decimal
+    deployed: Decimal
+    deployed_pct: Decimal | None
+    headroom: Decimal | None
+
+    def describe(self) -> str:
+        """``open risk 12% / 40%`` (``open risk n/a / 40%`` without equity)."""
+        dep = "n/a" if self.deployed_pct is None else f"{self.deployed_pct:.0%}"
+        return f"open risk {dep} / {self.cap_pct:.0%}"
+
+    @property
+    def shown(self) -> bool:
+        """Whether prompts/lines carry it: a cap of 100% is the rollback (lines unchanged)."""
+        return self.cap_pct < 1
+
+    def clause(self) -> str:
+        """``, open risk 12% / 40%`` for a prompt/line; ``""`` at the 100% rollback."""
+        return f", {self.describe()}" if self.shown else ""
+
+
+def open_risk(deployed: Decimal, equity: Decimal, cap_pct: float | Decimal) -> OpenRisk:
+    """The open-risk position of a book with *deployed* max loss (pre-trade) at *equity*."""
+    cap = _d(cap_pct)
+    if equity <= 0:
+        return OpenRisk(cap, deployed, None, None)
+    return OpenRisk(cap, deployed, deployed / equity, max(cap * equity - deployed, _ZERO))
+
+
+def tier_open_risk(tier: AllocTier, equity: Decimal, cap_pct: float | Decimal) -> OpenRisk:
+    """:func:`open_risk` on an :class:`AllocTier`'s own deployed sum (one number, two caps).
+
+    A tier built for an unvalued book (``deployed_pct`` None, ``deployed`` = equity)
+    keeps ``deployed_pct`` None: the line shows ``n/a`` and the headroom is 0.
+    """
+    risk = open_risk(tier.deployed, equity, cap_pct)
+    return risk if tier.deployed_pct is not None else risk._replace(deployed_pct=None)
