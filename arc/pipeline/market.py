@@ -23,10 +23,12 @@ from typing import TYPE_CHECKING
 import structlog
 from pydantic import BaseModel, ConfigDict, Field
 
+from arc.betas.corr_store import corr_matrix
 from arc.betas.store import betas_used
 from arc.context.ttl import from_db, to_db
 from arc.data.base import DEFAULT_SPOT_MAX_SPREAD_PCT, market_spot
 from arc.gate.band import as_grid
+from arc.gate.cluster import corr_key
 from arc.gate.delta import delta_exposure, kind_of
 from arc.gate.inputs import (
     AccountSnapshot,
@@ -39,7 +41,7 @@ from arc.gate.inputs import (
 )
 from arc.models import Greeks, Leg, LegIntent
 from arc.scanner.iv import atm_iv
-from arc.store.execution import reserved_open_max_loss
+from arc.store.execution import reserved_open_max_loss, reserved_opens
 from arc.structures import MarketInputs, analyze, max_gain_loss, net_greeks, parse_occ
 from arc.utils.calendar import ET, dte_calendar
 
@@ -47,6 +49,7 @@ if TYPE_CHECKING:
     import sqlite3
     from collections.abc import Iterable, Mapping, Sequence
 
+    from arc.betas.corr import CorrMatrix
     from arc.broker.base import AccountInfo, BrokerPosition
     from arc.config import ArcSettings
     from arc.data.base import MarketDataProvider, OptionContract
@@ -68,6 +71,10 @@ __all__ = [
     "curve_mid",
     "day_trades_used",
     "limit_price",
+    "book_underlyings",
+    "cluster_correlations",
+    "cluster_matrix",
+    "portfolio_names",
     "live_gate_status",
     "live_size_cap",
     "market_snapshot",
@@ -385,6 +392,58 @@ def deployed_book_max_loss(
     return total + reserved_open_max_loss(conn, now=now)
 
 
+def book_underlyings(
+    conn: sqlite3.Connection, positions: Sequence[BrokerPosition], *, now: _dt.datetime
+) -> list[str]:
+    """D131 (E28.5): the open names the cluster cap counts, without valuing the book.
+
+    The roots of :func:`build_portfolio`'s position groups plus the underlyings of the
+    in-flight opens (:func:`arc.store.execution.reserved_opens`), as the gate's
+    ``Portfolio.positions`` + ``reserved_underlyings`` carry them (duplicates kept; the
+    rule ignores them). Raises :class:`PortfolioError` on unreadable broker legs.
+    """
+    roots = [root for root, _, _ in _group_legs(conn, positions)]
+    return roots + [t for t, _ in reserved_opens(conn, now=now) if t]
+
+
+def cluster_matrix(
+    conn: sqlite3.Connection | None, settings: ArcSettings, *, today: _dt.date
+) -> CorrMatrix | None:
+    """D131 (E28.5): the stored correlation matrix the cluster cap reads *today*.
+
+    ``None`` when ``cluster_cap_enabled`` is off (nothing read). A missing or stale
+    store gives an empty matrix: every pair is then unknown and the rule counts it.
+    """
+    if not settings.cluster_cap_enabled:
+        return None
+    return corr_matrix(conn, today)
+
+
+def cluster_correlations(
+    matrix: CorrMatrix | None, ticker: str, open_names: Iterable[str]
+) -> dict[str, float]:
+    """D131 (E28.5): ``MarketSnapshot.correlations`` for an open on *ticker*.
+
+    *ticker*'s stored correlation with each other name in *open_names*, keyed by
+    :func:`arc.gate.cluster.corr_key`; unknown pairs are left out (the gate counts
+    them). ``{}`` without a matrix (rule off).
+    """
+    if matrix is None:
+        return {}
+    me = ticker.upper()
+    out: dict[str, float] = {}
+    for name in open_names:
+        other = name.upper()
+        if other != me and (c := matrix.get(me, other)) is not None:
+            out[corr_key(me, other)] = c
+    return out
+
+
+def portfolio_names(portfolio: Portfolio) -> list[str]:
+    """D131 (E28.5): the open names a gate ``Portfolio`` carries (positions + in flight)."""
+    return [p.underlying for p in portfolio.positions] + list(portfolio.reserved_underlyings)
+
+
 def build_portfolio(
     conn: sqlite3.Connection,
     positions: Sequence[BrokerPosition],
@@ -521,6 +580,7 @@ def build_portfolio(
         (since,),
     ).fetchall()
     lots = [ClosedLot.from_row(dict(r)) for r in rows]
+    reserved = reserved_opens(conn, now=now, exclude=exclude_reserved)
     held: dict[str, int] = defaultdict(int)
     for _, _, legs in groups:
         for leg in legs:
@@ -532,7 +592,8 @@ def build_portfolio(
         beta_dollar_delta=beta_dollar_delta,
         dollar_delta_raw=dollar_delta_raw,
         beta_dollar_delta_raw=beta_dollar_delta_raw,
-        reserved_max_loss=reserved_open_max_loss(conn, now=now, exclude=exclude_reserved),
+        reserved_max_loss=sum((x for _, x in reserved), Decimal(0)),
+        reserved_underlyings=tuple(t for t, _ in reserved if t),  # D131 (E28.5)
         closed_lots=lots,
         legs=dict(held),
         opened_today=frozenset(opened_today_symbols(conn, today)),
@@ -894,6 +955,7 @@ def market_snapshot(
     *,
     quote_ref_time: Mapping[str, _dt.datetime] | None = None,
     trend: MarketTrend | None = None,
+    correlations: Mapping[str, float] | None = None,
 ) -> MarketSnapshot:
     """Gate quotes for the legs. A contract without a quote timestamp is left out (fails closed).
 
@@ -905,6 +967,8 @@ def market_snapshot(
     chain's clock (:meth:`PricedStructure.quote_ref_times`); the gate ages those
     quotes against it. *trend* (D131, E28.2): :func:`market_trend`, the input of the
     gate's ``short_premium_regime`` rule (``None`` = unknown; opens only).
+    *correlations* (D131, E28.5): :func:`cluster_correlations`, the input of the gate's
+    ``cluster_cap`` rule (``None`` / missing pairs = unknown, counted; opens only).
     """
     quotes: dict[str, Quote] = {}
     for sym, c in contracts.items():
@@ -925,6 +989,7 @@ def market_snapshot(
         penny_program={sym: c.penny_program for sym, c in contracts.items()},
         quote_ref_time={s: t for s, t in (quote_ref_time or {}).items() if s in quotes},
         market_trend=trend,
+        correlations=dict(correlations or {}),
     )
 
 

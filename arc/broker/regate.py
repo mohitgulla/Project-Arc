@@ -224,11 +224,14 @@ def _run(
         account_baseline,
         account_snapshot,
         build_portfolio,
+        cluster_correlations,
+        cluster_matrix,
         limit_price,
         live_gate_status,
         market_snapshot,
         market_trend,
         next_earnings,
+        portfolio_names,
         proposal_betas,
     )
     from arc.store.repos import HaltRepo
@@ -310,6 +313,14 @@ def _run(
         spot_max_spread_pct=gs.spot_max_spread_pct,
         exclude_reserved=own,  # D116: the order being re-gated is not its own deployed
     )
+    if not closing and gs.cluster_cap_enabled:  # D131 (E28.5): vs the re-read book
+        snap = snap.model_copy(
+            update={
+                "correlations": cluster_correlations(
+                    cluster_matrix(conn, gs, today=day), root, portfolio_names(portfolio)
+                )
+            }
+        )
     decision = evaluate_with_halt(
         HaltSwitch(HaltRepo(conn)),
         regated,

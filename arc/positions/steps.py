@@ -585,11 +585,14 @@ def _open_leg(
     from arc.journal.store import JournalStore
     from arc.models import Proposal, QuantMetrics, Sizing
     from arc.pipeline.market import (
+        cluster_correlations,
+        cluster_matrix,
         limit_price,
         live_size_cap,
         market_snapshot,
         market_trend,
         next_earnings,
+        portfolio_names,
         price_structure,
         proposal_betas,
     )
@@ -632,6 +635,9 @@ def _open_leg(
         proposal_betas(ctx.conn, [t], _today(ctx)),
         quote_ref_time=priced.quote_ref_times(now),  # E10.2d: paired arm replay
         trend=market_trend(ctx.conn, settings, now=now),  # D131 (E28.2)
+        correlations=cluster_correlations(  # D131 (E28.5)
+            cluster_matrix(ctx.conn, settings, today=_today(ctx)), t, portfolio_names(portfolio)
+        ),
     )
     limit = limit_price(st.net_debit_credit, grid_for(st.legs, market, settings))
     band = band_for(st, limit, market, settings)

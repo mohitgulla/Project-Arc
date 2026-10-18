@@ -55,6 +55,7 @@ import pandas as pd
 import structlog
 from pydantic import BaseModel, ConfigDict, Field
 
+from arc.backtest.correlations import pit_closes
 from arc.backtest.engine import MULT, STRUCTURE_KIND, Trade, close_early, open_trade, settle
 from arc.backtest.entry_filter import (
     apply_be_filter,
@@ -77,10 +78,13 @@ from arc.backtest.ranking import (
 from arc.backtest.sim_config import SimSettings
 from arc.backtest.strategies import StrategyKind, StrategySpec
 from arc.exits.policy import check_rules, resolve_rules
+from arc.features.correlation import MIN_OBS, WINDOW, return_corr
 from arc.gate.caps import alloc_pct_for, deployed_max_loss, open_risk
+from arc.gate.cluster import corr_key
 from arc.gate.inputs import AccountSnapshot, MarketSnapshot, MarketTrend, Portfolio, Position
 from arc.gate.rules import (
     Derived,
+    check_cluster_cap,
     check_daily_loss,
     check_earnings_blackout,
     check_max_gain,
@@ -142,6 +146,8 @@ GATE_RULES_APPLIED: tuple[str, ...] = (
     "check_short_premium_regime (D131: SPY close vs its point-in-time SMA, when the walk "
     "loads SPY)",
     "check_open_risk (D131: open-risk cap on the held book; sizing fits its headroom)",
+    "check_cluster_cap (D131: point-in-time 60-session return correlations of the held "
+    "names from the walk's own closes, strictly before the session)",
     "cash_settled fit (check_account_profile's cash sub-check; cash_settled profiles)",
 )
 #: Live rules the walk does not apply, and why (also in every report).
@@ -175,6 +181,7 @@ SKIP_REASONS: tuple[str, ...] = (
     "new_risk_cap",
     "gate_short_premium_regime",
     "gate_open_risk_cap",
+    "gate_cluster_cap",
 )
 
 
@@ -853,6 +860,46 @@ class _Pos(BaseModel):
     outcome: Outcome
 
 
+class _PitCorr:
+    """D131 (E28.5): point-in-time pair correlations for the walk's cluster cap.
+
+    The value :func:`arc.backtest.correlations.pit_matrix` would hold for the pair
+    (closes strictly before the session, the live ``betas`` job's formula, rounded as
+    stored), computed lazily per pair the rule asks about rather than for every pair
+    of the universe each session. Each name's split-adjusted (else raw) closes.
+    Unknown (< 40 returns) is left out, which the rule counts as correlated. Per-run
+    cache, no global state.
+    """
+
+    def __init__(self, tickers: Mapping[str, SimTicker]) -> None:
+        self._series = {
+            t.upper(): r.adj_closes if r.adj_closes is not None else r.closes
+            for t, r in tickers.items()
+        }
+        self._closes: dict[tuple[dt.date, str], dict[dt.date, float]] = {}
+        self._pairs: dict[tuple[dt.date, str], float | None] = {}
+
+    def _before(self, day: dt.date, t: str) -> dict[dt.date, float]:
+        if (day, t) not in self._closes:
+            s = self._series.get(t)
+            self._closes[(day, t)] = {} if s is None else pit_closes({t: s}, day)[t]
+        return self._closes[(day, t)]
+
+    def correlations(self, day: dt.date, ticker: str, others: Sequence[str]) -> dict[str, float]:
+        """``MarketSnapshot.correlations`` for an open on *ticker* (known pairs only)."""
+        me = ticker.upper()
+        out: dict[str, float] = {}
+        for o in sorted({x.upper() for x in others} - {me}):
+            k = corr_key(me, o)
+            if (day, k) not in self._pairs:
+                res = return_corr(self._before(day, me), self._before(day, o), WINDOW, MIN_OBS)
+                self._pairs[(day, k)] = None if res.corr is None else round(res.corr, 6)
+            c = self._pairs[(day, k)]
+            if c is not None:
+                out[k] = c
+        return out
+
+
 def _derived(c: Candidate, contracts: int, max_loss_unit: float, fill: float) -> Derived:
     """The gate's view of the open: the order's limit is the modelled entry fill."""
     legs = _legs(c.picks, c.underlying)
@@ -1031,6 +1078,9 @@ def run_sim(
     *trends* (D131, E28.2): :func:`market_trends` for the ``short_premium_regime``
     rule (a session missing from it fails closed for the blocked kinds). ``None`` =
     the walk was built without the market reference: the rule is not applied.
+
+    D131 (E28.5): with ``cluster_cap_enabled`` the ``cluster_cap`` rule runs on the
+    held book with point-in-time correlations from the walk's own closes (:class:`_PitCorr`).
     """
     from arc.account_profiles import BuyingPower
 
@@ -1041,6 +1091,7 @@ def run_sim(
     keyfn = sort_key(ranker, vrp_threshold)
     trend = {t: tickers[t].trend for t in names}
     vol = {t: tickers[t].vol for t in names}
+    pit_corr = _PitCorr(tickers) if settings.cluster_cap_enabled and not legacy else None
     if momentum is None and not legacy:
         momentum = _monthly_momentum(tickers, [d for d in sessions if d <= end], sim, aliases or {})
     realised = 0.0
@@ -1101,6 +1152,7 @@ def run_sim(
                 trend=trend,
                 vol=vol,
                 regime=None if trends is None else (trends.get(day),),
+                pit_corr=pit_corr,
             )
             open_ = open_ + opened
         eq[day] = start_eq + realised + unrealised(day)
@@ -1152,6 +1204,7 @@ def _decide(
     trend: Mapping[str, pd.Series],
     vol: Mapping[str, pd.Series],
     regime: tuple[MarketTrend | None] | None = None,
+    pit_corr: _PitCorr | None = None,
 ) -> list[_Pos]:
     """One decision session: funnel → pool → open. Returns the new positions.
 
@@ -1305,6 +1358,12 @@ def _decide(
             if regime is not None and _regime_blocked(c, d, regime[0], settings):
                 skip(day, t, "gate_short_premium_regime", c.inputs.key)
                 continue
+            if pit_corr is not None:  # D131 (E28.5): the held names' cluster, as of `day`
+                corrs = pit_corr.correlations(day, t, [p.underlying for p in held])
+                snap = MarketSnapshot(correlations=corrs)
+                if check_cluster_cap(d, portfolio, snap, settings):
+                    skip(day, t, "gate_cluster_cap", c.inputs.key)
+                    continue
         cash_used = max(out.entry_debit, 0.0) * MULT * n + out.open_fees * n
         if cash_settled and cash_used > equity - sum(p.cash_used for p in held):
             skip(day, t, "cash", c.inputs.key)

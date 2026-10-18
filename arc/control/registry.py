@@ -831,6 +831,39 @@ _STATIC: tuple[Tunable, ...] = (
         hard_ceiling=1.0,
         ref="D131",
     ),
+    # D131 (E28.5): correlation cluster cap.
+    _s(
+        "cluster_cap_enabled",
+        Group.RISK,
+        _B,
+        "Gate rule cluster_cap: no new open that would be the 3rd name of a correlation "
+        "cluster (60-session return correlation above the threshold; a missing pair counts). "
+        "Off = the gate without this rule.",
+        Risk.FALSE,
+        ref="D131",
+    ),
+    _s(
+        "cluster_cap_corr_threshold",
+        Group.RISK,
+        _F,
+        "cluster_cap: two names whose 60-session return correlation is above this share a "
+        "cluster. Higher = fewer clusters (riskier).",
+        Risk.UP,
+        min=0.5,
+        max=0.95,
+        ref="D131",
+    ),
+    _s(
+        "cluster_cap_max_names",
+        Group.RISK,
+        _I,
+        "cluster_cap: the most open names one correlation cluster may hold.",
+        Risk.UP,
+        unit="names",
+        min=1,
+        max=10,
+        ref="D131",
+    ),
     _s(
         "alloc_tier_threshold_pct",
         Group.RISK,

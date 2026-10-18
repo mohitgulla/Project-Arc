@@ -14,7 +14,7 @@ import pytest
 from arc.context.ttl import to_db
 from arc.models import Sizing
 from arc.store.db import connect
-from arc.store.execution import reserved_open_max_loss
+from arc.store.execution import reserved_open_max_loss, reserved_opens
 from arc.store.migrate import migrate
 from tests.test_gate import NOW, bull_put
 
@@ -124,3 +124,16 @@ def test_unreadable_or_unbounded_rows_are_skipped(conn: sqlite3.Connection) -> N
     conn.execute("UPDATE proposals SET expires_at = 'garbage' WHERE proposal_hash = 'ok'")
     _proposal(conn, "good")
     assert reserved_open_max_loss(conn, now=NOW) == D(830)
+
+
+def test_reserved_opens_lists_underlying_and_amount(conn: sqlite3.Connection) -> None:
+    """D131 (E28.5): the per-open rows the sum and the cluster cap both read."""
+    assert reserved_opens(None, now=NOW) == []
+    _proposal(conn, "a", request="pending")
+    _proposal(conn, "w", contracts=5)
+    _execution(conn, "w", "working", contracts=5, filled=5)  # nothing left to fill
+    assert reserved_opens(conn, now=NOW) == [("SPY", D(830))]
+    assert reserved_opens(conn, now=NOW, exclude="a") == []
+    nolegs = bull_put().model_copy(update={"legs": []}).model_dump_json()
+    _proposal(conn, "z", structure_json=nolegs)
+    assert sorted(reserved_opens(conn, now=NOW)) == [("", D(830)), ("SPY", D(830))]
