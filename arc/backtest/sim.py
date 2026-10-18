@@ -164,6 +164,8 @@ GATE_RULES_APPLIED: tuple[str, ...] = (
     "loads SPY)",
     "check_open_risk (D131: open-risk cap on the held book; sizing fits its headroom)",
     "cash_settled fit (check_account_profile's cash sub-check; cash_settled profiles)",
+    "margin buying-power fit (check_account_profile's D129 sub-check: options buying "
+    "power = equity - held max loss; margin profiles, sim.margin_buying_power)",
     "check_sleeve_positions (sleeve_max_positions; E7.19, sleeve profiles)",
     "check_dte_window (through the sleeve windows; E7.19, sleeve profiles)",
 )
@@ -198,6 +200,7 @@ SKIP_REASONS: tuple[str, ...] = (
     "exit_delayed",
     "new_risk_cap",
     "sleeve_full",
+    "buying_power",
     "gate_dte_window",
     "gate_short_premium_regime",
     "gate_open_risk_cap",
@@ -762,7 +765,9 @@ def sim_ticker_from_chains(
     trend, vol = labels_for(label_closes, sim.regime_model)
     day_stance = trend_stances(trend) if bt.direction_tilt > 0 else None
     stretched = None
-    if bt.entry_filter != "none":
+    # E7.19 (D128): the live anti-chase filter on the live-shaped walk
+    live_filter = sim.entry_filters == "live" and sim.selection == "cross_name"
+    if bt.entry_filter != "none" or live_filter:
         stretched = stretched_days(
             ohlc if ohlc is not None else pd.DataFrame(),
             dd,
@@ -1337,6 +1342,11 @@ def run_sim(
     start_eq = sim.equity if starting_equity is None else starting_equity
     legacy = sim.selection == "per_ticker"
     cash_settled = settings.profile.buying_power is BuyingPower.CASH_SETTLED
+    margin_bp = (
+        not legacy
+        and sim.margin_buying_power
+        and settings.profile.buying_power is BuyingPower.MARGIN
+    )
     keyfn = sort_key(ranker, vrp_threshold)
     trend = {t: tickers[t].trend for t in names}
     vol = {t: tickers[t].vol for t in names}
@@ -1390,6 +1400,7 @@ def run_sim(
                 vrp_threshold=vrp_threshold,
                 settings=settings,
                 cash_settled=cash_settled,
+                margin_bp=margin_bp,
                 equity=equity,
                 prev_equity=prev_eq,
                 open_=open_,
@@ -1441,6 +1452,7 @@ def _decide(
     vrp_threshold: float,
     settings: ArcSettings,
     cash_settled: bool,
+    margin_bp: bool,
     equity: float,
     prev_equity: float,
     open_: list[_Pos],
@@ -1573,6 +1585,9 @@ def _decide(
         deployed = deployed_max_loss(portfolio)
         # D131 (E28.3): sizing fits the open-risk headroom, as the live quant.open does
         risk = open_risk(deployed, account_eq, settings.max_open_risk_pct)
+        # D129: margin options buying power = equity - the held book's max loss
+        bp_left = account_eq - deployed if margin_bp else None
+        bp_per = mlu + Decimal(str(round(out.open_fees, 2))) if margin_bp else None
         size = size_contracts(
             suggestion=10**6,
             max_loss_per_contract=mlu,
@@ -1581,9 +1596,13 @@ def _decide(
             cap_pct=alloc_pct_for(deployed, account_eq, settings),
             existing_max_loss=Decimal(0) if legacy else existing,
             open_risk_headroom=None if legacy or not risk.shown else risk.headroom,
+            cash_available=None if bp_left is None else max(bp_left, Decimal(0)),
+            cash_per_contract=bp_per,
         )
         if not size.trade:
-            skip(day, t, "sizing", c.inputs.key, size.code)
+            code = str(size.code)
+            reason = "buying_power" if margin_bp and "cash" in code else "sizing"
+            skip(day, t, reason, c.inputs.key, code)
             continue
         n = size.contracts
         if not legacy and sim.size_scale < 1.0:
@@ -1624,6 +1643,9 @@ def _decide(
         cash_used = max(out.entry_debit, 0.0) * MULT * n + out.open_fees * n
         if cash_settled and cash_used > equity - sum(p.cash_used for p in held):
             skip(day, t, "cash", c.inputs.key)
+            continue
+        if bp_left is not None and bp_per is not None and bp_per * n > bp_left:
+            skip(day, t, "buying_power", c.inputs.key)  # the D129 gate sub-check
             continue
         if not legacy and sim.max_new_risk_pct_day is not None:
             day_risk = sum((p.max_loss for p in new), Decimal(0)) + mlu * n

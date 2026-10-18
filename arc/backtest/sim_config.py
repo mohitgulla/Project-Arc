@@ -81,6 +81,26 @@ class SimSettings(BaseModel):
     exclude_kinds: tuple[str, ...] = Field(
         (), description="Strategy kinds never opened (structure counterfactuals)"
     )
+    # E7.19 (D125, D128): the live-shaped walk mirrors the live entry filters.
+    entry_filters: Literal["none", "live"] = Field(
+        "live",
+        description="live = the D78 anti-chase rule (backtest.anti_chase thresholds = "
+        "strategy.yaml anti_chase:, daily bars <= the decision day) runs on every "
+        "cross_name menu as the live pipeline runs it since D128: on a stretched stance "
+        "the debit structures leave the menu and the profile's credit structures stay "
+        "(a debit-only profile loses the idea). A run with backtest.entry_filter set "
+        "(E16.3) keeps that filter instead. The live range-edge rule (D98) is not "
+        "replayed: it checks bullish/bearish ideas in a sideways regime, and the trend "
+        "stance proxy never gives one. none = no entry filter (pre-E7.19 walk)",
+    )
+    margin_buying_power: bool = Field(
+        True,
+        description="D129 on margin profiles: an open needs max loss + open fees <= "
+        "options buying power, modelled as equity minus the max loss of the held book "
+        "(Alpaca reduces options buying power by a defined-risk spread's max loss: "
+        "credit (width - credit) x 100, debit the debit); sizing fits that headroom as "
+        "the live quant.open does. Skip reason buying_power. False = no BP rule",
+    )
     # E7.19 (D125): sim alignment with the live entry-DTE sleeves.
     intraday_proxy: Literal["none", "range"] = Field(
         "range",

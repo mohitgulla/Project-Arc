@@ -12,6 +12,22 @@ study**; `<book>_noproxy` is the same sim with `intraday_proxy: none`. Same wind
 `debit_width`) and seeds as E7.18 (`data/backtest/runs/anatomy/`, the "old" book).
 C500 dev is primary, C125 dev the check, as in E7.18.
 
+**Config provenance.** The books ran on the E7.19 sim with the pre-D128 profiles and
+menus (branch `843f0ee` + docs; manifest `git_sha` f5f1da0 / e1aa20e):
+
+- margin was a 30–45 credit-only profile with 2 % wings;
+- `menu_measure` was `control`.
+
+D128/D131, merged on main while the books ran, changed two things:
+
+- margin now has the cash_debit sleeves and debit kinds, and a 5 % widest-fit wing;
+- the default menu measure is now `managed_net_ev_full`.
+
+Both changes move the menu-cache keys, so a study run on current main rebuilds its
+menus and does **not** reproduce these books. A follow-up card rebuilds the incumbent
+on post-D128 config. Until then, read these books as the sim-change effect on fixed
+config, which is what this card measures.
+
 ## What changed in the sim
 
 | | old (pre-D125) | new (D125) |

@@ -86,6 +86,7 @@ from arc.structures import (
     MarketInputs,
     credit_vertical,
     debit_vertical,
+    interval_probe,
     iron_condor,
     long_call,
     long_put,
@@ -631,7 +632,7 @@ def _pop(structure: Structure, spot: float, sigma: float, t: float, r: float) ->
     edges = [0.0, *bes, math.inf]
     p = 0.0
     for lo, hi in zip(edges, edges[1:], strict=False):
-        probe = hi / 2 if lo == 0.0 else (lo * 2 if math.isinf(hi) else (lo + hi) / 2)
+        probe = interval_probe(lo, hi, spot)
         if payoff_at(structure.legs, Decimal(str(probe))) > 0:
             p += _lognormal_cdf(hi, spot, sigma, t, r) - _lognormal_cdf(lo, spot, sigma, t, r)
     return min(max(p, 0.0), 1.0)

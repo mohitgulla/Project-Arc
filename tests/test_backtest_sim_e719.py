@@ -531,3 +531,59 @@ def test_intraday_proxy_none_books_no_proxy_exits(view: HistoryView) -> None:  #
         for sc in cs:
             if sc.result is not None:
                 assert sc.result.outcome.trade.exit_reason not in PROXY_EXITS.values()
+
+
+# ---------------------------------------------------------------------------
+# D128/D129 owner items: live incumbent, live entry filters, margin buying power
+# ---------------------------------------------------------------------------
+
+
+def test_live_incumbent_is_the_menu_measure_ranker() -> None:
+    from arc.backtest.ranking import live_incumbent, rankers_for
+
+    assert live_incumbent("managed_net_ev_full", allows_credit=True) is Ranker.MANAGED_NET_EV
+    assert live_incumbent("control", allows_credit=True) is Ranker.CREDIT_WIDTH
+    assert live_incumbent("control", allows_credit=False) is Ranker.DEBIT_WIDTH
+    inc = live_incumbent(EXITS.pipeline.menu_measure, allows_credit=True)
+    assert rankers_for([Ranker.CREDIT_WIDTH], allows_credit=True, incumbent=inc)[0] is inc
+
+
+def test_live_entry_filter_is_on_by_default_and_debit_scoped() -> None:
+    from arc.backtest.entry_filter import apply_entry_filter
+
+    assert SimSettings().entry_filters == "live"
+    assert SimSettings().margin_buying_power is True
+
+    class _C:
+        def __init__(self, kind: str) -> None:
+            self.kind = kind
+
+    day = DECIDE[0]
+    menu = [_C("bull_put"), _C("bull_call"), _C("long_call")]
+    trend = pd.Series({day: "bull"})
+    out, hit = apply_entry_filter({day: menu}, trend, {day: frozenset({"bullish"})})  # type: ignore[dict-item]
+    assert [c.kind for c in out[day]] == ["bull_put"] and hit == 1  # credit stays
+
+
+def test_margin_buying_power_caps_the_book(view: HistoryView) -> None:  # noqa: F811
+    from tests.test_backtest_sim import _cfg as cfg0
+    from tests.test_backtest_sim import _run as run0
+    from tests.test_backtest_sim import _settings as set0
+
+    s = set0("margin", max_alloc_pct=0.5, max_open_risk_pct=1.0)
+    h = view.load("AAA")
+    t = sim_ticker_from_chains(
+        "AAA", h.chains, h.closes, decision_days=DECIDE, days=_days(100.0), cfg=cfg0(),
+        exits=EXITS, cost=COST, settings={"margin": s}, windows={"margin": (20, 45)},
+        rankers={"margin": [Ranker.CREDIT_WIDTH]}, stances=None, sim=SimSettings(),
+    )  # fmt: skip
+    small = SimSettings(momentum_size=0, capacity="off", equity=2_000)
+    on = run0({"AAA": t}, settings=s, sim=small)
+    off = run0({"AAA": t}, settings=s, sim=small.model_copy(update={"margin_buying_power": False}))
+    assert "buying_power" in SKIP_REASONS
+    assert off.skip_counts["buying_power"] == 0
+    # with BP on, the held max loss never exceeds equity at the open
+    tr = on.trades
+    if len(tr):
+        assert (tr["contracts"] * tr["max_loss_unit"]).max() <= 2_000 + 1e-6
+    assert on.skip_counts["buying_power"] + len(off.trades) >= len(on.trades)

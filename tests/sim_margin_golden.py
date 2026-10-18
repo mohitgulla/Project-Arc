@@ -81,7 +81,16 @@ def trades_csv(root: Path) -> str:
         update={"backtest": bt, "ranking": cfg.ranking.model_copy(update={"filters": no_filters})}
     )
     settings = ArcSettings(max_alloc_pct=0.05).with_profile("margin")  # the suite's pin
-    sim = SimSettings(momentum_size=0, regime_model="v1", equity=250_000, capacity="off")
+    # E7.19's live entry filters and the D129 BP rule are pinned off (they post-date the
+    # golden's main); a field main lacks is left out, so the same code regenerates it there
+    pin = {"entry_filters": "none", "margin_buying_power": False}
+    sim = SimSettings(
+        momentum_size=0,
+        regime_model="v1",
+        equity=250_000,
+        capacity="off",
+        **{k: v for k, v in pin.items() if k in SimSettings.model_fields},
+    )
     built = {}
     for i, t in enumerate(names):
         h = view.load(t)

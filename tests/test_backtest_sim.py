@@ -493,9 +493,10 @@ def test_cli_sim_writes_outputs_and_workers_match_serial(
 
     m = run(tmp_path / "a", 1)
     assert m["tickers"] == 2 and m["equity"] == 25_000 and m["partitions"] == {"thetadata": 2}
-    assert m["rankers"] == {"cash_debit": ["debit_width"]}
+    # E7.19 (D128): the incumbent is the live menu measure's ranker (managed_net_ev_full)
+    assert m["rankers"] == {"cash_debit": ["managed_net_ev"]}
     assert set(m["runtime_s"]) == {"build", "walk", "total"} and m["peak_rss_mb"] > 0
-    run_dir = tmp_path / "a" / "cash_debit" / "debit_width"
+    run_dir = tmp_path / "a" / "cash_debit" / "managed_net_ev"
     for f in ("trades.csv", "skips.csv", "equity.csv", "decisions.csv"):
         assert (run_dir / f).is_file()
     dec = pd.read_csv(run_dir / "decisions.csv")
@@ -506,7 +507,7 @@ def test_cli_sim_writes_outputs_and_workers_match_serial(
     run(tmp_path / "b", 2)
     for f in ("trades.csv", "skips.csv", "equity.csv", "decisions.csv"):
         a = (run_dir / f).read_text()
-        assert (tmp_path / "b" / "cash_debit" / "debit_width" / f).read_text() == a
+        assert (tmp_path / "b" / "cash_debit" / "managed_net_ev" / f).read_text() == a
 
 
 def test_cli_sim_refuses_an_incomplete_checkpoint(

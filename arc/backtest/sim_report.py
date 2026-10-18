@@ -31,7 +31,7 @@ import structlog
 from pydantic import BaseModel, ConfigDict, Field
 
 from arc.backtest.rank_report import _stances
-from arc.backtest.ranking import profile_allows_credit, rankers_for
+from arc.backtest.ranking import live_incumbent, profile_allows_credit, rankers_for
 from arc.backtest.sim import (
     GATE_RULES_APPLIED,
     GATE_RULES_NOT_APPLIED,
@@ -331,7 +331,15 @@ def build_sim(
     per_profile = {p: settings.with_profile(p) for p in profiles}
     windows = {p: bt.window_for(p, s.entry_dte_window) for p, s in per_profile.items()}
     allows = {p: profile_allows_credit(p, settings.account_profiles_file) for p in profiles}
-    rk = {p: rankers_for(rankers, allows_credit=allows[p]) for p in profiles}
+    # E7.19 (D128): the live menu measure's ranker is the incumbent (first) ranker
+    rk = {
+        p: rankers_for(
+            rankers,
+            allows_credit=allows[p],
+            incumbent=live_incumbent(exits.pipeline.menu_measure, allows_credit=allows[p]),
+        )
+        for p in profiles
+    }
     job_kw: dict[str, object] = {
         "cfg": cfg,
         "exits": exits,

@@ -1369,9 +1369,25 @@ def apply_stance(
     return out
 
 
-def rankers_for(requested: Sequence[Ranker], *, allows_credit: bool) -> list[Ranker]:
-    """Requested rankers that apply to the profile, incumbent always included (first)."""
-    inc = incumbent_for(allows_credit=allows_credit)
+def live_incumbent(menu_measure: str, *, allows_credit: bool) -> Ranker:
+    """D128: the ranker of the live ``pipeline.menu_measure`` (``config/exits.yaml``).
+
+    ``managed_net_ev_full`` (the live default since D128) is ``managed_net_ev``;
+    ``control`` (the scanner menu) is the profile's width incumbent.
+    """
+    from arc.scanner.menu import MENU_MEASURE_RANKER
+
+    return MENU_MEASURE_RANKER.get(menu_measure) or incumbent_for(allows_credit=allows_credit)
+
+
+def rankers_for(
+    requested: Sequence[Ranker], *, allows_credit: bool, incumbent: Ranker | None = None
+) -> list[Ranker]:
+    """Requested rankers that apply to the profile, incumbent always included (first).
+
+    *incumbent* (E7.19, D128: :func:`live_incumbent`) replaces the width incumbent.
+    """
+    inc = incumbent or incumbent_for(allows_credit=allows_credit)
     out = [inc]
     out += [r for r in requested if r is not inc and applicable(r, allows_credit=allows_credit)]
     return out
