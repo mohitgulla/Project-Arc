@@ -272,3 +272,39 @@ def test_input_diffs_names_the_revised_bar(facts: dict[str, Any]) -> None:
     assert out.iloc[0]["rows"] == 1 and out.iloc[0]["first"] == d
     assert out.iloc[0]["max_rel_diff"] == pytest.approx(0.0004, rel=1e-6)
     assert input_diffs(px, px, facts["sess"][-1]).empty
+
+
+def test_tape_bars_prefers_the_history_feed_per_date() -> None:
+    """E27.1a: the loop records a SIP 1Day read and, just after it, a feed-less 10-day
+    spot read on the quote feed (IEX). Per date the SIP bar wins regardless of order;
+    a date only the other payload has keeps it; within a tier the newest wins."""
+    from arc.ml.features.adapters.live import tape_bars
+
+    conn = connect(":memory:")
+    migrate(conn)
+    d = sessions_between(dt.date(2026, 10, 1), dt.date(2026, 10, 9))
+
+    def bar(day: dt.date, close: float) -> dict[str, Any]:
+        o = close - 1
+        return {"timestamp": _iso_utc(day, 0), "open": o, "high": close + 1, "low": o - 1,
+                "close": close, "volume": 1.0}  # fmt: skip
+
+    def put(call: str, rows: list[dict[str, Any]], hh: int, mm: int) -> None:
+        conn.execute(
+            "INSERT INTO market_tape (chain_run_id, call, payload, at) VALUES (?, ?, ?, ?)",
+            (f"r{hh}{mm}", call, zlib.compress(json.dumps(rows).encode()), _iso_utc(d[-1], hh, mm)),
+        )
+
+    sip = 'history_bars(["AMD", "2025-07-02", "2026-10-09", "1Day", "sip"])'
+    iex = 'history_bars(["AMD", "2026-09-29", "2026-10-09", "1Day"])'
+    put(sip, [bar(x, 600.0) for x in d[:-1]], 9, 40)  # SIP lacks the last day
+    put(iex, [bar(x, 599.0) for x in d], 9, 41)  # newer, one-exchange
+    put(sip, [bar(d[0], 601.0)], 9, 30)  # an older SIP recording: loses to the 9:40 one
+    put('history_bars(["AMD", "2026-10-01", "2026-10-09", "5Min", "sip"])', [], 9, 50)
+    out = tape_bars(conn, ["AMD", "MU"])
+    assert list(out) == ["AMD"]
+    amd = out["AMD"]
+    assert list(amd.index) == d
+    assert (amd.loc[d[:-1], "close"] == 600.0).all()
+    assert amd.at[d[-1], "close"] == 599.0
+    assert (tape_bars(conn, ["AMD"], feed="iex")["AMD"]["close"] == 599.0).all()

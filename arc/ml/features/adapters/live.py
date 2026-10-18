@@ -4,7 +4,8 @@ Builds the same frames as :mod:`arc.ml.features.adapters.history`, column for co
 from what the live loop stores (``data/arc.db``, opened read-only by the caller):
 
 * **OHLC**: daily bars. Default source ``market_tape`` (the loop's recorded
-  ``history_bars(..., "1Day", ...)`` payloads; the newest payload wins per date). The
+  ``history_bars(..., "1Day", ...)`` payloads; per date a bar recorded on the history
+  feed (SIP) beats any other payload, then the newest payload wins: E27.1a). The
   tape is a pruned cache (days), so a caller with no tape for a ticker passes
   ``bars=`` (e.g. :func:`provider_bars` over ``AlpacaMarketData``), the same call the
   pipeline makes. Alpaca bars are unadjusted: a split inside the window makes price
@@ -55,7 +56,11 @@ if TYPE_CHECKING:
 
     from arc.data.base import MarketDataProvider
 
-_DAILY_CALL = re.compile(r'^history_bars\(\["(?P<t>[^"]+)", "[^"]+", "[^"]+", "1Day"')
+_DAILY_CALL = re.compile(
+    r'^history_bars\(\["(?P<t>[^"]+)", "[^"]+", "[^"]+", "1Day"(?:, "(?P<feed>[^"]+)")?\]\)$'
+)
+#: The feed whose tape bars win per date (``data.alpaca_history_feed`` default, D98).
+HISTORY_FEED = "sip"
 _EARN_TEXT = re.compile(r"Earnings report for (?P<t>\S+) on (?P<d>\d{4}-\d{2}-\d{2})\.")
 _EARN_HOUR = re.compile(r"Reporting: (?P<h>\w+)")
 
@@ -75,21 +80,35 @@ def _bars_frame(rows: Iterable[dict[str, Any]]) -> pd.DataFrame:
     return df.sort_index()
 
 
-def tape_bars(conn: sqlite3.Connection, tickers: Iterable[str]) -> dict[str, pd.DataFrame]:
-    """Daily OHLC per ticker from every recorded ``history_bars`` 1Day payload."""
+def tape_bars(
+    conn: sqlite3.Connection, tickers: Iterable[str], *, feed: str = HISTORY_FEED
+) -> dict[str, pd.DataFrame]:
+    """Daily OHLC per ticker from every recorded ``history_bars`` 1Day payload.
+
+    E27.1a: per date, a bar from a payload recorded on *feed* (the history feed, SIP by
+    default: the regime technicals' read, the same consolidated bars as the history
+    store) beats a bar from any other payload. The others are mostly the feed-less
+    10-day spot reads of :func:`arc.data.base.market_spot` on the quote feed (IEX),
+    which the loop records just after the SIP read, so "newest wins" alone handed the
+    features one-exchange bars (AMD 2026-10-09 close 607.86 IEX vs 608.10 SIP). Within
+    a tier the newest recording wins; a date only a non-*feed* payload has keeps it.
+    """
     want = set(tickers)
     rows = conn.execute(
         "SELECT call, payload, at FROM market_tape WHERE call LIKE 'history_bars(%\"1Day\"%' "
         "ORDER BY at"
     ).fetchall()
-    acc: dict[str, list[dict[str, Any]]] = {}
+    other: dict[str, list[dict[str, Any]]] = {}
+    preferred: dict[str, list[dict[str, Any]]] = {}
     for call, payload, _at in rows:
         m = _DAILY_CALL.match(call)
         if not m or m.group("t") not in want:
             continue
         data = json.loads(zlib.decompress(payload))
+        acc = preferred if m.group("feed") == feed else other
         acc.setdefault(m.group("t"), []).extend(data)  # later recordings win per date
-    return {t: _bars_frame(r) for t, r in acc.items()}
+    names = sorted(set(other) | set(preferred))
+    return {t: _bars_frame([*other.get(t, []), *preferred.get(t, [])]) for t in names}
 
 
 def provider_bars(provider: MarketDataProvider) -> Callable[[str, dt.date, dt.date], pd.DataFrame]:
@@ -179,6 +198,7 @@ def live_inputs(
     market_ref: str = "SPY",
     macro_file: Path = MACRO_FILE,
     warmup_sessions: int = WARMUP_SESSIONS,
+    history_feed: str = HISTORY_FEED,
 ) -> FeatureInputs:
     """Inputs for ``compute_panel(dates in [start, end])`` from the live store.
 
@@ -186,7 +206,7 @@ def live_inputs(
     """
     lo = warmup_start(start, warmup_sessions)
     names = sorted({*tickers, market_ref})
-    ohlc = tape_bars(conn, names)
+    ohlc = tape_bars(conn, names, feed=history_feed)
     for t in names:
         have = ohlc.get(t)
         if bars is not None and (have is None or have.empty or have.index.min() > lo):

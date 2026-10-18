@@ -174,6 +174,9 @@ def add_backtest_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]
 
     add_data_parser(bs)
     add_cache_parser(bs)
+    from arc.backtest.ohlc_refresh import add_ohlc_parser
+
+    add_ohlc_parser(bs)
     sm = bs.add_parser(
         "sim",
         help="E7.11: live-shaped portfolio simulator (daily cross-name funnel, D80 account)",
@@ -478,6 +481,10 @@ def run_backtest_cli(args: argparse.Namespace) -> int:
         from arc.backtest.data_cli import run_cache_cli, run_data_cli
 
         return run_data_cli(args) if args.backtest_command == "data" else run_cache_cli(args)
+    if getattr(args, "backtest_command", None) == "ohlc":
+        from arc.backtest.ohlc_refresh import run_ohlc_cli
+
+        return run_ohlc_cli(args)
     if args.start is None or args.end is None:
         sys.stderr.write("arc backtest: --start and --end are required\n")
         return 2
