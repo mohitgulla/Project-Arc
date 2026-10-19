@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from arc.backtest.ranking import BootstrapSpec, Candidate, DecisionRule, RankRun
+    from arc.features.technicals import TechnicalFeatures
 
 log = structlog.get_logger()
 
@@ -205,19 +206,21 @@ def stretched_days(
     rule: AntiChaseRule,
     *,
     vwap: bool = False,
+    techs: Mapping[dt.date, TechnicalFeatures | None] | None = None,
 ) -> dict[dt.date, frozenset[str]]:
     """Decision day → the stances (``bullish`` / ``bearish``) that are stretched that day.
 
     Indicators use bars dated <= the day only (``compute_technicals`` truncates). A day
     with too few bars or missing inputs is never stretched (the live rule keeps the
     idea when it lacks data). With *vwap*, the VWAP part reads the day's bar VWAP.
+    *techs* (E7.21): ``compute_technicals(ohlc, d)`` already computed per day.
     """
     r = rule.model_copy(update={"vwap": vwap})
     out: dict[dt.date, frozenset[str]] = {}
     if ohlc.empty:
         return {d: frozenset() for d in days}
     for d in days:
-        tech = compute_technicals(ohlc, d)
+        tech = techs[d] if techs is not None and d in techs else compute_technicals(ohlc, d)
         vs: float | None = None
         if vwap and tech is not None and d in ohlc.index:
             bar_vwap = float(ohlc.at[d, "vwap"])
@@ -261,18 +264,24 @@ def apply_entry_filter(
 BeAtrDays = dict[dt.date, float]
 
 
-def atr14_days(ohlc: pd.DataFrame, closes: pd.Series, days: Sequence[dt.date]) -> BeAtrDays:
+def atr14_days(
+    ohlc: pd.DataFrame,
+    closes: pd.Series,
+    days: Sequence[dt.date],
+    techs: Mapping[dt.date, TechnicalFeatures | None] | None = None,
+) -> BeAtrDays:
     """ATR14 per decision day from split-adjusted *ohlc* (bars <= the day only).
 
     The OHLC is split-adjusted while strikes and *closes* are raw, so the ATR is put
     back into raw units with ``raw close / adjusted close`` of the same day (1.0 away
     from a split). A day without enough bars or a close is left out (nothing dropped).
+    *techs* (E7.21): ``compute_technicals(ohlc, d)`` already computed per day.
     """
     out: BeAtrDays = {}
     if ohlc.empty:
         return out
     for d in days:
-        tech = compute_technicals(ohlc, d)
+        tech = techs[d] if techs is not None and d in techs else compute_technicals(ohlc, d)
         if tech is None or tech.atr14 is None or tech.atr14 <= 0 or d not in closes.index:
             continue
         raw, adj = float(closes[d]), float(tech.close)

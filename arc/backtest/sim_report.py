@@ -282,6 +282,40 @@ class SimBuild(BaseModel):
     trends: dict[dt.date, MarketTrend] | None = None
 
 
+def study_inputs(
+    profiles: Sequence[str],
+    rankers: Sequence[Ranker],
+    cfg: RankingFile,
+    exits: ExitConfig,
+    settings: ArcSettings,
+) -> tuple[
+    dict[str, ArcSettings],
+    dict[str, tuple[int, int]],
+    dict[str, list[Ranker]],
+    dict[str, dict[str, frozenset[str]]] | None,
+]:
+    """Per profile: settings, menu window, rankers (live incumbent first) and stances.
+
+    Shared by :func:`build_sim` and the E7.21 candidate ledger, so both build the
+    same menus and the same top-k pools.
+    """
+    bt = cfg.backtest
+    per_profile = {p: settings.with_profile(p) for p in profiles}
+    windows = {p: bt.window_for(p, s.entry_dte_window) for p, s in per_profile.items()}
+    allows = {p: profile_allows_credit(p, settings.account_profiles_file) for p in profiles}
+    # E7.19 (D128): the live menu measure's ranker is the incumbent (first) ranker
+    rk = {
+        p: rankers_for(
+            rankers,
+            allows_credit=allows[p],
+            incumbent=live_incumbent(exits.pipeline.menu_measure, allows_credit=allows[p]),
+        )
+        for p in profiles
+    }
+    stances = {p: _stances(p, cfg, settings) for p in profiles} if bt.stance == "trend" else None
+    return per_profile, windows, rk, stances
+
+
 def build_sim(
     *,
     data_dir: Path,
@@ -331,18 +365,7 @@ def build_sim(
     for t in names:
         p = view.provider_for(t) or "none"
         partitions[p] = partitions.get(p, 0) + 1
-    per_profile = {p: settings.with_profile(p) for p in profiles}
-    windows = {p: bt.window_for(p, s.entry_dte_window) for p, s in per_profile.items()}
-    allows = {p: profile_allows_credit(p, settings.account_profiles_file) for p in profiles}
-    # E7.19 (D128): the live menu measure's ranker is the incumbent (first) ranker
-    rk = {
-        p: rankers_for(
-            rankers,
-            allows_credit=allows[p],
-            incumbent=live_incumbent(exits.pipeline.menu_measure, allows_credit=allows[p]),
-        )
-        for p in profiles
-    }
+    per_profile, windows, rk, stances = study_inputs(profiles, rankers, cfg, exits, settings)
     job_kw: dict[str, object] = {
         "cfg": cfg,
         "exits": exits,
@@ -350,9 +373,7 @@ def build_sim(
         "settings": per_profile,
         "windows": windows,
         "rankers": rk,
-        "stances": {p: _stances(p, cfg, settings) for p in profiles}
-        if bt.stance == "trend"
-        else None,
+        "stances": stances,
         "sim": bt.sim,
         "cache_dir": str(cache_dir or data_dir) if cache else None,
     }
