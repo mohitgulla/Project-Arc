@@ -162,17 +162,53 @@ def _measured(e: LedgerEntry) -> float | None:
 
 
 def estimate_s(
-    entries: Sequence[LedgerEntry], study: str, phase: str, universe: str, margin: float
+    entries: Sequence[LedgerEntry],
+    study: str,
+    phase: str,
+    universe: str,
+    margin: float,
+    cells: int | None = None,
 ) -> float | None:
     """Seconds a rung is expected to take: the median measured runtime of the last
     :data:`RECENT_ROWS` ledger rows of *study* on (*phase*, *universe*), else of every
-    study's rows there, x *margin*. ``None`` without any row (the run goes ahead)."""
+    study's rows there, x *margin*. ``None`` without any row (the run goes ahead).
+
+    E7.20 (D125): with *cells* (the robustness-grid cells the rung walks beyond the
+    control cell) a row that measured ``grid.walk_s_per_cell`` is rescaled: its
+    runtime minus its own extra-cell walks, plus *cells* x that per-cell walk cost. A
+    row without grid timing counts as is (no walk-only measurement to scale by)."""
     rows = sorted((e for e in entries if e.phase == phase and e.universe == universe), key=_at)
     for pool in ([e for e in rows if e.study == study], rows):
-        secs = [s for e in pool if (s := _measured(e)) is not None][-RECENT_ROWS:]
+        secs = [s for e in pool if (s := _scaled(e, cells)) is not None][-RECENT_ROWS:]
         if secs:
             return float(statistics.median(secs)) * margin
     return None
+
+
+def _scaled(e: LedgerEntry, cells: int | None) -> float | None:
+    s = _measured(e)
+    if s is None or cells is None or not e.grid:
+        return s
+    per = e.grid.get("walk_s_per_cell")
+    if per is None:
+        return s
+    own = float(e.grid.get("walk_s") or 0.0)
+    return max(s - own, 0.0) + cells * float(per)
+
+
+def grid_cells_for(
+    spec: StudySpec, phase: str, universe: str, entries: Sequence[LedgerEntry]
+) -> int | None:
+    """E7.20: grid cells the rung walks beyond the control cell; None = no grid."""
+    if spec.robustness is None:
+        return None
+    from arc.backtest.study import grid_plan
+
+    _, cells = grid_plan(spec, phase=phase, universe=universe, entries=entries)
+    from arc.backtest.sim import SimSettings
+
+    x0 = float(SimSettings.model_fields["slippage_x"].default)  # the shipped control x
+    return len([c for c in cells if c != ("trend_v2", x0)])
 
 
 def _at(e: LedgerEntry) -> dt.datetime:
@@ -507,7 +543,14 @@ class _Night:
     def _run_rung(self, entry: QueueEntry, spec: StudySpec, phase: str, uni: str) -> str:
         rung = entry.ladder_state or "holdout"
         entries = load_ledger(self.paths.ledger)
-        est = estimate_s(entries, entry.id, phase, uni, self.cfg.runtime_margin)
+        est = estimate_s(
+            entries,
+            entry.id,
+            phase,
+            uni,
+            self.cfg.runtime_margin,
+            cells=grid_cells_for(spec, phase, uni, entries),
+        )
         start = self.clock().astimezone(ET).replace(microsecond=0)
         left = _elapsed(start, self.end).total_seconds()
         if est is not None and est > left:

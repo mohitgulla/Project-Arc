@@ -326,6 +326,37 @@ def apply_be_filter(
     return out, dropped
 
 
+def spread_premium_frac(c: Candidate) -> float | None:
+    """E7.20: the structure's quoted spread as a fraction of its net mid premium,
+    Σ leg spread / |Σ side × leg mid| (per contract, before any slippage x). This is
+    E7.18's ``spread_pct_premium`` (``arc.ml.features.compute``), computed at the
+    decision close instead of backed out of the fill. None when the net mid is 0."""
+    net = abs(sum(p.side * p.mid for p in c.picks))
+    if net <= 0 or not math.isfinite(net):
+        return None
+    return sum(p.spread for p in c.picks) / net
+
+
+def apply_spread_premium_filter(
+    menus: Mapping[dt.date, list[Candidate]], max_frac: float
+) -> tuple[dict[dt.date, list[Candidate]], int]:
+    """Drop candidates whose :func:`spread_premium_frac` is > *max_frac* (both credit
+    and debit kinds), before any ranker picks, so the next-ranked candidate refills
+    the slot. A candidate with no net mid is dropped too (no premium to pay a spread)."""
+    out: dict[dt.date, list[Candidate]] = {}
+    dropped = 0
+    for d, menu in menus.items():
+        kept = []
+        for c in menu:
+            v = spread_premium_frac(c)
+            if v is None or v > max_frac:
+                dropped += 1
+                continue
+            kept.append(c)
+        out[d] = kept
+    return out, dropped
+
+
 # ---------------------------------------------------------------------------
 # Decision rule
 # ---------------------------------------------------------------------------

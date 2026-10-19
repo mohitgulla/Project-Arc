@@ -336,6 +336,15 @@ class BacktestSettings(BaseModel):
         "many ATR14 x sqrt(DTE) from the decision close (ATR14 from daily OHLC <= the "
         "decision day), before any ranker picks; None = off",
     )
+    # -- E7.20 (D125): E7.18's spread-to-premium cap, backtest-only (default off) --
+    max_spread_premium: float | None = Field(
+        None,
+        gt=0.0,
+        le=5.0,
+        description="Drop candidates whose quoted spread is more than this fraction of "
+        "the structure's net mid premium (sum of leg spreads / |net mid|), before any "
+        "ranker picks, so the next-ranked candidate refills the slot; None = off",
+    )
     # -- E7.7 (D84): the point-in-time backtest universe (`arc history universe build`) --
     universe: UniverseConfig = Field(
         default_factory=lambda: UniverseConfig(),
