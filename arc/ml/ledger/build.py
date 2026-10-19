@@ -784,12 +784,13 @@ def build_ledger(
     cache_dir: Path | None = None,
     range_rule: Any = None,
     progress: Callable[[str], None] | None = None,
+    stop: Callable[[], bool] | None = None,
 ) -> BuildResult:
     """Every pending (ticker, year) through :func:`ledger_job`, then the active list
     and the manifest. Menus are built with ``backtest.stance: none`` (all structures,
     every direction) whatever the ranking file says; the trend-stance verdict is a
     context column (``ctx_sim_menu``)."""
-    from concurrent.futures import ProcessPoolExecutor
+    from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 
     from arc.backtest.sim import ViewSpec
     from arc.backtest.sim_report import _git_sha, _sha, study_inputs
@@ -852,14 +853,28 @@ def build_ledger(
     stats: list[dict[str, object]] = []
     if workers > 1 and len(todo) > 1:
         with ProcessPoolExecutor(max_workers=workers) as ex:
-            futs = {ex.submit(ledger_job, t, ys, **kw): t for t, ys in todo.items()}
-            for f in futs:
-                stats.append(f.result())
-                say(f"  {futs[f]}: {stats[-1]['rows']} rows, {stats[-1]['seconds']:.0f}s")
+            pending_jobs = list(todo.items())
+            live: dict[Any, str] = {}
+            while pending_jobs or live:
+                while pending_jobs and len(live) < workers and not (stop and stop()):
+                    t, ys = pending_jobs.pop(0)
+                    live[ex.submit(ledger_job, t, ys, **kw)] = t
+                if not live:
+                    break
+                done, _ = wait(live, return_when=FIRST_COMPLETED)
+                for f in done:
+                    t = live.pop(f)
+                    stats.append(f.result())
+                    say(f"  {t}: {stats[-1]['rows']} rows, {stats[-1]['seconds']:.0f}s")
     else:
         for t, ys in todo.items():
+            if stop and stop():
+                break
             stats.append(ledger_job(t, ys, **kw))
             say(f"  {t}: {stats[-1]['rows']} rows, {stats[-1]['seconds']:.0f}s")
+    left = pending(vdir, names, years)
+    if left:
+        say(f"stopped with {len(left)} tickers pending (yield file present); rerun to resume")
     finalize_active(vdir, sim=bt.sim, aliases=MomentumConfig().share_class_aliases)
     meta = {
         "git_sha": _git_sha(),

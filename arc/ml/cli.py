@@ -84,6 +84,11 @@ def add_ml_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> N
     lb.add_argument("--out", type=Path, default=None, help="Default <data>/ml/ledger")
     lb.add_argument("--ranking", type=Path, default=REPO / "config" / "ranking.yaml")
     lb.add_argument("--no-cache", action="store_true", help="Skip the shared menu cache")
+    lb.add_argument(
+        "--ignore-window",
+        action="store_true",
+        help="Don't yield to the E26.3 runner (21:30–08:30 ET or data/backtest/queue.json)",
+    )
     ls2 = lsub.add_parser("stats", help="Counts, label base rates, mean r_net per x")
     ls2.add_argument("--out", type=Path, default=None, help="Ledger root (default data/ml/ledger)")
     ls2.add_argument("--data", type=Path, default=DEFAULT_DATA)
@@ -219,6 +224,19 @@ def _ledger(args: argparse.Namespace) -> int:
     def progress(s: str) -> None:
         sys.stderr.write(s + "\n")
 
+    from arc.utils.calendar import now_et
+
+    queue = data / "backtest" / "queue.json"
+
+    def stop() -> bool:
+        """The card's compute window: yield to the E26.3 runner (21:30–08:30 ET or its
+        queue file), unless --ignore-window."""
+        if args.ignore_window:
+            return False
+        t = now_et().time()
+        night = t >= _dt.time(21, 30) or t < _dt.time(8, 30)
+        return night or queue.exists()
+
     res = build_ledger(
         data_dir=data,
         out_root=out,
@@ -237,6 +255,7 @@ def _ledger(args: argparse.Namespace) -> int:
         cache_dir=None if args.no_cache else data,
         range_rule=edges.rule() if edges.enabled else None,
         progress=progress,
+        stop=stop,
     )
     sys.stdout.write(
         f"{res.vdir}: {res.jobs} (ticker, years) jobs, {res.rows} rows total, "
