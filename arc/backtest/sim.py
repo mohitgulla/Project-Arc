@@ -125,7 +125,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
     from arc.backtest.costs import CostModel
-    from arc.backtest.data import HistoryView
+    from arc.backtest.data import HistoryView, TickerHistory
     from arc.backtest.earnings_hist import NextEarnings
     from arc.backtest.ranking import RankingFile
     from arc.config import ArcSettings
@@ -522,10 +522,7 @@ def range_proxy_rule(
     and of two firing extremes the worse P&L is taken. Returns ``(rule, marks at that
     extreme, extreme)`` or ``None``. Reads only this session's range.
     """
-    pol = rules.policy
-    stop = rules.stop_pnl if not pol.stop_eod_only else None
-    lock_on = pol.profit_lock is not None and not pol.profit_lock.eod_only
-    if stop is None and not lock_on:
+    if not proxy_rules_on(rules):
         return None
     priced: list[tuple[float, dict[str, tuple[float, float]], float]] = []
     for x in rng:
@@ -534,13 +531,35 @@ def range_proxy_rule(
             return None
         pnl = sum(lg.side * m[lg.symbol][0] for lg in legs) - rules.entry_net
         priced.append((pnl, m, x))
-    priced.sort(key=lambda e: e[0])  # worst first
+    return pick_proxy_rule(rules, priced, peak=peak)
+
+
+def proxy_rules_on(rules: ResolvedRules) -> bool:
+    """Whether the policy runs any rule intraday (the range proxy has something to check)."""
+    pol = rules.policy
+    stop = rules.stop_pnl if not pol.stop_eod_only else None
+    lock_on = pol.profit_lock is not None and not pol.profit_lock.eod_only
+    return stop is not None or lock_on
+
+
+def pick_proxy_rule[M](
+    rules: ResolvedRules, priced: Sequence[tuple[float, M, float]], *, peak: float | None
+) -> tuple[str, M, float] | None:
+    """The rule the priced extremes fire, stop first, the worse P&L first.
+
+    *priced* is ``(per-share P&L, marks, extreme)`` per extreme, in (high, low) order.
+    Shared by :func:`range_proxy_rule` and the E7.21 ledger's leg-level walk.
+    """
+    pol = rules.policy
+    stop = rules.stop_pnl if not pol.stop_eod_only else None
+    lock_on = pol.profit_lock is not None and not pol.profit_lock.eod_only
+    order = sorted(priced, key=lambda e: e[0])  # worst first (stable: high before low)
     if stop is not None:
-        for pnl, m, x in priced:
+        for pnl, m, x in order:
             if pnl <= stop:
                 return "stop", m, x
     if lock_on:
-        for pnl, m, x in priced:
+        for pnl, m, x in order:
             if lock_fires(rules, pnl=pnl, peak=peak, eod=False):
                 return "profit_lock", m, x
     return None
@@ -722,6 +741,93 @@ def _top_keys(
     return keys
 
 
+class TickerPrep(BaseModel):
+    """One ticker's session-level inputs, shared by every menu (and the E7.21 ledger)."""
+
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
+
+    dd: list[dt.date] = Field(..., description="Decision sessions with a chain and a close")
+    adj: pd.Series = Field(..., description="Split-adjusted closes")
+    trend: pd.Series
+    vol: pd.Series
+    day_stance: dict[dt.date, str] | None = None
+    stretched: dict[dt.date, frozenset[str]] | None = None
+    atr: dict[dt.date, float] | None = None
+    mc: Any
+    base: Any = Field(..., description="The base CostModel at slippage_x")
+    spread_rule: bool
+    ranges: dict[dt.date, tuple[float, float]] | None = None
+
+
+def ticker_prep(
+    chains: Mapping[dt.date, pd.DataFrame],
+    closes: pd.Series,
+    *,
+    decision_days: Sequence[dt.date],
+    cfg: RankingFile,
+    exits: ExitConfig,
+    cost: CostModel,
+    sim: SimSettings,
+    ohlc: pd.DataFrame | None = None,
+    splits: Mapping[dt.date, float] | None = None,
+    label_closes: pd.Series | None = None,
+    techs: Mapping[dt.date, Any] | None = None,
+) -> TickerPrep:
+    """The per-ticker preamble of :func:`sim_ticker_from_chains` (labels, filters, proxy).
+
+    *techs* (E7.21): ``compute_technicals`` per decision day, already computed.
+    """
+    closes = closes.sort_index()
+    bt = cfg.backtest
+    mc: ExitModelConfig = exits.model.model_copy(update={"n_paths": bt.n_paths})
+    dd = [d for d in decision_days if d in chains and d in closes.index]
+    adj = split_adjusted(closes, splits or {})
+    if label_closes is None:
+        label_closes = adj
+    trend, vol = labels_for(label_closes, sim.regime_model)
+    day_stance = trend_stances(trend) if bt.direction_tilt > 0 else None
+    o = ohlc if ohlc is not None else pd.DataFrame()
+    stretched = None
+    # E7.19 (D128): the live anti-chase filter on the live-shaped walk
+    live_filter = sim.entry_filters == "live" and sim.selection == "cross_name"
+    if bt.entry_filter != "none" or live_filter:
+        stretched = stretched_days(
+            o, dd, bt.anti_chase, vwap=bt.entry_filter == "anti_chase_vwap", techs=techs
+        )
+    atr = atr14_days(o, closes, dd, techs=techs) if bt.max_be_atr is not None else None
+    base = cost.model_copy(update={"slippage_frac": sim.slippage_x})
+    # per_ticker reproduces the E7.5 walk: no spread rule on its fills or exits
+    spread_rule = sim.spread_rule == "live" and sim.selection == "cross_name"
+    ranges = None
+    if sim.intraday_proxy == "range" and sim.selection == "cross_name":
+        ranges = session_ranges(closes, ohlc)
+    return TickerPrep(
+        dd=dd,
+        adj=adj,
+        trend=trend,
+        vol=vol,
+        day_stance=day_stance,
+        stretched=stretched,
+        atr=atr,
+        mc=mc,
+        base=base,
+        spread_rule=spread_rule,
+        ranges=ranges,
+    )
+
+
+def profile_sleeves(
+    settings: ArcSettings, window: tuple[int, int], sim: SimSettings
+) -> list[SleeveWindow]:
+    """The menu windows the sim builds for a profile (:func:`sleeve_windows`).
+
+    An explicit window other than the profile's envelope (``backtest.dte_windows``, a
+    test) or the E7.5 per_ticker walk keeps the one-window menu.
+    """
+    override = tuple(window) != settings.entry_dte_window or sim.selection == "per_ticker"
+    return sleeve_windows(settings, window, override=override)
+
+
 def sim_ticker_from_chains(
     ticker: str,
     chains: Mapping[dt.date, pd.DataFrame],
@@ -764,34 +870,20 @@ def sim_ticker_from_chains(
     """
     closes = closes.sort_index()
     bt = cfg.backtest
-    mc: ExitModelConfig = exits.model.model_copy(update={"n_paths": bt.n_paths})
-    dd = [d for d in decision_days if d in chains and d in closes.index]
-    adj = split_adjusted(closes, splits or {})
-    if label_closes is None:
-        label_closes = adj
-    trend, vol = labels_for(label_closes, sim.regime_model)
-    day_stance = trend_stances(trend) if bt.direction_tilt > 0 else None
-    stretched = None
-    # E7.19 (D128): the live anti-chase filter on the live-shaped walk
-    live_filter = sim.entry_filters == "live" and sim.selection == "cross_name"
-    if bt.entry_filter != "none" or live_filter:
-        stretched = stretched_days(
-            ohlc if ohlc is not None else pd.DataFrame(),
-            dd,
-            bt.anti_chase,
-            vwap=bt.entry_filter == "anti_chase_vwap",
-        )
-    atr = (
-        atr14_days(ohlc if ohlc is not None else pd.DataFrame(), closes, dd)
-        if bt.max_be_atr is not None
-        else None
+    prep = ticker_prep(
+        chains,
+        closes,
+        decision_days=decision_days,
+        cfg=cfg,
+        exits=exits,
+        cost=cost,
+        sim=sim,
+        ohlc=ohlc,
+        splits=splits,
+        label_closes=label_closes,
     )
-    base = cost.model_copy(update={"slippage_frac": sim.slippage_x})
-    # per_ticker reproduces the E7.5 walk: no spread rule on its fills or exits
-    spread_rule = sim.spread_rule == "live" and sim.selection == "cross_name"
-    ranges = None
-    if sim.intraday_proxy == "range" and sim.selection == "cross_name":
-        ranges = session_ranges(closes, ohlc)
+    dd, adj, trend, vol = prep.dd, prep.adj, prep.trend, prep.vol
+    mc, base, spread_rule, ranges = prep.mc, prep.base, prep.spread_rule, prep.ranges
 
     def rate_of(d: dt.date) -> float:
         return bt.risk_free_rate if rate is None else float(rate(d))
@@ -799,12 +891,7 @@ def sim_ticker_from_chains(
     out: dict[str, dict[dt.date, list[SimCandidate]]] = {}
     for profile, window in sorted(windows.items()):
         per_day: dict[dt.date, list[SimCandidate]] = {}
-        # an explicit window other than the profile's envelope (backtest.dte_windows, a
-        # test) or the E7.5 per_ticker walk keeps the one-window menu
-        override = (
-            tuple(window) != settings[profile].entry_dte_window or sim.selection == "per_ticker"
-        )
-        for sw in sleeve_windows(settings[profile], window, override=override):
+        for sw in profile_sleeves(settings[profile], window, sim):
             for d, kept in _sleeve_menu(
                 ticker,
                 chains,
@@ -821,9 +908,9 @@ def sim_ticker_from_chains(
                 stances=stances,
                 trend=trend,
                 vol=vol,
-                day_stance=day_stance,
-                stretched=stretched,
-                atr=atr,
+                day_stance=prep.day_stance,
+                stretched=prep.stretched,
+                atr=prep.atr,
                 sim=sim,
                 spread_rule=spread_rule,
                 rate=rate,
@@ -848,6 +935,103 @@ def sim_ticker_from_chains(
         cache_misses=cache.misses if cache is not None else 0,
         provider=provider,
     )
+
+
+def sleeve_menus(
+    ticker: str,
+    chains: Mapping[dt.date, pd.DataFrame],
+    closes: pd.Series,
+    *,
+    sw: SleeveWindow,
+    profile: str,
+    dd: Sequence[dt.date],
+    cfg: RankingFile,
+    exits: ExitConfig,
+    mc: ExitModelConfig,
+    base: CostModel,
+    rate: Any,
+    day_stance: Mapping[dt.date, str] | None,
+    cache: MenuCache | None,
+    cache_ctx: MenuCacheContext | None,
+) -> tuple[dict[dt.date, list[Candidate]], dict[str, CostModel]]:
+    """The raw (profile, sleeve) menus per session, before stance and filters.
+
+    The one menu path of the sim (and of the E7.21 candidate ledger,
+    :mod:`arc.ml.ledger.build`): ``build_menus`` (or ``build_menus_by_kind`` with
+    ``backtest.slippage_by_kind``) on the sleeve's window and exit block, sessions grouped
+    by rate. Returns the menus and the per-kind cost models (empty = *base* for all).
+    """
+    bt = cfg.backtest
+    lo, hi = sw.dte_min, sw.dte_max
+    specs = bt.specs_for(profile, lo, hi, sw.exit_block)
+    ck = kind_costs(specs, base, bt.slippage_by_kind) if bt.slippage_by_kind else {}
+    menus: dict[dt.date, list[Candidate]] = {}
+    by_rate: dict[float, list[dt.date]] = {}
+    for d in dd:  # build_menus takes one rate: group sessions by it (flat = one call)
+        by_rate.setdefault(bt.risk_free_rate if rate is None else float(rate(d)), []).append(d)
+    for r, rdays in by_rate.items():
+        kw: dict[str, Any] = {
+            "days": rdays,
+            "underlying": ticker,
+            "specs": specs,
+            "cost": base,
+            "exits": exits,
+            "mc": mc,
+            "r": r,
+            "stances": day_stance,
+            "tilt": bt.direction_tilt,
+            "cache": cache,
+            "cache_ctx": cache_ctx,
+        }
+        # exactly the E7.5 ticker_job calls, so per_ticker mode reproduces its menus
+        if ck:
+            menus |= build_menus_by_kind(chains, closes, cost_by_kind=ck, **kw)
+        else:
+            menus |= build_menus(chains, closes, **kw)
+    return menus, ck
+
+
+def pool_menus(
+    menus: Mapping[dt.date, list[Candidate]],
+    closes: pd.Series,
+    *,
+    profile: str,
+    cfg: RankingFile,
+    rankers: Sequence[Ranker],
+    stances: Mapping[str, Mapping[str, frozenset[str]]] | None,
+    trend: pd.Series,
+    vol: pd.Series,
+    stretched: Any,
+    atr: Any,
+    sim: SimSettings,
+) -> dict[dt.date, tuple[list[Candidate], set[str]]]:
+    """Stance, entry filters, then each ranker's top ``per_name_depth`` keys per session.
+
+    Returns ``day -> (the filtered menu, the pooled keys)`` for non-empty menus: the
+    candidates the cross-name walk may pick from. Shared by the sim and the E7.21
+    ledger's ``in_topk`` context column.
+    """
+    bt = cfg.backtest
+    if stances is not None:
+        gate = {str(k): frozenset(v) for k, v in bt.vol_gate.get(profile, {}).items()}
+        menus = apply_stance(menus, trend, stances[profile], vol=vol, vol_gate=gate or None)
+    if stretched is not None:
+        menus, _ = apply_entry_filter(menus, trend, stretched)
+    if atr is not None and bt.max_be_atr is not None:
+        menus, _ = apply_be_filter(menus, closes, atr, bt.max_be_atr)
+    out: dict[dt.date, tuple[list[Candidate], set[str]]] = {}
+    for d, menu in menus.items():
+        if not menu:
+            continue
+        keys = _top_keys(
+            menu,
+            rankers,
+            cfg.ranking.filters,
+            cfg.ranking.vrp_threshold,
+            sim.per_name_depth,
+        )
+        out[d] = (menu, keys)
+    return out
 
 
 def _sleeve_menu(
@@ -881,51 +1065,37 @@ def _sleeve_menu(
     ranges: Mapping[dt.date, tuple[float, float]] | None,
 ) -> dict[dt.date, list[SimCandidate]]:
     """One (profile, sleeve) menu per session: build, stance/filters, top keys, outcomes."""
-    bt = cfg.backtest
-    lo, hi = sw.dte_min, sw.dte_max
-    specs = bt.specs_for(profile, lo, hi, sw.exit_block)
-    ck = kind_costs(specs, base, bt.slippage_by_kind) if bt.slippage_by_kind else {}
-    menus: dict[dt.date, list[Candidate]] = {}
-    by_rate: dict[float, list[dt.date]] = {}
-    for d in dd:  # build_menus takes one rate: group sessions by it (flat = one call)
-        by_rate.setdefault(bt.risk_free_rate if rate is None else float(rate(d)), []).append(d)
-    for r, rdays in by_rate.items():
-        kw: dict[str, Any] = {
-            "days": rdays,
-            "underlying": ticker,
-            "specs": specs,
-            "cost": base,
-            "exits": exits,
-            "mc": mc,
-            "r": r,
-            "stances": day_stance,
-            "tilt": bt.direction_tilt,
-            "cache": cache,
-            "cache_ctx": cache_ctx,
-        }
-        # exactly the E7.5 ticker_job calls, so per_ticker mode reproduces its menus
-        if ck:
-            menus |= build_menus_by_kind(chains, closes, cost_by_kind=ck, **kw)
-        else:
-            menus |= build_menus(chains, closes, **kw)
-    if stances is not None:
-        gate = {str(k): frozenset(v) for k, v in bt.vol_gate.get(profile, {}).items()}
-        menus = apply_stance(menus, trend, stances[profile], vol=vol, vol_gate=gate or None)
-    if stretched is not None:
-        menus, _ = apply_entry_filter(menus, trend, stretched)
-    if atr is not None and bt.max_be_atr is not None:
-        menus, _ = apply_be_filter(menus, closes, atr, bt.max_be_atr)
+    menus, ck = sleeve_menus(
+        ticker,
+        chains,
+        closes,
+        sw=sw,
+        profile=profile,
+        dd=dd,
+        cfg=cfg,
+        exits=exits,
+        mc=mc,
+        base=base,
+        rate=rate,
+        day_stance=day_stance,
+        cache=cache,
+        cache_ctx=cache_ctx,
+    )
+    pools = pool_menus(
+        menus,
+        closes,
+        profile=profile,
+        cfg=cfg,
+        rankers=rankers,
+        stances=stances,
+        trend=trend,
+        vol=vol,
+        stretched=stretched,
+        atr=atr,
+        sim=sim,
+    )
     per_day: dict[dt.date, list[SimCandidate]] = {}
-    for d, menu in menus.items():
-        if not menu:
-            continue
-        keys = _top_keys(
-            menu,
-            rankers,
-            cfg.ranking.filters,
-            cfg.ranking.vrp_threshold,
-            sim.per_name_depth,
-        )
+    for d, (menu, keys) in pools.items():
         kept: list[SimCandidate] = []
         for c in menu:
             if c.inputs.key not in keys:
@@ -997,6 +1167,37 @@ def build_view(spec: ViewSpec, cfg: RankingFile, cost: CostModel) -> HistoryView
     )
 
 
+def menu_cache_ctx(h: TickerHistory, cfg: RankingFile, exits: ExitConfig) -> MenuCacheContext:
+    """The run-level menu-cache key parts of one ticker (shared with the E7.21 ledger)."""
+    ds = cfg.backtest.data
+    return MenuCacheContext(
+        marks=f"{h.marks}:{ds.max_quoted_spread_pct}:{ds.quoted_fallback}",
+        exit_hash=config_hash(exits),
+        n_paths=cfg.backtest.n_paths,
+        seed=exits.model.seed,
+        provider=h.provider,
+    )
+
+
+def ticker_books(
+    h: TickerHistory, cfg: RankingFile, sim: SimSettings
+) -> tuple[dict[dt.date, pd.DataFrame] | None, dict[dt.date, float] | None]:
+    """``(exit book, split ratios)`` of one ticker as the walk marks it.
+
+    The exit book is every two-sided quote (:func:`quote_marks`) under
+    ``exit_marks: all_quotes`` on a quoted history, else ``None`` (marks on the entry
+    chains); the per_ticker E7.5 walk keeps neither.
+    """
+    live = sim.selection == "cross_name"  # per_ticker reproduces E7.5 unchanged
+    quotes = None
+    if live and sim.exit_marks == "all_quotes" and h.marks == "quoted":
+        quotes = quote_marks(h.raw, h.closes, dte_max=cfg.backtest.data.chain_dte_max)
+    splits = None
+    if live and sim.splits == "adjust" and len(h.ohlc):
+        splits = split_ratios(h.closes, pd.Series(h.ohlc["close"])) or None
+    return quotes, splits
+
+
 def sim_ticker_job(
     tickers: Sequence[str],
     *,
@@ -1013,27 +1214,14 @@ def sim_ticker_job(
 ) -> list[SimTicker]:
     """A batch of tickers through one view (safe in a worker process)."""
     view = build_view(spec, cfg, cost)
-    ds = cfg.backtest.data
     out: list[SimTicker] = []
     for t in tickers:
         h = view.load(t)
         sessions = [d for d in h.closes.index if spec.start <= d <= spec.end]
         days = {d: _day_info(view, t, d) for d in sessions}
         cache = MenuCache(cache_dir) if cache_dir is not None else None
-        ctx = MenuCacheContext(
-            marks=f"{h.marks}:{ds.max_quoted_spread_pct}:{ds.quoted_fallback}",
-            exit_hash=config_hash(exits),
-            n_paths=cfg.backtest.n_paths,
-            seed=exits.model.seed,
-            provider=h.provider,
-        )
-        live = sim.selection == "cross_name"  # per_ticker reproduces E7.5 unchanged
-        quotes = None
-        if live and sim.exit_marks == "all_quotes" and h.marks == "quoted":
-            quotes = quote_marks(h.raw, h.closes, dte_max=ds.chain_dte_max)
-        splits = None
-        if live and sim.splits == "adjust" and len(h.ohlc):
-            splits = split_ratios(h.closes, pd.Series(h.ohlc["close"])) or None
+        ctx = menu_cache_ctx(h, cfg, exits)
+        quotes, splits = ticker_books(h, cfg, sim)
         out.append(
             sim_ticker_from_chains(
                 t,
@@ -1129,6 +1317,33 @@ def active_list(
         fill=sim.active_fill,
     )
     return au.tickers
+
+
+def funnel_active(
+    day: dt.date,
+    infos: Mapping[str, DayInfo],
+    eligible: Sequence[str],
+    momentum: Sequence[str],
+    sim: SimSettings,
+) -> tuple[list[str], list[str], dict[str, str]]:
+    """The cross-name funnel's screen and active list for one session.
+
+    Returns ``(screened, active, tier_of)``: *eligible* names passing the live D9 screen
+    (seeds are never screened), the :func:`active_list` proxy (core, then momentum,
+    then the rest by liquidity) and each core/momentum name's tier. Shared by the walk
+    and the E7.21 candidate ledger's ``in_active`` context.
+    """
+    screened = [
+        t
+        for t in eligible
+        if not (sim.apply_screen and not infos[t].seed and not infos[t].screen_pass)
+    ]
+    core = [t for t in screened if infos[t].seed]
+    sset = set(screened)
+    mom = [t for t in momentum if t in sset and t not in set(core)]
+    rest = [(t, infos[t].liquidity) for t in screened if t not in set(core) | set(mom)]
+    active = active_list(day, core=core, momentum=mom, rest=rest, sim=sim)
+    return screened, active, dict.fromkeys(core, "core") | dict.fromkeys(mom, "momentum")
 
 
 # ---------------------------------------------------------------------------
@@ -1343,13 +1558,29 @@ def _monthly_momentum(
         t: (r.adj_closes if r.adj_closes is not None else r.closes) for t, r in tickers.items()
     }
     etfs = frozenset(t for t, r in tickers.items() if any(i.etf for i in r.days.values()))
+    return monthly_momentum(
+        closes, {t: r.days for t, r in tickers.items()}, sessions, sim, aliases, etfs=etfs
+    )
+
+
+def monthly_momentum(
+    closes: Mapping[str, pd.Series],
+    days: Mapping[str, Mapping[dt.date, DayInfo]],
+    sessions: Sequence[dt.date],
+    sim: SimSettings,
+    aliases: Mapping[str, str],
+    *,
+    etfs: frozenset[str],
+) -> dict[dt.date, list[str]]:
+    """:func:`_monthly_momentum` on plain inputs (split-adjusted closes and day infos per
+    name); shared with the E7.21 ledger's active-list context."""
     out: dict[dt.date, list[str]] = {}
     cur: list[str] = []
     month: tuple[int, int] | None = None
     for d in sessions:
         if (d.year, d.month) != month:
             month = (d.year, d.month)
-            elig = {t: s for t, s in closes.items() if (i := tickers[t].days.get(d)) and i.eligible}
+            elig = {t: s for t, s in closes.items() if (i := days[t].get(d)) and i.eligible}
             scores = momentum_scores(
                 elig, d, lookback=sim.momentum_lookback, skip=sim.momentum_skip
             )
@@ -1531,20 +1762,12 @@ def _decide(
         funnel["screened"] = funnel["active"] = len(active)
         tier_of = {t: "core" for t in active if t in infos and infos[t].seed}
     else:
-        screened: list[str] = []
+        screened, active, tier_of = funnel_active(day, infos, eligible, momentum, sim)
         for t in eligible:
-            if sim.apply_screen and not infos[t].seed and not infos[t].screen_pass:
+            if t not in set(screened):
                 skip(day, t, "screen")
-                continue
-            screened.append(t)
         funnel["screened"] = len(screened)
-        core = [t for t in screened if infos[t].seed]
-        sset = set(screened)
-        mom = [t for t in momentum if t in sset and t not in set(core)]
-        rest = [(t, infos[t].liquidity) for t in screened if t not in set(core) | set(mom)]
-        active = active_list(day, core=core, momentum=mom, rest=rest, sim=sim)
         funnel["active"] = len(active)
-        tier_of = dict.fromkeys(core, "core") | dict.fromkeys(mom, "momentum")
     new: list[_Pos] = []
     account_eq = Decimal(str(round(equity, 2)))
     account = AccountSnapshot(

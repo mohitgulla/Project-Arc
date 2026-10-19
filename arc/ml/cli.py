@@ -64,10 +64,38 @@ def add_ml_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> N
     r.add_argument("--out", type=Path, default=REPO / "docs" / "RESEARCH" / "ml-m1.md")
     r.add_argument("--card", type=Path, default=None, help="Also write model_card.md here")
 
+    lg = msub.add_parser("ledger", help="Candidate outcome ledger (E7.21)")
+    lsub = lg.add_subparsers(dest="ledger_command", required=True)
+    lb = lsub.add_parser("build", help="Every menu candidate × day with labels (resumable)")
+    lb.add_argument("--universe", default="c125", help="Checkpoint (c125/c250/c500)")
+    lb.add_argument("--from", dest="start", type=_dt.date.fromisoformat, required=True)
+    lb.add_argument("--to", dest="end", type=_dt.date.fromisoformat, required=True)
+    lb.add_argument(
+        "--data-end",
+        type=_dt.date.fromisoformat,
+        default=None,
+        help="Last session labels may read (default: --to + 75 days)",
+    )
+    lb.add_argument("--profiles", default="margin,cash_debit,cash_long_only")
+    lb.add_argument("--workers", type=int, default=1, help="Processes (≤ 6 on the host)")
+    lb.add_argument("--sample-frac", type=float, default=None, help="Off-band keep fraction")
+    lb.add_argument("--tickers", default=None, help="Comma list (overrides --universe)")
+    lb.add_argument("--data", type=Path, default=DEFAULT_DATA, help="History data dir")
+    lb.add_argument("--out", type=Path, default=None, help="Default <data>/ml/ledger")
+    lb.add_argument("--ranking", type=Path, default=REPO / "config" / "ranking.yaml")
+    lb.add_argument("--no-cache", action="store_true", help="Skip the shared menu cache")
+    ls2 = lsub.add_parser("stats", help="Counts, label base rates, mean r_net per x")
+    ls2.add_argument("--out", type=Path, default=None, help="Ledger root (default data/ml/ledger)")
+    ls2.add_argument("--data", type=Path, default=DEFAULT_DATA)
+    ls2.add_argument("--split", default="dev", choices=["dev", "holdout", "all"])
+    ls2.add_argument("--reason", default=None, help="Required to read holdout (logged)")
+
 
 def run_ml(args: argparse.Namespace) -> int:
     if args.ml_command == "m1":
         return _m1(args)
+    if args.ml_command == "ledger":
+        return _ledger(args)
     cmd = args.features_command
     if cmd == "list":
         return _list(args)
@@ -152,6 +180,56 @@ def _list(args: argparse.Namespace) -> int:
 
 def _split(raw: str) -> list[str]:
     return list(dict.fromkeys(t.strip().upper() for t in raw.split(",") if t.strip()))
+
+
+def _ledger(args: argparse.Namespace) -> int:
+    from arc.ml.ledger.build import ledger_stats
+
+    data = Path(args.data)
+    out = Path(args.out) if args.out else data / "ml" / "ledger"
+    if args.ledger_command == "stats":
+        sys.stdout.write(ledger_stats(out, split=args.split, reason=args.reason).rstrip() + "\n")
+        return 0
+    from arc.backtest.costs import load_cost_model
+    from arc.backtest.ranking import load_ranking_file
+    from arc.config import ArcSettings
+    from arc.exits.policy import load_exit_config
+    from arc.ml.features.adapters.history import universe_symbols
+    from arc.ml.ledger.build import build_ledger
+    from arc.routines.config import RangeEdgesSettings
+    from arc.routines.strategy import load_strategy_data
+
+    tickers = _split(args.tickers) if args.tickers else universe_symbols(data, args.universe)[0]
+    data_end = args.data_end or args.end + _dt.timedelta(days=75)
+    edges = RangeEdgesSettings.model_validate(load_strategy_data(None).get("range_edges") or {})
+
+    def progress(s: str) -> None:
+        sys.stderr.write(s + "\n")
+
+    res = build_ledger(
+        data_dir=data,
+        out_root=out,
+        universe=args.universe,
+        start=args.start,
+        end=args.end,
+        data_end=data_end,
+        profiles=[p.strip() for p in args.profiles.split(",") if p.strip()],
+        cfg=load_ranking_file(args.ranking),
+        cost=load_cost_model(),
+        exits=load_exit_config(),
+        settings=ArcSettings(),
+        tickers=tickers,
+        workers=args.workers,
+        sample_frac=args.sample_frac,
+        cache_dir=None if args.no_cache else data,
+        range_rule=edges.rule() if edges.enabled else None,
+        progress=progress,
+    )
+    sys.stdout.write(
+        f"{res.vdir}: {res.jobs} (ticker, years) jobs, {res.rows} rows total, "
+        f"{res.manifest['bytes'] / 1e9:.2f} GB, {res.seconds:.0f}s\n"
+    )
+    return 0
 
 
 def _build(args: argparse.Namespace) -> int:
