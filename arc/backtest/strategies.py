@@ -48,6 +48,7 @@ __all__ = [
     "StrategyKind",
     "StrategySpec",
     "WingFit",
+    "capped_expirations",
     "nan_if_none",
     "pick_expirations",
     "select_legs",
@@ -86,6 +87,20 @@ class StrategySpec(BaseModel):
     width_pct: float = Field(0.02, gt=0.0, description="Wing width as a fraction of spot")
     expiry_mode: ExpiryMode = ExpiryMode.NEAREST
     min_volume: float = Field(1.0, ge=0.0, description="Min session volume on every leg")
+    max_expiries: int | None = Field(
+        None,
+        ge=1,
+        description="E7.19 (D125): with expiry_mode all, keep at most this many expirations: "
+        "the ones nearest evenly spaced targets from dte_min to dte_max (3 = low end, middle, "
+        "high end). None = every expiration. Left out of the dump when None, so menu-cache "
+        "keys of specs that never set it are unchanged.",
+    )
+    exit_block: str | None = Field(
+        None,
+        description="E7.19 (D125): the config/exits.yaml sleeves: block the menu's managed-exit "
+        "model uses (the sleeve's exit_policy, as the live scanner's "
+        "exit_block_for_dte); None = the kind policy. Left out of the dump when None.",
+    )
     # D131 (E28.1) sim parity, credit kinds only. Defaults = the pre-D131 selection and
     # are left out of dumps, so menu-cache keys and labels of existing specs don't move.
     wing_fit: WingFit = Field(
@@ -109,6 +124,9 @@ class StrategySpec(BaseModel):
             out.pop("wing_cap", None)
         if out.get("min_credit_width") == 0.0:
             out.pop("min_credit_width", None)
+        for k in ("max_expiries", "exit_block"):  # E7.19 (D125)
+            if out.get(k) is None:
+                out.pop(k, None)
         return out
 
     @model_validator(mode="after")
@@ -167,11 +185,33 @@ def pick_expirations(chain: pd.DataFrame, spec: StrategySpec) -> list[dt.date]:
     if ok.empty:
         return []
     if spec.expiry_mode is ExpiryMode.ALL:
-        return sorted(ok.index)
+        exps = sorted(ok.index)
+        n = spec.max_expiries
+        if n is None or len(exps) <= n:
+            return exps
+        return capped_expirations({e: int(ok[e]) for e in exps}, spec.dte_min, spec.dte_max, n)
     mid = (spec.dte_min + spec.dte_max) / 2.0
     dist = (ok - mid).abs()
     best = dist.min()
     return [min(d for d, v in dist.items() if v == best)]
+
+
+def capped_expirations(
+    dte_by_exp: dict[dt.date, int], dte_min: int, dte_max: int, n: int
+) -> list[dt.date]:
+    """E7.19: the expirations nearest *n* evenly spaced DTE targets in [dte_min, dte_max].
+
+    Targets are ``dte_min + i * (dte_max - dte_min) / (n - 1)`` (one target, the middle,
+    when ``n == 1``); a tie goes to the earlier expiry. Two targets landing on the same
+    expiry keep it once, so fewer than *n* can come back. Ascending.
+    """
+    if n == 1:
+        targets = [(dte_min + dte_max) / 2.0]
+    else:
+        targets = [dte_min + i * (dte_max - dte_min) / (n - 1) for i in range(n)]
+    order = sorted(dte_by_exp)
+    picked = {min(order, key=lambda e: (abs(dte_by_exp[e] - t), e)) for t in targets}
+    return sorted(picked)
 
 
 def _pick(row: pd.Series, side: int) -> LegPick:

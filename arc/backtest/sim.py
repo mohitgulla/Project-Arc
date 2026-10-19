@@ -18,13 +18,19 @@ session close, from E7.10's point-in-time view (:class:`arc.backtest.data.Histor
    Trending cannot be replayed (no historical LLM, Reddit or Stocktwits inputs).
 4. **Stance proxy.** The live regime model's trend label (``regime_model``, v2) →
    the profile's ``stance_strategies`` (and ``backtest.vol_gate``).
-5. **Menus** (E7.10 menu cache), the hard filters, the earnings blackout through the
-   pure :func:`arc.gate.rules.check_earnings_blackout` on E7.10's projected dates, and
-   the optional entry filters.
+5. **Menus** (E7.10 menu cache). E7.19 (D125): a profile with entry-DTE sleeves
+   (``config/account_profiles.yaml``) builds one menu per sleeve, on its window and
+   its exit block (:func:`sleeve_windows`), and tags every candidate with its sleeve;
+   a single-window profile is one implicit ``default`` sleeve. Then the hard filters,
+   the earnings blackout through the pure :func:`arc.gate.rules.check_earnings_blackout`
+   on E7.10's projected dates, and the optional entry filters.
 6. **Cross-name ranking.** Every active name's top ``per_name_depth`` candidates are
    pooled and sorted by (ranker key, option liquidity desc, symbol, candidate key):
    shuffling the ticker order cannot change the result.
-7. **Open** down the pool until ``max_open_positions`` binds. Sizing is D18
+   E7.19: each name contributes its top ``per_name_depth`` per sleeve (live: one menu
+   per open sleeve); the sleeves compete in the one pool.
+7. **Open** down the pool until ``max_open_positions`` binds; a candidate whose
+   sleeve is full (gate rule ``sleeve_max_positions``) is skipped as ``sleeve_full``. Sizing is D18
    :func:`arc.sizing.size_contracts` on the marked equity of the account (D80:
    $25K, ``backtest.sim.equity``) with the name's open max loss as
    ``existing_max_loss``. Pure gate rules applied: :data:`GATE_RULES_APPLIED`.
@@ -36,6 +42,15 @@ session close, from E7.10's point-in-time view (:class:`arc.backtest.data.Histor
    of its session volume (clip or skip). A partition without OI (Alpaca) applies
    the volume limit only.
 10. **Exits.** ``config/exits.yaml`` on EOD marks (stop → lock → TP → DTE), as E7.5.
+    E7.19: each position resolves its policy once at entry through
+    ``ArcSettings.exit_block_for_dte(entry DTE)`` and ``ExitConfig.policy_for`` (the
+    live position manager's call path), so the short sleeve gets its own block.
+    Rules flagged intraday (``stop_eod_only: false``, ``profit_lock.eod_only:
+    false``) are also checked on a daily-range proxy (``intraday_proxy: range``): every
+    leg re-priced at the session's underlying high and low at its EOD IV (sticky
+    strike), stop first, exit at the proxy price minus the spread cost
+    (``stop_intraday_proxy`` / ``lock_intraday_proxy``). The proxy reads only session
+    d's high/low for d's check; it over-states stops on whipsaw days.
 
 Everything that depends on one ticker (menus, outcome paths, eligibility, liquidity)
 is computed by :func:`sim_ticker_job` in a worker; :func:`run_sim` is a single-process
@@ -55,6 +70,7 @@ import pandas as pd
 import structlog
 from pydantic import BaseModel, ConfigDict, Field
 
+from arc.backtest.chain import implied_vol_vec
 from arc.backtest.correlations import pit_closes
 from arc.backtest.engine import MULT, STRUCTURE_KIND, Trade, close_early, open_trade, settle
 from arc.backtest.entry_filter import (
@@ -77,7 +93,7 @@ from arc.backtest.ranking import (
 )
 from arc.backtest.sim_config import SimSettings
 from arc.backtest.strategies import StrategyKind, StrategySpec
-from arc.exits.policy import check_rules, resolve_rules
+from arc.exits.policy import ExitReason, check_rules, lock_fires, resolve_rules
 from arc.features.correlation import MIN_OBS, WINDOW, return_corr
 from arc.gate.caps import alloc_pct_for, deployed_max_loss, open_risk
 from arc.gate.cluster import corr_key
@@ -86,15 +102,18 @@ from arc.gate.rules import (
     Derived,
     check_cluster_cap,
     check_daily_loss,
+    check_dte_window,
     check_earnings_blackout,
     check_max_gain,
     check_max_open_positions,
     check_open_risk,
     check_per_underlying,
     check_short_premium_regime,
+    check_sleeve_positions,
     price_ceiling,
 )
 from arc.models import Proposal, Structure
+from arc.pricing.bs import price_vectorized
 from arc.scanner.rank import Ranker, RankFilters, passes_filters, rank, sort_key
 from arc.sizing import size_contracts
 from arc.structures import analyze
@@ -103,14 +122,14 @@ from arc.universe.tiers import Tier, TierMember, resolve_active
 from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Callable, Mapping, Sequence
 
     from arc.backtest.costs import CostModel
     from arc.backtest.data import HistoryView
     from arc.backtest.earnings_hist import NextEarnings
     from arc.backtest.ranking import RankingFile
     from arc.config import ArcSettings
-    from arc.exits.policy import ExitConfig, ExitModelConfig
+    from arc.exits.policy import ExitConfig, ExitModelConfig, ResolvedRules
 
 log = structlog.get_logger()
 
@@ -118,6 +137,7 @@ __all__ = [
     "GATE_RULES_APPLIED",
     "GATE_RULES_NOT_APPLIED",
     "NOT_REPLAYED",
+    "PROXY_EXITS",
     "SKIP_REASONS",
     "DayInfo",
     "SimCandidate",
@@ -133,6 +153,7 @@ __all__ = [
     "sim_outcome",
     "sim_ticker_from_chains",
     "sim_ticker_job",
+    "sleeve_windows",
     "spread_ok",
 ]
 
@@ -149,11 +170,16 @@ GATE_RULES_APPLIED: tuple[str, ...] = (
     "check_cluster_cap (D131: point-in-time 60-session return correlations of the held "
     "names from the walk's own closes, strictly before the session)",
     "cash_settled fit (check_account_profile's cash sub-check; cash_settled profiles)",
+    "margin buying-power fit (check_account_profile's D129 sub-check: options buying "
+    "power = equity - held max loss; margin profiles, sim.margin_buying_power)",
+    "check_sleeve_positions (sleeve_max_positions; E7.19, sleeve profiles)",
+    "check_dte_window (through the sleeve windows; E7.19, sleeve profiles)",
 )
 #: Live rules the walk does not apply, and why (also in every report).
 GATE_RULES_NOT_APPLIED: tuple[str, ...] = (
     "check_greek_caps (needs per-leg greeks of the whole book; not in the menu)",
-    "check_dte_window (the menu's own DTE window decides; backtest.dte_windows may differ)",
+    "check_dte_window on single-window profiles (the menu's own DTE window decides; "
+    "backtest.dte_windows may differ)",
     "check_spread_tick / check_band / tick grid (the fill model's spread rule stands in)",
     "check_wash_sale, check_order_budget, check_day_trades, check_halt, approval TTL, "
     "data freshness (operational; no history)",
@@ -179,10 +205,16 @@ SKIP_REASONS: tuple[str, ...] = (
     "no_fill",
     "exit_delayed",
     "new_risk_cap",
+    "sleeve_full",
+    "buying_power",
+    "gate_dte_window",
     "gate_short_premium_regime",
     "gate_open_risk_cap",
     "gate_cluster_cap",
 )
+#: E7.19: exit labels of the intraday-rule daily-range proxy (trades.csv exit_reason).
+PROXY_EXITS: dict[str, str] = {"stop": "stop_intraday_proxy", "profit_lock": "lock_intraday_proxy"}
+DEFAULT_SLEEVE = "default"
 
 
 # ---------------------------------------------------------------------------
@@ -207,6 +239,9 @@ class SimCandidate(BaseModel):
 
     candidate: Candidate
     result: SimOutcome | None = Field(None, description="None = cannot be filled or settled")
+    sleeve: str = Field(
+        DEFAULT_SLEEVE, description="E7.19: entry-DTE sleeve (ArcSettings.sleeve_for_dte)"
+    )
 
 
 class DayInfo(BaseModel):
@@ -372,6 +407,145 @@ def _restruck(o: Any, f: float) -> dict[str, str]:
     }
 
 
+# ---------------------------------------------------------------------------
+# E7.19 (D125): entry-DTE sleeves and the intraday-rule range proxy
+# ---------------------------------------------------------------------------
+
+
+class SleeveWindow(BaseModel):
+    """One menu window of a profile: a live entry-DTE sleeve (or the implicit default)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    dte_min: int
+    dte_max: int
+    exit_block: str | None = None
+
+
+def sleeve_windows(
+    settings: ArcSettings, window: tuple[int, int], *, override: bool = False
+) -> list[SleeveWindow]:
+    """The menu windows of *settings*' profile, read from ``config/account_profiles.yaml``.
+
+    A profile with named sleeves gets one window per sleeve, with the sleeve's
+    ``exit_policy`` block. A single-window profile, or any profile whose window the
+    backtest overrides (*override*: ``backtest.dte_windows``), is one implicit
+    ``default`` sleeve on *window* with the kind policy, exactly the pre-E7.19 menu.
+    """
+    if override or not settings.profile.has_sleeves:
+        return [SleeveWindow(name=DEFAULT_SLEEVE, dte_min=window[0], dte_max=window[1])]
+    return [
+        SleeveWindow(name=s.name, dte_min=s.dte_min, dte_max=s.dte_max, exit_block=s.exit_policy)
+        for s in settings.entry_sleeves
+    ]
+
+
+def sleeve_name(settings: ArcSettings, dte: int) -> str:
+    """The sleeve containing entry DTE *dte* (``ArcSettings.sleeve_for_dte``), else default."""
+    s = settings.sleeve_for_dte(dte)
+    return s.name if s is not None else DEFAULT_SLEEVE
+
+
+def session_ranges(
+    closes: pd.Series, ohlc: pd.DataFrame | None
+) -> dict[dt.date, tuple[float, float]]:
+    """Per session, the underlying's (high, low) in raw strike units.
+
+    ``underlying_ohlc`` is split-adjusted to today; each day is scaled by that day's
+    raw close / adjusted close, so the range sits on the same strikes as the chain.
+    The range always contains the raw close. Sessions without a bar are left out.
+    """
+    if ohlc is None or ohlc.empty or not {"high", "low", "close"} <= set(ohlc.columns):
+        return {}
+    out: dict[dt.date, tuple[float, float]] = {}
+    for d, row in ohlc.iterrows():
+        if d not in closes.index:
+            continue
+        raw, adj = float(closes[d]), float(row["close"])
+        hi, lo = float(row["high"]), float(row["low"])
+        if not all(math.isfinite(v) and v > 0 for v in (raw, adj, hi, lo)):
+            continue
+        k = raw / adj
+        out[d] = (max(hi * k, raw), min(lo * k, raw))  # type: ignore[index]
+    return out
+
+
+def proxy_marks(
+    legs: Sequence[Any],
+    marks: Mapping[str, tuple[float, float]],
+    *,
+    spot: float,
+    extreme: float,
+    expiration: dt.date,
+    day: dt.date,
+    r: float,
+) -> dict[str, tuple[float, float]] | None:
+    """Every leg re-priced at underlying *extreme* at its EOD IV (sticky strike).
+
+    The IV is solved from the leg's EOD mid at the EOD *spot* (European BSM, no
+    dividend, ``implied_vol_vec``); the spread stays the EOD quoted spread, so a fill
+    there pays the same spread cost. ``None`` when a leg's IV cannot be solved.
+    """
+    t = max((expiration - day).days, 0) / 365.0
+    if t <= 0:
+        return None
+    mids = np.array([marks[lg.symbol][0] for lg in legs], dtype=float)
+    k = np.array([lg.strike for lg in legs], dtype=float)
+    flag = np.array(["c" if lg.right == "call" else "p" for lg in legs])
+    tt = np.full(len(legs), t)
+    iv = implied_vol_vec(mids, spot, k, tt, r, 0.0, flag)
+    if not np.isfinite(iv).all():
+        return None
+    px = price_vectorized(flag, np.full(len(legs), extreme), k, tt, r, iv)
+    return {lg.symbol: (float(v), marks[lg.symbol][1]) for lg, v in zip(legs, px, strict=True)}
+
+
+def range_proxy_rule(
+    rules: ResolvedRules,
+    legs: Sequence[Any],
+    marks: Mapping[str, tuple[float, float]],
+    *,
+    spot: float,
+    rng: tuple[float, float],
+    expiration: dt.date,
+    day: dt.date,
+    r: float,
+    peak: float | None,
+) -> tuple[str, dict[str, tuple[float, float]], float] | None:
+    """The intraday-flagged rule the session's range would have fired, stop first.
+
+    Only rules the policy runs intraday are checked (``stop_eod_only: false``,
+    ``profit_lock.eod_only: false``); *peak* is the peak P&L of the earlier EOD
+    marks. Each extreme (high, low) is priced by :func:`proxy_marks`; the stop is
+    checked on both before the lock (pessimistic: when both touch, the stop wins),
+    and of two firing extremes the worse P&L is taken. Returns ``(rule, marks at that
+    extreme, extreme)`` or ``None``. Reads only this session's range.
+    """
+    pol = rules.policy
+    stop = rules.stop_pnl if not pol.stop_eod_only else None
+    lock_on = pol.profit_lock is not None and not pol.profit_lock.eod_only
+    if stop is None and not lock_on:
+        return None
+    priced: list[tuple[float, dict[str, tuple[float, float]], float]] = []
+    for x in rng:
+        m = proxy_marks(legs, marks, spot=spot, extreme=x, expiration=expiration, day=day, r=r)
+        if m is None:
+            return None
+        pnl = sum(lg.side * m[lg.symbol][0] for lg in legs) - rules.entry_net
+        priced.append((pnl, m, x))
+    priced.sort(key=lambda e: e[0])  # worst first
+    if stop is not None:
+        for pnl, m, x in priced:
+            if pnl <= stop:
+                return "stop", m, x
+    if lock_on:
+        for pnl, m, x in priced:
+            if lock_fires(rules, pnl=pnl, peak=peak, eod=False):
+                return "profit_lock", m, x
+    return None
+
+
 def sim_outcome(
     c: Candidate,
     *,
@@ -384,6 +558,9 @@ def sim_outcome(
     marks: Mapping[dt.date, pd.DataFrame] | None = None,
     splits: Mapping[dt.date, float] | None = None,
     fill_cost: CostModel | None = None,
+    ranges: Mapping[dt.date, tuple[float, float]] | None = None,
+    rate: Callable[[dt.date], float] | float = 0.0,
+    sleeves: bool = True,
 ) -> SimOutcome | None:
     """Play *c* forward: entry at mid ± x·spread, exits on EOD marks, retry on no fill.
 
@@ -399,6 +576,13 @@ def sim_outcome(
     re-struck contract (strike / r, price × r) and settle on the adjusted close; any
     other adjustment inside the hold returns ``None``. *fill_cost* (estimated-spread
     counterfactual) re-prices every fill's spread as ``fill_cost.spread(mid)``.
+
+    E7.19: the exit policy is resolved once, at entry, from the entry DTE's sleeve
+    (``settings.exit_block_for_dte``; *sleeves* False = the kind policy, for a
+    one-window menu that overrides the profile's sleeves). *ranges*
+    (:func:`session_ranges`; ``None`` = no proxy) add the intraday-rule daily-range
+    check (:func:`range_proxy_rule`) on each session before its EOD rules; *rate* is
+    the session's risk-free rate for it.
     """
     spec_kind = StrategyKind(c.kind)
     picks = c.picks
@@ -437,7 +621,8 @@ def sim_outcome(
         leg_vol.append(None if row is None else _num(row.get("volume")))
     entry_ok = (not spread_rule) or all(spread_ok(p.mid, p.spread, settings) for p in c.picks)
     structure = analyze(_legs(c.picks, c.underlying), as_of=c.day)
-    rules = resolve_rules(structure, exits.policy_for(STRUCTURE_KIND[spec_kind]))
+    block = settings.exit_block_for_dte(o.dte) if sleeves else None  # E7.19: once, at entry
+    rules = resolve_rules(structure, exits.policy_for(STRUCTURE_KIND[spec_kind], block))
     entry_fill = sum(lg.side * lg.fill for lg in o.legs)
     book = chains if marks is None else marks
     day_marks: dict[dt.date, float] = {}
@@ -463,6 +648,29 @@ def sim_outcome(
         m = {old: (raw_m[new][0] * f, raw_m[new][1] * f) for old, new in sym.items()}
         spot = float(closes[day]) * f if day in closes.index else float("nan")
         value_mid = sum(lg.side * m[lg.symbol][0] for lg in o.legs)
+        rng = None if ranges is None else ranges.get(day)
+        if pending is None and rng is not None and math.isfinite(spot):
+            hit = range_proxy_rule(
+                rules,
+                o.legs,
+                m,
+                spot=spot,
+                rng=(rng[0] * f, rng[1] * f),
+                expiration=o.expiration,
+                day=day,
+                r=float(rate(day)) if callable(rate) else float(rate),
+                peak=peak,
+            )
+            if hit is not None and (
+                not spread_rule or all(spread_ok(*raw_m[s], settings) for s in sym.values())
+            ):
+                rule, pm, x = hit
+                if fill_cost is not None:
+                    pm = {k: (v[0], fill_cost.spread(v[0])) for k, v in pm.items()}
+                reason = ExitReason(rule)
+                trade = close_early(o, day=day, marks=pm, spot=x, reason=reason, cost=cost)
+                trade = trade.model_copy(update={"exit_reason": PROXY_EXITS[rule]})
+                break
         day_marks[day] = (value_mid - entry_fill) * MULT - o.open_fees
         if pending is None:
             pnl = value_mid - rules.entry_net
@@ -546,6 +754,13 @@ def sim_ticker_from_chains(
     E7.17: *quotes* is the exit book (:func:`quote_marks`; ``None`` = mark on
     *chains*), *splits* the ticker's split events (:func:`split_ratios`): outcomes
     follow them, and trend labels and momentum read split-adjusted closes.
+
+    E7.19 (D125): each profile's menu is built per entry-DTE sleeve
+    (:func:`sleeve_windows`: its window, its exit block in the managed-exit model),
+    each sleeve's own top ``per_name_depth`` get outcome paths, and every candidate
+    is tagged with its sleeve. A single-window profile is one ``default`` sleeve.
+    With ``backtest.sim.intraday_proxy: range`` (cross_name only) outcomes add the
+    daily-range check of intraday-flagged rules on *ohlc*.
     """
     closes = closes.sort_index()
     bt = cfg.backtest
@@ -557,7 +772,9 @@ def sim_ticker_from_chains(
     trend, vol = labels_for(label_closes, sim.regime_model)
     day_stance = trend_stances(trend) if bt.direction_tilt > 0 else None
     stretched = None
-    if bt.entry_filter != "none":
+    # E7.19 (D128): the live anti-chase filter on the live-shaped walk
+    live_filter = sim.entry_filters == "live" and sim.selection == "cross_name"
+    if bt.entry_filter != "none" or live_filter:
         stretched = stretched_days(
             ohlc if ohlc is not None else pd.DataFrame(),
             dd,
@@ -572,69 +789,52 @@ def sim_ticker_from_chains(
     base = cost.model_copy(update={"slippage_frac": sim.slippage_x})
     # per_ticker reproduces the E7.5 walk: no spread rule on its fills or exits
     spread_rule = sim.spread_rule == "live" and sim.selection == "cross_name"
+    ranges = None
+    if sim.intraday_proxy == "range" and sim.selection == "cross_name":
+        ranges = session_ranges(closes, ohlc)
+
+    def rate_of(d: dt.date) -> float:
+        return bt.risk_free_rate if rate is None else float(rate(d))
+
     out: dict[str, dict[dt.date, list[SimCandidate]]] = {}
-    for profile, (lo, hi) in sorted(windows.items()):
-        specs = bt.specs_for(profile, lo, hi)
-        ck = kind_costs(specs, base, bt.slippage_by_kind) if bt.slippage_by_kind else {}
-        menus: dict[dt.date, list[Candidate]] = {}
-        by_rate: dict[float, list[dt.date]] = {}
-        for d in dd:  # build_menus takes one rate: group sessions by it (flat = one call)
-            by_rate.setdefault(bt.risk_free_rate if rate is None else float(rate(d)), []).append(d)
-        for r, rdays in by_rate.items():
-            kw: dict[str, Any] = {
-                "days": rdays,
-                "underlying": ticker,
-                "specs": specs,
-                "cost": base,
-                "exits": exits,
-                "mc": mc,
-                "r": r,
-                "stances": day_stance,
-                "tilt": bt.direction_tilt,
-                "cache": cache,
-                "cache_ctx": cache_ctx,
-            }
-            # exactly the E7.5 ticker_job calls, so per_ticker mode reproduces its menus
-            if ck:
-                menus |= build_menus_by_kind(chains, closes, cost_by_kind=ck, **kw)
-            else:
-                menus |= build_menus(chains, closes, **kw)
-        if stances is not None:
-            gate = {str(k): frozenset(v) for k, v in bt.vol_gate.get(profile, {}).items()}
-            menus = apply_stance(menus, trend, stances[profile], vol=vol, vol_gate=gate or None)
-        if stretched is not None:
-            menus, _ = apply_entry_filter(menus, trend, stretched)
-        if atr is not None and bt.max_be_atr is not None:
-            menus, _ = apply_be_filter(menus, closes, atr, bt.max_be_atr)
+    for profile, window in sorted(windows.items()):
         per_day: dict[dt.date, list[SimCandidate]] = {}
-        for d, menu in menus.items():
-            if not menu:
-                continue
-            keys = _top_keys(
-                menu,
-                rankers[profile],
-                cfg.ranking.filters,
-                cfg.ranking.vrp_threshold,
-                sim.per_name_depth,
-            )
-            kept: list[SimCandidate] = []
-            for c in menu:
-                if c.inputs.key not in keys:
-                    continue
-                res = sim_outcome(
-                    c,
-                    chains=chains,
-                    closes=closes,
-                    cost=ck.get(c.kind, base),
-                    exits=exits,
-                    settings=settings[profile],
-                    spread_rule=spread_rule,
-                    marks=quotes,
-                    splits=splits,
-                    fill_cost=ck.get(c.kind, base) if sim.fill_spread == "estimated" else None,
-                )
-                kept.append(SimCandidate(candidate=c, result=res))
-            per_day[d] = kept
+        # an explicit window other than the profile's envelope (backtest.dte_windows, a
+        # test) or the E7.5 per_ticker walk keeps the one-window menu
+        override = (
+            tuple(window) != settings[profile].entry_dte_window or sim.selection == "per_ticker"
+        )
+        for sw in sleeve_windows(settings[profile], window, override=override):
+            for d, kept in _sleeve_menu(
+                ticker,
+                chains,
+                closes,
+                sw=sw,
+                profile=profile,
+                dd=dd,
+                cfg=cfg,
+                exits=exits,
+                mc=mc,
+                base=base,
+                settings=settings[profile],
+                rankers=rankers[profile],
+                stances=stances,
+                trend=trend,
+                vol=vol,
+                day_stance=day_stance,
+                stretched=stretched,
+                atr=atr,
+                sim=sim,
+                spread_rule=spread_rule,
+                rate=rate,
+                rate_of=rate_of,
+                cache=cache,
+                cache_ctx=cache_ctx,
+                quotes=quotes,
+                splits=splits,
+                ranges=ranges,
+            ).items():
+                per_day.setdefault(d, []).extend(kept)
         out[profile] = per_day
     return SimTicker(
         ticker=ticker,
@@ -648,6 +848,107 @@ def sim_ticker_from_chains(
         cache_misses=cache.misses if cache is not None else 0,
         provider=provider,
     )
+
+
+def _sleeve_menu(
+    ticker: str,
+    chains: Mapping[dt.date, pd.DataFrame],
+    closes: pd.Series,
+    *,
+    sw: SleeveWindow,
+    profile: str,
+    dd: Sequence[dt.date],
+    cfg: RankingFile,
+    exits: ExitConfig,
+    mc: ExitModelConfig,
+    base: CostModel,
+    settings: ArcSettings,
+    rankers: Sequence[Ranker],
+    stances: Mapping[str, Mapping[str, frozenset[str]]] | None,
+    trend: pd.Series,
+    vol: pd.Series,
+    day_stance: Mapping[dt.date, str] | None,
+    stretched: Any,
+    atr: Any,
+    sim: SimSettings,
+    spread_rule: bool,
+    rate: Any,
+    rate_of: Callable[[dt.date], float],
+    cache: MenuCache | None,
+    cache_ctx: MenuCacheContext | None,
+    quotes: Mapping[dt.date, pd.DataFrame] | None,
+    splits: Mapping[dt.date, float] | None,
+    ranges: Mapping[dt.date, tuple[float, float]] | None,
+) -> dict[dt.date, list[SimCandidate]]:
+    """One (profile, sleeve) menu per session: build, stance/filters, top keys, outcomes."""
+    bt = cfg.backtest
+    lo, hi = sw.dte_min, sw.dte_max
+    specs = bt.specs_for(profile, lo, hi, sw.exit_block)
+    ck = kind_costs(specs, base, bt.slippage_by_kind) if bt.slippage_by_kind else {}
+    menus: dict[dt.date, list[Candidate]] = {}
+    by_rate: dict[float, list[dt.date]] = {}
+    for d in dd:  # build_menus takes one rate: group sessions by it (flat = one call)
+        by_rate.setdefault(bt.risk_free_rate if rate is None else float(rate(d)), []).append(d)
+    for r, rdays in by_rate.items():
+        kw: dict[str, Any] = {
+            "days": rdays,
+            "underlying": ticker,
+            "specs": specs,
+            "cost": base,
+            "exits": exits,
+            "mc": mc,
+            "r": r,
+            "stances": day_stance,
+            "tilt": bt.direction_tilt,
+            "cache": cache,
+            "cache_ctx": cache_ctx,
+        }
+        # exactly the E7.5 ticker_job calls, so per_ticker mode reproduces its menus
+        if ck:
+            menus |= build_menus_by_kind(chains, closes, cost_by_kind=ck, **kw)
+        else:
+            menus |= build_menus(chains, closes, **kw)
+    if stances is not None:
+        gate = {str(k): frozenset(v) for k, v in bt.vol_gate.get(profile, {}).items()}
+        menus = apply_stance(menus, trend, stances[profile], vol=vol, vol_gate=gate or None)
+    if stretched is not None:
+        menus, _ = apply_entry_filter(menus, trend, stretched)
+    if atr is not None and bt.max_be_atr is not None:
+        menus, _ = apply_be_filter(menus, closes, atr, bt.max_be_atr)
+    per_day: dict[dt.date, list[SimCandidate]] = {}
+    for d, menu in menus.items():
+        if not menu:
+            continue
+        keys = _top_keys(
+            menu,
+            rankers,
+            cfg.ranking.filters,
+            cfg.ranking.vrp_threshold,
+            sim.per_name_depth,
+        )
+        kept: list[SimCandidate] = []
+        for c in menu:
+            if c.inputs.key not in keys:
+                continue
+            res = sim_outcome(
+                c,
+                chains=chains,
+                closes=closes,
+                cost=ck.get(c.kind, base),
+                exits=exits,
+                settings=settings,
+                spread_rule=spread_rule,
+                marks=quotes,
+                splits=splits,
+                fill_cost=ck.get(c.kind, base) if sim.fill_spread == "estimated" else None,
+                ranges=ranges,
+                rate=rate_of,
+            )
+            dte = (c.picks[0].expiration - c.day).days
+            tag = sleeve_name(settings, dte) if sw.name != DEFAULT_SLEEVE else DEFAULT_SLEEVE
+            kept.append(SimCandidate(candidate=c, result=res, sleeve=tag))
+        per_day[d] = kept
+    return per_day
 
 
 def _day_info(view: HistoryView, ticker: str, day: dt.date) -> DayInfo:
@@ -858,6 +1159,7 @@ class _Pos(BaseModel):
     max_loss: Decimal
     cash_used: float
     outcome: Outcome
+    entry_dte: int | None = None
 
 
 class _PitCorr:
@@ -1024,6 +1326,8 @@ def _trade_row(
         "trend": str(trend[t].get(day, "unknown")) if t in trend else "unknown",
         "vol": str(vol[t].get(day, "unknown")) if t in vol else "unknown",
         "legs": " ".join(f"{'+' if lg.side > 0 else '-'}{lg.symbol}" for lg in tr.legs),
+        "sleeve": sc.sleeve,
+        "dte_entry": tr.dte,
     }
 
 
@@ -1088,6 +1392,11 @@ def run_sim(
     start_eq = sim.equity if starting_equity is None else starting_equity
     legacy = sim.selection == "per_ticker"
     cash_settled = settings.profile.buying_power is BuyingPower.CASH_SETTLED
+    margin_bp = (
+        not legacy
+        and sim.margin_buying_power
+        and settings.profile.buying_power is BuyingPower.MARGIN
+    )
     keyfn = sort_key(ranker, vrp_threshold)
     trend = {t: tickers[t].trend for t in names}
     vol = {t: tickers[t].vol for t in names}
@@ -1142,6 +1451,7 @@ def run_sim(
                 vrp_threshold=vrp_threshold,
                 settings=settings,
                 cash_settled=cash_settled,
+                margin_bp=margin_bp,
                 equity=equity,
                 prev_equity=prev_eq,
                 open_=open_,
@@ -1194,6 +1504,7 @@ def _decide(
     vrp_threshold: float,
     settings: ArcSettings,
     cash_settled: bool,
+    margin_bp: bool,
     equity: float,
     prev_equity: float,
     open_: list[_Pos],
@@ -1276,11 +1587,16 @@ def _decide(
         if not keyed:
             skip(day, t, "no_candidate")
             continue
-        for k, sc in keyed[: sim.per_name_depth]:
+        per_sleeve: dict[str, int] = {}  # E7.19: the top per_name_depth of each sleeve
+        for k, sc in keyed:
+            if per_sleeve.get(sc.sleeve, 0) >= sim.per_name_depth:
+                continue
+            per_sleeve[sc.sleeve] = per_sleeve.get(sc.sleeve, 0) + 1
             pool.append(((*k[:3], -liq, t, sc.candidate.inputs.key), sc, liq))
     if not legacy:
         pool.sort(key=lambda e: e[0])  # type: ignore[arg-type, return-value]
     funnel["candidates"] = len(pool)
+    sleeved = not legacy and settings.profile.has_sleeves
     for i, (_, sc, liq) in enumerate(pool):
         c = sc.candidate
         t = c.underlying
@@ -1290,7 +1606,10 @@ def _decide(
         out = sc.result.outcome
         held = open_ + new
         portfolio = Portfolio(
-            positions=[Position(underlying=p.underlying, max_loss=p.max_loss) for p in held]
+            positions=[
+                Position(underlying=p.underlying, max_loss=p.max_loss, entry_dte=p.entry_dte)
+                for p in held
+            ]
         )
         if check_max_open_positions(portfolio, settings):
             if legacy:
@@ -1305,11 +1624,23 @@ def _decide(
                 )
             break
         ml_unit = out.trade.max_loss
+        if sleeved:  # E7.19: the sleeve rules through the pure gate functions
+            d1 = _derived(c, 1, ml_unit, out.entry_debit)
+            now = dt.datetime.combine(c.day, dt.time(16, 0), tzinfo=ET)
+            if check_dte_window(d1, settings, now):
+                skip(day, t, "gate_dte_window", c.inputs.key)
+                continue
+            if check_sleeve_positions(portfolio, d1, settings, now):
+                skip(day, t, "sleeve_full", c.inputs.key, sc.sleeve)
+                continue
         mlu = Decimal(str(round(ml_unit, 2)))
         existing = sum((p.max_loss for p in held if p.underlying == t), Decimal(0))
         deployed = deployed_max_loss(portfolio)
         # D131 (E28.3): sizing fits the open-risk headroom, as the live quant.open does
         risk = open_risk(deployed, account_eq, settings.max_open_risk_pct)
+        # D129: margin options buying power = equity - the held book's max loss
+        bp_left = account_eq - deployed if margin_bp else None
+        bp_per = mlu + Decimal(str(round(out.open_fees, 2))) if margin_bp else None
         size = size_contracts(
             suggestion=10**6,
             max_loss_per_contract=mlu,
@@ -1318,9 +1649,13 @@ def _decide(
             cap_pct=alloc_pct_for(deployed, account_eq, settings),
             existing_max_loss=Decimal(0) if legacy else existing,
             open_risk_headroom=None if legacy or not risk.shown else risk.headroom,
+            cash_available=None if bp_left is None else max(bp_left, Decimal(0)),
+            cash_per_contract=bp_per,
         )
         if not size.trade:
-            skip(day, t, "sizing", c.inputs.key, size.code)
+            code = str(size.code)
+            reason = "buying_power" if margin_bp and "cash" in code else "sizing"
+            skip(day, t, reason, c.inputs.key, code)
             continue
         n = size.contracts
         if not legacy and sim.size_scale < 1.0:
@@ -1368,6 +1703,9 @@ def _decide(
         if cash_settled and cash_used > equity - sum(p.cash_used for p in held):
             skip(day, t, "cash", c.inputs.key)
             continue
+        if bp_left is not None and bp_per is not None and bp_per * n > bp_left:
+            skip(day, t, "buying_power", c.inputs.key)  # the D129 gate sub-check
+            continue
         if not legacy and sim.max_new_risk_pct_day is not None:
             day_risk = sum((p.max_loss for p in new), Decimal(0)) + mlu * n
             if float(day_risk) > sim.max_new_risk_pct_day * equity + 1e-9:
@@ -1381,6 +1719,7 @@ def _decide(
                 max_loss=mlu * n,
                 cash_used=cash_used,
                 outcome=out,
+                entry_dte=out.trade.dte,
             )
         )
         rows.append(

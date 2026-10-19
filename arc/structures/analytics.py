@@ -22,6 +22,7 @@ Conventions
 from __future__ import annotations
 
 import datetime as dt  # noqa: TC003 — kept at runtime for readability of signatures
+import math
 from collections.abc import Sequence  # noqa: TC003
 from decimal import Decimal
 from typing import NamedTuple
@@ -46,6 +47,7 @@ __all__ = [
     "legs_direction",
     "max_gain_loss",
     "net_debit_credit",
+    "interval_probe",
     "net_greeks",
     "payoff_at",
     "payoff_grid",
@@ -148,6 +150,24 @@ def payoff_at(legs: Sequence[Leg], spot: Decimal | float | str) -> Decimal:
         msg = "spot must be >= 0"
         raise ValueError(msg)
     return _payoff(_resolve(legs), s)
+
+
+def interval_probe(lo: float, hi: float, spot: float) -> float:
+    """A finite underlying price inside the breakeven interval ``(lo, hi)`` (PoP probe).
+
+    The PoP integrals evaluate the expiry payoff once per interval between breakevens.
+    A structure with no breakevens (e.g. a debit spread priced at or above its width)
+    has the single interval ``(0, inf)``; the old ``hi / 2`` probe was then ``inf``, and
+    ``inf - inf`` across a spread's legs gave NaN and a silent PoP of 0. That interval
+    probes at *spot* (D125 / E7.19); every other interval keeps its old probe.
+    """
+    if lo == 0.0 and math.isinf(hi):
+        return spot if spot > 0 and math.isfinite(spot) else 1.0
+    if lo == 0.0:
+        return hi / 2
+    if math.isinf(hi):
+        return lo * 2
+    return (lo + hi) / 2
 
 
 def strike_grid(

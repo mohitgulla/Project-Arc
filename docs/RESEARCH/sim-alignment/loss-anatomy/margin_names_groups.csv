@@ -1,0 +1,17 @@
+group,names,n,net
+technology,16,94,-8450.0
+energy_materials,7,22,-3765.0
+business_services,5,13,-3748.0
+etf:commodity,4,89,-3326.0
+industrials,12,36,-2459.0
+financials_realestate,9,82,-2166.0
+consumer_staples,3,8,-1815.0
+consumer,13,56,-1636.0
+etf:leveraged,2,5,-1106.0
+etf:broad_equity,3,76,-976.0
+etf:international,3,22,-583.0
+etf:sector,4,27,-155.0
+health,4,18,311.0
+communication,7,38,499.0
+other,1,3,502.0
+etf:bond,2,10,3939.0

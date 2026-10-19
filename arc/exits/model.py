@@ -65,7 +65,7 @@ from arc.exits.policy import (
 )
 from arc.models import LegIntent, Structure, StructureKind
 from arc.pricing.bs import OptionKind, price_vectorized
-from arc.structures import CONTRACT_MULTIPLIER, parse_occ
+from arc.structures import CONTRACT_MULTIPLIER, interval_probe, parse_occ
 
 __all__ = [
     "MODEL_NAME",
@@ -599,7 +599,7 @@ def analytic_pop(
 
     p = 0.0
     for lo, hi in zip(edges, edges[1:], strict=False):
-        probe = hi / 2 if lo == 0.0 else (lo * 2 if math.isinf(hi) else (lo + hi) / 2)
+        probe = interval_probe(lo, hi, spot)
         if _payoff_mid(legs, np.array([probe]), entry)[0] > 0:
             p += cdf(hi) - cdf(lo)
     return min(max(p, 0.0), 1.0)

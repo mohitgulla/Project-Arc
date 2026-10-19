@@ -175,13 +175,22 @@ class MenuSpec(BaseModel):
         description="nearest = one expiration nearest the window middle (E7.5); all = every "
         "expiration in the DTE window, like the live scanner (E7.5b)",
     )
+    max_expiries_per_sleeve: int | None = Field(
+        None,
+        ge=1,
+        description="E7.19 (D125): with expiry_mode all, at most this many expirations per "
+        "DTE window (one sleeve): the ones nearest the window's low end, middle and high end "
+        "for 3 (arc.backtest.strategies.capped_expirations); None = every expiration",
+    )
     # D131 (E28.1): the live pct_spot credit wing + credit/width floor (credit kinds only;
     # defaults = the pre-D131 sim). See StrategySpec.
     wing_fit: WingFit = "nearest"
     wing_cap: float | None = Field(None, gt=0.0)
     min_credit_width: float = Field(0.0, ge=0.0, le=0.40)
 
-    def specs(self, dte_min: int, dte_max: int) -> list[StrategySpec]:
+    def specs(
+        self, dte_min: int, dte_max: int, exit_block: str | None = None
+    ) -> list[StrategySpec]:
         return [
             StrategySpec(
                 kind=k,
@@ -192,6 +201,8 @@ class MenuSpec(BaseModel):
                 width_pct=self.width_pct,
                 min_volume=self.min_volume,
                 expiry_mode=self.expiry_mode,
+                max_expiries=self.max_expiries_per_sleeve,
+                exit_block=exit_block,
                 wing_fit=self.wing_fit,
                 wing_cap=self.wing_cap,
                 min_credit_width=self.min_credit_width,
@@ -345,11 +356,14 @@ class BacktestSettings(BaseModel):
         lo, hi = self.dte_windows.get(profile, default)
         return int(lo), int(hi)
 
-    def specs_for(self, profile: str, dte_min: int, dte_max: int) -> list[StrategySpec]:
+    def specs_for(
+        self, profile: str, dte_min: int, dte_max: int, exit_block: str | None = None
+    ) -> list[StrategySpec]:
+        """*profile*'s menu on one DTE window; *exit_block* (E7.19) = that sleeve's exits."""
         if profile not in self.menus:
             msg = f"no backtest menu for profile {profile!r} in config/ranking.yaml"
             raise KeyError(msg)
-        return [s for m in self.menus[profile] for s in m.specs(dte_min, dte_max)]
+        return [s for m in self.menus[profile] for s in m.specs(dte_min, dte_max, exit_block)]
 
 
 class RankingFile(BaseModel):
@@ -526,7 +540,7 @@ def build_menu(
                 continue
             if structure.max_loss is None or structure.max_loss <= 0:
                 continue
-            policy = exits.policy_for(STRUCTURE_KIND[spec.kind])
+            policy = exits.policy_for(STRUCTURE_KIND[spec.kind], spec.exit_block)
             res = model_exits(
                 structure,
                 policy,
@@ -1355,9 +1369,25 @@ def apply_stance(
     return out
 
 
-def rankers_for(requested: Sequence[Ranker], *, allows_credit: bool) -> list[Ranker]:
-    """Requested rankers that apply to the profile, incumbent always included (first)."""
-    inc = incumbent_for(allows_credit=allows_credit)
+def live_incumbent(menu_measure: str, *, allows_credit: bool) -> Ranker:
+    """D128: the ranker of the live ``pipeline.menu_measure`` (``config/exits.yaml``).
+
+    ``managed_net_ev_full`` (the live default since D128) is ``managed_net_ev``;
+    ``control`` (the scanner menu) is the profile's width incumbent.
+    """
+    from arc.scanner.menu import MENU_MEASURE_RANKER
+
+    return MENU_MEASURE_RANKER.get(menu_measure) or incumbent_for(allows_credit=allows_credit)
+
+
+def rankers_for(
+    requested: Sequence[Ranker], *, allows_credit: bool, incumbent: Ranker | None = None
+) -> list[Ranker]:
+    """Requested rankers that apply to the profile, incumbent always included (first).
+
+    *incumbent* (E7.19, D128: :func:`live_incumbent`) replaces the width incumbent.
+    """
+    inc = incumbent or incumbent_for(allows_credit=allows_credit)
     out = [inc]
     out += [r for r in requested if r is not inc and applicable(r, allows_credit=allows_credit)]
     return out

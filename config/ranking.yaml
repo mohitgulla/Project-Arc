@@ -144,13 +144,19 @@ backtest:
     max_pct_volume: 0.25      # contracts <= 25 % of each leg's session volume
     per_name_depth: 3         # candidates per name in the cross-name pool
     daily_loss_rule: true     # check_daily_loss blocks the day's opens
+    intraday_proxy: range     # E7.19 (D125): intraday-flagged exit rules also checked at the day's high/low
   decision:                   # D25 switch rule, fixed before the run
     min_subperiod_wins: 2
     subperiods: [bear, sideways, bull]
   # Menu per account profile: the strategies the profile maps a stance to
   # (config/account_profiles.yaml), each at these anchor deltas. Anchor = the short
   # strike for verticals / condors, the bought strike for single long options.
-  # DTE window = the profile's entry window; one expiration nearest its middle.
+  # DTE windows = E7.19 (D125): one menu per entry-DTE sleeve of the profile
+  # (config/account_profiles.yaml; a single-window profile is one `default` sleeve),
+  # on every expiration in the window (expiry_mode: all), capped per sleeve at the 3
+  # nearest the window's low end, middle and high end (max_expiries_per_sleeve; the
+  # C125 20-session size check: cash_debit menu build 5.1x the one-expiry time
+  # uncapped, 4.5x capped). expiry_mode: nearest = one expiration nearest the middle.
   menus:
     margin:                                 # D128: credit + cash_debit's debit kinds
       # D131 (E28.1): live scanner parity for credit kinds: the widest gap <= 5% of spot
@@ -163,17 +169,29 @@ backtest:
         wing_fit: widest
         wing_cap: 3750
         min_credit_width: 0.10
+        expiry_mode: all
+        max_expiries_per_sleeve: 3
       - kinds: [bull_call, bear_put]
         deltas: [0.20, 0.25, 0.30, 0.35]
         width_pct: 0.02
+        expiry_mode: all
+        max_expiries_per_sleeve: 3
       - kinds: [long_call, long_put]
         deltas: [0.40, 0.55, 0.70]
+        expiry_mode: all
+        max_expiries_per_sleeve: 3
     cash_debit:
       - kinds: [bull_call, bear_put]        # short leg at 20-35 delta (scanner debit_short band)
         deltas: [0.20, 0.25, 0.30, 0.35]
         width_pct: 0.02
+        expiry_mode: all
+        max_expiries_per_sleeve: 3
       - kinds: [long_call, long_put]        # bought leg at 40-70 delta (scanner long band)
         deltas: [0.40, 0.55, 0.70]
+        expiry_mode: all
+        max_expiries_per_sleeve: 3
     cash_long_only:
       - kinds: [long_call, long_put]
         deltas: [0.40, 0.55, 0.70]
+        expiry_mode: all
+        max_expiries_per_sleeve: 3

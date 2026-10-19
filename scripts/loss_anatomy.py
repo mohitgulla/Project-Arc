@@ -9,6 +9,10 @@ Three steps, all reproducible from this file:
     # 3. the report: docs/RESEARCH/loss-anatomy.md + aggregate CSVs
     .venv/bin/python scripts/loss_anatomy.py report
 
+E7.19 (D125) re-baseline on the sleeve-aligned sim: the same three steps with
+``--runs-dir data/backtest/runs/baseline_d125`` (env ``ARC_ANATOMY_RUNS``) before the
+subcommand; ``--intraday-proxy none`` writes the proxy-off books (``<name>_noproxy``).
+
 Runs land in ``data/backtest/runs/anatomy/<name>/`` (dev period 2020-01-01 ->
 2023-12-31, data end 2024-03-30, both profiles, incumbent rankers). The holdout
 (2024-01-01 on) is read only as the settlement tail of trades opened by 2023-12-31,
@@ -37,7 +41,9 @@ if TYPE_CHECKING:
     from arc.backtest.sim import SimRun
     from arc.backtest.sim_report import SimBuild
 
-RUNS = DATA / "backtest" / "runs" / "anatomy"
+#: The books' root. ``ARC_ANATOMY_RUNS`` (set by ``--runs-dir``) points every step at
+#: another root, e.g. the E7.19 re-baseline ``data/backtest/runs/baseline_d125``.
+RUNS = Path(os.environ.get("ARC_ANATOMY_RUNS") or DATA / "backtest" / "runs" / "anatomy")
 START, END, DATA_END = "2020-01-01", "2023-12-31", "2024-03-30"
 #: name -> universe. ``c500_mid_gross`` is not a sim: the report re-scores c500_dev at mid.
 BOOKS: dict[str, str] = {"c500_dev": "c500", "c125_dev": "c125"}
@@ -79,7 +85,7 @@ def run_paths(b: SimBuild, run: SimRun) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=["trade", "day", "mark_unit"])
 
 
-def _run_book(name: str, workers: int) -> None:
+def _run_book(name: str, workers: int, intraday_proxy: str | None = None) -> None:
     from arc.backtest.costs import load_cost_model
     from arc.backtest.ranking import load_ranking_file
     from arc.backtest.sim import (
@@ -97,6 +103,7 @@ def _run_book(name: str, workers: int) -> None:
         peak_rss_mb,
         render_report,
         run_summary,
+        sleeve_frame,
         walk,
     )
     from arc.config import ArcSettings
@@ -104,9 +111,12 @@ def _run_book(name: str, workers: int) -> None:
 
     t0 = time.monotonic()
     universe = BOOKS[name]
-    out = RUNS / name
+    out = RUNS / (name if intraday_proxy in (None, "range") else f"{name}_noproxy")
     out.mkdir(parents=True, exist_ok=True)
     cfg = load_ranking_file()
+    if intraday_proxy is not None:
+        sim0 = cfg.backtest.sim.model_copy(update={"intraday_proxy": intraday_proxy})
+        cfg = cfg.model_copy(update={"backtest": cfg.backtest.model_copy(update={"sim": sim0})})
     cost, exits = load_cost_model(), load_exit_config()
     start, end, data_end = (dt.date.fromisoformat(x) for x in (START, END, DATA_END))
     b = build_sim(
@@ -175,35 +185,61 @@ def _run_book(name: str, workers: int) -> None:
         [{"profile": r.profile, "ranker": r.ranker, **r.skip_counts} for r in runs],
         columns=["profile", "ranker", *SKIP_REASONS],
     )
+    sleeves = sleeve_frame(runs)
     summaries.to_csv(out / "summary.csv", index=False)
     skips.to_csv(out / "skip_counts.csv", index=False)
+    sleeves.to_csv(out / "sleeves.csv", index=False)
     (out / "manifest.json").write_text(m.model_dump_json(indent=1))
-    (out / "report.md").write_text(render_report(m, summaries, skips, sim.model_dump(mode="json")))
+    (out / "report.md").write_text(
+        render_report(m, summaries, skips, sim.model_dump(mode="json"), sleeves)
+    )
     sys.stdout.write(f"== {name}: done {m.runtime_s}\n{summaries.to_string()}\n")
     sys.stdout.flush()
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="E7.18 loss & drawdown anatomy")
+    ap.add_argument(
+        "--runs-dir",
+        type=Path,
+        default=None,
+        help="Books root (default data/backtest/runs/anatomy; E7.19: .../baseline_d125)",
+    )
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("runs", help="C500 + C125 dev books with per-trade marks")
     r.add_argument("--workers", type=int, default=6)
     r.add_argument("--only", action="append", choices=sorted(BOOKS))
     r.add_argument("--skip-done", action="store_true", help="Skip books with a manifest")
+    r.add_argument(
+        "--intraday-proxy",
+        choices=["none", "range"],
+        default=None,
+        help="E7.19: override backtest.sim.intraday_proxy (none -> <name>_noproxy)",
+    )
     f = sub.add_parser("features", help="Point-in-time entry feature table")
     f.add_argument("--only", action="append", choices=sorted(BOOKS))
     rep = sub.add_parser("report")
     rep.add_argument("--out", type=Path, default=ROOT / "docs" / "RESEARCH")
     args = ap.parse_args(argv)
     os.environ.setdefault("ARC_ENV", "paper")
+    if args.runs_dir is not None and args.runs_dir.resolve() != RUNS.resolve():
+        # every module reads RUNS at import: re-exec with the env set (no global mutation)
+        import subprocess
+
+        env = {**os.environ, "ARC_ANATOMY_RUNS": str(args.runs_dir.resolve())}
+        rest = list(argv if argv is not None else sys.argv[1:])
+        i = rest.index("--runs-dir")
+        del rest[i : i + 2]
+        return subprocess.call([sys.executable, __file__, *rest], env=env)
     if args.cmd == "runs":
         if (DATA / "backtest" / "queue.json").exists():
             sys.stderr.write("refused: data/backtest/queue.json exists (E26.3 runner owns it)\n")
             return 3
         for name in args.only or list(BOOKS):
-            if args.skip_done and (RUNS / name / "manifest.json").exists():
+            dest = name if args.intraday_proxy in (None, "range") else f"{name}_noproxy"
+            if args.skip_done and (RUNS / dest / "manifest.json").exists():
                 continue
-            _run_book(name, args.workers)
+            _run_book(name, args.workers, args.intraday_proxy)
         return 0
     if args.cmd == "features":
         from scripts.loss_anatomy_features import write_features

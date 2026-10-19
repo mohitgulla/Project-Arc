@@ -1,0 +1,4 @@
+test_year,train_n,test_n,test_loser_rate,auc
+2021,231.0,210,0.495,0.552
+2022,445.0,123,0.472,0.468
+pooled,,333,0.486,0.513
