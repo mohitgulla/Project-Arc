@@ -265,3 +265,42 @@ def test_n_concurrent_counts_overlapping_label_windows() -> None:
         }
     )
     assert n_concurrent(df).tolist() == [1, 1, 0, 0]
+
+
+def test_report_rank_ic_sign_and_cost_share() -> None:
+    from arc.ml.ledger.report import base_rates, cost_share, rank_ic, render_report
+
+    rows = []
+    for i in range(6):
+        day = dt.date(2021, 3, 1) + dt.timedelta(days=i)
+        for j in range(8):
+            rows.append(
+                {
+                    "date": day,
+                    "profile": "margin",
+                    "sleeve": "short",
+                    "kind": "bull_put",
+                    "anchor_delta": 0.25,
+                    "sample_weight": 1,
+                    "managed_net_ev": float(j),
+                    "credit_width": float(-j),
+                    "label_r_net_x025": 0.1 * j,
+                    "label_r_at_mid": 0.1 * j + 0.05,
+                    "label_win_x025": j > 3,
+                    "label_hit_stop": j == 0,
+                    "label_hit_tp": j == 7,
+                    "label_days_held": 5.0,
+                }
+            )
+    df = pd.DataFrame(rows)
+    ic = rank_ic(df).set_index("key")["ic"]
+    assert ic["managed_net_ev"] == pytest.approx(1.0)
+    assert ic["credit_width"] == pytest.approx(-1.0)
+    cs = cost_share(df, ["x025"])
+    assert cs["cost_x025"].iloc[0] == pytest.approx(0.05)
+    br = base_rates(df)
+    assert br["n"].sum() == 48
+    assert br["win"].iloc[0] == pytest.approx(0.5)
+    md = render_report(df, {"universe": "c125"})
+    assert "Rank IC" in md
+    assert "managed_net_ev" in md

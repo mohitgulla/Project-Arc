@@ -89,6 +89,10 @@ def add_ml_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> N
     ls2.add_argument("--data", type=Path, default=DEFAULT_DATA)
     ls2.add_argument("--split", default="dev", choices=["dev", "holdout", "all"])
     ls2.add_argument("--reason", default=None, help="Required to read holdout (logged)")
+    lr = lsub.add_parser("report", help="Write docs/RESEARCH/candidate-ledger.md (dev rows)")
+    lr.add_argument("--out", type=Path, default=None, help="Ledger root (default data/ml/ledger)")
+    lr.add_argument("--data", type=Path, default=DEFAULT_DATA)
+    lr.add_argument("--doc", type=Path, default=REPO / "docs" / "RESEARCH" / "candidate-ledger.md")
 
 
 def run_ml(args: argparse.Namespace) -> int:
@@ -189,6 +193,15 @@ def _ledger(args: argparse.Namespace) -> int:
     out = Path(args.out) if args.out else data / "ml" / "ledger"
     if args.ledger_command == "stats":
         sys.stdout.write(ledger_stats(out, split=args.split, reason=args.reason).rstrip() + "\n")
+        return 0
+    if args.ledger_command == "report":
+        from arc.ml.ledger.build import load_ledger, version_dir
+        from arc.ml.ledger.report import render_report
+
+        vdir = out if (out / "manifest.json").exists() else version_dir(out)
+        manifest = json.loads((vdir / "manifest.json").read_text())
+        Path(args.doc).write_text(render_report(load_ledger(vdir), manifest))
+        sys.stdout.write(f"wrote {args.doc}\n")
         return 0
     from arc.backtest.costs import load_cost_model
     from arc.backtest.ranking import load_ranking_file
