@@ -145,6 +145,29 @@ backtest:
     per_name_depth: 3         # candidates per name in the cross-name pool
     daily_loss_rule: true     # check_daily_loss blocks the day's opens
     intraday_proxy: range     # E7.19 (D125): intraday-flagged exit rules also checked at the day's high/low
+    # E28.6 (D131): study-arm knobs. null = the live ArcSettings value (shipped D131
+    # rules), so an arm is one overlay line, e.g. `sim: {gate: {max_open_risk_pct: 0.30}}`.
+    gate:
+      regime_gate_enabled: null       # E28.2 short_premium_regime on/off
+      regime_gate_ma: null            # 50 | 100 | 200 (SPY SMA)
+      regime_gate_buffer_pct: null    # -0.05..0.05
+      regime_gate_blocked_kinds: null # bull_put,iron_condor | bull_put | iron_condor
+      regime_vix_pct_above: null      # sim-only: + VIX 1y percentile > x (needs market_index/VIX.parquet)
+      regime_vix_combine: and         # and = SPY < SMA and VIX high; or = either
+      max_open_risk_pct: null         # E28.3 open_risk_cap, 0.10..1.0 (1.0 = off)
+      cluster_cap_enabled: null       # E28.5 cluster_cap on/off
+      cluster_cap_corr_threshold: null
+      cluster_cap_max_names: null
+    vrp_max: null             # sim-only (D131 #12, no live default): skip credit entries when iv30 - hv20 > x
+  # E28.6 (D131): the E28.1 credit-wing rule for a study arm, applied to every menu block
+  # below that offers a credit kind. null = the block as written (changing one rebuilds
+  # the credit menus: new menu-cache key).
+  credit_wings:
+    mode: null                # pct_spot | pct_nearest | dollars
+    pct: null                 # pct modes: wing as a share of spot
+    dollars: null             # dollars mode (null = the live rollback $5)
+    cap: null                 # pct_spot: 1-lot max-loss cap ($)
+    min_credit_width: null    # credit/width floor (BT grid 0.10 / 0.15 / 0.20 / 0.25)
   decision:                   # D25 switch rule, fixed before the run
     min_subperiod_wins: 2
     subperiods: [bear, sideways, bull]

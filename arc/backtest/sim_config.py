@@ -7,11 +7,68 @@ live loop, the gate or a strategy default.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-__all__ = ["SimSettings"]
+if TYPE_CHECKING:
+    from arc.config import ArcSettings
+
+__all__ = ["SimGateOverrides", "SimSettings"]
+
+
+class SimGateOverrides(BaseModel):
+    """``backtest.sim.gate`` (E28.6, D131): the D131 gate rules' knobs for one study arm.
+
+    Every field defaults to ``None`` = the walk uses the live ``ArcSettings`` value
+    (the shipped default, plus any registry override the caller's settings carry), so
+    the base config is the shipped behaviour and a study arm is one overlay line, e.g.
+    ``ranking: {backtest: {sim: {gate: {max_open_risk_pct: 0.30}}}}``. Bounds match the
+    ``ArcSettings`` fields they replace. ``regime_vix_pct_above`` / ``regime_vix_combine``
+    are sim-only (no live rule reads them): the E28.6 regime variant.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    # E28.2: short_premium_regime
+    regime_gate_enabled: bool | None = Field(None, description="None = ArcSettings")
+    regime_gate_ma: Literal[50, 100, 200] | None = Field(None, description="SPY SMA length")
+    regime_gate_buffer_pct: float | None = Field(None, ge=-0.05, le=0.05)
+    regime_gate_blocked_kinds: Literal["bull_put,iron_condor", "bull_put", "iron_condor"] | None = (
+        None
+    )
+    regime_vix_pct_above: float | None = Field(
+        None,
+        ge=0.0,
+        lt=1.0,
+        description="Sim-only VIX condition on the regime gate: VIX's 1-year percentile "
+        "(the market_health vix_pct_1y rule: share of the prior <= 252 closes strictly "
+        "below the session's close, >= 120 prior obs) is strictly above this. Needs "
+        "<data-dir>/market_index/VIX.parquet (scripts/fetch_vix_history.py). None = no "
+        "VIX condition (the live rule)",
+    )
+    regime_vix_combine: Literal["and", "or"] = Field(
+        "and",
+        description="and = a blocked kind is refused only when SPY < SMA *and* VIX is high; "
+        "or = when either holds. A session without a VIX percentile counts as VIX high "
+        "(fail closed, like the live rule's missing input)",
+    )
+    # E28.3: open_risk_cap
+    max_open_risk_pct: float | None = Field(None, ge=0.10, le=1.0, description="1.0 = off")
+    # E28.5: cluster_cap
+    cluster_cap_enabled: bool | None = None
+    cluster_cap_corr_threshold: float | None = Field(None, ge=0.5, le=0.95)
+    cluster_cap_max_names: int | None = Field(None, ge=1, le=10)
+
+    def settings_update(self) -> dict[str, object]:
+        """The set ``ArcSettings`` fields (sim-only VIX knobs excluded)."""
+        skip = {"regime_vix_pct_above", "regime_vix_combine"}
+        return {k: v for k, v in self.model_dump(exclude=skip).items() if v is not None}
+
+    def apply(self, settings: ArcSettings) -> ArcSettings:
+        """*settings* with the set fields replaced (the same object when none is set)."""
+        upd = self.settings_update()
+        return settings.model_copy(update=upd) if upd else settings
 
 
 class SimSettings(BaseModel):
@@ -111,4 +168,20 @@ class SimSettings(BaseModel):
         "lock_intraday_proxy). Stop-first: the proxy is checked before the EOD rules, so a "
         "day touching both a stop and a take profit books the stop. Over-states stop hits "
         "on whipsaw days (high/low order unknown). none = EOD marks only",
+    )
+    # E28.6 (D131): the D131 rule knobs for study arms + a sim-only VRP cap.
+    gate: SimGateOverrides = Field(
+        default_factory=lambda: SimGateOverrides(),
+        description="D131 gate-rule overrides for the walk (None fields = ArcSettings)",
+    )
+    vrp_max: float | None = Field(
+        None,
+        ge=0.0,
+        le=1.0,
+        description="Sim-only (owner D131 #12: backtest arm first, no live default): skip a "
+        "short-premium (credit) entry when the name's IV30 - HV20 at the decision close is "
+        "above this, in vol points as a fraction (0.05 = 5 pts; IV30 = the E7.10 "
+        "constant-maturity ATM IV, HV20 = 20-session close-to-close vol of the "
+        "split-adjusted closes). A name-day with either input unknown is not skipped. "
+        "Skip reason vrp_cap. None = off",
     )

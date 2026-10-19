@@ -114,6 +114,14 @@ class StrategySpec(BaseModel):
     min_credit_width: float = Field(
         0.0, ge=0.0, le=0.40, description="Drop credit structures with credit/width below (0=off)"
     )
+    wing_dollars: float | None = Field(
+        None,
+        gt=0.0,
+        description="E28.6 (D131 rollback parity, the live scanner_wing_mode: dollars): a "
+        "credit kind's wing is the strike nearest this many dollars beyond the anchor "
+        "(within [0.5, 2]x) instead of width_pct x spot; wing_fit/wing_cap are then "
+        "ignored. None = width_pct. Left out of the dump when None",
+    )
 
     @model_serializer(mode="wrap")
     def _drop_legacy(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
@@ -124,7 +132,7 @@ class StrategySpec(BaseModel):
             out.pop("wing_cap", None)
         if out.get("min_credit_width") == 0.0:
             out.pop("min_credit_width", None)
-        for k in ("max_expiries", "exit_block"):  # E7.19 (D125)
+        for k in ("max_expiries", "exit_block", "wing_dollars"):  # E7.19 (D125), E28.6
             if out.get(k) is None:
                 out.pop(k, None)
         return out
@@ -140,7 +148,9 @@ class StrategySpec(BaseModel):
     def label(self) -> str:
         w = "" if self.kind in SINGLE_KINDS else f"_w{self.width_pct * 100:g}"
         if self.kind in CREDIT_KINDS:  # D131: only non-default credit rules show
-            if self.wing_fit == "widest":
+            if self.wing_dollars is not None:
+                w = f"_w${self.wing_dollars:g}"
+            elif self.wing_fit == "widest":
                 w += "max" if self.wing_cap is None else f"max{self.wing_cap:g}"
             if self.min_credit_width > 0:
                 w += f"_cw{self.min_credit_width:g}"
@@ -287,7 +297,11 @@ def _vertical(
         return None
     width = spec.width_pct * spot
     k = float(a["strike"])
-    if spec.wing_fit == "widest" and spec.kind in CREDIT_KINDS:
+    credit = spec.kind in CREDIT_KINDS
+    if credit and spec.wing_dollars is not None:  # E28.6: the live dollars wing mode
+        width = spec.wing_dollars
+        w = _wing(side_chain, k, k + width if wing_above else k - width, wing_above, width)
+    elif spec.wing_fit == "widest" and credit:
         w = _widest_wing(side_chain, a, above=wing_above, max_gap=width, cap=spec.wing_cap)
     else:
         w = _wing(side_chain, k, k + width if wing_above else k - width, wing_above, width)
