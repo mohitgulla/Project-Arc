@@ -185,6 +185,7 @@ class TestConfig:
         c = load_routines(DEFAULT_ROUTINES_PATH)
         background = sorted(n for n, (_, s) in c.jobs().items() if s.lane is Lane.BACKGROUND)
         assert background == [
+            "backtest.recon",  # E7.22: weekly live<->sim replay, menu builds per proposal
             "backtest.studies",  # E26.3: the nightly study runner, hours long
             "betas",  # E3.6: ~55 daily-bars requests on the shared Alpaca budget
             "edgar",

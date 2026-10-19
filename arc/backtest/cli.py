@@ -241,6 +241,23 @@ def add_backtest_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     from arc.backtest.study_cli import add_study_parser
 
     add_study_parser(bs)
+    rc = bs.add_parser(
+        "recon",
+        help="E7.22: replay live fills/proposals/exits/stances through the sim (read-only)",
+    )
+    rc.add_argument("--db", type=Path, default=None, help="Live audit store (default: ARC_DB)")
+    rc.add_argument("--since", type=_date, default=None, help="First live day (default: all)")
+    rc.add_argument("--arm", choices=["control", "all"], default="control")
+    rc.add_argument("--data-dir", type=Path, default=Path("data"))
+    rc.add_argument("--out", type=Path, default=Path("data/backtest/recon"))
+    rc.add_argument("--report", type=Path, default=Path("docs/RESEARCH/live-sim-recon.md"))
+    rc.add_argument(
+        "--reconciliation",
+        type=Path,
+        default=Path("docs/RESEARCH/studies/reconciliation.json"),
+        help="The Analyst's drift slot (E7.14/E7.15) the summary is written to",
+    )
+    rc.add_argument("--config", type=Path, default=None, help="Ranking config file")
     cmp_ = bs.add_parser(
         "rank-compare",
         help="E7.5a: experiment vs baseline `backtest rank` output, same ranker, D25 rule",
@@ -475,9 +492,57 @@ def run_sim_cli(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_recon_cli(args: argparse.Namespace) -> int:
+    from arc.backtest.ranking import load_ranking_file
+    from arc.backtest.recon import menu_measure_at, run_recon, write_outputs
+    from arc.config import ArcSettings
+    from arc.utils.calendar import now_et
+
+    settings = ArcSettings()
+    db = Path(args.db or settings.db_path or "data/arc.db")
+    if not db.exists():
+        sys.stderr.write(f"arc backtest recon: audit store not found: {db}\n")
+        return 2
+    repo = Path(__file__).resolve().parents[2]
+    rep = run_recon(
+        db,
+        data_dir=args.data_dir,
+        now=now_et(),
+        since=args.since,
+        arm=args.arm,
+        cfg=load_ranking_file(args.config),
+        settings=settings,
+        menu_measure_for=menu_measure_at(repo),
+        git_sha=_git_sha(repo),
+    )
+    paths = write_outputs(
+        rep, report_md=args.report, reconciliation_json=args.reconciliation, out_dir=args.out
+    )
+    sys.stdout.write(paths["report"].read_text())
+    sys.stdout.write("\n" + "\n".join(f"{k}: {v}" for k, v in paths.items()) + "\n")
+    return 0
+
+
+def _git_sha(repo: Path) -> str:
+    import subprocess
+
+    try:
+        return subprocess.run(  # noqa: S603
+            ["git", "-C", str(repo), "rev-parse", "HEAD"],  # noqa: S607
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+
+
 def run_backtest_cli(args: argparse.Namespace) -> int:
     if getattr(args, "backtest_command", None) == "sim":
         return run_sim_cli(args)
+    if getattr(args, "backtest_command", None) == "recon":
+        return run_recon_cli(args)
     if getattr(args, "backtest_command", None) == "study":
         from arc.backtest.study_cli import run_study_cli
 
