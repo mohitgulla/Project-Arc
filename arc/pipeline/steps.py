@@ -88,6 +88,7 @@ from arc.gate.caps import (
     open_risk,
     tier_open_risk,
 )
+from arc.gate.cluster import ClusterCheck, cluster_check
 from arc.gate.delta import kind_of
 from arc.gate.rules import regime_blocked_kinds, regime_gate_closed
 from arc.ingest.llm import ScalpLLMError
@@ -160,7 +161,10 @@ from arc.pipeline.market import (
     PortfolioError,
     account_baseline,
     account_snapshot,
+    book_underlyings,
     build_portfolio,
+    cluster_correlations,
+    cluster_matrix,
     deployed_book_max_loss,
     limit_price,
     live_gate_status,
@@ -168,6 +172,7 @@ from arc.pipeline.market import (
     market_snapshot,
     market_trend,
     next_earnings,
+    portfolio_names,
     price_structure,
     proposal_betas,
 )
@@ -201,7 +206,7 @@ from arc.structures import parse_occ
 from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Collection, Mapping, Sequence
+    from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 
     import pandas as pd
 
@@ -649,6 +654,54 @@ def _wing_cap_dollars(ctx: JobContext, env: PipelineEnv) -> float | None:
     return float(cap) if cap > 0 else None
 
 
+def _cluster_blocked(
+    ctx: JobContext, env: PipelineEnv, tickers: Iterable[str]
+) -> list[ClusterCheck] | None:
+    """D131 (E28.5): the gate's ``cluster_cap`` rule applied to *tickers* up front.
+
+    Each ticker whose new open the rule would refuse (``cluster_cap_max_names`` other
+    open names, positions + in-flight opens, with correlation above the threshold or
+    unknown), sorted. ``None`` when the rule is off or the book cannot be read (logged;
+    the gate stays the authority).
+    """
+    settings = ctx.settings
+    if not settings.cluster_cap_enabled:
+        return None
+    try:
+        _, positions = _account_inputs(ctx, env)
+        names = book_underlyings(ctx.conn, positions, now=ctx.now)
+    except Exception as exc:  # noqa: BLE001 - a broker hiccup must not sink the prompt
+        log.warning("pipeline.cluster_cap_unavailable", error=str(exc))
+        return None
+    matrix = cluster_matrix(ctx.conn, settings, today=_today(ctx))
+    out = []
+    for t in sorted({x.upper() for x in tickers}):
+        chk = cluster_check(
+            t,
+            names,
+            cluster_correlations(matrix, t, names),
+            threshold=settings.cluster_cap_corr_threshold,
+            max_names=settings.cluster_cap_max_names,
+        )
+        if chk.blocked:
+            out.append(chk)
+    return out
+
+
+def _cluster_line(blocked: Sequence[ClusterCheck] | None, settings: ArcSettings) -> str | None:
+    """D131 (E28.5): the one code-rendered prompt line naming the names the cluster cap
+    blocks now; ``None`` when nothing is blocked (or the rule is off): prompt unchanged."""
+    if not blocked:
+        return None
+    return (
+        f"Correlation cluster cap (at most {settings.cluster_cap_max_names} open names with "
+        f"60-session return correlation > {settings.cluster_cap_corr_threshold:g}; the gate "
+        "refuses the next one): cannot be opened now: "
+        + "; ".join(f"{c.ticker} (cluster: {c.describe()})" for c in blocked)
+        + "."
+    )
+
+
 def _portfolio_summary(
     ctx: JobContext, env: PipelineEnv, settings: ArcSettings
 ) -> tuple[str, Decimal]:
@@ -988,13 +1041,15 @@ def _research_rules(
     budget: BudgetView | None = None,
     portfolio: PortfolioContext | None = None,
     diversification: ResearchDiversificationSettings | None = None,
+    cluster_line: str | None = None,
 ) -> list[str]:
     """Research constraints (E5.7: rank, don't gatekeep; no count cap in the prompt).
 
     D32: in the restrictive order-budget tier an advisory line is added; the
     deterministic cap is the lowered Quant/Risk budget (:func:`_shortlist_limit`).
     E13.8 (D56): the rules name the idea pool and Research lists no exclusions;
-    E13.17: with open positions they ask for the exit watchlist.
+    E13.17: with open positions they ask for the exit watchlist. D131 (E28.5):
+    *cluster_line* (the pool names the cluster cap blocks) is appended when given.
     """
     rules = [
         f"shortlist tickers MUST come from the idea pool above: {', '.join(sorted(cands))}.",
@@ -1041,6 +1096,8 @@ def _research_rules(
             "review; thesis_status intact | weakened | broken; evidence <= 4 items of "
             "<= 160 chars each; reason <= 240 chars."
         )
+    if cluster_line:
+        rules.append(cluster_line)
     return rules
 
 
@@ -2820,6 +2877,8 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
     # Quant/Risk budget (never shown to Research); D32 lowers it in the restrictive tier.
     qr_budget = _shortlist_limit(settings, budget)
     diversification = ctx.routines.director_diversification  # E12.5 (D51)
+    # D131 (E28.5): pool names the cluster cap blocks (None/[] = prompt unchanged)
+    cluster_line = _cluster_line(_cluster_blocked(ctx, env, cands), settings)
     inputs = {
         "portfolio_summary": summary,
         "scan_date": _today(ctx).isoformat(),
@@ -2827,7 +2886,7 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
         "portfolio_block": "" if pctx.empty else render_portfolio_context(pctx, settings),
         "recent_ideas": "\n".join([*recent_lines, *stale_lines]),
         "entry_terms": entry_terms(settings).model_dump(mode="json"),
-        "rules": _research_rules(cands, settings, budget, pctx, diversification),
+        "rules": _research_rules(cands, settings, budget, pctx, diversification, cluster_line),
         # E4.6 (D45): [{slug, label, category}] of the youtube.briefs job, for the n/N lines.
         "youtube_channels": _youtube_channels(ctx),
         # D49: the effective categories block (labels + max_age), so a replay judges
@@ -2871,7 +2930,7 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
         inputs,
         pool.items,
         settings,
-        lambda c: _research_rules(c, settings, budget, pctx, diversification),
+        lambda c: _research_rules(c, settings, budget, pctx, diversification, cluster_line),
     )
     for item in budget_cut:
         cands.pop(item.ticker, None)
@@ -3328,8 +3387,11 @@ def _quant_rules(
     no_chain: list[str],
     settings: ArcSettings | None = None,
     sleeve_slots: Sequence[SleeveSlots] = (),
+    cluster_line: str | None = None,
 ) -> list[str]:
     extra = [] if settings is None else [_profile_rule(settings)]
+    if cluster_line:  # D131 (E28.5): absent when nothing is blocked (prompt unchanged)
+        extra.append(cluster_line)
     if sleeve_slots:  # E22.2 (D97): sleeved profiles only; single-window text unchanged
         extra.append(
             "DTE sleeve slots (open positions/max): "
@@ -3387,6 +3449,8 @@ class _QuantMenus:
     regime_off: str | None = None
     regime_trend: MarketTrend | None = None
     regime_dropped: list[str] = dataclasses.field(default_factory=list)
+    # D131 (E28.5): budgeted names the cluster cap blocks (no menu), by ticker
+    cluster_blocked: dict[str, ClusterCheck] = dataclasses.field(default_factory=dict)
 
 
 def _be_filter(
@@ -3593,6 +3657,10 @@ def _quant_menus(
         if m.regime_off is not None:
             blocked = regime_blocked_kinds(settings)
             log.info("pipeline.regime_gate_credit_off", why=m.regime_off, kinds=sorted(blocked))
+    # D131 (E28.5): the gate's cluster_cap rule, applied up front like the regime gate
+    if items:
+        for chk in _cluster_blocked(ctx, env, [i.ticker for i in items]) or []:
+            m.cluster_blocked[chk.ticker] = chk
 
     def cut(
         ticker: str, stance: str, cands: list[ScanCandidate], spot: float, rv: float | None
@@ -3654,6 +3722,15 @@ def _quant_menus(
                 stance=item.stance,
                 profile=settings.account_profile,
                 reason=_profile_reason(item.stance).value,
+            )
+            continue
+        if (chk := m.cluster_blocked.get(item.ticker.upper())) is not None:  # D131 (E28.5)
+            no_chain.append(item.ticker)
+            m.no_chain_code[item.ticker] = ReasonCode.CLUSTER_CAP
+            no_chain_why[item.ticker] = (
+                f"correlation cluster cap: {chk.ticker} would be name {len(chk.peers) + 1} "
+                f"of its cluster (corr > {chk.threshold:g}, max {chk.max_names}): "
+                f"{chk.describe()}"
             )
             continue
         if blocked:  # D131 (E28.2): SPY below its SMA: no bull puts / iron condors
@@ -3931,7 +4008,12 @@ def quant_open(ctx: JobContext, env: PipelineEnv) -> JobResult:
         "underlying_prices_json": json.dumps(spots, sort_keys=True),
         "scan_date": today.isoformat(),
         "entry_terms": entry_terms(settings).model_dump(mode="json"),
-        "rules": _quant_rules(no_chain, settings, m.sleeve_slots),
+        "rules": _quant_rules(
+            no_chain,
+            settings,
+            m.sleeve_slots,
+            _cluster_line(list(m.cluster_blocked.values()), settings),
+        ),
     }
     reply, out = _ask(ctx, env, "quant", ctx.snapshot, inputs, QuantOutput)
     dropped: Counter[str] = Counter()
@@ -5081,6 +5163,7 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
     )
     earnings = next_earnings(ctx.conn, list(by_ticker), _today(ctx))
     trend = market_trend(ctx.conn, settings, now=now)  # D131 (E28.2): None when off
+    cmatrix = cluster_matrix(ctx.conn, settings, today=_today(ctx))  # D131 (E28.5)
     switch = HaltSwitch(HaltRepo(ctx.conn))
     exits = exit_config(settings)  # D26: exits/costs yaml + control-panel overrides
     cost_model = cost_config(settings)
@@ -5275,6 +5358,8 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
             proposal_betas(ctx.conn, [t], now.astimezone(ET).date()),
             quote_ref_time=priced.quote_ref_times(now),  # E10.2d: paired arm replay
             trend=trend,
+            # D131 (E28.5): vs the in-run book (earlier passes count as open names)
+            correlations=cluster_correlations(cmatrix, t, portfolio_names(portfolio)),
         )
         limit = limit_price(st.net_debit_credit, grid_for(st.legs, market, settings))
         # D24: the gate checks the whole price band; size at its worst price (D18).

@@ -21,6 +21,7 @@ tables:
   - options_volume_daily
   - market_tape
   - betas
+  - correlations   # E28.4 (D131): reference data from the betas job
   - channel_briefs
 
 # context_entries rows kept by kind (market / reference kinds only). Checked on the

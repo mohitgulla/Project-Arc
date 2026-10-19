@@ -372,6 +372,10 @@ def _make_parser() -> argparse.ArgumentParser:
 
     add_betas_parser(sub)
 
+    from arc.betas.corr_cli import add_correlations_parser
+
+    add_correlations_parser(sub)
+
     from arc.ml.cli import add_ml_parser
 
     add_ml_parser(sub)
@@ -1197,6 +1201,11 @@ def main(argv: list[str] | None = None) -> int:
 
         _log_to_stderr()
         return run_betas(args)
+    if args.command == "correlations":
+        from arc.betas.corr_cli import run_correlations
+
+        _log_to_stderr()
+        return run_correlations(args)
     if args.command == "ml":
         from arc.ml.cli import run_ml
 

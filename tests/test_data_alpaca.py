@@ -344,6 +344,25 @@ class TestDataFeed:
         assert mock_option.get_option_chain.call_args.args[0].feed == OptionsFeed.OPRA
 
     @patch.dict("os.environ", _KEYS)
+    def test_bars_adjustment(self) -> None:
+        """E28.4: the betas job asks for adjusted bars; the default sends no adjustment."""
+        day = (dt.date(2026, 9, 1), dt.date(2026, 10, 1))
+        plain_stock, adj_stock = _stock_client(), _stock_client()
+        opt = MagicMock()
+        AlpacaMarketData(
+            option_client=opt, stock_client=plain_stock, data_feed="iex", options_feed="indicative"
+        ).history_bars("SPY", *day)
+        assert "adjustment" not in plain_stock.get_stock_bars.call_args.args[0].to_request_fields()
+        AlpacaMarketData(
+            option_client=opt,
+            stock_client=adj_stock,
+            data_feed="iex",
+            options_feed="indicative",
+            bars_adjustment="all",
+        ).history_bars("SPY", *day)
+        assert adj_stock.get_stock_bars.call_args.args[0].to_request_fields()["adjustment"] == "all"
+
+    @patch.dict("os.environ", _KEYS)
     def test_explicit_args(self) -> None:
         mock_stock = _stock_client()
         adapter = AlpacaMarketData(

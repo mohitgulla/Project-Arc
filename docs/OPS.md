@@ -2639,6 +2639,19 @@ rejects only over the cap; a missing spot still fails closed as `missing_spot`).
 `show` prints the stored β, the β used today and its source. Override the cap with
 `!arc config portfolio_beta_delta_cap_pct 1.5` (registry 0.25–4.00).
 
+**Correlations (E28.4, D131).** The same run (same closes, no second pull; bars read
+split/dividend-adjusted, `adjustment=all`) stores every pair's Pearson correlation of
+the last 60 aligned daily log returns in `correlations` (migration 040:
+`day, a, b, corr, n_obs, window, as_of`, `a < b`, that day's rows replaced on a re-run;
+fewer than 40 returns → no row). Live 2026-10-18 on 53 names: 1,378 pairs in 0.04 s,
+62 pairs > 0.7. Reader: `arc.betas.corr_store.corr_matrix` (latest day ≤ today, at most 5
+sessions old, else empty) → `arc.betas.corr.cluster_peers(matrix, ticker, open, 0.7)`,
+the E28.5 cluster cap's input; the sim builds the same matrix point in time from cached
+closes (`arc.backtest.correlations.pit_matrix`, closes strictly before the session).
+Arms sync the table as of the chain (D106). By hand:
+
+    arc correlations show NVDA [--day 2026-10-18] [--top 25] [--threshold 0.7] [--db <scratch>]
+
 ### 5.34 Tape movers: `market_movers` (E14.3, D60, D44)
 
 One `market_movers` source (`feed: scalp`, `category: options_fast`, every 30m

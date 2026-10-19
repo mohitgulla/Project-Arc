@@ -70,7 +70,7 @@ def run_betas(args: argparse.Namespace) -> int:
 def _refresh(
     args: argparse.Namespace, conn: sqlite3.Connection, now: _dt.datetime
 ) -> int:  # pragma: no cover - live network (pasted on the card)
-    from arc.betas.refresh import refresh_betas
+    from arc.betas.refresh import BARS_ADJUSTMENT, refresh_betas
     from arc.control.effective import effective_settings
     from arc.data.alpaca import AlpacaMarketData
     from arc.ingest.finnhub import DbRateLimiter
@@ -83,7 +83,7 @@ def _refresh(
     day = args.day or now.date()
     res = refresh_betas(
         conn,
-        AlpacaMarketData(),
+        AlpacaMarketData(bars_adjustment=BARS_ADJUSTMENT),
         _tickers(args.tickers, conn, now),
         day,
         now=now,
@@ -98,6 +98,11 @@ def _refresh(
         f"{len(res.rows)} rows for {day} · {len(res.errors)} errors · "
         f"{res.calls} Alpaca data requests\n"
     )
+    sys.stdout.write(
+        f"{len(res.corr_rows)} pair correlations ({res.corr_seconds:.2f}s); top pairs:\n"
+    )
+    for a, b, c in res.top_pairs(10):
+        sys.stdout.write(f"  {a:<6} {b:<6} {c:6.3f}\n")
     return 0 if res.rows else 1
 
 

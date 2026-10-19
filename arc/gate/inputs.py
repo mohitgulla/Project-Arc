@@ -176,6 +176,15 @@ class Portfolio(_Frozen):
             "counted toward 'deployed' for the tiered per-underlying cap (arc.gate.caps)."
         ),
     )
+    reserved_underlyings: tuple[str, ...] = Field(
+        default=(),
+        exclude=True,
+        description=(
+            "D131 (E28.5): underlyings of the in-flight opens behind reserved_max_loss "
+            "(arc.store.execution.reserved_opens), counted as open names by rule "
+            "cluster_cap. Left out of dumps (the Risk prompt's portfolio_json is unchanged)."
+        ),
+    )
     closed_lots: list[ClosedLot] = Field(default_factory=list)
     legs: dict[str, int] = Field(
         default_factory=dict,
@@ -263,5 +272,14 @@ class MarketSnapshot(_Frozen):
         description=(
             "D131 (E28.2): the market reference's close vs SMA(regime_gate_ma) for rule "
             "short_premium_regime. None = unknown: fails closed for the blocked kinds only."
+        ),
+    )
+    correlations: dict[str, float] = Field(
+        default_factory=dict,
+        description=(
+            "D131 (E28.5): 60-session daily log-return correlations for rule cluster_cap, "
+            "keyed by arc.gate.rules.corr_key ('AAA|BBB', upper-case, sorted). Built outside "
+            "the gate (arc.pipeline.market.cluster_correlations) from the stored "
+            "`correlations` table. A missing pair counts as not correlated."
         ),
     )

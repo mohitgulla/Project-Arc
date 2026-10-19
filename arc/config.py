@@ -293,6 +293,24 @@ class ArcSettings(BaseSettings):
             "of equity (40%). Sizing fits the headroom. 1.00 = effectively off (rollback)."
         ),
     )
+    # D131 (E28.5): gate rule cluster_cap (60-session return-correlation clusters).
+    cluster_cap_enabled: bool = Field(
+        default=True,
+        description=(
+            "Gate rule cluster_cap: a new open fails when cluster_cap_max_names other open "
+            "names (positions + in-flight opens) have a 60-session return correlation with "
+            "its underlying above cluster_cap_corr_threshold (a missing pair counts). Off = "
+            "the pre-D131 gate (rollback)."
+        ),
+    )
+    cluster_cap_corr_threshold: Annotated[float, Field(ge=0.5, le=0.95)] = Field(
+        default=0.7,
+        description="cluster_cap: two names with correlation strictly above this share a cluster.",
+    )
+    cluster_cap_max_names: Annotated[int, Field(ge=1, le=10)] = Field(
+        default=2,
+        description="cluster_cap: the most open names one correlation cluster may hold (2).",
+    )
     daily_loss_halt_pct: Annotated[float, Field(gt=0.0, le=1.0)] = Field(
         default=0.03,
         description="Daily portfolio loss halt threshold (3%).",

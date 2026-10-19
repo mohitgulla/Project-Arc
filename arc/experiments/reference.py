@@ -81,6 +81,13 @@ ARM_REFERENCE_TABLES: tuple[ReferenceTable, ...] = (
         reader="arc.betas.store.betas_used (gate β$Δ cap, monitor)",
     ),
     ReferenceTable(
+        "correlations",
+        ("day", "a", "b"),
+        "created_at",
+        "day <= :day",
+        reader="arc.betas.corr_store.corr_matrix (E28.5 cluster cap, D131)",
+    ),
+    ReferenceTable(
         "iv_daily",
         ("ticker", "day", "source"),
         "created_at",

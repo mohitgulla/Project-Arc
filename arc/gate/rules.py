@@ -26,6 +26,7 @@ from pydantic import BaseModel, ConfigDict
 from arc.account_profiles import BuyingPower, DayTradeRule, ShortLegPolicy
 from arc.gate.band import MAX_BAND_STEPS, PriceBand, as_grid, band_from_nbbo
 from arc.gate.caps import alloc_tier, deployed_max_loss, open_risk
+from arc.gate.cluster import cluster_check
 from arc.gate.delta import MAX_LOSS_DELTA_KINDS, delta_exposure, kind_of
 from arc.gate.ticks import TickGrid, order_grid
 from arc.models import GateDecision, Leg, LegIntent, Proposal, QuoteClock
@@ -55,6 +56,7 @@ __all__ = [
     "check_account_profile",
     "check_approval_ttl",
     "check_band",
+    "check_cluster_cap",
     "check_closing",
     "check_daily_loss",
     "check_data_freshness",
@@ -137,6 +139,8 @@ class RuleCode(StrEnum):
     SHORT_PREMIUM_REGIME = "short_premium_regime"
     # D131 (E28.3): Σ open + reserved + new max loss <= max_open_risk_pct x equity
     OPEN_RISK_CAP = "open_risk_cap"
+    # D131 (E28.5): at most cluster_cap_max_names open names per correlation cluster
+    CLUSTER_CAP = "cluster_cap"
     RULE_ERROR = "rule_error"
 
 
@@ -301,6 +305,36 @@ def check_open_risk(
             f"{risk.cap_pct * account.equity} ({risk.describe()}; equity {account.equity})",
         )
     return []
+
+
+def check_cluster_cap(
+    d: Derived, portfolio: Portfolio, market: MarketSnapshot, config: ArcSettings
+) -> list[Violation]:
+    """D131 (E28.5): a new open may not be the 3rd name of a correlation cluster.
+
+    Counts the open positions' and reserved in-flight opens' *other* underlyings whose
+    60-session return correlation with the new open's underlying is above
+    ``cluster_cap_corr_threshold``; a missing pair does not count. Fails when
+    that count reaches ``cluster_cap_max_names``. Opens only; off when
+    ``cluster_cap_enabled`` is false (rollback). See :mod:`arc.gate.cluster`.
+    """
+    if not config.cluster_cap_enabled:
+        return []
+    names = [p.underlying for p in portfolio.positions] + list(portfolio.reserved_underlyings)
+    chk = cluster_check(
+        d.underlying,
+        names,
+        market.correlations,
+        threshold=config.cluster_cap_corr_threshold,
+        max_names=config.cluster_cap_max_names,
+    )
+    if not chk.blocked:
+        return []
+    return _v(
+        RuleCode.CLUSTER_CAP,
+        f"{chk.ticker} would be name {len(chk.peers) + 1} of its correlation cluster "
+        f"(corr > {chk.threshold:g}; max {chk.max_names} open names): {chk.describe()}",
+    )
 
 
 def check_daily_loss(account: AccountSnapshot, config: ArcSettings) -> list[Violation]:
@@ -1121,7 +1155,8 @@ def evaluate(
     ``closing``: the proposal closes an open position (E6.2 exits). Every leg must
     reduce a held leg (:func:`check_closing`); rules that only limit *opening*
     risk are skipped — daily-loss entry block, max open positions, Greek caps,
-    per-underlying cap, open-risk cap (D131), structure whitelist, account profile (D25),
+    per-underlying cap, open-risk cap and cluster cap (D131), structure whitelist,
+    account profile (D25),
     wash sale, entry DTE window,
     DTE-sleeve slots (E22.1), earnings blackout and the short-premium regime rule
     (D131). The halt, TTL, data freshness, spread/NBBO/tick and band checks still run
@@ -1166,6 +1201,7 @@ def evaluate(
         if not closing:
             violations += _run("per_underlying", lambda: check_per_underlying(risk_d, a, pf, c))
             violations += _run("open_risk", lambda: check_open_risk(risk_d, a, pf, c))
+            violations += _run("cluster_cap", lambda: check_cluster_cap(dd, pf, m, c))
         violations += _run("spread_tick", lambda: check_spread_tick(p, dd, m, c))
         violations += _run("max_gain", lambda: check_max_gain(dd))
         if band is not None:

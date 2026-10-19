@@ -1,0 +1,73 @@
+"""D131 (E28.5): correlation cluster cap — pure, no storage, no network.
+
+A new open on ticker *T* is the ``max_names + 1``-th name of its cluster when at least
+``cluster_cap_max_names`` (2) *other* open names *U* (open positions plus reserved
+in-flight opens) have ``corr(T, U) > cluster_cap_corr_threshold`` (0.7). The owner rule
+is at most 2 open names per cluster, so that open fails the gate's ``cluster_cap`` rule.
+
+* A pair with no stored correlation counts as **not correlated** (owner, D131 revision:
+  no data is not evidence of a cluster), so it never adds a peer.
+* Same-ticker positions are not peers (other rules govern a second structure on *T*).
+* Direction-agnostic in v1: a bull put and a bear call on two correlated names count
+  alike (E7.18 measured same-cluster names regardless of direction).
+
+The correlations come in on :attr:`arc.gate.inputs.MarketSnapshot.correlations`, keyed
+by :func:`corr_key`, built outside the gate from the ``correlations`` table (E28.4).
+The pipeline's pre-gate (Research / Quant lines, Quant menu drops) and the backtest
+call :func:`cluster_check` too, so they agree with the rule by construction.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, NamedTuple
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Mapping
+
+__all__ = ["ClusterCheck", "cluster_check", "corr_key"]
+
+
+def corr_key(a: str, b: str) -> str:
+    """``"AAA|BBB"``: the two tickers upper-cased and sorted (the snapshot's dict key)."""
+    x, y = a.upper(), b.upper()
+    return f"{x}|{y}" if x < y else f"{y}|{x}"
+
+
+class ClusterCheck(NamedTuple):
+    """*ticker*'s open cluster peers: ``peers`` (stored corr above the threshold,
+    sorted). Pairs with no stored correlation are not peers."""
+
+    ticker: str
+    peers: tuple[str, ...]
+    max_names: int
+    threshold: float
+
+    @property
+    def blocked(self) -> bool:
+        """A new open would make *ticker* the (max_names + 1)-th name of the cluster."""
+        return len(self.peers) >= self.max_names
+
+    def describe(self) -> str:
+        """``AMD, AVGO`` for prompts and violations."""
+        return ", ".join(self.peers) or "none"
+
+
+def cluster_check(
+    ticker: str,
+    open_names: Iterable[str],
+    correlations: Mapping[str, float],
+    *,
+    threshold: float,
+    max_names: int,
+) -> ClusterCheck:
+    """*ticker*'s cluster peers among *open_names* (see the module doc)."""
+    me = ticker.upper()
+    peers: set[str] = set()
+    for name in open_names:
+        other = name.upper()
+        if other == me:
+            continue
+        c = correlations.get(corr_key(me, other))
+        if c is not None and c > threshold:
+            peers.add(other)
+    return ClusterCheck(me, tuple(sorted(peers)), max_names, threshold)

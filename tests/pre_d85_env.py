@@ -33,6 +33,11 @@ PRE_D85_ENV: dict[str, str] = {
     # pipelines' prompts, sizing and Tower goldens stay byte-identical. The shipped 40%
     # is tested in tests/test_e283_open_risk_cap.py and tests/test_gate_open_risk.py.
     "ARC_MAX_OPEN_RISK_PCT": "1.0",
+    # D131 (E28.5): the correlation cluster cap off, so the fixture books (no stored
+    # correlations: every pair unknown, counted) keep opening and their prompts stay
+    # byte-identical. The shipped default (on) is tested in tests/test_gate_cluster.py
+    # and tests/test_e285_cluster_cap.py.
+    "ARC_CLUSTER_CAP_ENABLED": "false",
 }
 
 

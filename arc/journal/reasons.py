@@ -137,6 +137,8 @@ class ReasonCode(StrEnum):
     SLEEVE_FULL = "sleeve_full"  # E22.2 (D97): a DTE sleeve with no free slot, no menu
     # D131 (E28.2): SPY below its SMA: bull puts / iron condors taken off the menus
     REGIME_GATE_CREDIT_OFF = "regime_gate_credit_off"
+    # D131 (E28.5): the name would be the 3rd of a correlation cluster; no menu
+    CLUSTER_CAP = "cluster_cap"
     # account profile (D25): the profile maps the stance to no structure
     PROFILE_NO_NEUTRAL = "profile:no_neutral_structure"
     PROFILE_NO_STRUCTURE = "profile:no_structure"
@@ -255,6 +257,7 @@ class ReasonCode(StrEnum):
     GATE_SLEEVE_POSITIONS = "gate:sleeve_max_positions"  # E22.1 (D97)
     GATE_SHORT_PREMIUM_REGIME = "gate:short_premium_regime"  # D131 (E28.2)
     GATE_OPEN_RISK_CAP = "gate:open_risk_cap"  # D131 (E28.3)
+    GATE_CLUSTER_CAP = "gate:cluster_cap"  # D131 (E28.5)
     # approval (E6.1)
     OWNER_APPROVE = "owner_approve"
     OWNER_REJECT = "owner_reject"
@@ -528,6 +531,8 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.GATE_SLEEVE_POSITIONS: "Gate: DTE sleeve full",
     ReasonCode.SLEEVE_FULL: "No menu: DTE sleeve full",
     ReasonCode.GATE_OPEN_RISK_CAP: "Gate: over the portfolio open-risk cap",
+    ReasonCode.GATE_CLUSTER_CAP: "Gate: correlation cluster full (open-name cap)",
+    ReasonCode.CLUSTER_CAP: "No menu: correlation cluster full (open-name cap)",
     ReasonCode.GATE_SHORT_PREMIUM_REGIME: "Gate: SPY below its trend (no new bull puts / condors)",
     ReasonCode.REGIME_GATE_CREDIT_OFF: "Menus: bull puts / condors off (SPY below its trend)",
     ReasonCode.OWNER_APPROVE: "Owner approved",
