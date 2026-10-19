@@ -55,6 +55,7 @@ from arc.backtest.sim import (
     profile_sleeves,
     sleeve_menus,
     sleeve_name,
+    split_adjusted,
     spread_ok,
     ticker_books,
     ticker_prep,
@@ -703,11 +704,37 @@ def pending(vdir: Path, tickers: Sequence[str], years: Sequence[int]) -> dict[st
     return out
 
 
+def momentum_closes(
+    data_dir: Path, tickers: Sequence[str], start: dt.date, end: dt.date
+) -> dict[str, pd.Series]:
+    """Split-adjusted closes per name from ``start - 400d`` (the view's warm-up), exactly
+    the sim's ``SimTicker.adj_closes`` (raw closes with :func:`split_ratios` from the
+    adjusted OHLC), so the 12-1 momentum score sees its full lookback."""
+    from arc.backtest.entry_filter import OhlcStore
+    from arc.backtest.sim import split_ratios
+    from arc.backtest.underlying import UnderlyingStore
+
+    lo = start - dt.timedelta(days=400)
+    us, os_ = UnderlyingStore(data_dir), OhlcStore(data_dir)
+    out: dict[str, pd.Series] = {}
+    for t in tickers:
+        bars = us.read_bars(t)
+        idx = pd.Index(bars.index)
+        raw = bars[(idx >= lo) & (idx <= end)]["close"].dropna()
+        ohlc = os_.read(t)
+        oidx = pd.Index(ohlc.index)
+        ohlc = ohlc[(oidx >= lo) & (oidx <= end)]
+        splits = split_ratios(raw, pd.Series(ohlc["close"])) if len(ohlc) else {}
+        out[t] = split_adjusted(raw, splits) if splits else raw
+    return out
+
+
 def finalize_active(
     vdir: Path,
     *,
     sim: Any,
     aliases: Mapping[str, str],
+    data_dir: Path | None = None,
 ) -> pd.DataFrame:
     """The sim's active-list proxy per session from every ticker's day infos.
 
@@ -730,6 +757,8 @@ def finalize_active(
             r["date"]: DayInfo(**{k: r[k] for k in fields if k in r}) for r in g.to_dict("records")
         }
         closes[str(t)] = pd.Series(g["close"].to_numpy(float), index=list(g["date"]))
+    if data_dir is not None:  # the sim's adj_closes, with the 12-1 momentum warm-up
+        closes = momentum_closes(Path(data_dir), sorted(infos), min(df["date"]), max(df["date"]))
     sessions = sorted(set(df["date"]))
     etfs = frozenset(t for t, i in infos.items() if any(v.etf for v in i.values()))
     mom = monthly_momentum(closes, infos, sessions, sim, aliases, etfs=etfs)
@@ -875,7 +904,9 @@ def build_ledger(
     left = pending(vdir, names, years)
     if left:
         say(f"stopped with {len(left)} tickers pending (yield file present); rerun to resume")
-    finalize_active(vdir, sim=bt.sim, aliases=MomentumConfig().share_class_aliases)
+    finalize_active(
+        vdir, sim=bt.sim, aliases=MomentumConfig().share_class_aliases, data_dir=data_dir
+    )
     meta = {
         "git_sha": _git_sha(),
         "config_hashes": {
