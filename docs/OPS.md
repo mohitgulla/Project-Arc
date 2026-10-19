@@ -3366,7 +3366,10 @@ instead of ending: a study approved on Saturday starts that night.
   `stopped`, the holdout is never spent.
 - **Fit-or-defer:** a rung starts only if the time left covers its estimate: the median
   `runtime_s` of the ledger's rows for that phase × universe (this study's, else any) ×
-  `runtime_margin` (1.2). No history → it starts and may be interrupted.
+  `runtime_margin` (1.2). No history → it starts and may be interrupted. For a spec with a
+  `robustness` grid (E7.20) each row is rescaled by its measured walk-only cost
+  (`grid.walk_s_per_cell`): its runtime minus its own extra-cell walks plus the cells this
+  rung walks × that per-cell cost.
 - **Window end:** SIGTERM to the child's process group, SIGKILL after `kill_grace` (120 s).
   `study run` exits 143 with **no ledger line** (the ledger line and the report are written
   together with SIGTERM held). The rung is recorded `interrupted` and reruns from the start
@@ -3391,6 +3394,58 @@ ending N minutes from now and the event lines printed instead of posted:
 
     .venv/bin/arc backtest study night --minutes 60 [--slack]
 
+
+## E7.20 robust study protocol (D125)
+
+A BT study may pre-register a **robustness grid** so a treatment has to win under the
+unknowns live differs on (who sets the stance, what fills cost), not only under the sim's
+own assumption set. Optional `robustness:` block in `config/backtest_studies/BT-<n>.yaml`
+(`{}` = the defaults; the block is in the spec hash, a spec without it keeps its old hash
+and today's verdict exactly):
+
+    robustness:
+      stance: [trend_v2, noisy_0.35, lagged_5, market_v2]   # must include trend_v2
+      slippage_x: [0.0, 0.25, 0.5]                          # fill at mid ± x × spread
+      min_cell_win_frac: 0.75
+      max_cell_loss_ci: no_cell_ci_hi_below_0
+
+- **Stance proxies** (`arc/backtest/stance.py`, pure and seeded; each maps (ticker, session)
+  to bull / bear / sideways from data ≤ that session): `trend_v2` (the sim's own label, the
+  control proxy), `noisy_0.2` / `noisy_0.35` (trend_v2 flipped once per (ticker, ISO week)
+  with probability p, RNG seeded by (spec hash, ticker, week): a bull/bear flips, a sideways
+  turns bull or bear), `lagged_5` (the label 5 sessions earlier), `market_v2` (SPY's label
+  on every name; needs SPY closes), `both` (no stance filter: every direction competes).
+  `live_llm` is reserved for E7.22 and refused.
+- **One build per arm overlay serves every cell.** Each candidate is tagged with the
+  stances it is a top pick under (the menu, ranking and filters for a stance are exactly the
+  untagged build's for a session with that trend label) and carries its outcome at every
+  grid x (exit timing is found once on mids and quoted spreads, only fills differ). The menu
+  cache key is unchanged (golden test), so E7.18/E7.19 cached menus still resolve. A cell is
+  then one walk: `stance_of` picks the proxy labels, `fill_x` the outcome.
+- **Verdict** per profile × treatment: `switch` = the D25 rule says switch on the control
+  cell (`trend_v2@<sim slippage_x>`) **and** treatment − control P&L diff > 0 in ≥
+  `min_cell_win_frac` of the cells **and** no cell's bootstrap CI upper bound < 0;
+  `fragile` = the control cell switches but the grid fails; else `keep`. For a robust spec
+  the ledger's `verdicts.<p>.<t>.switch` is the robust call (old readers can't cite a
+  fragile arm), plus `robust_call` and `grid`; the D25 fields (`pnl_diff`, CI, sub-periods)
+  stay the control cell's.
+- **Ladder:** the full grid runs on the first ladder rung (C125 dev). C500 dev and the
+  holdout run the control cell plus the worst non-control cell per profile × treatment of
+  the latest full-grid row of the same spec hash (no such row → the full grid).
+- **Ledger:** `cells` = profile → treatment → `<proxy>@<x>` → `pnl_diff`, `ci_lo`, `ci_hi`,
+  both arms' net P&L and trade counts; `grid` = `scope`, `control_cell`, `cells`,
+  `build_s`, `walk_s`, `walk_s_per_cell`. Both keys are absent on a spec without a grid.
+- **Report:** a `## Robustness grid (D125)` heat-table (▲ won, ▼ CI below 0) with the
+  timing line, and one `robust: switch | fragile | keep` line per treatment.
+- A grid with `backtest.direction_tilt > 0` is refused (tilted ranker keys follow the
+  ticker's own label, not the proxy).
+- The Analyst reads `fragile` and cites only `switch` holdouts as evidence (its BT-ref
+  validator rejects a fragile holdout).
+
+E7.18's spread-to-premium cap is available to studies as the backtest-only knob
+`backtest.max_spread_premium` (`config/ranking.yaml`, default off): a candidate whose Σ leg
+quoted spread / |net mid| exceeds it is dropped before ranking, so the next-ranked
+candidate refills the slot.
 
 ## E7.22 live ↔ sim reconciliation (D125)
 

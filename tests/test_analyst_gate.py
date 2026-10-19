@@ -569,6 +569,29 @@ def _bt_line(
     }  # fmt: skip
 
 
+def _fragile(line: dict[str, Any]) -> dict[str, Any]:
+    """E7.20 (D125): a robust study's line whose t1 wins the control cell only."""
+    v = line["verdicts"]["margin"]["t1"]
+    v |= {"robust_call": "fragile", "grid": {"call": "fragile", "cells_won": 5, "cells": 12}}
+    return line
+
+
+def test_fragile_holdout_is_never_evidence() -> None:
+    s = _studies(_bt_line(phase="dev", universe="c125"), _fragile(_bt_line(switch=False)),
+                 current={"BT-3": {"spec_hash": "a" * 64}})[0]  # fmt: skip
+    assert not s["holdout"]["passes"] and s["holdout"]["fragile"]
+    assert aa.study_evidence_class(s).startswith("C500 holdout: FRAGILE")
+    r = s["holdout"]["verdicts"][0]
+    assert "FRAGILE (wins the control cell, fails the robustness grid: won 5/12" in (
+        aa._verdict_text(r)
+    )
+    robust = _bt_line()
+    robust["verdicts"]["margin"]["t1"] |= {"robust_call": "switch"}
+    ok = _studies(robust, current={"BT-3": {"spec_hash": "a" * 64}})[0]
+    assert ok["holdout"]["passes"] and not ok["holdout"]["fragile"]
+    assert "SWITCH candidate (robust)" in aa._verdict_text(ok["holdout"]["verdicts"][0])
+
+
 def _studies(*lines: dict[str, Any], current: dict[str, dict[str, Any]] | None = None) -> list:
     return aa.study_overview(list(lines), current or {})
 
@@ -1561,6 +1584,8 @@ def test_checkpoints_and_drift_sections(tmp_path: Path) -> None:
         (_studies(_bt_line()), _prop(), "no loadable spec file"),
         (_studies(_bt_line(switch=False), current={"BT-3": {"spec_hash": "a" * 64}}),
          _prop(), "holdout verdict is keep-control"),
+        (_studies(_fragile(_bt_line(switch=False)), current={"BT-3": {"spec_hash": "a" * 64}}),
+         _prop(), "holdout verdict is fragile (wins the control cell, fails the D125"),
         (BT3, _prop(spec=_spec(arms={"control": {}, "treatments": {
             f"t{i}": {"overlay": {"ranking": {"rank_by": v}}}
             for i, v in enumerate("abcd", 1)}})), "the proposal varies ['ranking.rank_by']"),
@@ -1729,6 +1754,27 @@ def test_study_spec_mirror_tracks_the_model() -> None:
     assert StudySpec.model_fields["universe_ladder"].get_default(call_default_factory=True) == (
         aa.STUDY_LADDER
     )
+    from arc.backtest.stance import PROXIES
+    from arc.backtest.study import StudyRobustness
+
+    assert tuple(p for p in PROXIES if p != "live_llm") == aa.STUDY_STANCE_PROXIES
+    assert set(aa.STUDY_ROBUSTNESS_KEYS) == set(StudyRobustness.model_fields)
+    assert aa.validate_study_spec  # the grid validator agrees with the model on samples:
+    for rob, ok in (
+        ({}, True),
+        ({"stance": ["trend_v2", "both"], "slippage_x": [0, 0.5]}, True),
+        ({"stance": ["noisy_0.2"]}, False),
+        ({"slippage_x": [0.25, 0.25]}, False),
+        ({"min_cell_win_frac": 0}, False),
+        ({"cells": 3}, False),
+    ):
+        assert (aa._validate_robustness(rob, "r") == []) is ok, rob
+        try:
+            StudyRobustness.model_validate(rob)
+            model_ok = True
+        except ValueError:
+            model_ok = False
+        assert model_ok is ok, rob
 
 
 @pytest.mark.usefixtures("_stub_views")
