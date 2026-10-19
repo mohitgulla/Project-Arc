@@ -1,5 +1,5 @@
 information,evidence,n,net,eod_stop_overshoot_$
-intraday path (stop fills at EOD),stops gapping through −0.5R→stop between closes,9,-3342.0,6981.0
-earnings calendar (real dates),stocks with a detected earnings day inside the hold the projected-date blackout missed,16,-2027.0,
-macro calendar in selection,entries with FOMC/CPI within 2 sessions,105,-6255.0,
-market regime stance (news/LLM),entries ≤10 sessions before the SPY trend label changed,144,-29997.0,
+intraday path (stop fills at EOD),stops gapping through −0.5R→stop between closes,4,-304.0,9976.0
+earnings calendar (real dates),stocks with a detected earnings day inside the hold the projected-date blackout missed,37,-1264.0,
+macro calendar in selection,entries with FOMC/CPI within 2 sessions,109,9913.0,
+market regime stance (news/LLM),entries ≤10 sessions before the SPY trend label changed,346,-18417.0,

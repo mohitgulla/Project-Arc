@@ -3,11 +3,12 @@
 Status: done 2026-10-17. Generated tables: [sim-alignment/tables.md](sim-alignment/tables.md)
 (`scripts/sim_alignment_report.py`). The E7.18 report re-run on the new books is
 [sim-alignment/loss-anatomy/tables.md](sim-alignment/loss-anatomy/tables.md), produced by
-`scripts/loss_anatomy.py --runs-dir data/backtest/runs/baseline_d125 {runs,features,report --out docs/RESEARCH/sim-alignment}`
+`scripts/loss_anatomy.py --runs-dir data/backtest/runs/baseline_d125_post128 {runs,features,report --out docs/RESEARCH/sim-alignment}`
 (the same code path, pointed at the new runs dir).
 
-Books: `data/backtest/runs/baseline_d125/<book>` is **the incumbent for every later
-study**; `<book>_noproxy` is the same sim with `intraday_proxy: none`. Same window
+Books: `data/backtest/runs/baseline_d125/<book>` (pre-D128 config) and
+`data/backtest/runs/baseline_d125_post128/<book>` (**the incumbent for every later
+study**); `<book>_noproxy` is the same sim with `intraday_proxy: none`. Same window
 (dev 2020-01-01 → 2023-12-29), data end, universes, rankers (`credit_width` /
 `debit_width`) and seeds as E7.18 (`data/backtest/runs/anatomy/`, the "old" book).
 C500 dev is primary, C125 dev the check, as in E7.18.
@@ -24,9 +25,14 @@ D128/D131, merged on main while the books ran, changed two things:
 - the default menu measure is now `managed_net_ev_full`.
 
 Both changes move the menu-cache keys, so a study run on current main rebuilds its
-menus and does **not** reproduce these books. A follow-up card rebuilds the incumbent
-on post-D128 config. Until then, read these books as the sim-change effect on fixed
-config, which is what this card measures.
+menus and does **not** reproduce these books. Read them (variant `pre128` in the
+generated tables) as the sim-change effect on fixed config.
+
+**The incumbent is the post-D128 rebuild** `data/backtest/runs/baseline_d125_post128/<book>`
+(+ `_noproxy`), variant `new` in the tables: the margin superset menu, the live
+incumbent ranker (`menu_measure` → `managed_net_ev`), the debit-scoped anti-chase on the
+walk (`sim.entry_filters: live`), margin buying power (D129) and the D131 rules. Why it
+is worse than `pre128`, cell by cell, is in [Post-D128 attribution](#post-d128-attribution).
 
 ## What changed in the sim
 
@@ -38,7 +44,96 @@ config, which is what this card measures.
 | intraday-flagged rules | EOD marks only | also checked at session d's underlying high/low (sticky-strike reprice, spread paid), stop-first |
 | margin | one window 21–45, nearest expiry | one implicit `default` sleeve 21–45, every expiry (cap 3) |
 
-## Old vs new books (All)
+## Post-D128 attribution
+
+The incumbent ruins margin on both books (C500 −$24,934, 599 trades, −0.123 per-$-risk,
+net at mid −$19,410; C125 −$24,382, −0.046, at mid −$10,940). The `pre128` margin books
+lost −$14,976 / −$16,079 and were positive at mid. `scripts/sim_alignment_ablation.py`
+walks a grid on the same cached menus to find which change does it:
+- ranker: `managed_net_ev` (the live incumbent) or the width ranker;
+- debit kinds on the margin menu or credit only;
+- anti-chase (`entry_filters`) live or none;
+- margin buying power on or off;
+- D131 rules (`short_premium_regime` + `open_risk_cap`) on or off.
+
+That is 32 margin cells and 8 cash_debit cells per book, all on the proxy-on sim. The
+output is `baseline_d125_post128/ablation/<book>/`, and the 80 cells are in
+[sim-alignment/ablation.csv](sim-alignment/ablation.csv). Every cell keeps the
+post-D128 margin menu shape (sleeves, 5 % widest-fit wing), so the first row below is
+not the `pre128` book.
+
+**Margin, one change at a time (C500 / C125):**
+
+| step | C500 trades | C500 net | C500 per-$-risk | C500 at mid | C125 net | C125 per-$-risk | C125 at mid |
+|---|---|---|---|---|---|---|---|
+| credit only, width ranker, nothing else | 630 | −$22,660 | −0.046 | −$833 | −$16,327 | −0.017 | +$12,928 |
+| + ranker `managed_net_ev` | 688 | −$22,859 | −0.027 | −$3,961 | −$22,412 | −0.028 | −$7,004 |
+| + debit kinds (D128 superset) | 822 | −$24,940 | −0.048 | −$9,214 | −$24,932 | −0.104 | −$16,698 |
+| + debit-scoped anti-chase | 528 | −$24,955 | −0.096 | −$15,947 | −$24,929 | −0.087 | −$15,205 |
+| + margin buying power | 551 | −$24,950 | −0.108 | −$15,538 | −$24,935 | −0.085 | −$16,018 |
+| + D131 rules = **incumbent** | 599 | −$24,934 | −0.123 | −$19,410 | −$24,382 | −0.046 | −$10,940 |
+
+**Margin, incumbent minus one change:**
+
+| removed | C500 net | C500 per-$-risk | C500 at mid | C500 max DD | C125 net | C125 per-$-risk | C125 at mid | C125 max DD |
+|---|---|---|---|---|---|---|---|---|
+| — (incumbent) | −$24,934 | −0.123 | −$19,410 | 99.8 % | −$24,382 | −0.046 | −$10,940 | 98.4 % |
+| debit kinds (credit only) | **−$4,569** | **−0.005** | **+$12,049** | **70.0 %** | **−$6,223** | **−0.010** | **+$3,774** | **56.3 %** |
+| ranker → `credit_width` | −$23,083 | −0.044 | +$7,849 | 94.2 % | −$24,901 | −0.070 | −$7,723 | 99.7 % |
+| anti-chase | −$22,720 | −0.036 | −$6,725 | 98.2 % | −$24,519 | −0.096 | −$17,207 | 99.3 % |
+| buying power | identical | | | | identical | | | |
+| D131 rules | −$24,950 | −0.108 | −$15,538 | 99.8 % | −$24,935 | −0.085 | −$16,018 | 99.8 % |
+
+What the grid shows:
+
+1. **The debit kinds on the margin menu are the loss.** Removing them is the only
+   single change that keeps margin out of ruin on both books, and it gives the best
+   margin book in the grid: C500 −$4,569 and +$12,049 at mid, C125 −$6,223 and +$3,774
+   at mid. The credit-only width-ranker cell with D131 rules is +$1,851 on C500 (+$34,533
+   at mid, 64.5 % max DD).
+   - Under `managed_net_ev`, 84–88 % of the incumbent's C500 margin trades are debit.
+   - Long calls alone are −$17,453 (n 298, −0.119), long puts −0.448 and bear puts
+     −0.178, while the credit kinds are flat to positive
+     (`sim-alignment/loss-anatomy/margin_by_kind.csv`).
+   - E7.5b's evidence for `managed_net_ev_full` was a debit-only and a credit-only book
+     (D128: "untested on a mixed menu"). On a mixed menu the ranker's managed Net EV
+     prefers debit structures, and those lose after cost.
+2. **The ranker is second.** With debit kinds on the menu, `credit_width` beats
+   `managed_net_ev` on C500 (−0.044 vs −0.123, +$7,849 vs −$19,410 at mid) but not on
+   C125 (−0.070 vs −0.046). Credit only, the two rankers are close on per-$-risk.
+3. **Anti-chase is not consistent.** It costs money on C500 (off: −0.036, on: −0.123)
+   and saves money on C125 (off: −0.096, on: −0.046). It cuts only debit ideas, so its
+   effect rides on the debit kinds in item 1.
+4. **Margin buying power never binds once the D131 rules are on.** The bp-on and bp-off
+   cells match in every pair (same trades, same net): `open_risk_cap` refuses first.
+   Without D131 it changes up to 182 opens and at most ±$3.1K net, mostly on cells
+   that are already ruined.
+5. **D131 rules mostly help.** Per-$-risk on minus off:
+   - C125 mixed menu: +0.008 to +0.144;
+   - C500 credit only: +0.016 to +0.052;
+   - C500 mixed menu: −0.027 to +0.072;
+   - C125 credit only: −0.018 to +0.020.
+6. **cash_debit:** the grid reproduces the `pre128` book (debit_width, no filter, no
+   D131: 674 trades, −0.040, +$45,560 at mid, against 679 / −0.040 / +$45,756). The
+   incumbent ranker `managed_net_ev` is worse at mid on both books (C500 −$7,243 vs
+   `debit_width` +$22,427; C125 −$19,625 vs −$3,318). Every cash_debit cell is ruined.
+7. **The proxy is a large share of the incumbent's margin loss**, now that margin
+   carries the short-sleeve debit book. With the proxy off, margin is C500 −$23,204 at
+   −0.023 (+$1,112 at mid) and C125 −$5,133 at −0.006 (+$15,945 at mid).
+
+These are dev-period walks of one sim on fixed menus. They attribute the loss, but none
+of them is a study verdict. Under D86/D44 any change to the live menu, ranker or filter
+goes through a BT study and an XP. The candidate studies this points to are:
+- margin credit only, or the debit kinds on a separate measure;
+- `credit_width` vs `managed_net_ev` on the mixed margin menu;
+- anti-chase on/off on the mixed menu.
+
+## Old vs pre128 books (All)
+
+This section and the next five measure the sim change on fixed pre-D128 config
+(`new` below = variant `pre128` in the generated tables). The incumbent's numbers are in
+[Post-D128 attribution](#post-d128-attribution); the E7.18 loss-anatomy re-run under
+`sim-alignment/loss-anatomy/` is on the incumbent.
 
 | book | profile | variant | trades | net | max DD | per-$-risk | win | net at mid |
 |---|---|---|---|---|---|---|---|---|
@@ -146,7 +241,7 @@ Size check (menu build, C125, 20 sessions from 2021-03-01):
 
 These numbers are recorded in D125.
 
-## E7.18 headline findings on the new books (C500 primary, C125 check)
+## E7.18 headline findings on the pre128 books (C500 primary, C125 check)
 
 | # | E7.18 finding | on the new books | verdict |
 |---|---|---|---|
@@ -171,6 +266,20 @@ Ranked candidates from E7.18 that these results change: the macro-event blackout
 (margin) no longer holds on C500, and the debit earnings blackout loses most of its
 evidence. The spread cap and the cluster cap still rest on findings 1 and 6 (the cluster
 cap now on weaker evidence) and need re-testing on this incumbent book.
+
+The table above was measured on the `pre128` books (commit 4fa18a45).
+`sim-alignment/loss-anatomy/` is now regenerated on the incumbent. These are the
+incumbent's C500 values that differ:
+- **#1** no longer holds for margin: it is negative at mid (−$19,410). Only credit-only
+  margin is positive at mid (attribution, item 1).
+- **#3 holds**, stronger:
+  - margin regime-flip trades ≤10 sessions −$22,160 (−0.140);
+  - cash_debit −$14,704 (−0.268).
+- **#4:** margin's bleed is now its debit kinds: long call −$17,453, long put −0.448,
+  bear put −0.178. Margin condors and bull puts are flat.
+- **#6** comes back on margin as `same_group_open` (q5−q1 −0.153 R, CI excludes 0).
+  cash_debit `same_cluster_open` is −0.115 R with a CI that includes 0.
+- **#7 holds:** fold AUCs ≤ 0.55.
 
 ## Caveats
 

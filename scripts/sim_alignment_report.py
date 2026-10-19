@@ -2,9 +2,11 @@
 
     .venv/bin/python scripts/sim_alignment_report.py
 
-Reads the E7.18 books (``data/backtest/runs/anatomy/<book>``, pre-D125 sim) and the
-re-baseline (``data/backtest/runs/baseline_d125/<book>`` and ``<book>_noproxy``, the
-same sim with ``intraday_proxy: none``); writes ``docs/RESEARCH/sim-alignment/``.
+Reads the E7.18 books (``data/backtest/runs/anatomy/<book>``, pre-D125 sim), the D125
+books on pre-D128 config (``data/backtest/runs/baseline_d125``, variant ``pre128``) and
+the incumbent re-baseline (``data/backtest/runs/baseline_d125_post128/<book>`` and
+``<book>_noproxy``, the same sim with ``intraday_proxy: none``); writes
+``docs/RESEARCH/sim-alignment/``.
 Aggregates only (D84 licence): no quote rows. Every table splits All / Stocks / ETFs.
 """
 
@@ -24,7 +26,11 @@ from scripts.loss_attribution import DATA  # noqa: E402
 from scripts.loss_attribution_report import book, md_table, metrics, reconcile  # noqa: E402
 
 OLD = DATA / "backtest" / "runs" / "anatomy"
-NEW = DATA / "backtest" / "runs" / "baseline_d125"
+#: The D125 books on pre-D128 config (credit-only margin, width incumbents).
+PRE128 = DATA / "backtest" / "runs" / "baseline_d125"
+#: The incumbent: the same sim on post-D128 config (margin superset, the live
+#: ``menu_measure`` ranker, debit-scoped anti-chase, margin buying power, D131 rules).
+NEW = DATA / "backtest" / "runs" / "baseline_d125_post128"
 BOOKS = ("c500_dev", "c125_dev")
 PROFILES = ("margin", "cash_debit")
 #: Entry-DTE buckets: the short sleeve (10-35) split at 21, the swing sleeve (36-60).
@@ -33,7 +39,13 @@ CLASSES = ("All", "Stocks", "ETFs")
 
 
 def _variants(name: str) -> dict[str, Path]:
-    out = {"old": OLD / name, "new": NEW / name, "new_noproxy": NEW / f"{name}_noproxy"}
+    out = {
+        "old": OLD / name,
+        "pre128": PRE128 / name,
+        "pre128_noproxy": PRE128 / f"{name}_noproxy",
+        "new": NEW / name,
+        "new_noproxy": NEW / f"{name}_noproxy",
+    }
     return {k: v for k, v in out.items() if (v / "manifest.json").exists()}
 
 
@@ -77,6 +89,16 @@ def collect() -> dict[str, pd.DataFrame]:
                         "gate_dte_window": int(row.get("gate_dte_window", 0) or 0),
                         "gate_max_open_positions": int(row["gate_max_open_positions"]),
                         "gate_daily_loss": int(row["gate_daily_loss"]),
+                        **{
+                            k: int(row.get(k, 0) or 0)
+                            for k in (
+                                "buying_power",
+                                "cash",
+                                "sizing",
+                                "gate_open_risk_cap",
+                                "gate_short_premium_regime",
+                            )
+                        },
                     }
                 )
                 rc = reconcile(t, e)
@@ -155,7 +177,39 @@ def collect() -> dict[str, pd.DataFrame]:
         "exit_mix": pd.DataFrame(exits),
         "skips": pd.DataFrame(skips),
         "runtime": pd.DataFrame(runtime),
+        "ablation": ablation(),
     }
+
+
+#: The attribution grid (``scripts/sim_alignment_ablation.py``), aggregates only.
+ABLATION_COLS = (
+    "book",
+    "profile",
+    "entry_filters",
+    "ranker",
+    "credit_only",
+    "bp",
+    "d131",
+    "trades",
+    "net_pnl",
+    "max_dd_pct",
+    "per_risk",
+    "net_at_mid",
+    "win_rate",
+    "eq_2021_12_31",
+)
+
+
+def ablation() -> pd.DataFrame:
+    parts = [
+        pd.read_csv(f) for name in BOOKS if (f := NEW / "ablation" / name / "cells.csv").exists()
+    ]
+    if not parts:
+        return pd.DataFrame(columns=list(ABLATION_COLS))
+    df = pd.concat(parts, ignore_index=True)
+    return df[list(ABLATION_COLS)].sort_values(
+        ["book", "profile", "entry_filters", "ranker", "credit_only", "bp", "d131"]
+    )
 
 
 def main() -> int:
@@ -165,8 +219,11 @@ def main() -> int:
         "# E7.19 sim alignment: generated tables",
         "",
         "Written by `scripts/sim_alignment_report.py`; the narrative is `../sim-alignment.md`.",
-        "`old` = E7.18 books (one expiry nearest the window middle); `new` = the D125",
-        "sleeve-aligned sim; `new_noproxy` = the same with `intraday_proxy: none`.",
+        "`old` = E7.18 books (one expiry nearest the window middle); `pre128` = the D125",
+        "sleeve-aligned sim on pre-D128 config (credit-only margin, width incumbents);",
+        "`new` = the incumbent: the same sim on post-D128 config (margin superset, the",
+        "live `menu_measure` ranker `managed_net_ev`, debit-scoped anti-chase, margin",
+        "buying power, D131 rules); `*_noproxy` = the same with `intraday_proxy: none`.",
         "",
     ]
     for k, df in collect().items():

@@ -6,8 +6,10 @@
 > slots, no short-sleeve exit block). From E7.19 the sim trades both entry-DTE sleeves
 > (every expiry per sleeve, capped at 3; per-sleeve slots; per-sleeve exit block; the
 > intraday-rule high/low proxy). The incumbent book for every later study is
-> `data/backtest/runs/baseline_d125/` ([sim-alignment.md](sim-alignment.md)); re-check
-> any pre-D125 verdict against it before relying on it.
+> `data/backtest/runs/baseline_d125_post128/` (post-D128/D129/D131 config: margin
+> superset, the live `menu_measure` ranker, debit-scoped anti-chase, margin buying power,
+> D131 rules; [sim-alignment.md](sim-alignment.md)); re-check any pre-D125 verdict
+> against it before relying on it.
 
 Status: first baseline, 2026-09-27. Engine: `arc/backtest/`. Reproduce:
 
