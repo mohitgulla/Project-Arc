@@ -305,7 +305,12 @@ BT_CHECKPOINTS = Path("data") / "backtest_universe" / "checkpoints.json"  # E7.9
 # E7.14's backtest<->live reconciliation, aggregates only:
 # {"generated_at", "git_sha", "sim_slippage_frac",
 #  "rows": [{"kind", "regime", "n", "entry_pred", "entry_actual", "exit_pred", "exit_actual",
-#            "exit_reason_match", "pnl_tracking_error", "pnl_bias"}]}  ($ per unit / per trade)
+#            "exit_reason_match", "pnl_tracking_error", "pnl_bias"}],
+#  "summary": [str]}  ($ per unit / per trade). E7.22's `arc backtest recon` writes it
+# (rows = closed live trades replayed through the sim, `exit_reason_match` = the share
+# whose sim exit falls on live's exit day -- live's reasons (research_review) and the
+# sim's (take_profit/stop/dte_exit) are different vocabularies; summary = slippage x,
+# menu overlap, stance agreement).
 BT_RECONCILIATION = BT_REPORTS / "reconciliation.json"
 BT_SECTION_MAX = 4_000
 BT_CHECKPOINT_NAMES = ("c125", "c250", "c500")
@@ -3026,6 +3031,8 @@ def drift_lines(path: Path) -> list[str]:
             f" · P&L tracking error {_num(r.get('pnl_tracking_error'), ',.2f')}"
             f" (bias {_num(r.get('pnl_bias'), '+,.2f')})"
         )
+    # E7.22 (D125): the live<->sim recon adds its aggregate summary to the same slot
+    out += [f"- {s}" for s in d.get("summary") or [] if isinstance(s, str)]
     return out
 
 
