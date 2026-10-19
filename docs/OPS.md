@@ -3447,6 +3447,58 @@ E7.18's spread-to-premium cap is available to studies as the backtest-only knob
 quoted spread / |net mid| exceeds it is dropped before ranking, so the next-ranked
 candidate refills the slot.
 
+## E7.22 live ↔ sim reconciliation (D125)
+
+**Routine `backtest.recon`** (Sat 10:00 ET, background lane, `ttl: 2h`, `arm: all`): reads
+the audit store **read-only** (`mode=ro`) plus every D69 arm store recorded under
+`routine_state experiment_arm:*`, replays what live did through the sim on the ThetaData
+EOD book (`HistoryView`, C500 data dir) and writes:
+
+- `docs/RESEARCH/live-sim-recon.md`: the report (aggregates and our own fills only, no
+  vendor rows, D84). Every estimate prints n and its 90 % seeded bootstrap CI;
+  `insufficient` = n < 2 or CI half-width > 0.25 x. A `paper_bias` note states that paper
+  fills are a lower bound on live slippage.
+- `docs/RESEARCH/studies/reconciliation.json`: the Analyst's existing E7.14/E7.15 drift
+  slot (`drift_lines`; kind × regime rows + a `summary` list). No second slot.
+- `data/backtest/recon/recon.json` (every row) and `live_llm_stances.json` (the E7.20
+  `live_llm` stance series), gitignored.
+
+Sections (All / Stocks / ETFs each):
+
+1. **Slippage** `x = (fill − mid) / spread`, pay convention (+ = cost), per kind / side /
+   sleeve / time-of-day / ladder step / arm / pre-post D128 switch. NBBO sources: opens
+   `market_contexts.payload.legs[].bid/ask` (`quotes_as_of` = submit time); D101 re-gated
+   fills (`executions.detail` "re-priced") the `order:band_moved` decision's `mid` /
+   `far_touch`; closes `proposals.structure_json.legs[].premium` (review mid) + the D24
+   band (`2 × (band_hi − band_lo) / execution_band_reach`, an upper bound on x). `x_eod` =
+   the same fill vs that session's EOD closing NBBO, which is what the sim's
+   `slippage_x` stands for; the proposed `backtest.slippage_by_kind` comes from it.
+   **Report only**: the owner flips the knob.
+2. **Candidate overlap**: the E7.19 sim menu (`_sim_menu`, every sleeve window of the
+   day's profile) for each live open proposal; `exact` / `same_expiry` / `nearest` /
+   `kind_absent`, rank under each ranker within the menu of live's direction, the sim's top
+   pick (trend_v2 stance, the day's menu measure). The profile per day comes from
+   `run_manifests.payload.account_profile`; the menu measure from an applied
+   `config_changes menu_measure` override, else `config/exits.yaml` at the manifest's
+   `git_sha`.
+3. **Exit timing**: each closed `open_structures` row re-entered at its legs' EOD fills and
+   walked by the sim's own `arc.backtest.sim.exit_walk` (EOD and with the intraday range
+   proxy). `err = live − sim` splits exactly into `pricing gap` (live − the sim's fills on
+   live's own entry and exit days) and `timing gap` (live's exit day vs the sim's rules).
+4. **Stance gap**: Research's `decisions.payload.stance` (persona research, stage
+   shortlist, `shortlisted`, last per ET day) vs `trend_v2` (ticker), `market_v2` (SPY) and
+   `m1_direction` (`unknown` until a live M1 shadow series exists).
+
+Run by hand (any store, outputs anywhere):
+
+    .venv/bin/arc backtest recon [--since 2026-10-19] [--arm control|all] \
+        [--db data/arc.db] [--out DIR] [--report MD] [--reconciliation JSON]
+    .venv/bin/arc routines run backtest.recon --no-slack   # the routine, as scheduled
+
+`!arc config set routines.backtest.recon.enabled off` pauses it. It never changes a
+config default and never writes the store; a run takes ~2 min on a week of live data.
+
+
 ## E27.1 ML feature store (D126)
 
 One point-in-time feature library for the ML programme. `arc/ml/features/compute.py` holds

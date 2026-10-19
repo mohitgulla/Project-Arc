@@ -72,7 +72,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from arc.backtest.chain import implied_vol_vec
 from arc.backtest.correlations import pit_closes
-from arc.backtest.engine import MULT, STRUCTURE_KIND, close_early, open_trade, settle
+from arc.backtest.engine import MULT, STRUCTURE_KIND, Trade, close_early, open_trade, settle
 from arc.backtest.entry_filter import (
     apply_be_filter,
     apply_entry_filter,
@@ -148,6 +148,8 @@ __all__ = [
     "SimTicker",
     "active_list",
     "capacity_cap",
+    "exit_search",
+    "exit_walk",
     "momentum_scores",
     "market_trends",
     "run_sim",
@@ -580,6 +582,134 @@ def pick_proxy_rule[M](
     return None
 
 
+_Close = tuple[dt.date, ExitReason, dict[str, tuple[float, float]], float, str | None]
+
+
+def exit_search(
+    o: Any,
+    rules: ResolvedRules,
+    *,
+    entry_day: dt.date,
+    book: Mapping[dt.date, pd.DataFrame],
+    closes: pd.Series,
+    inside: Sequence[tuple[dt.date, float]],
+    settings: ArcSettings,
+    spread_rule: bool,
+    ranges: Mapping[dt.date, tuple[float, float]] | None = None,
+    rate: Callable[[dt.date], float] | float = 0.0,
+) -> tuple[_Close | None, dict[dt.date, float], int]:
+    """The session-by-session exit search of :func:`sim_outcomes` (E7.20/E7.22).
+
+    Walks *book* (``symbol``/``mid``/``spread`` per session) after *entry_day* and
+    before the expiry: the intraday range proxy first (*ranges*), then the EOD rules;
+    a fired exit waits for a tradeable session. Found on mids and quoted spreads only,
+    so it is the same for every fill model. Returns ``(close or None if nothing fired
+    before the book or the expiry ran out, structure mid value per marked session,
+    sessions an exit waited)``; ``close = (session, reason, per-leg (mid, spread) to
+    fill at, spot, proxy label or None)``. *inside* = split events inside the hold.
+    """
+    day_mids: dict[dt.date, float] = {}
+    peak: float | None = None
+    pending = None
+    delays = 0
+    for day in sorted(book):
+        if day <= entry_day:
+            continue
+        if day >= o.expiration:
+            break
+        f = math.prod(r for d, r in inside if d <= day)
+        sym = _restruck(o, f)
+        ch = book[day]
+        rows = ch[ch["symbol"].isin(list(sym.values()))]
+        raw_m = {str(x.symbol): (float(x.mid), float(x.spread)) for x in rows.itertuples()}
+        if not all(s in raw_m for s in sym.values()):
+            if pending is not None:
+                delays += 1
+            continue
+        # per original (pre-split) contract: price x f
+        m = {old: (raw_m[new][0] * f, raw_m[new][1] * f) for old, new in sym.items()}
+        spot = float(closes[day]) * f if day in closes.index else float("nan")
+        value_mid = sum(lg.side * m[lg.symbol][0] for lg in o.legs)
+        rng = None if ranges is None else ranges.get(day)
+        if pending is None and rng is not None and math.isfinite(spot):
+            hit = range_proxy_rule(
+                rules,
+                o.legs,
+                m,
+                spot=spot,
+                rng=(rng[0] * f, rng[1] * f),
+                expiration=o.expiration,
+                day=day,
+                r=float(rate(day)) if callable(rate) else float(rate),
+                peak=peak,
+            )
+            if hit is not None and (
+                not spread_rule or all(spread_ok(*raw_m[s], settings) for s in sym.values())
+            ):
+                rule, pm, x = hit
+                return (day, ExitReason(rule), pm, x, PROXY_EXITS[rule]), day_mids, delays
+        day_mids[day] = value_mid
+        if pending is None:
+            pnl = value_mid - rules.entry_net
+            pending = check_rules(rules, pnl=pnl, dte=(o.expiration - day).days, peak_pnl=peak)
+            peak = pnl if peak is None else max(peak, pnl)
+        if pending is not None:
+            if spread_rule and not all(spread_ok(*raw_m[s], settings) for s in sym.values()):
+                delays += 1
+                continue
+            return (day, pending, m, spot, None), day_mids, delays
+    return None, day_mids, delays
+
+
+def _close_trade(op: Any, close: _Close, *, cost: CostModel, fill_cost: CostModel | None) -> Trade:
+    """Price an :func:`exit_search` close for one fill model."""
+    day, reason, cm, spot, label = close
+    if fill_cost is not None:
+        cm = {k: (v[0], fill_cost.spread(v[0])) for k, v in cm.items()}
+    trade = close_early(op, day=day, marks=cm, spot=spot, reason=reason, cost=cost)
+    if label is not None:
+        trade = trade.model_copy(update={"exit_reason": label})
+    return trade
+
+
+def exit_walk(
+    o: Any,
+    rules: ResolvedRules,
+    *,
+    entry_day: dt.date,
+    book: Mapping[dt.date, pd.DataFrame],
+    closes: pd.Series,
+    inside: Sequence[tuple[dt.date, float]],
+    settings: ArcSettings,
+    spread_rule: bool,
+    cost: CostModel,
+    fill_cost: CostModel | None = None,
+    ranges: Mapping[dt.date, tuple[float, float]] | None = None,
+    rate: Callable[[dt.date], float] | float = 0.0,
+) -> tuple[Trade | None, dict[dt.date, float], int]:
+    """:func:`exit_search` priced under one fill model (E7.22: the recon's exit replay).
+
+    Returns ``(trade or None if nothing fired before the book or the expiry ran out,
+    unrealised net P&L per marked session, sessions an exit waited)``.
+    """
+    close, day_mids, delays = exit_search(
+        o,
+        rules,
+        entry_day=entry_day,
+        book=book,
+        closes=closes,
+        inside=inside,
+        settings=settings,
+        spread_rule=spread_rule,
+        ranges=ranges,
+        rate=rate,
+    )
+    entry_fill = sum(lg.side * lg.fill for lg in o.legs)
+    day_marks = {d: (v - entry_fill) * MULT - o.open_fees for d, v in day_mids.items()}
+    trade = None if close is None else _close_trade(o, close, cost=cost, fill_cost=fill_cost)
+    return trade, day_marks, delays
+
+
 def sim_outcome(
     c: Candidate,
     *,
@@ -700,63 +830,18 @@ def sim_outcomes(
     structure = analyze(_legs(c.picks, c.underlying), as_of=c.day)
     block = settings.exit_block_for_dte(o.dte) if sleeves else None  # E7.19: once, at entry
     rules = resolve_rules(structure, exits.policy_for(STRUCTURE_KIND[spec_kind], block))
-    book = chains if marks is None else marks
-    day_mids: dict[dt.date, float] = {}
-    peak: float | None = None
-    pending = None
-    delays = 0
-    # (session, reason, per-leg (mid, spread) to fill at, spot, label) of the exit; None =
-    # held to expiry. Found on mids and quoted spreads only: the same for every fill model.
-    close: tuple[dt.date, ExitReason, dict[str, tuple[float, float]], float, str | None] | None
-    close = None
-    for day in sorted(book):
-        if day <= c.day:
-            continue
-        if day >= o.expiration:
-            break
-        f = math.prod(r for d, r in inside if d <= day)
-        sym = _restruck(o, f)
-        ch = book[day]
-        rows = ch[ch["symbol"].isin(list(sym.values()))]
-        raw_m = {str(x.symbol): (float(x.mid), float(x.spread)) for x in rows.itertuples()}
-        if not all(s in raw_m for s in sym.values()):
-            if pending is not None:
-                delays += 1
-            continue
-        # per original (pre-split) contract: price x f
-        m = {old: (raw_m[new][0] * f, raw_m[new][1] * f) for old, new in sym.items()}
-        spot = float(closes[day]) * f if day in closes.index else float("nan")
-        value_mid = sum(lg.side * m[lg.symbol][0] for lg in o.legs)
-        rng = None if ranges is None else ranges.get(day)
-        if pending is None and rng is not None and math.isfinite(spot):
-            hit = range_proxy_rule(
-                rules,
-                o.legs,
-                m,
-                spot=spot,
-                rng=(rng[0] * f, rng[1] * f),
-                expiration=o.expiration,
-                day=day,
-                r=float(rate(day)) if callable(rate) else float(rate),
-                peak=peak,
-            )
-            if hit is not None and (
-                not spread_rule or all(spread_ok(*raw_m[s], settings) for s in sym.values())
-            ):
-                rule, pm, x = hit
-                close = (day, ExitReason(rule), pm, x, PROXY_EXITS[rule])
-                break
-        day_mids[day] = value_mid
-        if pending is None:
-            pnl = value_mid - rules.entry_net
-            pending = check_rules(rules, pnl=pnl, dte=(o.expiration - day).days, peak_pnl=peak)
-            peak = pnl if peak is None else max(peak, pnl)
-        if pending is not None:
-            if spread_rule and not all(spread_ok(*raw_m[s], settings) for s in sym.values()):
-                delays += 1
-                continue
-            close = (day, pending, m, spot, None)
-            break
+    close, day_mids, delays = exit_search(
+        o,
+        rules,
+        entry_day=c.day,
+        book=chains if marks is None else marks,
+        closes=closes,
+        inside=inside,
+        settings=settings,
+        spread_rule=spread_rule,
+        ranges=ranges,
+        rate=rate,
+    )
     out: list[SimOutcome | None] = []
     for (cost, fill_cost), op in zip(fills, opens, strict=True):
         if op is None:
@@ -765,12 +850,7 @@ def sim_outcomes(
         held = settle(op, float(past.iloc[-1]) * total, cost)
         trade = held
         if close is not None:
-            day, reason, cm, spot, label = close
-            if fill_cost is not None:
-                cm = {k: (v[0], fill_cost.spread(v[0])) for k, v in cm.items()}
-            trade = close_early(op, day=day, marks=cm, spot=spot, reason=reason, cost=cost)
-            if label is not None:
-                trade = trade.model_copy(update={"exit_reason": label})
+            trade = _close_trade(op, close, cost=cost, fill_cost=fill_cost)
         entry_fill = sum(lg.side * lg.fill for lg in op.legs)
         exit_day = trade.exit_date or trade.expiration
         res = Outcome(

@@ -1564,6 +1564,10 @@ def test_checkpoints_and_drift_sections(tmp_path: Path) -> None:
         " · exit pred 1.60 vs actual 1.50 (-0.10) · exit-reason match 75%"
         " · P&L tracking error 18.40 (bias -12.00)"
     )
+    # E7.22: the recon's summary lines ride in the same slot, after the rows
+    doc = json.loads(rec.read_text())
+    rec.write_text(json.dumps({**doc, "summary": ["x_eod per kind: long_call 0.2", 3]}))
+    assert aa.drift_lines(rec)[2:] == ["- x_eod per kind: long_call 0.2"]
 
 
 @pytest.mark.parametrize(
