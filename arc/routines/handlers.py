@@ -1202,6 +1202,71 @@ def _analyst_poster(ctx: JobContext) -> Callable[[str], None]:
     return post
 
 
+def _store_path(conn: sqlite3.Connection) -> Path:
+    """The file behind the routine's store connection (``main`` database)."""
+    for row in conn.execute("PRAGMA database_list").fetchall():
+        if row[1] == "main" and row[2]:
+            return Path(row[2])
+    msg = "backtest.recon needs a file-backed audit store"
+    raise RuntimeError(msg)
+
+
+def backtest_recon_source(
+    ctx: JobContext, *, repo_root: Path | None = None, view: Any | None = None
+) -> JobResult:
+    """E7.22 (D125): weekly live <-> sim reconciliation by replay (report only).
+
+    Reads the audit store (and with ``arm: all`` the D69 arm stores) read-only, replays
+    them through the sim on the EOD history and writes the report
+    (``docs/RESEARCH/live-sim-recon.md``), the Analyst's drift slot
+    (``docs/RESEARCH/studies/reconciliation.json``) and the per-row detail
+    (``data/backtest/recon/``, gitignored). Never touches a config default.
+    """
+    from arc.backtest.cli import _git_sha
+    from arc.backtest.recon import menu_measure_at, run_recon, write_outputs
+
+    root = repo_root or _REPO_ROOT
+    opts = ctx.spec.options
+
+    def _p(key: str, default: str) -> Path:
+        p = Path(str(opts.get(key) or default))
+        return p if p.is_absolute() else root / p
+
+    arm = str(opts.get("arm") or "control")
+    if arm not in ("control", "all"):
+        msg = f"backtest.recon: arm must be control or all, got {arm!r}"
+        raise ValueError(msg)
+    rep = run_recon(
+        _store_path(ctx.conn),
+        data_dir=_p("data_dir", "data"),
+        now=ctx.now,
+        arm="all" if arm == "all" else "control",
+        view=view,
+        settings=ctx.settings,
+        menu_measure_for=menu_measure_at(root),
+        git_sha=_git_sha(root),
+    )
+    write_outputs(
+        rep,
+        report_md=_p("report", "docs/RESEARCH/live-sim-recon.md"),
+        reconciliation_json=_p("reconciliation", "docs/RESEARCH/studies/reconciliation.json"),
+        out_dir=_p("out_dir", "data/backtest/recon"),
+    )
+    metrics = {
+        "fills": len(rep.slippage),
+        "proposals": len(rep.overlap),
+        "closed": len(rep.exits),
+        "stances": len(rep.stance),
+        "stores": len(rep.stores),
+    }
+    summary = (
+        f"recon: {metrics['fills']} fills, {metrics['proposals']} proposals, "
+        f"{metrics['closed']} closed trades, {metrics['stances']} stances over "
+        f"{metrics['stores']} store(s)"
+    )
+    return JobResult(summary=summary, metrics=metrics)
+
+
 def betas_source(
     ctx: JobContext,
     market: MarketDataProvider | None = None,
@@ -3130,6 +3195,7 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "iv.backfill": "arc.routines.handlers:iv_backfill_source",  # E16.1 (D76) / D81 pre-market
     "history.topup": "arc.routines.handlers:history_topup_source",  # E7.13 (D84) nightly Theta
     "backtest.studies": "arc.routines.handlers:backtest_studies_source",  # E26.3 (D121)
+    "backtest.recon": "arc.routines.handlers:backtest_recon_source",  # E7.22 (D125) weekly
     "betas": "arc.routines.handlers:betas_source",  # E3.6 (D62) daily 1y beta vs SPY
     "levels": "arc.routines.handlers:levels_source",  # E23.0 (D98) volume profile + OI walls
     # E4.8 (D46): Finnhub per-ticker context (typed kinds, shared 55/min budget)
