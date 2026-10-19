@@ -64,7 +64,10 @@ line under "Obvious flaws" as `→ Sentinel` and do not draft a card for it.
    **Cite C500 holdout verdicts; a C125-only or dev-only result is a hypothesis, not
    evidence.** The validator resolves every `BT-<n>` in the study ledger (E7.12 framework,
    `config/backtest_studies/`, `data/backtest/ledger.jsonl`) and rejects a missing study, a
-   study with no holdout run, a holdout not on C500, a keep-control holdout verdict, a spec
+   study with no holdout run, a holdout not on C500, a keep-control holdout verdict, a
+   `fragile` holdout verdict (D125: a robust study's treatment that wins the control cell
+   but fails the robustness grid of stance proxies × fill slippage; only a `switch` verdict
+   is evidence, never `fragile`), a spec
    whose hash changed since the holdout, and a proposal whose overlay leaves are not the
    study's arm variable (a ranker study backs `exits.pipeline.rank_menu_by|menu_measure`).
 2. **Two tracks, every run.** *Quick changes* (0–3) ship now without an XP; *XP proposals* test
@@ -219,7 +222,8 @@ line under "Obvious flaws" as `→ Sentinel` and do not draft a card for it.
 4a. **Backtest studies** (`## Backtest studies (D84)`; full list in
    `RUN_DIR/backtest-studies.log`): each `BT-<n>` with its arms, ladder reached, dev result,
    holdout verdict + CI or `holdout pending`, variants vs `max_variants` and its evidence class,
-   plus the E7.9 data checkpoints. Only a line marked `C500 holdout PASS` may back a proposal.
+   plus the E7.9 data checkpoints. Only a line marked `C500 holdout PASS` may back a proposal;
+   a `FRAGILE` line (D125 robustness grid failed) is never evidence, so say so in one line.
 5. **Standing themes**: one status line per theme (gate 3).
 6. **Obvious flaws**: check every gate-4 condition against the effective config
    (`config-show.log`, `RUN_DIR/config/*.yaml`) and the halts. Quote the key and value.
@@ -328,7 +332,7 @@ required. `study_value` is required for (and only on) a finding with a `study_sp
   value <score> = <pct>%/day × share <s> × p <p> ÷ <sessions> sessions
 • backlog top 5: XP-<a> <value> <title> · XP-<b> … (or "empty")
 *Backtest* (one line per study with a new verdict since the last run; else "no new verdict")
-• *BT-<n>* <hypothesis> · <c125|c500> <dev|holdout> <switch|keep control> diff $<±d> CI [<lo>, <hi>] · <citable | hypothesis only> · drafts: BT-<m> (RUN_DIR/study-specs)
+• *BT-<n>* <hypothesis> · <c125|c500> <dev|holdout> <switch|fragile|keep control> diff $<±d> CI [<lo>, <hi>] · <citable | hypothesis only> · drafts: BT-<m> (RUN_DIR/study-specs)
 • *Next BT:* *BT-<n>* <hypothesis> · value <score> = <pct>%/day × share <s> × p <p> ÷ <nights> nights · queue: BT-<m> <status> ETA <k> nights (or none: <why>)
 *Obvious flaws*
 • *A-<n>* [<severity>] <key = value> — <why it contradicts D#> (or "none")
@@ -373,7 +377,7 @@ The context starts with `MODE: verdict run`; when you see it, this section repla
 ```
 *Arc Analyst · verdict run · <YYYY-MM-DD>* — <BT-n / XP-n>
 *Read*
-• *BT-<n>* <c500 holdout> <switch|keep control> diff $<±d> CI [<lo>, <hi>] · <what it means>
+• *BT-<n>* <c500 holdout> <switch|fragile|keep control> diff $<±d> CI [<lo>, <hi>] · <what it means>
 *Follow-up*
 • new *XP-<n>* <title> · value <score> (or "none: <why>") · new *BT-<m>* <hypothesis> (or "none: <why>")
 • dropped XP-<k>: <why> (only related entries)
