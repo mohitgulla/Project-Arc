@@ -78,6 +78,7 @@ from arc.backtest.menucache import MenuCache, MenuCacheContext, config_hash, fra
 from arc.backtest.regime import BacktestRegimeModel, regime_labels
 from arc.backtest.sim_config import SimSettings
 from arc.backtest.strategies import (
+    CREDIT_KINDS,
     ExpiryMode,
     LegPick,
     StrategyKind,
@@ -187,6 +188,7 @@ class MenuSpec(BaseModel):
     wing_fit: WingFit = "nearest"
     wing_cap: float | None = Field(None, gt=0.0)
     min_credit_width: float = Field(0.0, ge=0.0, le=0.40)
+    wing_dollars: float | None = Field(None, gt=0.0, description="E28.6: dollars wing mode")
 
     def specs(
         self, dte_min: int, dte_max: int, exit_block: str | None = None
@@ -206,10 +208,60 @@ class MenuSpec(BaseModel):
                 wing_fit=self.wing_fit,
                 wing_cap=self.wing_cap,
                 min_credit_width=self.min_credit_width,
+                wing_dollars=self.wing_dollars,
             )
             for k in self.kinds
             for d in self.deltas
         ]
+
+
+class CreditWings(BaseModel):
+    """``backtest.credit_wings`` (E28.6, D131): the E28.1 wing rule for a study arm.
+
+    Applied by :meth:`BacktestSettings.specs_for` to every menu block that offers a
+    credit kind (``bull_put`` / ``bear_call`` / ``iron_condor``); ``None`` fields keep
+    the block as written in ``backtest.menus`` (the shipped D131 rule on margin: 5 %
+    widest fit to $3,750, floor 0.10), so the base config is unchanged and an arm is
+    one line, e.g. ``credit_wings: {min_credit_width: 0.20}``. A changed field changes
+    the menu-cache key (the arm rebuilds its credit menus).
+    """
+
+    model_config = _FORBID
+
+    mode: Literal["pct_spot", "pct_nearest", "dollars"] | None = Field(
+        None,
+        description="pct_spot = the widest gap <= pct x spot whose 1-lot max loss fits cap "
+        "(live D131, scanner_wing_mode pct_spot); pct_nearest = the strike nearest pct x "
+        "spot, within [0.5, 2]x, no cap fit (the pre-D131 sim menu); dollars = the strike "
+        "nearest `dollars` beyond the short (the live rollback scanner_wing_mode dollars)",
+    )
+    pct: float | None = Field(None, ge=0.01, le=0.10, description="pct modes: share of spot")
+    dollars: float | None = Field(
+        None, gt=0.0, description="dollars mode: wing width ($; None = the live $5)"
+    )
+    cap: float | None = Field(
+        None, gt=0.0, description="pct_spot: 1-contract max-loss cap ($); None = as written"
+    )
+    min_credit_width: float | None = Field(None, ge=0.0, le=0.40, description="Floor (0 = off)")
+
+    def apply(self, m: MenuSpec) -> MenuSpec:
+        """*m* with the set fields applied when it offers a credit kind (else *m*)."""
+        if not any(k in CREDIT_KINDS for k in m.kinds):
+            return m
+        upd: dict[str, Any] = {}
+        if self.mode == "dollars":
+            upd["wing_dollars"] = self.dollars if self.dollars is not None else 5.0
+        elif self.mode == "pct_nearest":
+            upd |= {"wing_fit": "nearest", "wing_cap": None, "wing_dollars": None}
+        elif self.mode == "pct_spot":
+            upd |= {"wing_fit": "widest", "wing_dollars": None}
+        if self.pct is not None:
+            upd["width_pct"] = self.pct
+        if self.cap is not None:
+            upd["wing_cap"] = self.cap
+        if self.min_credit_width is not None:
+            upd["min_credit_width"] = self.min_credit_width
+        return m.model_copy(update=upd) if upd else m
 
 
 class BootstrapSpec(BaseModel):
@@ -351,6 +403,11 @@ class BacktestSettings(BaseModel):
         default_factory=lambda: SimSettings(),
         description="Daily cross-name funnel on the D80 account, fill model, capacity",
     )
+    # -- E28.6 (D131): the E28.1 credit-wing rule for a study arm (None = as written) --
+    credit_wings: CreditWings = Field(
+        default_factory=lambda: CreditWings(),
+        description="Overrides of every credit menu block's wing mode / pct / cap / floor",
+    )
 
     def window_for(self, profile: str, default: tuple[int, int]) -> tuple[int, int]:
         lo, hi = self.dte_windows.get(profile, default)
@@ -363,7 +420,11 @@ class BacktestSettings(BaseModel):
         if profile not in self.menus:
             msg = f"no backtest menu for profile {profile!r} in config/ranking.yaml"
             raise KeyError(msg)
-        return [s for m in self.menus[profile] for s in m.specs(dte_min, dte_max, exit_block)]
+        return [
+            s
+            for m in self.menus[profile]
+            for s in self.credit_wings.apply(m).specs(dte_min, dte_max, exit_block)
+        ]
 
 
 class RankingFile(BaseModel):
