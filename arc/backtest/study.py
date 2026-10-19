@@ -55,6 +55,7 @@ from arc.backtest.ranking import (
     challenge,
     summarize,
 )
+from arc.backtest.stance import CONTROL_PROXY, StanceProxy, labels_needed
 from arc.experiments.models import document_hash
 from arc.scanner.rank import Ranker, applicable, incumbent_for
 from arc.utils.yamlpatch import deep_merge
@@ -85,11 +86,14 @@ __all__ = [
     "StudyArms",
     "StudyPeriod",
     "StudyRefusedError",
+    "StudyRobustness",
     "StudyRule",
     "StudySpec",
     "arm_set_hash",
+    "cell_id",
     "check_holdout",
     "compare_runs",
+    "grid_verdict",
     "ladder_flags",
     "load_ledger",
     "load_retired",
@@ -315,6 +319,59 @@ class StudyRule(BaseModel):
         return self.decision.text(ci)
 
 
+class StudyRobustness(BaseModel):
+    """E7.20 (D125): the robustness grid a treatment must win across (pre-registered).
+
+    One grid cell = one stance proxy (:mod:`arc.backtest.stance`) × one fill slippage
+    x. The control cell is (``trend_v2``, the sim's ``slippage_x``). The universe axis
+    is the spec's ``universe_ladder`` (the grid runs on the first dev rung, later rungs
+    run the control cell plus that rung's worst cell) and the sub-period axis is the
+    decision rule's sub-periods, applied on the control cell.
+    """
+
+    model_config = _FORBID
+
+    stance: list[StanceProxy] = Field(
+        default_factory=lambda: ["trend_v2", "noisy_0.35", "lagged_5", "market_v2"],
+        min_length=1,
+    )
+    slippage_x: list[float] = Field(default_factory=lambda: [0.0, 0.25, 0.5], min_length=1)
+    min_cell_win_frac: float = Field(0.75, gt=0.0, le=1.0)
+    #: No cell may have the treatment − control CI wholly below 0 (upper bound < 0).
+    max_cell_loss_ci: Literal["no_cell_ci_hi_below_0"] = "no_cell_ci_hi_below_0"
+
+    @field_validator("stance")
+    @classmethod
+    def _stances(cls, v: list[str]) -> list[str]:
+        if "trend_v2" not in v:
+            msg = "robustness.stance must include the control proxy trend_v2"
+            raise ValueError(msg)
+        if "live_llm" in v:
+            msg = "robustness.stance: live_llm is reserved for E7.22 (not available yet)"
+            raise ValueError(msg)
+        if len(set(v)) != len(v):
+            msg = "robustness.stance: duplicate proxy"
+            raise ValueError(msg)
+        return v
+
+    @field_validator("slippage_x")
+    @classmethod
+    def _xs(cls, v: list[float]) -> list[float]:
+        if len(set(v)) != len(v) or any(not 0.0 <= x <= 1.0 for x in v):  # noqa: PLR2004
+            msg = "robustness.slippage_x: distinct values in [0, 1]"
+            raise ValueError(msg)
+        return v
+
+    def cells(self) -> list[tuple[str, float]]:
+        """Every (stance proxy, slippage x) cell, in spec order."""
+        return [(s, float(x)) for s in self.stance for x in self.slippage_x]
+
+
+def cell_id(stance: str, x: float) -> str:
+    """``trend_v2@0.25``: the ledger/report name of one grid cell."""
+    return f"{stance}@{x:g}"
+
+
 class StudySpec(BaseModel):
     """``config/backtest_studies/BT-<n>.yaml`` (hash-locked by :func:`study_hash`)."""
 
@@ -331,6 +388,15 @@ class StudySpec(BaseModel):
     decision_rule: StudyRule = Field(default_factory=lambda: StudyRule())
     primary_metric: PrimaryMetric = "net_pnl"
     max_variants: int = Field(3, ge=1)
+    #: E7.20 (D125): None = today's single-cell verdict, unchanged.
+    robustness: StudyRobustness | None = None
+
+    @model_validator(mode="after")
+    def _grid_rule(self) -> StudySpec:
+        if self.robustness is not None and self.decision_rule.kind != "d25_challenge":
+            msg = "robustness needs decision_rule.kind d25_challenge (treatment − control CI)"
+            raise ValueError(msg)
+        return self
 
     @field_validator("id")
     @classmethod
@@ -364,6 +430,8 @@ def study_hash(spec: StudySpec) -> str:
     for k in _OPTIONAL_RULE_FIELDS:
         if rule.get(k) is None:
             rule.pop(k, None)
+    if doc.get("robustness") is None:  # E7.20: a spec without a grid keeps its hash
+        doc.pop("robustness", None)
     return document_hash(doc)
 
 
@@ -549,6 +617,14 @@ class LedgerEntry(BaseModel):
     #: E26.2 (D121): wall seconds of the run (build + walk); the study queue's
     #: ETA and the E26.3 runner's fit-or-defer read it. None on rows written before it.
     runtime_s: float | None = None
+    #: E7.20 (D125): profile -> treatment -> cell id (``trend_v2@0.25``) -> per-cell
+    #: row (treatment − control P&L diff + CI, both arms' net P&L/trades). None = a spec
+    #: without ``robustness``. ``metrics``/``verdicts`` stay the control cell's.
+    cells: dict[str, dict[str, dict[str, dict[str, Any]]]] | None = None
+    #: E7.20: the grid run's scope and timing: ``scope`` (``full`` | ``control+worst``),
+    #: ``cells`` run, ``build_s``, ``walk_s_per_cell`` (the measured walk-only cost of
+    #: one cell × every arm × profile; the runner's fit-or-defer reads it).
+    grid: dict[str, Any] | None = None
 
 
 def load_ledger(path: Path) -> list[LedgerEntry]:
@@ -560,7 +636,9 @@ def load_ledger(path: Path) -> list[LedgerEntry]:
 def _append(path: Path, entry: LedgerEntry) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a") as fh:
-        fh.write(entry.model_dump_json() + "\n")
+        # E7.20: a no-grid run writes exactly the pre-E7.20 line (no null cells/grid keys)
+        drop = {k for k in ("cells", "grid") if getattr(entry, k) is None}
+        fh.write(entry.model_dump_json(exclude=drop or None) + "\n")
 
 
 @contextlib.contextmanager
@@ -854,6 +932,92 @@ def compare_runs(
     }
 
 
+def cell_row(control: SimRun, treatment: SimRun, rule: StudyRule) -> dict[str, Any]:
+    """E7.20: one grid cell's treatment − control row: the block-bootstrap CI of the
+    daily P&L difference (the same estimator and seed as the D25 rule) and both arms'
+    net P&L and trade counts."""
+    from arc.backtest.ranking import block_bootstrap_ci
+
+    c, t = _as_rank_run(control), _as_rank_run(treatment)
+    boot = rule.bootstrap
+    idx = c.equity.index.union(t.equity.index)
+    a = t.equity.reindex(idx).ffill().bfill()
+    b = c.equity.reindex(idx).ffill().bfill()
+    diff = (a.diff().fillna(0.0) - b.diff().fillna(0.0)).to_numpy(dtype=float)
+    point, lo, hi = block_bootstrap_ci(
+        diff, resamples=boot.resamples, block=boot.block_days, ci=boot.ci, seed=boot.seed
+    )
+    pnl_c = float(c.trades["pnl"].sum()) if len(c.trades) else 0.0
+    pnl_t = float(t.trades["pnl"].sum()) if len(t.trades) else 0.0
+    return {
+        "pnl_diff": round(point, 2),
+        "ci_lo": round(lo, 2),
+        "ci_hi": round(hi, 2),
+        "net_pnl_control": round(pnl_c, 2),
+        "net_pnl_treatment": round(pnl_t, 2),
+        "trades_control": len(c.trades),
+        "trades_treatment": len(t.trades),
+    }
+
+
+def grid_verdict(
+    control_row: Mapping[str, Any],
+    cells: Mapping[str, Mapping[str, Any]],
+    rob: StudyRobustness,
+) -> dict[str, Any]:
+    """E7.20 (D125): the robust call for one profile × treatment.
+
+    ``switch`` = the D25 rule says switch on the control cell (*control_row*, the
+    verdict row) **and** treatment − control P&L diff > 0 in ≥ ``min_cell_win_frac`` of
+    the grid cells run **and** no cell's CI upper bound is < 0. ``fragile`` = the
+    control cell switches but the grid fails. ``keep`` otherwise. The ``worst`` cell is
+    the one with the lowest P&L diff (ties: lowest CI upper bound, then cell id).
+    """
+    n = len(cells)
+    won = sorted(k for k, v in cells.items() if float(v["pnl_diff"]) > 0)
+    lost_ci = sorted(k for k, v in cells.items() if float(v["ci_hi"]) < 0)
+    frac = len(won) / n if n else 0.0
+    grid_ok = n > 0 and frac >= rob.min_cell_win_frac - 1e-12 and not lost_ci
+    ctrl = bool(control_row.get("switch"))
+    call = "switch" if ctrl and grid_ok else ("fragile" if ctrl else "keep")
+    worst = (
+        min(cells, key=lambda k: (float(cells[k]["pnl_diff"]), float(cells[k]["ci_hi"]), k))
+        if cells
+        else None
+    )
+    return {
+        "call": call,
+        "control_switch": ctrl,
+        "cells": n,
+        "cells_won": len(won),
+        "cell_win_frac": round(frac, 4),
+        "min_cell_win_frac": rob.min_cell_win_frac,
+        "cells_ci_below_0": lost_ci,
+        "worst_cell": worst,
+    }
+
+
+def worst_cells(entry: LedgerEntry, control: str) -> list[str]:
+    """E7.20: the worst non-control cell per profile × treatment of a full-grid ledger
+    row (:func:`grid_verdict`'s ``worst``), sorted, deduplicated."""
+    out: set[str] = set()
+    for tr in (entry.cells or {}).values():
+        for cells in tr.values():
+            rest = {k: v for k, v in cells.items() if k != control}
+            if rest:
+                out.add(
+                    min(
+                        rest,
+                        key=lambda k, r=rest: (  # type: ignore[misc]
+                            float(r[k]["pnl_diff"]),
+                            float(r[k]["ci_hi"]),
+                            k,
+                        ),
+                    )
+                )
+    return sorted(out)
+
+
 def regime_call(verdicts: Mapping[str, Mapping[str, Mapping[str, Any]]], treatment: str) -> str:
     """E17.3's study-level verdict across every profile (``regime_keep`` rows)."""
     rows = [tr[treatment] for tr in verdicts.values() if treatment in tr]
@@ -1047,6 +1211,92 @@ def _window(spec: StudySpec, phase: str, latest: dt.date) -> tuple[dt.date, dt.d
     return p.holdout_start, end, latest
 
 
+def grid_plan(
+    spec: StudySpec, *, phase: str, universe: str, entries: Sequence[LedgerEntry]
+) -> tuple[str, list[tuple[str, float]]]:
+    """E7.20 (D125): (scope, cells) a robust spec runs on this rung.
+
+    The first dev rung (``universe_ladder[0]``, C125) runs the full grid. Later dev
+    rungs and the holdout run the control cell plus the worst cell(s) of the latest
+    full-grid ledger row of the same spec hash (:func:`worst_cells`); without such a
+    row they run the full grid (scope ``full (no first-rung grid row)``).
+    """
+    rob = spec.robustness
+    assert rob is not None
+    full = rob.cells()
+    if phase == "dev" and universe == spec.universe_ladder[0]:
+        return "full", full
+    h = study_hash(spec)
+    rows = [
+        e
+        for e in entries
+        if e.study == spec.id
+        and e.spec_hash == h
+        and e.phase == "dev"
+        and e.universe == spec.universe_ladder[0]
+        and e.cells
+        and (e.grid or {}).get("scope") == "full"
+    ]
+    if not rows:
+        return "full (no first-rung grid row)", full
+    last = max(rows, key=lambda e: e.at)
+    control = str((last.grid or {}).get("control_cell", ""))
+    by_id = {cell_id(s, x): (s, x) for s, x in full}
+    worst = [by_id[c] for c in worst_cells(last, control) if c in by_id]
+    return "control+worst", worst
+
+
+def _proxy_labels(
+    b: Any,
+    proxies: Sequence[str],
+    *,
+    data_dir: Path,
+    start: dt.date,
+    end: dt.date,
+    seed_key: str,
+    model: str,
+) -> dict[str, dict[str, pd.Series]]:
+    """proxy -> ticker -> session -> stance for every built ticker (E7.20)."""
+    from arc.backtest.ranking import labels_for
+    from arc.backtest.stance import proxy_labels
+
+    market = None
+    if "market_v2" in proxies:
+        spy = b.built.get(MARKET_PROXY_TICKER)
+        if spy is not None:
+            market = spy.trend
+        else:
+            from arc.backtest.underlying import UnderlyingStore, load_closes
+
+            lo = start - dt.timedelta(days=_PROXY_WARMUP_DAYS)
+            closes = load_closes(UnderlyingStore(data_dir), MARKET_PROXY_TICKER, lo, end)
+            if closes.empty:
+                msg = f"market_v2 stance proxy: no {MARKET_PROXY_TICKER} closes in {data_dir}"
+                raise StudyRefusedError(msg)
+            market, _ = labels_for(closes.sort_index(), model)  # type: ignore[arg-type]
+    out: dict[str, dict[str, pd.Series]] = {}
+    for s in dict.fromkeys(proxies):
+        if s == CONTROL_PROXY:
+            continue
+        out[s] = {
+            t: proxy_labels(s, tk.trend, ticker=t, market=market, seed_key=seed_key)
+            for t, tk in b.built.items()
+        }
+    return out
+
+
+#: E7.20: the market reference the ``market_v2`` stance proxy reads.
+MARKET_PROXY_TICKER = "SPY"
+#: Calendar days of SPY closes read before the window for the trend label's warm-up.
+_PROXY_WARMUP_DAYS = 400
+#: E7.20: the plain-words call of each robust verdict (the ledger's ``call`` field).
+ROBUST_CALLS = {
+    "switch": "switch candidate (robust across the grid)",
+    "fragile": "fragile: wins the control cell, fails the robustness grid",
+    "keep": "keep control",
+}
+
+
 def run_study(  # noqa: PLR0913
     spec: StudySpec,
     *,
@@ -1105,11 +1355,32 @@ def run_study(  # noqa: PLR0913
                 raise StudyRefusedError(msg)
 
     run_dir = runs_dir / spec.id / f"{now:%Y%m%dT%H%M%S}-{phase}-{uni}-{h[:8]}"
+    rob = spec.robustness
+    ctrl_plan = next(p for p in plans if p.arm == "control")
+    control_x = float(ctrl_plan.cfg.backtest.sim.slippage_x)
+    control_cell = cell_id(CONTROL_PROXY, control_x)
+    grid_cells: list[tuple[str, float]] = []
+    scope = None
+    if rob is not None:
+        if any(p.cfg.backtest.direction_tilt > 0 for p in plans):
+            msg = (
+                f"{spec.id}: robustness grid with backtest.direction_tilt > 0 (the tilted "
+                "ranker keys follow the ticker's own label, not the stance proxy)"
+            )
+            raise StudyRefusedError(msg)
+        scope, grid_cells = grid_plan(spec, phase=phase, universe=uni, entries=entries)
+        if (CONTROL_PROXY, control_x) not in grid_cells:
+            grid_cells = [(CONTROL_PROXY, control_x), *grid_cells]
+    labels = labels_needed([s for s, _ in grid_cells])
+    alt_x = sorted({x for _, x in grid_cells if x != control_x})
     runs: dict[str, dict[str, SimRun]] = {p: {} for p in spec.profiles}
+    cell_runs: dict[str, dict[str, dict[str, SimRun]]] = {}
     equity0 = 0.0
     version = ""
     partitions: dict[str, int] = {}
     built: dict[str, Any] = {}  # overlay key -> SimBuild (arms differing by ranker share it)
+    proxies: dict[str, dict[str, dict[str, pd.Series]]] = {}  # overlay key -> proxy -> labels
+    walk_s = 0.0
     for plan in plans:
         want = sorted({r for x in spec.arms.names if (r := spec.arms.arm(x).ranker) is not None})
         if plan.overlay_key not in built:
@@ -1129,7 +1400,19 @@ def run_study(  # noqa: PLR0913
                 workers=workers,
                 cache=cache,
                 cache_dir=cache_dir,
+                stance_labels=labels,
+                alt_x=alt_x,
             )
+            if grid_cells:
+                proxies[plan.overlay_key] = _proxy_labels(
+                    built[plan.overlay_key],
+                    [s for s, _ in grid_cells],
+                    data_dir=data_dir,
+                    start=start,
+                    end=end,
+                    seed_key=h,
+                    model=plan.cfg.backtest.sim.regime_model,
+                )
         b = built[plan.overlay_key]
         version, partitions = b.universe_version, b.partitions
         equity0 = plan.cfg.backtest.sim.equity
@@ -1138,6 +1421,22 @@ def run_study(  # noqa: PLR0913
             run = walk(b, profile=p, ranker=r, cfg=plan.cfg, end=end)
             _write_run(run, run_dir / p / plan.arm)
             runs[p][plan.arm] = run
+            for s, x in grid_cells:
+                cid = cell_id(s, x)
+                if cid == control_cell:
+                    cell_runs.setdefault(cid, {}).setdefault(p, {})[plan.arm] = run
+                    continue
+                w0 = time.monotonic()
+                cell_runs.setdefault(cid, {}).setdefault(p, {})[plan.arm] = walk(
+                    b,
+                    profile=p,
+                    ranker=r,
+                    cfg=plan.cfg,
+                    end=end,
+                    stance_of=None if s == CONTROL_PROXY else proxies[plan.overlay_key][s],
+                    fill_x=None if x == control_x else x,
+                )
+                walk_s += time.monotonic() - w0
 
     metrics: dict[str, dict[str, ArmMetrics]] = {
         p: {arm: arm_metrics(r, equity0) for arm, r in by.items()} for p, by in runs.items()
@@ -1150,6 +1449,35 @@ def run_study(  # noqa: PLR0913
                 metrics[p]["control"], spec.primary_metric
             )
             verdicts[p][t] = compare_runs(by["control"], by[t], spec.decision_rule, primary=d)
+    cells: dict[str, dict[str, dict[str, dict[str, Any]]]] | None = None
+    grid: dict[str, Any] | None = None
+    if rob is not None:
+        cells = {p: {t: {} for t in spec.arms.treatments} for p in spec.profiles}
+        for cid, by_p in cell_runs.items():
+            for p, by in by_p.items():
+                for t in spec.arms.treatments:
+                    cells[p][t][cid] = cell_row(by["control"], by[t], spec.decision_rule)
+        for p in spec.profiles:
+            for t in spec.arms.treatments:
+                g = grid_verdict(verdicts[p][t], cells[p][t], rob)
+                # old readers (Analyst, Tower, runner) read `switch`: robust specs set it
+                # to the robust call, so a fragile arm is never cited as a switch
+                verdicts[p][t] = {
+                    **verdicts[p][t],
+                    "switch": g["call"] == "switch",
+                    "call": ROBUST_CALLS[g["call"]],
+                    "robust_call": g["call"],
+                    "grid": g,
+                }
+        n_walked = max(len(cell_runs) - 1, 0)
+        grid = {
+            "scope": scope,
+            "control_cell": control_cell,
+            "cells": [cell_id(s, x) for s, x in grid_cells],
+            "build_s": round(sum(b.build_s for b in built.values()), 1),
+            "walk_s": round(walk_s, 2),
+            "walk_s_per_cell": round(walk_s / n_walked, 2) if n_walked else None,
+        }
     entry = LedgerEntry(
         at=now,
         study=spec.id,
@@ -1174,6 +1502,8 @@ def run_study(  # noqa: PLR0913
         overfit_warning=overfit,
         run_dir=str(run_dir),
         runtime_s=round(time.monotonic() - t0, 1),
+        cells=cells,
+        grid=grid,
     )
     payload = build_report(
         spec,
@@ -1291,7 +1621,17 @@ def build_report(
             else {}
         ),
         "ladder": ladder_flags(entries, spec, entry),
-    }
+    } | (
+        {
+            "robustness": {
+                "spec": spec.robustness.model_dump(mode="json"),
+                "grid": entry.grid,
+                "cells": entry.cells,
+            }
+        }
+        if spec.robustness is not None
+        else {}
+    )
 
 
 def _md_table(rows: Sequence[Mapping[str, Any]], cols: Sequence[str] | None = None) -> str:
@@ -1327,10 +1667,66 @@ def verdict_lines(payload: Mapping[str, Any]) -> list[str]:
                 f"[{v['won']}], P&L diff {v['pnl_diff']:,.0f}, "
                 f"CI [{v['ci_lo']:,.0f}, {v['ci_hi']:,.0f}])"
             )
+            if "robust_call" in v:  # E7.20: the robust verdict line
+                g = v["grid"]
+                below = ", ".join(g["cells_ci_below_0"]) or "none"
+                out.append(
+                    f"{word} · {p} · {t} robust: **{v['robust_call']}** (control cell "
+                    f"{'switch' if g['control_switch'] else 'keep'}; won {g['cells_won']} of "
+                    f"{g['cells']} cells = {g['cell_win_frac']:.0%}, needs "
+                    f"{g['min_cell_win_frac']:.0%}; cells with CI < 0: {below}; worst "
+                    f"{g['worst_cell']})"
+                )
     if payload["header"].get("rule_kind") == "regime_keep":
         for t, call in payload.get("study_calls", {}).items():
             out.append(f"{word} · all profiles · {t} vs control: {call}")
     return out
+
+
+def grid_section(rob: Mapping[str, Any]) -> list[str]:
+    """E7.20: the report's robustness-grid heat-table (cells × treatment) + timing."""
+    g = rob.get("grid") or {}
+    spec = rob.get("spec") or {}
+    lines = [
+        "## Robustness grid (D125)",
+        "",
+        f"Cells = stance proxy @ fill slippage x; control cell `{g.get('control_cell')}`; "
+        f"scope **{g.get('scope')}**. `switch` needs the rule above on the control cell, "
+        f"treatment − control P&L diff > 0 in ≥ {float(spec.get('min_cell_win_frac', 0)):.0%} "
+        "of cells, and no cell with its CI upper bound < 0; `fragile` = wins the control "
+        "cell only.",
+        "",
+    ]
+    rows = []
+    for p, tr in (rob.get("cells") or {}).items():
+        for t, cells in tr.items():
+            for cid in g.get("cells") or sorted(cells):
+                v = cells.get(cid)
+                if v is None:
+                    continue
+                mark = "▲" if v["pnl_diff"] > 0 else ("▼" if v["ci_hi"] < 0 else "·")
+                rows.append(
+                    {
+                        "profile": p,
+                        "treatment": t,
+                        "cell": cid,
+                        "": mark,
+                        "pnl_diff": v["pnl_diff"],
+                        "ci_lo": v["ci_lo"],
+                        "ci_hi": v["ci_hi"],
+                        "net_control": v["net_pnl_control"],
+                        "net_treatment": v["net_pnl_treatment"],
+                        "trades_c/t": f"{v['trades_control']}/{v['trades_treatment']}",
+                    }
+                )
+    lines += [_md_table(rows)]
+    lines += [
+        f"Timing: build {g.get('build_s')} s (all cells share it); walk-only "
+        f"{g.get('walk_s_per_cell')} s per extra cell (every arm × profile), "
+        f"{g.get('walk_s')} s total.",
+        "",
+    ]
+    return lines
 
 
 def render_report(payload: Mapping[str, Any]) -> str:
@@ -1379,6 +1775,7 @@ def render_report(payload: Mapping[str, Any]) -> str:
         "A verdict only recommends: a live change still goes through D44 "
         "(`Experiment: XP-<n>` with arms copied from this spec) or an owner waiver.",
         "",
+        *(grid_section(payload["robustness"]) if "robustness" in payload else []),
         "## Per arm × profile",
         "",
     ]
