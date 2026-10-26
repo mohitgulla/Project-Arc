@@ -1,6 +1,6 @@
 # E28.6 · D131 margin rules in the backtest — knobs, baseline, BT proposal brief
 
-Status: knobs + baseline done 2026-10-19 (card E28.6). Plan ref: PLAN D131 (owner answers
+Status: knobs + brief done 2026-10-19, baseline 2026-10-26 (card E28.6). Plan ref: PLAN D131 (owner answers
 1–12, 2026-10-17). Cards do not draft BT specs (D121/D86): this file is the **brief** the
 Analyst turns into `BT-<n>` proposals; the owner approves them.
 
@@ -52,12 +52,85 @@ LLM selection). Margin profile, live incumbent ranker (`managed_net_ev`), $25K, 
 - `menu-d131 / rules-on` = shipped main (5 % widest-fit wing, floor 0.10, regime 200-SMA,
   open risk 40 %, cluster cap 0.7/2);
 - `menu-pre / rules-off` = main before D131 (nearest 2 % wing, no floor, every rule off);
-- the two cross cells separate the menu effect from the gate effect.
+- the two cross cells separate the menu effect from the gate effect;
+- each of the four again with the debit kinds excluded (`sim.exclude_kinds`, suffix
+  `__credit`). This is a diagnostic, not a study arm (see "Why every full cell is ruined").
 
 Output: `data/backtest/runs/d131_baseline/c125_dev/` (`cells.csv`, `by_kind.csv`,
-`by_sleeve.csv`, per-cell trades/equity/skips).
+`by_sleeve.csv`, per-cell trades/equity/skips). Run 2026-10-26 on the warm menu cache
+(d131 build 817 s); the four full cells reproduce the 2026-10-19 run to the cent.
+`net_mid` = the same trades filled at mid (the cost-free bound). `max_dd_pct` is negative,
+so a positive delta = a shallower drawdown.
 
-_Baseline running; results land here before the PR leaves draft._
+| cell | trades | net | net at mid | max DD % | win | per-$-risk |
+|---|---|---|---|---|---|---|
+| **menu-d131 / rules-on** (shipped) | 913 | −$24,350 | −$12,069 | −99.0 | 0.468 | −0.056 |
+| menu-d131 / rules-off | 469 | −$24,935 | −$16,018 | −99.8 | 0.456 | −0.085 |
+| **menu-pre / rules-off** (pre-D131) | 511 | −$24,927 | −$15,981 | −99.7 | 0.434 | −0.099 |
+| menu-pre / rules-on | 848 | −$24,686 | −$9,750 | −99.6 | 0.459 | −0.046 |
+| menu-d131 / rules-on / credit | 510 | −$9,811 | +$1,643 | −59.1 | 0.725 | −0.016 |
+| menu-d131 / rules-off / credit | 623 | −$22,147 | −$6,918 | −90.8 | 0.685 | −0.034 |
+| menu-pre / rules-off / credit | 564 | −$21,175 | −$3,085 | −88.9 | 0.690 | −0.040 |
+| menu-pre / rules-on / credit | 476 | +$3,406 | +$22,878 | −55.8 | 0.708 | +0.005 |
+
+Where the loss sits (net by entry year; D25 sub-periods):
+
+| cell | debit share | debit net | credit net | 2020–21 | 2022 | 2023 | equity end-2021 | equity < $2.5K from |
+|---|---|---|---|---|---|---|---|---|
+| d131 / on | 0.91 | −$20,163 | −$4,187 | −$15,765 | −$4,506 | −$4,080 | $7,557 | 2023-02-21 |
+| d131 / off | 0.85 | −$20,309 | −$4,626 | −$24,815 | −$104 | −$16 | $153 | 2021-03-22 |
+| pre / off | 0.86 | −$21,499 | −$3,428 | −$24,767 | −$127 | −$34 | $202 | 2020-10-12 |
+| pre / on | 0.91 | −$25,393 | +$707 | −$12,751 | −$8,717 | −$3,218 | $15,087 | 2023-01-24 |
+| d131 / on / credit | 0 | — | −$9,811 | +$4,138 | −$8,644 | −$5,305 | $28,441 | never |
+| d131 / off / credit | 0 | — | −$22,147 | −$5,834 | −$13,785 | −$2,527 | $18,889 | never |
+| pre / off / credit | 0 | — | −$21,175 | −$4,406 | −$15,072 | −$1,697 | $19,564 | never |
+| pre / on / credit | 0 | — | +$3,406 | +$12,055 | −$6,532 | −$2,117 | $33,859 | never |
+
+Per-kind, per-sleeve and skip tables: `data/backtest/runs/d131_baseline/c125_dev/`
+(`by_kind.csv`, `by_sleeve.csv`, `cells.csv`) and the PR body.
+
+### Why every full cell is ruined (−97 % to −99.7 %)
+
+It is not a harness or capital-base bug. Checked on all four full cells:
+
+- Σ trade P&L = Δequity to the cent, and the book starts at $25,000 (the live D80 size).
+- No open's max loss exceeds 15 % of the equity at entry (the D116 per-underlying cap);
+  the median is 3–9 %.
+- The shipped cell reproduces E7.19's attribution: E7.19's incumbent C125 margin book
+  (same menu shape, D131 rules on) is −$24,382 / −0.046 there
+  (`docs/RESEARCH/sim-alignment.md` § Post-D128 attribution); `menu-d131 / rules-on`
+  here is −$24,350 / −0.056.
+
+The cause is the D128 margin menu, as E7.19 found: the margin profile carries the
+cash_debit sleeves and debit kinds, and the live incumbent ranker (`managed_net_ev`)
+picks them. Debit kinds are 85–91 % of every full cell's trades and −$20K to −$25K of
+its net; long calls alone are −$11K to −$23K. A small book compounds the loss: 90–93 % of
+the trades in the rules-off cells open in 2020–21, the book is below $250 by end-2021,
+and the 2022–23 trades are a few dollars each (median |P&L| $8–12). The D131 rules slow that (end-2021
+equity $7.6K / $15.1K with rules on) but don't stop it, because they don't touch
+debit kinds (the regime gate blocks bull puts and iron condors only).
+
+With the debit kinds excluded no cell is ruined (max DD 56–91 %), and the D131 rules
+are worth +$12.3K net (d131 menu) and +$24.6K (pre menu) on the credit book they were
+written for. Whether margin keeps the debit kinds is a strategy question (D128) that
+E7.19 already listed as a candidate study ("margin credit only, or the debit kinds on a
+separate measure"); this card does not change it.
+
+### Read (relative A/B only)
+
+- **Shipped vs pre-D131, full menu:** +$577 net, +$3,913 at mid, per-$-risk +0.043,
+  drawdown 0.7 pts shallower. Both are ruined, so the $ net is censored at −$25K;
+  per-$-risk and time-to-ruin (2023-02 vs 2020-10) are the comparable measures.
+- **Gate effect** (rules on − off, same menu): per-$-risk +0.029 (d131 menu) / +0.053
+  (pre menu) on the full menu; +$12.3K / +$24.6K net and 32–33 pts shallower drawdown
+  credit only. The rules help in every pair.
+- **Menu effect** (d131 menu − pre menu): ≈ 0 on the full menu with rules off (both
+  ruined). Credit only it is negative: rules off −$972, rules on −$13.2K (the 5 %
+  widest-fit wing and 0.10 floor vs the 2 % nearest wing, both under the D131 rules).
+  That is one book and one window, not a verdict; brief (a) and a wing-width arm
+  (`credit_wings.mode: pct_nearest, pct: 0.02`) are how the Analyst would test it.
+- Every credit-only cell loses in 2022 and in 2023; 2020–21 is the only sub-period with
+  a positive cell. This baseline is not a study verdict.
 
 ## 3. Market-state frequencies the studies will act on (C125 dev window, 1,006 sessions)
 
@@ -108,6 +181,14 @@ d. **Open-risk cap** 40 % (control) vs 30 % / 50 %:
 e. **Credit take-profit** 50 % (control) vs 65 % of max gain: exits overlay on the credit
    kinds (`vertical_credit`, `iron_condor`) `take_profit_pct_of_max_gain: 0.65`, as in
    the E7.18 TP candidates. Changes exit outcomes, so the menus rebuild.
+
+Two more questions the baseline raises (listed for the Analyst; not part of the card's a–e):
+- **Wing width**: shipped 5 % widest-fit vs the pre-D131 2 % nearest wing
+  (`{backtest: {credit_wings: {mode: pct_nearest, pct: 0.02}}}`); credit only, under the
+  D131 rules, the 2 % wing was +$13.2K better on this one book.
+- **Debit kinds on the margin menu** (E7.19's first candidate study, D128): they are the
+  ruin in every full cell here. A credit-only arm is `{backtest: {sim: {exclude_kinds:
+  [bull_call, bear_put, long_call, long_put]}}}`.
 
 Cluster cap: no study proposed (owner revision 2026-10-18: a missing correlation is *not*
 a peer; the PIT matrix needs ≥ 40 returns, so the dev window's first months cap nothing).

@@ -111,6 +111,9 @@ BRIEF_ARMS: list[dict[str, object]] = [
     *({"backtest": {"sim": {"vrp_max": x}}} for x in (0.05, 0.10, 0.15, 0.20)),
     {"backtest": {"sim": {"gate": {"regime_gate_ma": 50, "regime_vix_pct_above": 0.8}}}},
     *({"backtest": {"sim": {"gate": {"max_open_risk_pct": x}}}} for x in (0.30, 0.50)),
+    # The two baseline follow-ups (wing width; margin credit only).
+    {"backtest": {"credit_wings": {"mode": "pct_nearest", "pct": 0.02}}},
+    {"backtest": {"sim": {"exclude_kinds": ["bull_call", "bear_put", "long_call", "long_put"]}}},
 ]
 
 

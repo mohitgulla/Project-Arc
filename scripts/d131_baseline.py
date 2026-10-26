@@ -13,7 +13,11 @@ each walked with the D131 gate rules on and off, so menu and gate effects separa
   no cap fit, no floor) walked with every D131 rule off (``backtest.sim.gate``:
   ``regime_gate_enabled: false``, ``max_open_risk_pct: 1.0``,
   ``cluster_cap_enabled: false``) = main before D131;
-- the two cross cells (``d131`` menu / rules off, ``pre`` menu / rules on).
+- the two cross cells (``d131`` menu / rules off, ``pre`` menu / rules on);
+- each of the four again with the debit kinds excluded (``sim.exclude_kinds``, suffix
+  ``__credit``): a diagnostic, not an arm. All four full cells ruin the $25K book, and
+  E7.19 traced that ruin to the D128 debit kinds on the margin menu; the credit cells
+  show what the D131 rules do to the credit book they were written for.
 
 Every arm is the E28.6 overlay knobs, not code edits. Writes
 ``<runs>/d131_baseline/<book>/<cell>/`` (trades, equity, skips, sleeves), plus
@@ -46,10 +50,13 @@ PRE_WINGS = {"mode": "pct_nearest", "pct": 0.02, "min_credit_width": 0.0}
 #: Every D131 gate rule off (the E28.2/E28.3/E28.5 rollback values).
 RULES_OFF = {"regime_gate_enabled": False, "max_open_risk_pct": 1.0, "cluster_cap_enabled": False}
 CELLS = (("d131", True), ("d131", False), ("pre", False), ("pre", True))
+#: The margin menu's debit kinds (D128 superset); excluded in the ``__credit`` cells.
+DEBIT_KINDS = ("bull_call", "bear_put", "long_call", "long_put")
 
 
-def _cell(menu: str, rules: bool) -> str:
-    return f"menu-{menu}__rules-{'on' if rules else 'off'}"
+def _cell(menu: str, rules: bool, credit_only: bool = False) -> str:
+    base = f"menu-{menu}__rules-{'on' if rules else 'off'}"
+    return f"{base}__credit" if credit_only else base
 
 
 def _per_risk(t: pd.DataFrame) -> float | None:
@@ -114,11 +121,12 @@ def run(book: str, workers: int, out_root: Path) -> pd.DataFrame:
         sys.stdout.write(f"== {book} menu={menu} build {build_s:.0f}s\n")
         sys.stdout.flush()
         ranker = b.rankers[PROFILE][0]
-        for m, rules in CELLS:
+        for (m, rules), credit_only in ((c, co) for co in (False, True) for c in CELLS):
             if m != menu:
                 continue
             gate = SimGateOverrides() if rules else SimGateOverrides.model_validate(RULES_OFF)
-            sim = cfg.backtest.sim.model_copy(update={"gate": gate})
+            excl = DEBIT_KINDS if credit_only else ()
+            sim = cfg.backtest.sim.model_copy(update={"gate": gate, "exclude_kinds": excl})
             r = run_sim(
                 b.built,
                 ranker=ranker,
@@ -132,7 +140,7 @@ def run(book: str, workers: int, out_root: Path) -> pd.DataFrame:
                 aliases=MomentumConfig().share_class_aliases,
                 trends=b.trends,
             )
-            name = _cell(menu, rules)
+            name = _cell(menu, rules, credit_only)
             _write_run(r, out / name)
             t = r.trades
             rows.append(
@@ -140,8 +148,10 @@ def run(book: str, workers: int, out_root: Path) -> pd.DataFrame:
                     "cell": name,
                     "menu": menu,
                     "rules": rules,
+                    "credit_only": credit_only,
                     **run_summary(r, sim.equity),
                     "per_risk": _per_risk(t),
+                    "net_mid": round(float(t["pnl_mid"].sum()), 2) if len(t) else 0.0,
                     "build_s": round(build_s, 0),
                     **{f"skip_{k}": v for k, v in r.skip_counts.items() if v},
                 }
@@ -167,7 +177,7 @@ def main(argv: list[str] | None = None) -> int:
         sys.stderr.write("refused: data/backtest/queue.json exists (E26.3 runner owns it)\n")
         return 3
     df = run(args.book, args.workers, args.out)
-    cols = ["cell", "trades", "net_pnl", "return_pct", "max_dd_pct", "win_rate", "per_risk"]
+    cols = ["cell", "trades", "net_pnl", "net_mid", "max_dd_pct", "win_rate", "per_risk"]
     sys.stdout.write(df[cols].to_string() + "\n")
     return 0
 
