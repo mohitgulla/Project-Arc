@@ -2,7 +2,7 @@
   "$defs": {
     "CarryoverKnobs": {
       "additionalProperties": false,
-      "description": "D64: the carry-over knobs a merged ``universe_tier`` entry was built with.",
+      "description": "D64: the carry-over knobs a merged ``universe_tier`` entry was built with.\n\nD138: exactly one window is set: ``window_sessions`` (trading sessions) when the\nsession window is on, else ``window_h`` (clock hours). The unset one is left out of\nthe dump, so a ``window_sessions: null`` entry is byte-identical to a D64 one.",
       "properties": {
         "w_prev": {
           "title": "W Prev",
@@ -13,12 +13,31 @@
           "type": "number"
         },
         "window_h": {
-          "title": "Window H",
-          "type": "integer"
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Window H"
+        },
+        "window_sessions": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Window Sessions"
         }
       },
       "required": [
-        "window_h",
         "w_today",
         "w_prev"
       ],
