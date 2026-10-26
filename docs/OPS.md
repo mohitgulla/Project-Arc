@@ -3228,6 +3228,22 @@ byte-identical to before E2.6).
   on 2 ticks`. Tower status strip: `Opens halted` (amber), with `at HH:MM ET · now <day %>`.
 - Manual `!halt`, reconcile and book-invariant halts keep scope `all`.
 
+### E3.9a: the daily-loss halt ends with its session (D137)
+
+- A `daily_loss` halt stops opens for its own ET session only. The first live routines tick
+  of the next trading session (Monday for a Friday halt, Tuesday after a holiday Monday;
+  never on a weekend) clears it before reading the halt state: `cleared_by =
+  arc:session-rollover`, `cleared_at` = the tick time. `monitor` does the same on a manual
+  run. One line per cleared halt in today's #arc-investor day thread:
+  `[Ops] daily-loss halt from Fri Oct 23 expired at session open; opens allowed`.
+- Before that clear runs (weekend, overnight), the open path, `arc halt-status` and the
+  Tower already treat a `daily_loss` row from an earlier ET day as inactive.
+- Only `daily_loss` rolls over. Manual, reconcile, book-invariant, expiry-guard and
+  account-changed halts still need `!resume`. Audit: `select id, session_date, cleared_at,
+  cleared_by from halts where kind = 'daily_loss' order by at desc`.
+- Arm stores: each arm's own tick clears its arm's stale `daily_loss` halt the same way
+  (logged, no Slack line).
+
 ## E3.7 tiered per-underlying cap (D116)
 
 The gate rule `per_underlying_limit` caps Σ max loss on one underlying (existing + new) at

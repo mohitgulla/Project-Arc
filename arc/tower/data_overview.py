@@ -1405,7 +1405,7 @@ def _session_count(start: _dt.date | None, now_et: _dt.datetime) -> int | None:
 def _status(
     conn: sqlite3.Connection, monitor: sqlite3.Row | None, now_et: _dt.datetime
 ) -> StatusSection:
-    active = [h for h in _halts(conn, 50) if h.active]
+    active = [h for h in _halts(conn, 50, now_et) if h.active]
     epoch = _dt.datetime.min.replace(tzinfo=_dt.UTC)
     active.sort(key=lambda h: h.at or epoch, reverse=True)
     tick = _latest_heartbeat(conn, "tick")

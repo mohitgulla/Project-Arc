@@ -19,6 +19,11 @@ it survives process restarts. This module owns the *policy*:
   fires only after ``daily_loss_confirm_ticks`` consecutive ``monitor`` breaches. The
   count is kept by the caller (:class:`DailyLossTicks`, persisted by ``monitor``); the
   gate's per-snapshot ``daily_loss`` rule still blocks opens on any single breach.
+- E3.9a (D137): a ``daily_loss`` halt lasts for its own ET session only. The routines
+  tick (and ``monitor``) clear it at the first session after it with
+  :meth:`HaltSwitch.expire_stale_session_halts` (``cleared_by = arc:session-rollover``),
+  and a switch built with ``now`` already ignores it on any later calendar day
+  (:func:`daily_loss_expired`). Every other halt kind still needs the owner's resume.
 
 The gate itself stays pure: callers stamp the halt flag onto the
 :class:`~arc.gate.inputs.AccountSnapshot` with :meth:`HaltSwitch.apply` before
@@ -36,9 +41,11 @@ import structlog
 from pydantic import BaseModel, ConfigDict
 
 from arc.gate.rules import check_daily_loss, evaluate
-from arc.utils.calendar import ET
+from arc.utils.calendar import ET, is_session
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from arc.config import ArcSettings
     from arc.gate.band import PriceBand
     from arc.gate.inputs import AccountSnapshot, MarketSnapshot, Portfolio
@@ -55,9 +62,13 @@ __all__ = [
     "HaltSwitch",
     "HaltState",
     "ResumeNotAuthorizedError",
+    "SESSION_ROLLOVER_ACTOR",
     "daily_loss_breach",
+    "daily_loss_expired",
     "daily_loss_halt_reason",
     "evaluate_with_halt",
+    "halt_row_expired",
+    "session_rollover_notice",
 ]
 
 
@@ -157,6 +168,38 @@ def daily_loss_breach(account: AccountSnapshot, config: ArcSettings) -> str | No
     return violations[0].detail if violations else None
 
 
+def daily_loss_expired(halt: HaltRecord, now: dt.datetime) -> bool:
+    """Pure (E3.9a, D137): True when *halt* is a ``daily_loss`` halt from an earlier ET day.
+
+    A daily-loss halt stops opens for its own session only. Any later calendar day is
+    past that session (a weekend or holiday has no opens to stop), so the read side
+    ignores it from midnight ET; the audited clear waits for the next trading session.
+    Other kinds never expire. A row without a ``session_date`` never expires (fail closed).
+    """
+    return halt_row_expired(halt.kind.value, halt.session_date, now)
+
+
+def halt_row_expired(kind: str, session_date: dt.date | str | None, now: dt.datetime) -> bool:
+    """Pure (E3.9a, D137): :func:`daily_loss_expired` on raw ``halts`` columns (Tower)."""
+    if kind != HaltKind.DAILY_LOSS.value or not session_date:
+        return False
+    if isinstance(session_date, str):
+        session_date = dt.date.fromisoformat(session_date)
+    return session_date < now.astimezone(ET).date()
+
+
+#: E3.9a (D137): ``cleared_by`` of a daily-loss halt cleared at the next session.
+SESSION_ROLLOVER_ACTOR = "arc:session-rollover"
+
+
+def session_rollover_notice(halt: HaltRecord) -> str:
+    """Pure (E3.9a): the #arc-investor day-thread line for a halt the rollover cleared."""
+    day = halt.session_date or halt.at.date()
+    return (
+        f"[Ops] daily-loss halt from {day:%a %b} {day.day} expired at session open; opens allowed"
+    )
+
+
 def daily_loss_halt_reason(account: AccountSnapshot, config: ArcSettings, ticks: int) -> str:
     """Pure (E3.9): the stored halt reason, e.g. ``day loss 3.01% >= 3.00% on 2 ticks``.
 
@@ -193,10 +236,25 @@ class HaltSwitch:
     """Store-backed kill switch over a :class:`~arc.store.repos.HaltRepo`; holds no state itself.
 
     Takes the repo, not a connection, so nothing in ``arc.gate`` touches sqlite3 directly.
+
+    E3.9a (D137): with *now* (a clock or a fixed time) the read side ignores
+    ``daily_loss`` halts from an earlier ET day (:func:`daily_loss_expired`). Without it
+    every uncleared row counts, as before.
     """
 
-    def __init__(self, repo: HaltRepo) -> None:
+    def __init__(
+        self,
+        repo: HaltRepo,
+        *,
+        now: dt.datetime | Callable[[], dt.datetime] | None = None,
+    ) -> None:
         self._repo = repo
+        self._now = now
+
+    def _read_now(self) -> dt.datetime | None:
+        if self._now is None or isinstance(self._now, dt.datetime):
+            return self._now
+        return self._now()
 
     # -- read ------------------------------------------------------------
 
@@ -204,6 +262,9 @@ class HaltSwitch:
         """Active halts; fails closed (halted) if the store cannot be read or parsed."""
         try:
             active = [_record(r) for r in self._repo.active()]
+            now = self._read_now()
+            if now is not None:
+                active = [h for h in active if not daily_loss_expired(h, now)]
         except Exception as exc:  # noqa: BLE001 — any read/parse error means halted
             log.error("halt.state_unreadable", error=str(exc))
             return HaltState(halted=True, active=[], error=f"{type(exc).__name__}: {exc}")
@@ -292,6 +353,42 @@ class HaltSwitch:
         active = self.state().active
         self._repo.clear_all(actor=actor, at=_to_store(now))
         return active
+
+    def expire_stale_session_halts(self, now: dt.datetime) -> list[HaltRecord]:
+        """E3.9a (D137): clear ``daily_loss`` halts whose session has ended; audited.
+
+        Runs only on a trading day (ET): a Friday halt is cleared by the first tick of
+        Monday's session (or Tuesday's after a holiday Monday), never on the weekend.
+        Each cleared row gets ``cleared_at = now`` and ``cleared_by =``
+        :data:`SESSION_ROLLOVER_ACTOR`. Other kinds and today's halts are untouched.
+        Idempotent: returns only the rows this call cleared (empty on a re-run).
+        """
+        today = now.astimezone(ET).date()
+        if not is_session(today):
+            return []
+        at = _to_store(now)
+        cleared: list[HaltRecord] = []
+        for row in self._repo.active():
+            halt = _record(row)
+            if not daily_loss_expired(halt, now):
+                continue
+            if self._repo.resume(halt.id, actor=SESSION_ROLLOVER_ACTOR, at=at):
+                log.info(
+                    "halt.session_rollover_cleared",
+                    halt_id=halt.id,
+                    kind=halt.kind.value,
+                    session_date=str(halt.session_date),
+                    reason=halt.reason,
+                )
+                cleared.append(
+                    halt.model_copy(
+                        update={
+                            "cleared_at": now.astimezone(ET),
+                            "cleared_by": SESSION_ROLLOVER_ACTOR,
+                        }
+                    )
+                )
+        return cleared
 
     def check_daily_loss(
         self,
