@@ -56,6 +56,7 @@ MOVED: dict[str, tuple[tuple[str, ...], Any]] = {
     "universe_floor_trending": (("floors", "trending"), 0.6),
     "universe.carryover.enabled": (("carryover", "enabled"), True),
     "universe.carryover.window_h": (("carryover", "window_h"), 48),
+    "universe.carryover.window_sessions": (("carryover", "window_sessions"), 1),  # D138
     "universe.carryover.w_today": (("carryover", "w_today"), 0.6),
     "universe.trending.scoring": (("trending", "scoring"), "rank_gain"),
 }
@@ -95,6 +96,7 @@ def test_shipped_universe_yaml_carries_every_setting() -> None:
         0.6,
     )
     assert (u.carryover.enabled, u.carryover.window_h, u.carryover.w_today) == (True, 48, 0.6)
+    assert u.carryover.window_sessions == 1  # D138
     assert u.momentum.source_order == ["stockanalysis", "schwab"] and u.momentum.size == 25
     t = u.trending
     assert (t.pool, t.min_inputs_first, t.exclude_market_reference, t.scoring) == (
@@ -348,6 +350,7 @@ SET_CASES: dict[str, tuple[str, Any]] = {
     "universe_floor_trending": ("0.7", lambda u: u.floors.trending == 0.7),
     "universe.carryover.enabled": ("off", lambda u: u.carryover.enabled is False),
     "universe.carryover.window_h": ("72", lambda u: u.carryover.window_h == 72),
+    "universe.carryover.window_sessions": ("2", lambda u: u.carryover.window_sessions == 2),
     "universe.carryover.w_today": ("0.8", lambda u: u.carryover.w_today == 0.8),
     "universe.trending.scoring": ("velocity", lambda u: u.trending.scoring == "velocity"),
 }

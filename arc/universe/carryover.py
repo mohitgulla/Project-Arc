@@ -7,9 +7,12 @@ consecutive runs inform a name's score and rank. Deterministic code, no LLM.
 Rules (:func:`merge_members`, pure):
 
 * prev = the latest ``universe_tier`` entry for the tier whose ``valid_from`` is within
-  ``window_h`` (48) hours of this run and on an **earlier ET day** (a manual re-run never
-  merges today with today). Any status: a same-day re-run finds yesterday's entry
-  superseded by today's first run, and still merges it.
+  the window and on an **earlier ET day** (a manual re-run never merges today with
+  today). The window is ``window_sessions`` trading sessions when set (D138: 1 = from
+  00:00 ET of the previous session, so Monday merges Friday and the Monday after a Friday
+  holiday merges Thursday), else ``window_h`` (48) clock hours (D64). Any status: a
+  same-day re-run finds yesterday's entry superseded by today's first run, and still
+  merges it.
 * Only prev's **own** names count (its ``score_today``, or the score parsed from its
   ``reason`` for pre-D64 rows); a name prev itself carried is not carried again, so a
   name never informs more than two runs.
@@ -182,17 +185,38 @@ def merge_members(
     )
 
 
+def _window_start(
+    local: _dt.datetime, *, window_h: int, window_sessions: int | None
+) -> _dt.datetime:
+    """Lower bound of the prev window: 00:00 ET of the *window_sessions*-th trading session
+    before *local*'s day (D138), else *window_h* clock hours before *local* (D64)."""
+    from arc.utils.calendar import ET, previous_session
+
+    if window_sessions is None:
+        return local - _dt.timedelta(hours=window_h)
+    d = local.date()
+    for _ in range(window_sessions):
+        d = previous_session(d)
+    return _dt.datetime(d.year, d.month, d.day, tzinfo=ET)
+
+
 def previous_entry(
-    conn: sqlite3.Connection, tier: Tier, *, now: _dt.datetime, window_h: int
+    conn: sqlite3.Connection,
+    tier: Tier,
+    *,
+    now: _dt.datetime,
+    window_h: int,
+    window_sessions: int | None = None,
 ) -> tuple[str, _dt.datetime, UniverseTierPayload] | None:
-    """``(entry id, valid_from, payload)`` of the latest *tier* entry written within
-    *window_h* hours before *now* and on an earlier ET day (any status), else ``None``."""
+    """``(entry id, valid_from, payload)`` of the latest *tier* entry written inside the
+    window before *now* and on an earlier ET day (any status), else ``None``. The window
+    is *window_sessions* trading sessions when set (D138), else *window_h* hours (D64)."""
     from arc.context.ttl import from_db, to_db
     from arc.utils.calendar import ET
 
     local = now.astimezone(ET)
     day_start = _dt.datetime(local.year, local.month, local.day, tzinfo=ET)
-    lo = local - _dt.timedelta(hours=window_h)
+    lo = _window_start(local, window_h=window_h, window_sessions=window_sessions)
     try:
         row = conn.execute(
             "SELECT id, payload, valid_from FROM context_entries WHERE kind = 'universe_tier' "
@@ -225,7 +249,15 @@ def apply_carryover(
 
     today_day = now.astimezone(ET).date()
     prev = (
-        previous_entry(conn, payload.tier, now=now, window_h=cfg.window_h) if cfg.enabled else None
+        previous_entry(
+            conn,
+            payload.tier,
+            now=now,
+            window_h=cfg.window_h,
+            window_sessions=cfg.window_sessions,
+        )
+        if cfg.enabled
+        else None
     )
     res = merge_members(
         payload.members,

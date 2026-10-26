@@ -973,13 +973,17 @@ discoveries, `universe.tiers.model`); an old `model:` / `trending:` key in
   table, no write) or `arc universe trending [--db PATH] [--no-slack]` (runs the job).
   The job's `[Routines]` notice is the diff against the previous list
   (`Trending tier: 23 names, 11 in both inputs (+SPCX −RIVN) · inputs reddit, stocktwits`).
-- **48 h two-run carry-over (E14.7, D64), discovery + trending, on by default.** Both
+- **Two-run carry-over (E14.7, D64; window D138), discovery + trending, on by default.** Both
   tiers' `universe_tier` entries live **48 h** (strict clock hours; job-level
   `context:` on `universe.trending`, `context_kinds: {universe_tier: …}` on the Scout so
   its other kinds keep their TTLs). Each run writes a **merged** list: this run's names
   plus the previous entry's own names, where previous = the latest entry for the tier
-  written ≤ `window_h` ago on an **earlier ET day** (a same-day re-run never merges today
-  with today; Monday's run is > 48 h after Friday's, so it has no previous run).
+  (any status, so an expired one still counts) written on an **earlier ET day** inside
+  the window (a same-day re-run never merges today with today). D138: the window is
+  `window_sessions` trading sessions (1 = from 00:00 ET of the previous session), so
+  Monday merges Friday and the Monday after a Friday holiday merges Thursday. With
+  `window_sessions` null/0 it is the D64 rule, ≤ `window_h` clock hours ago (Monday's run
+  is > 48 h after Friday's, so then it has no previous run).
   `score = round(0.6 × today + 0.4 × previous, 4)` (a name missing from a run scores 0
   there), sorted by score, today's rank, previous rank, ticker, cut to the tier size (25).
   Each run uses the previous run's **own** score (`score_today`), so a name never informs
@@ -991,8 +995,9 @@ discoveries, `universe.tiers.model`); an old `model:` / `trending:` key in
   `score_today`, `score_prev`, `runs` (discovery also `stance`, `origins`); the entry
   carries `merged_from` (previous entry id) and `merge` (knobs). A failed run writes
   nothing, so the previous list serves until its 48 h end. Knobs:
-  `universe.carryover.enabled` (true; off = each run's list only), `.window_h` (48,
-  24–96), `.w_today` (0.6, 0.5–1.0) in `config/universe.yaml` `carryover:` (E20.4) /
+  `universe.carryover.enabled` (true; off = each run's list only), `.window_sessions`
+  (1, 0–3; 0 = off → `window_h`), `.window_h` (48, 24–96), `.w_today` (0.6, 0.5–1.0) in
+  `config/universe.yaml` `carryover:` (E20.4) /
   `!arc config set`.
   Rehearse on a scratch copy: `arc universe trending --db <scratch> --now <next 05:50>`
   (`--now` on a real run needs an explicit `--db`); the printout shows

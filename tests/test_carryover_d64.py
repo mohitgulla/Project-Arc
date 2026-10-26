@@ -59,6 +59,8 @@ FRI = THU + dt.timedelta(days=1)
 MON = THU + dt.timedelta(days=4)
 ON = CarryoverSettings()
 OFF = CarryoverSettings(enabled=False)
+# D138 rollback: window_sessions null = the D64 48 clock-hour rule
+H48 = CarryoverSettings(window_sessions=None)
 
 
 def _settings(**kw: Any) -> ArcSettings:
@@ -287,9 +289,11 @@ class TestPrevious:
             fetched_at=MON,
             source="t",
         )
-        out, res = apply_carryover(db, payload, now=MON, cfg=ON, size=25)
+        out, res = apply_carryover(db, payload, now=MON, cfg=H48, size=25)
         assert [m.ticker for m in out.members] == ["BBB"] and out.merged_from is None
         assert out.merge is not None and out.merge.w_prev == 0.4 and not res.carried
+        # D64 knobs dump unchanged (no window_sessions key) when the session window is off
+        assert out.merge.model_dump() == {"window_h": 48, "w_today": 0.6, "w_prev": 0.4}
 
     def test_same_day_rerun_merges_the_earlier_day_not_today(self, db: sqlite3.Connection) -> None:
         thu_id = _write(db, _today(("OLD", 0.9), day=THU.date()), THU)
@@ -376,8 +380,9 @@ def test_journal_carried_once_per_day(db: sqlite3.Connection) -> None:
 class TestConfig:
     def test_shipped_yaml(self) -> None:
         # E20.4 (D85): the carry-over lives in config/universe.yaml
+        # D138: the shipped window is the previous trading session
         assert load_universe_config().carryover == CarryoverSettings(
-            enabled=True, window_h=48, w_today=0.6
+            enabled=True, window_h=48, window_sessions=1, w_today=0.6
         )
         c = load_routines(DEFAULT_ROUTINES_PATH)
         for job in ("scout", "universe.trending"):
