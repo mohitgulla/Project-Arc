@@ -254,7 +254,7 @@ def test_velocity_overlay_owns_the_trending_job_and_the_scout() -> None:
     }
     plan = arm_plan(load_routines(), ov, RunnerConfig())
     assert plan.fork_step == "research"
-    assert persona_jobs(plan.arm_personas) == ["scout", "universe.trending"]
+    assert persona_jobs(plan.arm_personas) == ["scout", "scout.rescreen", "universe.trending"]
     assert {"universe.trending", "scout"} <= set(plan.own_producers)
 
 

@@ -111,6 +111,8 @@ class ReasonCode(StrEnum):
     SCOUT_CANDIDATE = "scout_feed_candidate"  # a Scout ticker call written as a candidate
     SCOUT_DISCOVERY = "scout_discovery"  # added to the discovery tier
     SCOUT_DISCOVERY_SCREENED_OUT = "scout_discovery_screened_out"  # failed a discovery rule
+    # E13.7c (D138): a 06:00 screen drop that passed the 10:00 RTH re-screen (scout.rescreen)
+    SCOUT_DISCOVERY_RESCREENED = "scout_discovery_rescreened"
     # shortlist (Research)
     SHORTLISTED = "shortlisted"
     NOT_RANKED = "not_ranked"
@@ -414,6 +416,7 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.SCOUT_CANDIDATE: "Scout raised this idea",
     ReasonCode.SCOUT_DISCOVERY: "Added to the discovery tier by the Scout",
     ReasonCode.SCOUT_DISCOVERY_SCREENED_OUT: "Scout pick kept out of the discovery tier",
+    ReasonCode.SCOUT_DISCOVERY_RESCREENED: "Added to discovery by the market-hours re-screen",
     ReasonCode.SHORTLISTED: "Shortlisted by Research",
     ReasonCode.NOT_RANKED: "Not ranked by Research",
     ReasonCode.NOT_A_CANDIDATE: "Not one of the Scalp's candidates",

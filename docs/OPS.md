@@ -952,6 +952,21 @@ discoveries, `universe.tiers.model`); an old `model:` / `trending:` key in
   job). Weekly instead: `days: [mon]` and `context: {ttl: 8d}` in `config/routines.yaml`.
 - **Discovery tier (E13.4):** only the Scout admits names here (`scout_read`
   `discovery`), screened `loose`; the Scalp never admits a name outside the tiers.
+- **Discovery RTH re-screen (E13.7c, D138), on by default.** Job `scout.rescreen`
+  (10:00 ET, trading days, ttl 1h, no LLM, no catch-up) re-screens today's Scout
+  nominations the 06:00 run dropped **only** on the liquidity screen (`scout_read`
+  `screened_out` reason `screened_out: …`: pre-market spreads, 401/data errors). Names
+  dropped by any other rule (not in calls, higher tier, ETF/reference, below floor, over
+  cap) are never revived and no new name is added. Each is re-checked (higher tier now,
+  the discovery cap counting today's members) and screened `loose`; a pass is appended
+  to today's discovery members through the Scout's tier writer (D64 carry-over, active
+  list re-resolved) with the 06:00 entry's expiry, journaled `scout_discovery_rescreened`;
+  a fail is journaled `scout_discovery_screened_out` with `rescreen: <reason>`. A data
+  error admits nothing for that name and the summary ends `· data error (…)`. Idempotent
+  per ET day; `scout_read` is never edited. Summary: `rescreen N dropped → +K admitted
+  (TICKERS) · discovery X/25`; no `scout_read` today = `skipped`. Off: set
+  `personas.scout.rescreen.enabled: false` in `config/routines.yaml`; another slot =
+  add a time to its `schedule`. By hand: `arc routines run scout.rescreen --db <copy>`.
 - **Trending tier (E13.19, D58):** source job `retail_buzz` (05:40 ET, trading days)
   pulls Reddit (ApeWisdom all-stocks, pages 1–2) and the Stocktwits trending list into
   one `retail_buzz` entry (category `retail_buzz`, 24h); inputs are configured under

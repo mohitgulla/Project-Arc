@@ -177,7 +177,8 @@ def test_arm_owned_personas_from_overlay_keys(overlay: dict, personas: set[str])
 
 def test_persona_prefix_table_covers_the_arm_personas() -> None:
     assert set(PERSONA_OVERLAY_PREFIXES) == set(ARM_PERSONAS)
-    assert persona_jobs(["scalp", "scout", "scalp"]) == ["scalp", "scout"]  # D91: one Scalp job
+    # D91: one Scalp job; E13.7c: the Scout's RTH re-screen runs with it
+    assert persona_jobs(["scalp", "scout", "scalp"]) == ["scalp", "scout", "scout.rescreen"]
 
 
 def test_arm_personas_are_validated_and_never_tunable() -> None:
@@ -201,7 +202,7 @@ def test_plan_for_xp5_runs_its_own_scout_and_syncs_its_inputs() -> None:
     )
     assert plan.fork_step == "research"
     assert plan.arm_personas == ["scout"]
-    assert plan.own_producers == ["scout"]
+    assert plan.own_producers == ["scout", "scout.rescreen"]
     # the Scout's inputs come from control; candidate stays shared by producer
     assert {"channel_brief", "options_daily", "vx_curve", "candidate"} <= set(plan.shared_kinds)
     assert "active_universe" not in plan.shared_kinds  # re-resolved by the arm's Scout
@@ -231,7 +232,7 @@ def test_runner_arm_personas_apply_to_every_arm() -> None:
 def test_arm_routines_enables_only_arm_jobs_and_own_personas() -> None:
     routines = arm_routines(load_routines(), ["broker.reconcile", *persona_jobs(["scout"])])
     enabled = {n for n, (_, s) in routines.jobs().items() if s.enabled}
-    assert enabled == {"broker.reconcile", "scout"}
+    assert enabled == {"broker.reconcile", "scout", "scout.rescreen"}
 
 
 def test_pre_e13_12_store_loads_with_no_personas(tmp_path: Path) -> None:
