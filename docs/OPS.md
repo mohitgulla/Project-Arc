@@ -1965,6 +1965,16 @@ The treatment arm is the same trading loop on its own paper account
   `book_invariant: …`, journal `reconcile:book_invariant`, one `[Ops]` notice
   per arm; after fixing the cause, the owner resumes the arm with
   `ARC_DB_PATH=<arm store> arc resume --actor <owner>`.
+- Book epoch (E15.11, D135): "t0" above is the account's current *epoch*, which
+  starts at the latest arm t0 with no earlier arm still running (broker-flat by
+  the t0 rules). Arms stopped before it, their stale ledgers and the owner's
+  `owner-flatten-*` orders between experiments are out of the check, and their
+  arm codes are free again. Owner manual orders *during* an experiment still
+  halt every arm, so flatten only between experiments, after `arc experiment stop`.
+- Arm candidate rows (E15.11): every `candidate` context entry copied into an arm
+  (shared-context sync or `_reuse_upstream`) brings its `candidates` row, or is
+  re-pointed at the arm's own row for that ticker/day, so `quant.propose`'s
+  `proposals.candidate_id` FK always resolves.
 
 ### 5.20 Strategy-lane CI check: locked leaves + XP advisory (E21.1, D86; was E10.7 / D44)
 
@@ -3217,6 +3227,22 @@ byte-identical to before E2.6).
 - Slack: `daily-loss halt (new opens only; exits keep running): day loss 3.01% >= 3.00%
   on 2 ticks`. Tower status strip: `Opens halted` (amber), with `at HH:MM ET · now <day %>`.
 - Manual `!halt`, reconcile and book-invariant halts keep scope `all`.
+
+### E3.9a: the daily-loss halt ends with its session (D137)
+
+- A `daily_loss` halt stops opens for its own ET session only. The first live routines tick
+  of the next trading session (Monday for a Friday halt, Tuesday after a holiday Monday;
+  never on a weekend) clears it before reading the halt state: `cleared_by =
+  arc:session-rollover`, `cleared_at` = the tick time. `monitor` does the same on a manual
+  run. One line per cleared halt in today's #arc-investor day thread:
+  `[Ops] daily-loss halt from Fri Oct 23 expired at session open; opens allowed`.
+- Before that clear runs (weekend, overnight), the open path, `arc halt-status` and the
+  Tower already treat a `daily_loss` row from an earlier ET day as inactive.
+- Only `daily_loss` rolls over. Manual, reconcile, book-invariant, expiry-guard and
+  account-changed halts still need `!resume`. Audit: `select id, session_date, cleared_at,
+  cleared_by from halts where kind = 'daily_loss' order by at desc`.
+- Arm stores: each arm's own tick clears its arm's stale `daily_loss` halt the same way
+  (logged, no Slack line).
 
 ## E3.7 tiered per-underlying cap (D116)
 

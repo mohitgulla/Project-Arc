@@ -983,3 +983,161 @@ def test_tick_a_balanced_account_halts_nothing(tmp_path: Path) -> None:
                                   CASH_T0 - D("2015.33")))  # fmt: skip
     assert report["books"]["ALPACA_EXP"]["violations"] == []
     assert _halted(stores) == []
+
+
+# --- E15.11: the book epoch (XP-2 invalid) -------------------------------------------------
+
+#: XP-1-like: an earlier experiment on the account, stopped before the new one started
+OLD_T0 = dt.datetime(2026, 10, 5, 9, 0, tzinfo=ET)
+OLD_STOP = dt.datetime(2026, 10, 7, 16, 0, tzinfo=ET)
+OLD_CASH = D("31234.56")
+FLATTEN_AT = dt.datetime(2026, 10, 8, 10, 0, tzinfo=ET)
+
+
+def _start_at(conn: sqlite3.Connection, eid: str, k: int, tmp: Path, *, now: dt.datetime,
+              cash: D) -> Any:  # fmt: skip
+    runner = _runner()
+    store = ExperimentStore.for_runner(conn, runner, now=lambda: now)
+    store.create(_spec(eid, k), actor=OWNER, owner_approval="XP-1")
+    store.register(eid, actor=OWNER, owner_approval="XP-1")
+
+    def probe(keys_env: str) -> ArmAccount:
+        return ArmAccount(account_number=ACCT, equity=D("250000"), positions=0, open_orders=0,
+                          cash=cash)  # fmt: skip
+
+    return start_arms(
+        conn, eid, actor=OWNER, now=now, t0_equity=D("10000"), runner=runner,
+        arm_dir=tmp / "arms", control_sha="abcdef1", aa_override=True, probe=probe,
+    )  # fmt: skip
+
+
+def _stale_leg(path: Path, arm_id: str, symbol: str, qty: str) -> None:
+    """A stopped arm's ledger still holding a leg the owner flattened by hand."""
+    c = connect(path)
+    with c:
+        c.execute(
+            "INSERT INTO virtual_ledger (arm_id, kind, ref, amount, settles_on, at, detail) "
+            "VALUES (?, 'fill', ?, '-300', NULL, ?, ?)",
+            (arm_id, f"act:stale-{symbol}", "2026-10-06T14:00:00.000000Z",
+             json.dumps({"symbol": symbol, "qty": qty})),
+        )  # fmt: skip
+    c.close()
+
+
+def _flatten(symbol: str, qty: str, n: int) -> tuple[dict[str, Any], dict[str, Any]]:
+    """The owner's untagged manual close of a stale leg after the old experiment stopped."""
+    at = FLATTEN_AT.astimezone(dt.UTC).strftime("%Y-%m-%dT%H:%M:%S.000000Z")
+    oid = f"owner-order-{n}"
+    order = {
+        "id": oid,
+        "client_order_id": f"owner-flatten-xp1-{n}",
+        "order_class": "simple",
+        "status": "filled",
+        "submitted_at": at,
+        "created_at": at,
+        "symbol": symbol,
+    }
+    fill = {"activity_type": "FILL", "id": f"20261008100000000::flat-{n}", "order_id": oid,
+            "price": "1.10", "qty": qty, "side": "buy", "symbol": symbol,
+            "transaction_time": at, "type": "fill"}  # fmt: skip
+    return order, fill
+
+
+def _two_epochs(tmp_path: Path) -> tuple[sqlite3.Connection, _Account]:
+    """XP-29 (3 arms, codes 0-2) stopped with a stale leg in t1's ledger and the owner's
+    untagged flatten after it; XP-30 then starts flat at T0 on the same account."""
+    conn = _db(tmp_path / "control.db")
+    _start_at(conn, "XP-29", 3, tmp_path, now=OLD_T0, cash=OLD_CASH)
+    _stale_leg(arm_stores(conn, "XP-29")["t1"], "XP-29:t1", "AAPL261120P00335000", "-3")
+    ExperimentStore(conn, now=lambda: OLD_STOP).stop("XP-29", StopReason.OWNER, actor=OWNER)
+    _start_at(conn, "XP-30", 3, tmp_path, now=T0, cash=CASH_T0)
+    order, fill = _flatten("AAPL261120P00335000", "3", 1)
+    account = _Account([fill, *LIVE["fills"]], [order, *LIVE["orders"]], LIVE_POS,
+                       CASH_T0 - D("2015.33"))  # fmt: skip
+    return conn, account
+
+
+def test_book_epoch_is_the_latest_flat_start_before_the_running_arms() -> None:
+    old = [_w("XP-29:t1", "0", t0=OLD_T0, stop=OLD_STOP, running=False)]
+    new = [_w("XP-30:t1", "1"), _w("XP-30:t2", "2")]
+    assert attribution.book_epoch([*old, *new]) == T0
+    assert [w.arm_id for w in attribution.epoch_windows([*old, *new])] == ["XP-30:t1", "XP-30:t2"]
+    assert attribution.book_epoch(old) is None  # nothing running: no book
+    assert attribution.epoch_windows(old) == []
+    # an old arm with no stop recorded is never proven closed: the epoch stays its t0
+    unknown = [_w("XP-29:t1", "0", t0=OLD_T0, stop=None, running=False)]
+    assert attribution.book_epoch([*unknown, *new]) == OLD_T0
+    # a later experiment joined busy (XP-30 still running at XP-31's t0): same epoch
+    joined = _w("XP-31:t1", "3", t0=T0 + dt.timedelta(hours=1))
+    assert attribution.book_epoch([*old, *new, joined]) == T0
+
+
+def test_a_stopped_arm_overlapping_the_epoch_is_still_checked() -> None:
+    # XP-30:t1 (code 1) stopped at 15:00 after its fills; XP-31:t2 (code 2) still runs
+    stopped = _w("XP-30:t1", "1", stop=dt.datetime(2026, 10, 12, 15, 0, tzinfo=ET),
+                 running=False)  # fmt: skip
+    ws = [stopped, _w("XP-31:t2", "2")]
+    assert attribution.book_epoch(ws) == T0
+    scoped = attribution.epoch_windows(ws)
+    assert [w.arm_id for w in scoped] == ["XP-30:t1", "XP-31:t2"]
+    cash = CASH_T0 - D("2015.33")
+    assert account_violations(build_book(LIVE["fills"], LIVE["orders"], scoped, LIVE_POS,
+                                         broker_cash=cash, since=T0)) == []  # fmt: skip
+    gone = [p for p in LIVE_POS if not p.symbol.startswith("HOOD")]  # the stopped arm's leg
+    (v,) = account_violations(build_book(LIVE["fills"], LIVE["orders"], scoped, gone,
+                                         broker_cash=cash, since=T0))  # fmt: skip
+    assert (v.scope, v.arm_id, v.kind) == ("arm", "XP-30:t1", "qty")
+
+
+def test_the_cash_baseline_is_the_epochs_never_an_earlier_experiments() -> None:
+    old = _w("XP-29:t1", "0", t0=OLD_T0, stop=OLD_STOP, running=False)
+    old = old.model_copy(update={"cash_t0": OLD_CASH})
+    ws = [old, _w("XP-30:t1", "1")]
+    assert attribution.cash_baseline(ws) == OLD_CASH  # the pre-E15.11 read
+    assert attribution.cash_baseline(attribution.epoch_windows(ws)) == CASH_T0
+
+
+def test_a_fill_earlier_on_the_epochs_own_day_is_out_of_scope() -> None:
+    order, fill = _flatten("AAPL261120P00335000", "3", 2)
+    fill = fill | {"transaction_time": "2026-10-12T12:30:00.000000Z"}  # 08:30 ET, before t0
+    book = build_book([fill, *LIVE["fills"]], [order, *LIVE["orders"]], WINDOWS, LIVE_POS,
+                      broker_cash=CASH_T0 - D("2015.33"), since=T0)  # fmt: skip
+    assert account_violations(book) == []
+
+
+def test_stale_stopped_ledgers_and_pre_epoch_flattens_are_out_of_the_book(
+    tmp_path: Path,
+) -> None:
+    conn, account = _two_epochs(tmp_path)
+    book = account_book(account, conn, account_sha256=None, keys_env="ALPACA_EXP")
+    assert book.since == T0
+    assert {w.arm_id for w in book.windows} == {"XP-30:t1", "XP-30:t2", "XP-30:t3"}
+    assert book.cash_baseline == CASH_T0
+    assert account_violations(book) == []
+    # the pre-E15.11 book (every window, since the first t0) is what halted XP-2
+    every = account_windows(conn, account_sha256=None, keys_env="ALPACA_EXP")
+    old = build_book(account.raw, account.orders_, every, LIVE_POS,
+                     broker_cash=account.cash, since=every[0].t0)  # fmt: skip
+    kinds = {(v.scope, v.kind) for v in account_violations(old)}
+    assert {("account", "order"), ("account", "untagged"), ("account", "cash")} <= kinds
+
+
+def test_tick_starts_a_new_experiment_clean_after_an_owner_flatten(tmp_path: Path) -> None:
+    conn, account = _two_epochs(tmp_path)
+    report = _tick(conn, account)
+    assert report["books"]["ALPACA_EXP"]["violations"] == []
+    assert _halted(arm_stores(conn, "XP-30")) == []
+
+
+def test_a_flat_start_frees_the_codes_of_earlier_stopped_arms(tmp_path: Path) -> None:
+    conn, _ = _two_epochs(tmp_path)
+    # XP-29:t1's ledger was never flattened, but the account was flat at XP-30's t0
+    assert _codes(conn, "XP-30") == {"t1": "0", "t2": "1", "t3": "2"}
+    windows = account_windows(conn, account_sha256=None, keys_env="ALPACA_EXP")
+    assert held_codes(windows) == {"0", "1", "2"}  # held by XP-30's running arms only
+    ExperimentStore(conn, now=lambda: T0 + dt.timedelta(days=3)).stop(
+        "XP-30", StopReason.OWNER, actor=OWNER
+    )
+    windows = account_windows(conn, account_sha256=None, keys_env="ALPACA_EXP")
+    assert held_codes(windows) == {"0"}  # nothing running: XP-29:t1 is not proven flat
+    assert held_codes(windows, flat_at=T0 + dt.timedelta(days=4)) == set()

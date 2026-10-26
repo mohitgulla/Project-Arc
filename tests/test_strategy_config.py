@@ -377,7 +377,7 @@ def test_registered_spec_hashes_unchanged() -> None:
     # Since the D111 registry reset XP-1 (the K=3 A/A, spec v3) is the only committed
     # spec; its hash must not move once it is registered.
     specs = {p.name: load_spec(p) for p in sorted(LIVE_SPECS_DIR.glob("*.yaml"))}
-    assert set(specs) == {"xp1_aa_k3.yaml", "xp2_aa_margin.yaml"}
+    assert set(specs) == {"xp1_aa_k3.yaml", "xp2_aa_margin.yaml", "xp3_aa_margin.yaml"}
     assert (
         spec_hash(specs["xp1_aa_k3.yaml"])
         == "4bb58189448a727a4f580a5dd828237f85187e46f2cfe5e83e47c9f890be5367"
@@ -386,6 +386,11 @@ def test_registered_spec_hashes_unchanged() -> None:
     assert (
         spec_hash(specs["xp2_aa_margin.yaml"])
         == "4578de1db59ec29ecb8f0f68ca45a148eec5f3ba9a1b75c234c3cd1bd950bdf2"
+    )
+    # D136: XP-3, XP-2's restart after the E15.11 invariant fix (same design/analysis)
+    assert (
+        spec_hash(specs["xp3_aa_margin.yaml"])
+        == "d01d1cd2cdcad4b4a89fd82895a67489bac1b858da94a1c9916af7914f4da423"
     )
 
 

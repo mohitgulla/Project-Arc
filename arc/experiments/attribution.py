@@ -29,11 +29,16 @@ no ``client_order_id``, so attribution is Arc's own:
 
 :func:`check_book` ties the arms back to the broker: per contract the arms' net
 qty (plus smoke) equals ``/v2/positions``; the arms' cash flows equal the broker
-cash less the cash at the account's first t0 (tolerance $0.01 per fee row, widened
+cash less the cash at the book epoch's first t0 (tolerance $0.01 per fee row, widened
 by pending fees below and the latest posted fee day above, see :func:`check_book`); every
 order in the window carries a known arm tag or a smoke id. An untagged
 leg/order/fill and any cash drift halt **every** arm on the account; a qty drift on
 a contract only one arm holds halts that arm only (:func:`halt_violations`).
+
+**Book epoch (E15.11).** The invariant covers one epoch (:func:`book_epoch`): from
+the latest t0 at which no earlier arm was still running, which the t0 rules require
+to be broker-flat. Arms stopped before it, their never-flattened ledgers and the
+owner's untagged flatten orders between experiments are out of scope.
 
 Everything here is pure except :func:`account_windows` (reads the arm stores
 read-only) and :func:`halt_violations` (writes halts + journal rows to arm stores).
@@ -68,7 +73,9 @@ __all__ = [
     "CodeAllocationError",
     "account_windows",
     "attribute",
+    "book_epoch",
     "check_book",
+    "epoch_windows",
     "free_codes",
     "halt_violations",
     "order_tags",
@@ -694,12 +701,65 @@ def account_windows(
     return sorted(out, key=lambda w: (w.t0, w.arm_id))
 
 
-def held_codes(windows: Sequence[ArmWindow]) -> set[str]:
-    """Codes not reusable: the arm is running, or stopped but not flat in its ledger."""
+def book_epoch(windows: Sequence[ArmWindow]) -> _dt.datetime | None:
+    """E15.11: the t0 the account's book invariant starts from (``None`` = nothing running).
+
+    A *flat start* is an arm t0 with no earlier arm's window still open at it (every
+    earlier arm stopped before it). :func:`arc.experiments.runner._check_accounts`
+    refuses such a start unless the broker account is flat, so it is a clean reset of
+    the shared book. The epoch is the latest flat start at or before the earliest
+    running arm's t0. Arms whose window ended before the epoch (an earlier
+    experiment, its stale ledger and any owner flatten after it) are out of scope; an
+    arm stopped after the epoch began stays in scope. Inferred from the windows (no
+    stored column): the windows already carry every t0/stop the rule needs.
+    """
+    running = [w.t0 for w in windows if w.running]
+    if not running:
+        return None
+    first_running = min(running)
+    epoch: _dt.datetime | None = None
+    open_until: _dt.datetime | None = None  # latest stop seen so far (None = none yet)
+    open_forever = False
+    for w in sorted(windows, key=lambda w: (w.t0, w.arm_id)):
+        if w.t0 > first_running:
+            break
+        if epoch is None or (not open_forever and open_until is not None and w.t0 > open_until):
+            epoch = w.t0
+        if w.stop is None:
+            open_forever = True
+        elif open_until is None or w.stop > open_until:
+            open_until = w.stop
+    return epoch
+
+
+def epoch_windows(
+    windows: Sequence[ArmWindow], epoch: _dt.datetime | None = None
+) -> list[ArmWindow]:
+    """E15.11: the windows in the book's epoch (all of them end at or after it)."""
+    at = book_epoch(windows) if epoch is None else epoch
+    if at is None:
+        return []
+    return [w for w in windows if w.stop is None or w.stop >= at]
+
+
+def held_codes(windows: Sequence[ArmWindow], *, flat_at: _dt.datetime | None = None) -> set[str]:
+    """Codes not reusable: the arm is running, or stopped but not flat in its ledger.
+
+    E15.11 (D69 "reusable once stopped and flat"): a stopped arm whose window ended
+    before the account's current epoch (:func:`book_epoch`), or before *flat_at* (a new
+    t0 the caller has just proven broker-flat with no arm running), frees its code
+    even when its own ledger was never flattened: the broker was flat at a later
+    epoch, so nothing on the account can carry its tag.
+    """
     from arc.experiments.virtual import replay, rows
 
+    cut = book_epoch(windows)
+    if flat_at is not None and not any(w.running for w in windows):
+        cut = flat_at
     taken: set[str] = set()
     for w in windows:
+        if not w.running and cut is not None and w.stop is not None and w.stop < cut:
+            continue
         if w.running:
             taken.add(w.code)
             continue
@@ -720,7 +780,11 @@ def held_codes(windows: Sequence[ArmWindow]) -> set[str]:
 
 
 def cash_baseline(windows: Sequence[ArmWindow]) -> Decimal | None:
-    """The broker cash at the shared account's first t0 (None when not recorded)."""
+    """The broker cash at the book epoch's first t0 (None when not recorded).
+
+    E15.11: *windows* are the epoch's (:func:`epoch_windows`); the oldest of them
+    started the epoch on a flat account. An earlier experiment's t0 cash is never used.
+    """
     return windows[0].cash_t0 if windows else None
 
 
@@ -750,6 +814,14 @@ class AccountBook(BaseModel):
         return out
 
 
+def _in_epoch(a: Activity, since: _dt.datetime) -> bool:
+    """E15.11: a FILL (always timed) counts from the epoch instant, so an owner flatten
+    earlier on the epoch's own day stays out; date-only rows from the epoch's ET day."""
+    if a.activity_type == "FILL":
+        return a.at >= since
+    return a.day >= since.astimezone(ET).date()
+
+
 def build_book(
     raw_activities: Iterable[object],
     raw_orders: Sequence[Mapping[str, Any]],
@@ -759,10 +831,15 @@ def build_book(
     broker_cash: Decimal | None,
     since: _dt.datetime | None = None,
 ) -> AccountBook:
-    """Pure: raw Alpaca rows + the account's arm windows -> :class:`AccountBook`."""
+    """Pure: raw Alpaca rows + the account's arm windows -> :class:`AccountBook`.
+
+    *windows* are the epoch's arms (:func:`account_book` scopes them); *since* is the
+    epoch. A timed activity (every FILL) counts from *since*; a date-only one (a FEE,
+    an option event) from the epoch's ET day.
+    """
     acts = [a for a in (parse_activity(r) for r in raw_activities) if a is not None]
     if since is not None:
-        acts = [a for a in acts if a.at >= since or a.day >= since.astimezone(ET).date()]
+        acts = [a for a in acts if _in_epoch(a, since)]
     attr = attribute(acts, order_tags(raw_orders), windows)
     return AccountBook(
         windows=list(windows),
@@ -812,9 +889,12 @@ def account_book(
     finally:
         if opener and conn is not None:
             conn.close()
-    since = windows[0].t0 if windows else None
-    if since is None:  # no shared arm on the account: nothing to attribute
+    # E15.11: one epoch only (the latest flat start); stopped arms of earlier epochs,
+    # their stale ledgers and the owner's flattens between epochs are out of scope
+    since = book_epoch(windows)
+    if since is None:  # no running shared arm on the account: nothing to attribute
         return build_book([], [], [], broker.positions(), broker_cash=None)
+    windows = epoch_windows(windows, since)
     raw = broker.raw_activities(since.astimezone(ET).date())
     orders = broker.raw_orders(since)
     return build_book(

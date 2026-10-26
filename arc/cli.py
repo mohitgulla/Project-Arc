@@ -425,9 +425,11 @@ def _switch() -> HaltSwitch:
     from arc.gate.halt import HaltSwitch
     from arc.store.identity import open_store
     from arc.store.repos import HaltRepo
+    from arc.utils.calendar import now_et
 
     conn = open_store()  # D70: ARC_DB_PATH or the env's default store, bound to ARC_ENV
-    return HaltSwitch(HaltRepo(conn))
+    # E3.9a (D137): last session's daily-loss halt no longer counts (read side).
+    return HaltSwitch(HaltRepo(conn), now=now_et)
 
 
 def _run_halt_command(args: argparse.Namespace) -> int:

@@ -568,3 +568,85 @@ def test_migration_026_keeps_every_experiment_row_and_the_triggers(tmp_path: Pat
         conn.execute("UPDATE experiments SET area = 'other'")
     cols = {r[1] for r in conn.execute("PRAGMA table_info(arm_identity)")}
     assert "plan" in cols
+
+
+def _day_candidate(conn: sqlite3.Connection, cid: str, ticker: str, *, entry: bool) -> None:
+    conn.execute(
+        """INSERT INTO candidates (id, ticker, stance, catalyst_type, confidence, sources,
+           created_at, day) VALUES (?, ?, 'bearish', 'technical', 0.45, '[]', ?, ?)""",
+        (cid, ticker, NOW.isoformat(), NOW.date().isoformat()),
+    )
+    if entry:
+        ContextStore(conn).write(
+            kind="candidate",
+            subject=ticker,
+            payload={
+                "id": cid,
+                "ticker": ticker,
+                "stance": "bearish",
+                "catalyst_type": "technical",
+                "confidence": 0.45,
+                "sources": [],
+                "created_at": NOW.isoformat(),
+                "feed": "scalp",
+                "origin": "pullback_watch",
+            },  # fmt: skip
+            produced_by="research",
+            ttl="1d",
+            now=NOW - dt.timedelta(minutes=1),
+        )
+    conn.commit()
+
+
+def _propose(arm: sqlite3.Connection, ticker: str) -> None:
+    """``quant.propose``'s insert: ``proposals.candidate_id`` -> ``candidates(id)``."""
+    from arc.store.repos import ProposalRepo
+
+    cid = json.loads(
+        arm.execute(
+            "SELECT payload FROM context_entries WHERE kind = 'candidate' AND subject = ? "
+            "AND status = 'active'",
+            (ticker,),
+        ).fetchone()[0]
+    )["id"]
+    ProposalRepo(arm).insert(
+        candidate_id=cid, proposal_hash=f"h-{ticker}", structure_json="{}", thesis="t",
+        quant_json="{}", sizing_json="{}", expires_at=NOW.isoformat(), ticker=ticker,
+    )  # fmt: skip
+
+
+def test_a_reused_research_candidate_resolves_in_the_arm() -> None:
+    """E15.11 FK replay (XP-2 2026-10-20 14:43Z, JPM): control's Research re-armed a
+    pullback watch and wrote a new candidate row + entry; the arm reused that Research
+    run (fork exits.mandatory), which copied the entry but not the row, so the arm's
+    ``quant.propose`` failed ``FOREIGN KEY constraint failed``."""
+    from arc.experiments.runner import _copy_entries
+
+    control, arm = _db(), _db()
+    arm.execute("PRAGMA foreign_keys = ON")
+    _day_candidate(control, "c-jpm", "JPM", entry=True)
+    rows = control.execute("SELECT * FROM context_entries WHERE kind = 'candidate'").fetchall()
+    _copy_entries(control, arm, rows, load_routines())
+    assert [r[0] for r in arm.execute("SELECT id FROM candidates")] == ["c-jpm"]
+    _propose(arm, "JPM")  # raised sqlite3.IntegrityError before E15.11
+
+
+def test_a_candidate_the_arm_already_holds_for_the_day_points_at_the_arms_row() -> None:
+    """E15.11 FK replay (XP-1 2026-10-16, META): the arm's own Research (forked at
+    research) had written its own META row for the day; control's later candidate had
+    another id, the ``(ticker, day)`` unique index ignored control's row, and the copied
+    entry's id dangled."""
+    control, arm = _db(), _db()
+    arm.execute("PRAGMA foreign_keys = ON")
+    _day_candidate(arm, "c-meta-arm", "META", entry=False)
+    _day_candidate(control, "c-meta-ctl", "META", entry=True)
+    routines = load_routines()
+    chain = ["research", "quant.open", "risk.open", "quant.propose", "broker.execute"]
+    sync_shared_context(control, arm, routines, chain, [], as_of=NOW)
+    assert [r[0] for r in arm.execute("SELECT id FROM candidates")] == ["c-meta-arm"]
+    _propose(arm, "META")
+    got = arm.execute("SELECT candidate_id FROM proposals").fetchone()[0]
+    assert got == "c-meta-arm"
+    # control's entry is unchanged; only the arm's copy is re-pointed
+    payload = control.execute("SELECT payload FROM context_entries").fetchone()[0]
+    assert json.loads(payload)["id"] == "c-meta-ctl"

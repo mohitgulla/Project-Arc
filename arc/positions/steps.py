@@ -114,7 +114,7 @@ def _book(ctx: JobContext, env: PipelineEnv) -> tuple[Any, AccountSnapshot, Port
         r=settings.scanner_risk_free_rate,
         spot_max_spread_pct=settings.spot_max_spread_pct,
     )
-    switch = HaltSwitch(HaltRepo(ctx.conn))
+    switch = HaltSwitch(HaltRepo(ctx.conn), now=ctx.now)
     # D32: closes are charged against the full daily cap (the gate's order_budget rule).
     budget = read_budget(ctx, env, settings, now=ctx.clock())
     # E10.2: the profile's day-trade limit on same-day closes (its own store's count).
@@ -837,7 +837,7 @@ def expiry_sweep(ctx: JobContext, env: PipelineEnv) -> ExpirySweep:
     now = ctx.clock()
     today = now.astimezone(ET).date()
     day = today.isoformat()
-    switch = HaltSwitch(HaltRepo(ctx.conn))
+    switch = HaltSwitch(HaltRepo(ctx.conn), now=now)
     journal = JournalStore(ctx.conn)
     for row in OpenStructureRepo(ctx.conn).list_open():
         sid, ticker = str(row["id"]), str(row["ticker"])
