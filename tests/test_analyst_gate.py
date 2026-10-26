@@ -1099,12 +1099,12 @@ def test_owner_approve_drop_reprioritise_backlog(
     b = aa.empty_backlog()
     aa.apply_backlog(b, {"findings": [_prop(key="xp-proposal:a"),
                                       _prop(key="xp-proposal:b", p_success=0.6)]},
-                     "r", "t", used={1, 2})  # fmt: skip  # XP-1/XP-2: committed A/A specs
-    assert [e["id"] for e in b["items"].values()] == ["XP-3", "XP-4"]
+                     "r", "t", used={1, 2, 3})  # fmt: skip  # XP-1..3: committed A/A specs
+    assert [e["id"] for e in b["items"].values()] == ["XP-4", "XP-5"]
     aa.save_json(p.backlog, b)
     assert aa.main(["approve", "XP-9", "--approval", "slack:1791668051.305679"], p, NOW) == 2
     assert "no proposal XP-9" in capsys.readouterr().out
-    assert aa.main(["approve", "XP-3", "go"], p, NOW) == 2  # E21.4: the owner's Slack ts
+    assert aa.main(["approve", "XP-4", "go"], p, NOW) == 2  # E21.4: the owner's Slack ts
     assert "needs --approval slack:<ts>" in capsys.readouterr().out
     calls: list[tuple[str, Path, str]] = []
 
@@ -1118,41 +1118,41 @@ def test_owner_approve_drop_reprioritise_backlog(
 
     monkeypatch.setattr(aa, "adopt_proposal", fake_adopt)
     approval = ["--approval", "slack:1791668051.305679"]
-    assert aa.main(["approve", "XP-3", "go", *approval], p, NOW) == 0
+    assert aa.main(["approve", "XP-4", "go", *approval], p, NOW) == 0
     out = capsys.readouterr().out
-    spec_path = p.home / "proposals" / "XP-3.yaml"
-    assert calls == [("XP-3", spec_path, "slack:1791668051.305679")]
-    assert "XP-3 [registered], area exits, 4 arms" in out  # D121: same id, no "->"
+    spec_path = p.home / "proposals" / "XP-4.yaml"
+    assert calls == [("XP-4", spec_path, "slack:1791668051.305679")]
+    assert "XP-4 [registered], area exits, 4 arms" in out  # D121: same id, no "->"
     assert "Spec PR: https://github.com/o/r/pull/9" in out
-    assert "owner to start: `arc experiment start XP-3`" in out
+    assert "owner to start: `arc experiment start XP-4`" in out
     spec = yaml.safe_load(spec_path.read_text())
     # D121: the spec carries its reserved id; adopt registers it with --id
-    assert spec["id"] == "XP-3" and spec["kind"] == "ab" and spec["spec_version"] == 3
-    assert "--id XP-3" in spec_path.read_text()
+    assert spec["id"] == "XP-4" and spec["kind"] == "ab" and spec["spec_version"] == 3
+    assert "--id XP-4" in spec_path.read_text()
     assert spec["arms"]["control"] == {"overlay": {}}  # D108: control runs as its own arm
     from arc.experiments.models import ExperimentSpec
 
     adopted = ExperimentSpec.model_validate(spec)
     assert len(adopted.arms.treatments) == 3 and adopted.control_runs
     b = aa.load_backlog(p.backlog)
-    entry = aa.backlog_by_id(b, "XP-3")
-    assert entry["status"] == "registered" and entry["experiment_id"] == "XP-3"
-    assert aa.main(["approve", "XP-3", *approval], p, NOW) == 2  # already registered
-    assert "XP-3 is registered (XP-3); nothing to do" in capsys.readouterr().out
-    aa.backlog_by_id(b, "XP-3")["status"] = "approved"  # back to approved for the ranking part
+    entry = aa.backlog_by_id(b, "XP-4")
+    assert entry["status"] == "registered" and entry["experiment_id"] == "XP-4"
+    assert aa.main(["approve", "XP-4", *approval], p, NOW) == 2  # already registered
+    assert "XP-4 is registered (XP-4); nothing to do" in capsys.readouterr().out
+    aa.backlog_by_id(b, "XP-4")["status"] = "approved"  # back to approved for the ranking part
     aa.save_json(p.backlog, b)
-    assert aa.main(["reprioritise", "XP-3", "owner wants exits first"], p, NOW) == 0
-    assert "XP-3 -> rank #1" in capsys.readouterr().out
-    assert aa.main(["reprioritise", "XP-4", "why", "--score", "x"], p, NOW) == 2
-    assert aa.main(["drop", "XP-4", ""], p, NOW) == 2
-    assert aa.main(["drop", "XP-4", "superseded"], p, NOW) == 0
-    assert aa.backlog_by_id(aa.load_backlog(p.backlog), "XP-4")["status"] == "dropped"
+    assert aa.main(["reprioritise", "XP-4", "owner wants exits first"], p, NOW) == 0
+    assert "XP-4 -> rank #1" in capsys.readouterr().out
+    assert aa.main(["reprioritise", "XP-5", "why", "--score", "x"], p, NOW) == 2
+    assert aa.main(["drop", "XP-5", ""], p, NOW) == 2
+    assert aa.main(["drop", "XP-5", "superseded"], p, NOW) == 0
+    assert aa.backlog_by_id(aa.load_backlog(p.backlog), "XP-5")["status"] == "dropped"
     capsys.readouterr()
     assert aa.main(["backlog"], p, NOW) == 0
     out = capsys.readouterr().out
-    assert "#1 XP-3 [approved] exits: Take-profit level" in out and "XP-4 [dropped]" in out
-    # D121: a dropped number is never reused: the next proposal reserves XP-4
-    assert "next proposal id: XP-5 (reserved at record)" in out
+    assert "#1 XP-4 [approved] exits: Take-profit level" in out and "XP-5 [dropped]" in out
+    # D121: a dropped number is never reused: the next proposal reserves XP-6
+    assert "next proposal id: XP-6 (reserved at record)" in out
 
 
 def test_owner_commands_route_on_the_id_prefix(
@@ -1282,7 +1282,7 @@ def test_v1_backlog_migrates_to_xp_ids(tmp_path: Path, capsys: pytest.CaptureFix
     aa.save_json(p.backlog, v1)
     assert aa.main(["backlog"], p, NOW) == 0
     out = capsys.readouterr().out
-    assert "#1 XP-4 [proposed]" in out and not re.search(r"(?<!X)P-[0-9]", out)
+    assert "#1 XP-5 [proposed]" in out and not re.search(r"(?<!X)P-[0-9]", out)
     saved = aa.load_json(p.backlog, {})
     assert saved["version"] == 2
     assert {e["legacy_id"] for e in saved["items"].values()} == {"P-1", "P-2", "P-3"}
