@@ -287,9 +287,16 @@ def test_registry_lifecycle_and_owner_only_promotion(tmp_path):
     assert e.status == "shadow"  # automatic on the rule
     with pytest.raises(reg.RegistryError, match="not the owner"):
         reg.promote(tmp_path, "credit", "m2-a", actor="U_SOMEONE", owner=OWNER, now=NOW)
+    with pytest.raises(reg.RegistryError, match="no holdout read"):
+        reg.promote(tmp_path, "credit", "m2-a", actor=OWNER, owner=OWNER, now=NOW)
+    hk = {"now": NOW, "code_sha": "abc", "reason": "final"}
+    reg.authorize_holdout_read(tmp_path, "credit", "m2-a", **hk)
     idx = reg.promote(tmp_path, "credit", "m2-a", actor=OWNER, owner=OWNER, now=NOW)
     assert idx.champion == "m2-a"
     reg.register(tmp_path, "credit", "m2-b", now=NOW, rule=RULE_KIND, rule_passed=True)
+    reg.authorize_holdout_read(
+        tmp_path, "credit", "m2-b", actor=OWNER, owner=OWNER, ack=reg.HOLDOUT_REREAD_ACK, **hk
+    )
     idx = reg.promote(tmp_path, "credit", "m2-b", actor=OWNER, owner=OWNER, now=NOW, reason="r")
     assert idx.champion == "m2-b"
     assert idx.versions["m2-a"].status == "retired"

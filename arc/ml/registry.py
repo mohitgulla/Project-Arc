@@ -181,6 +181,27 @@ def register(
     return entry
 
 
+def check_promotable(root: Path, family: str, version: str, *, actor: str, owner: str) -> None:
+    """Refuse unless *actor* is the owner and *version* is an intact ``shadow``."""
+    if actor != owner:
+        msg = f"{actor!r} is not the owner; only {owner} may promote a model to champion"
+        raise RegistryError(msg)
+    verify(root, family, version)
+    entry = load_index(root, family).versions.get(version)
+    if entry is None:
+        msg = f"{family}/{version} is not registered"
+        raise RegistryError(msg)
+    if entry.status != "shadow":
+        msg = f"{family}/{version} is {entry.status}; only a shadow version can become champion"
+        raise RegistryError(msg)
+    if not any(r.get("version") == version for r in holdout_reads(root, family)):
+        msg = (
+            f"{family}/{version} has no holdout read; run `arc ml m2 holdout` first "
+            "(a re-read needs the owner's ack, D133)"
+        )
+        raise RegistryError(msg)
+
+
 def promote(
     root: Path,
     family: str,
@@ -192,18 +213,9 @@ def promote(
     reason: str = "",
 ) -> FamilyIndex:
     """Owner-only ``shadow → champion``; the previous champion is ``retired``."""
-    if actor != owner:
-        msg = f"{actor!r} is not the owner; only {owner} may promote a model to champion"
-        raise RegistryError(msg)
-    verify(root, family, version)
+    check_promotable(root, family, version, actor=actor, owner=owner)
     idx = load_index(root, family)
-    entry = idx.versions.get(version)
-    if entry is None:
-        msg = f"{family}/{version} is not registered"
-        raise RegistryError(msg)
-    if entry.status != "shadow":
-        msg = f"{family}/{version} is {entry.status}; only a shadow version can become champion"
-        raise RegistryError(msg)
+    entry = idx.versions[version]
     old = idx.champion
     if old is not None and old in idx.versions:
         idx.versions[old].status = "retired"

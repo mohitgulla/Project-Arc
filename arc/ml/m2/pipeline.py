@@ -241,7 +241,7 @@ def holdout_run(
     ``OWNER UPDATE: holdout re-read ok`` (:func:`arc.ml.registry.authorize_holdout_read`).
     """
     from arc.ml.m2.predict import load_model
-    from arc.ml.m2.train import RANK_BASELINES
+    from arc.ml.m2.train import eval_rows, reliability_rows
 
     model = load_model(out_root, family, version)
     n = reg.authorize_holdout_read(
@@ -287,9 +287,6 @@ def holdout_run(
             1 - 1e-4,
         ),
     }
-    from arc.ml.m2.train import eval_rows, reliability_rows
-
-    del RANK_BASELINES
     met = eval_rows("holdout", rows, s, labels, w, base)
     rel = reliability_rows("holdout", rows, s, labels, w)
     vdir = out_root / family / version
