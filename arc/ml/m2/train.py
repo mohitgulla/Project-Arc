@@ -46,7 +46,7 @@ if TYPE_CHECKING:
 
 log = structlog.get_logger(__name__)
 
-PROTOCOL_REV = 1
+PROTOCOL_REV = 2  # 2: classifiers ship the booster their isotonic map was fitted on
 DEV_YEARS: tuple[int, ...] = (2020, 2021, 2022, 2023)
 QUANTILES: tuple[float, ...] = (0.1, 0.5, 0.9)
 #: target -> (objective kind, label key)
@@ -345,9 +345,14 @@ def fit_fold(
             shrink_k=cfg.calibration.shrink_k,
         )
         raw_val[t] = s
-    # refit every target on the full train window
+    # refit the regressors on the full train window; the classifiers stay the inner
+    # boosters, so each isotonic map is applied to the model whose out-of-fold scores
+    # it was fitted on (refitting after calibrating mis-calibrates: E27.3 run 1).
     boosters = {}
     for t in TARGETS:
+        if t in ("win", "stop"):
+            boosters[t] = inner[t]
+            continue
         boosters[t], _ = fit_one(
             cfg, fr, t, points[t], train, None, rounds=rounds[t], monotone=monotone
         )
@@ -443,6 +448,12 @@ def eval_rows(
                 r[f"win_log_loss_{name[6:]}"] = v.log_loss(yw[m], p[m], w[m])
             elif name.startswith("p_stop:"):
                 r[f"stop_log_loss_{name[7:]}"] = v.log_loss(ys[m], p[m], w[m])
+        # the uncalibrated booster output: shows what the isotonic map added or cost
+        for t, y in (("win", yw), ("stop", ys)):
+            if f"raw_{t}" in s:
+                raw = np.clip(s[f"raw_{t}"].to_numpy()[m], 1e-4, 1 - 1e-4)
+                r[f"{t}_log_loss_raw"] = v.log_loss(y[m], raw, w[m])
+                r[f"{t}_ece_raw"] = v.ece(y[m], raw, w[m])
         for k, val in v.rank_metrics(dm, s["e_r"].to_numpy()[m], yr[m]).items():
             r[f"er_{k}"] = val
         for name, col in RANK_BASELINES.items():
@@ -804,19 +815,22 @@ def train_family(
     table = pd.concat(metrics, ignore_index=True)
     checks = promote_checks(table)
 
-    # final model: every dev row at fold-2023's points; calibrators = fold-2023 test raw scores
+    # final model: regressors refit on every dev row at fold-2023's points; classifiers
+    # trained on rows before 2023 (fold-2023's full train window) and calibrated on their
+    # out-of-fold 2023 scores, so each map calibrates the booster it ships with.
     say("  final fit")
     tf = time.monotonic()
     last_name = folds[-1].name
     last = fold_models[last_name]
     every = np.ones(len(fr.df), dtype=bool)
+    before_last = folds[-1].train_mask(fr.df, fr.sessions)
     boosters = {
         t: fit_one(
             cfg,
             fr,
             t,
             last.points[t],
-            every,
+            before_last if t in ("win", "stop") else every,
             None,
             rounds=last.rounds[t],
             monotone=cfg.monotone_default,
@@ -828,7 +842,7 @@ def train_family(
     calib, final_rep = {}, {}
     for t in ("win", "stop"):
         m = lt & target_mask(fr.df, fr.labels, t)
-        sraw = predict_raw(last.boosters[t], fr.x(m))
+        sraw = predict_raw(boosters[t], fr.x(m))
         calib[t], final_rep[t] = fit_family(
             sraw,
             target_values(fr.df[m], fr.labels, t),
