@@ -679,12 +679,17 @@ def _proposals(conn: sqlite3.Connection, since_day: str, limit: int) -> list[Pro
     return out[:limit]
 
 
-def _halts(conn: sqlite3.Connection, limit: int) -> list[HaltView]:
+def _halts(conn: sqlite3.Connection, limit: int, now: _dt.datetime | None = None) -> list[HaltView]:
+    """Halts, active first. E3.9a (D137): with *now*, a ``daily_loss`` halt from an
+    earlier ET day reads as inactive (the switch ignores it; the tick clears it)."""
+    from arc.gate.halt import halt_row_expired
+
     rows = conn.execute(
         """SELECT * FROM halts
            ORDER BY (cleared_at IS NULL) DESC, at DESC, rowid DESC LIMIT ?""",
         (limit,),
     ).fetchall()
+    keys = rows[0].keys() if rows else []
     return [
         HaltView(
             id=r["id"],
@@ -694,8 +699,13 @@ def _halts(conn: sqlite3.Connection, limit: int) -> list[HaltView]:
             at=parse_ts(r["at"]),
             cleared_at=parse_ts(r["cleared_at"]),
             cleared_by=r["cleared_by"],
-            active=r["cleared_at"] is None,
-            scope=r["scope"] if "scope" in r.keys() else "all",  # noqa: SIM118 - sqlite3.Row
+            active=r["cleared_at"] is None
+            and not (
+                now is not None
+                and "session_date" in keys
+                and halt_row_expired(r["kind"], r["session_date"], now)
+            ),
+            scope=r["scope"] if "scope" in keys else "all",
         )
         for r in rows
     ]
@@ -815,7 +825,7 @@ def load_snapshot(
         structures=_structures(conn, legs),
         legs=legs,
         proposals=_proposals(conn, since_day, limit),
-        halts=_halts(conn, 50),
+        halts=_halts(conn, 50, now_et),
         violations=violations,
         violation_counts=dict(Counter(v.code for v in violations).most_common()),
         ops=_ops(conn),

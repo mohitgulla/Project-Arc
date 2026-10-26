@@ -363,7 +363,7 @@ def broker_execute(
             conn=ctx.conn,
             broker=broker,
             config=ctx.settings,
-            halt=HaltSwitch(HaltRepo(ctx.conn)),
+            halt=HaltSwitch(HaltRepo(ctx.conn), now=clock),
             clock=clock,
             sleep=sleep,
             kind=kind,

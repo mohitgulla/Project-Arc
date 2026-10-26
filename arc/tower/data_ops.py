@@ -763,6 +763,8 @@ class HaltsResponse(BaseModel):
 
 
 def load_halts(conn: sqlite3.Connection, *, now: _dt.datetime, limit: int = 50) -> HaltsResponse:
+    from arc.gate.halt import halt_row_expired
+
     if not _has_table(conn, "halts"):
         return HaltsResponse(as_of=now, active=0, halts=[])
     rows = conn.execute(
@@ -791,7 +793,8 @@ def load_halts(conn: sqlite3.Connection, *, now: _dt.datetime, limit: int = 50) 
                 at=at,
                 cleared_at=cleared,
                 cleared_by=r["cleared_by"],
-                active=cleared is None,
+                active=cleared is None
+                and not halt_row_expired(r["kind"], r["session_date"], now),  # D137
                 run_id=r["run_id"],
                 trades=trades,
                 trades_route=f"/trades?date=custom&date_from={lo.isoformat()}&date_to={hi.isoformat()}",

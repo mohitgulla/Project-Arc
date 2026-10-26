@@ -320,6 +320,28 @@ class Dispatcher:
 
         return HaltSwitch(HaltRepo(self.conn)).is_halted()
 
+    def _expire_session_halts(self, now: _dt.datetime) -> None:
+        """E3.9a (D137): clear last session's ``daily_loss`` halts at the tick's start.
+
+        Runs first in every live tick (control and each arm store's own tick), so the
+        first slot of a new session (pre-open jobs included) already sees opens allowed.
+        One ``[Ops]`` line per cleared halt in the day thread. A failure is logged and
+        never stops the tick: the switch's read side ignores the stale row anyway.
+        """
+        from arc.gate.halt import HaltSwitch, session_rollover_notice
+        from arc.store.repos import HaltRepo
+
+        try:
+            cleared = HaltSwitch(HaltRepo(self.conn)).expire_stale_session_halts(now)
+        except Exception as exc:  # noqa: BLE001 - the read-side guard still applies
+            log.warning("routines.halt_rollover_failed", error=str(exc))
+            return
+        for halt in cleared:
+            try:
+                self.heartbeats.card(now, session_rollover_notice(halt))
+            except Exception as exc:  # noqa: BLE001 - Slack is best-effort; row is cleared
+                log.warning("routines.halt_rollover_post_failed", halt_id=halt.id, error=str(exc))
+
     # -- planning ------------------------------------------------------------
 
     def _window_start(
@@ -435,6 +457,8 @@ class Dispatcher:
         since: _dt.datetime | None = None,
     ) -> TickReport:
         now = (now or now_et()).astimezone(ET)
+        if not dry_run:
+            self._expire_session_halts(now)  # E3.9a (D137): before any halt read
         halted = self._is_halted()
         report = TickReport(now=now, since=since, dry_run=dry_run, halted=halted)
         plan = self.plan(now, since=since, halted=halted)

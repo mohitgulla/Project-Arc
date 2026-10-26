@@ -607,13 +607,14 @@ class HaltRepo:
         log.info("halt.set", halt_id=row_id, kind=kind, actor=actor, reason=reason, scope=scope)
         return row_id
 
-    def resume(self, halt_id: str, *, actor: str = "", at: str | None = None) -> None:
-        """Clear one halt row (no-op if already cleared)."""
-        self.conn.execute(
+    def resume(self, halt_id: str, *, actor: str = "", at: str | None = None) -> bool:
+        """Clear one halt row (no-op if already cleared); True when this call cleared it."""
+        cur = self.conn.execute(
             "UPDATE halts SET cleared_at = ?, cleared_by = ? WHERE id = ? AND cleared_at IS NULL",
             (at or _now_iso(), actor, halt_id),
         )
         self.conn.commit()
+        return cur.rowcount > 0
 
     def clear_all(self, *, actor: str, at: str | None = None) -> int:
         """Clear every active halt atomically; returns how many rows were cleared."""
