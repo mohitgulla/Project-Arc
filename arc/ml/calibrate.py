@@ -9,7 +9,8 @@ block centres, clipped to ``[eps, 1 − eps]``.
 :class:`FamilyCalibrator` holds one family calibrator plus optional per-kind ones,
 each shrunk toward the family: ``p = λ · p_kind + (1 − λ) · p_family`` with
 ``λ = n_eff / (n_eff + SHRINK_K)``. A per-kind calibrator is fitted only when that
-kind's ECE under the family calibrator is above ``2 ×`` the family's ECE.
+kind's ECE under the family calibrator is above ``2 ×`` the family's ECE and above the
+sampling-noise floor of a calibrated kind of that size (:func:`noise_floor`).
 """
 
 from __future__ import annotations
@@ -103,6 +104,14 @@ class FamilyCalibrator(BaseModel):
         return np.clip(out, EPS, 1.0 - EPS)
 
 
+def noise_floor(w: np.ndarray, bins: int = 10) -> float:
+    """``sqrt(0.25 · bins / n_eff)`` with Kish ``n_eff`` (∞ rows → 0)."""
+    w = np.asarray(w, dtype=float)
+    s2 = float(np.sum(w * w))
+    n_eff = float(np.sum(w)) ** 2 / s2 if s2 > 0 else 0.0
+    return float(np.sqrt(0.25 * bins / n_eff)) if n_eff > 0 else float("inf")
+
+
 def fit_family(
     s: np.ndarray,
     y: np.ndarray,
@@ -130,8 +139,19 @@ def fit_family(
     for name in sorted(set(k)):
         m = k == name
         e_k = ece(y[m], p[m], w[m])
-        fit = bool(np.isfinite(e_k) and np.isfinite(e_fam) and e_k > kind_ece_ratio * e_fam)
+        # sampling-noise floor: a calibrated kind with n_eff rows still shows ECE of order
+        # the per-bin binomial s.d. sqrt(0.25 · bins / n_eff); the family map is fitted
+        # in-sample so its own ECE is near 0 and "2×" alone would fire on noise.
+        floor = noise_floor(w[m])
+        fit = bool(
+            np.isfinite(e_k) and np.isfinite(e_fam) and e_k > max(kind_ece_ratio * e_fam, floor)
+        )
         if fit:
             maps[name] = fit_isotonic(np.asarray(s)[m], np.asarray(y)[m], w[m])
-        rep[name] = {"ece_under_family_map": e_k, "ece_family": e_fam, "per_kind": float(fit)}
+        rep[name] = {
+            "ece_under_family_map": e_k,
+            "ece_family": e_fam,
+            "noise_floor": floor,
+            "per_kind": float(fit),
+        }
     return FamilyCalibrator(family=fam, kinds=maps, shrink_k=shrink_k), rep

@@ -67,22 +67,8 @@ OUTPUTS = ("p_win", "p_stop", "e_r", "r_q10", "r_q50", "r_q90", "e_days")
 
 
 def load_lightgbm() -> Any:
-    """``lightgbm``; on macOS without a system libomp, preload the one sklearn bundles
-    (same ``ml`` extra) and retry, so the CLI runs without ``DYLD_*`` env vars."""
-    try:
-        import lightgbm
-    except OSError:
-        import ctypes
-        import sys
-        from pathlib import Path as _P
-
-        if sys.platform != "darwin":
-            raise
-        import sklearn
-
-        lib = _P(sklearn.__file__).parent / ".dylibs" / "libomp.dylib"
-        ctypes.CDLL(str(lib), mode=ctypes.RTLD_GLOBAL)
-        import lightgbm
+    """``lightgbm`` (``ml`` extra; on macOS it needs ``brew install libomp``, OPS.md)."""
+    import lightgbm
 
     return lightgbm
 
