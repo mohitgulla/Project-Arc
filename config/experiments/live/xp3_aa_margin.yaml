@@ -1,0 +1,34 @@
+# D135 restart of the margin-profile calibration A/A (owner 2026-10-26, #project-arc
+# 1791573604.189879). XP-2 (D130) was stopped `invalid`: the shared-account book
+# invariant still counted the stopped XP-1 arms and the untagged owner flatten, halting
+# every arm from t0 (0 orders in 4 sessions). Fixed by E15.11 (#346, D135): the
+# invariant covers one epoch from the latest flat start, and arm candidate rows are
+# copied with their entries (the quant.propose FK failure). Same design and
+# pre-registered analysis as XP-2: flat control arm + three identical treatments on the
+# shared experiment account at production's t0 equity; any Ti - C difference is noise.
+spec_version: 3
+id: XP-3
+title: K=3 A/A calibration on the margin profile, control arm plus three identical treatments
+hypothesis: >
+  Four arms running production's config (margin profile, managed_net_ev_full menu) on
+  the shared experiment account, all started flat at production's t0 equity, produce
+  Ti - C paired daily net P&L differences with mean 0; their standard deviation sets
+  the MDE that later A/B experiments are sized for.
+area: other
+kind: aa
+arms:
+  control:
+    overlay: {}
+  treatments:
+    t1:
+      overlay: {}
+    t2:
+      overlay: {}
+    t3:
+      overlay: {}
+analysis:
+  covariates: [spy_ret]
+  hac_lag: 5
+min_sessions: 10
+max_sessions: 10
+proposed_by: owner
