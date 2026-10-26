@@ -1060,8 +1060,9 @@ KINDS: Mapping[str, KindSpec] = _registry(
     # write momentum/trending); active_universe subject = "active" (one per resolve).
     # E12.2: url, partial; E13.19 (D58): v3 member `inputs` (trending); D64 (E14.7): v4
     # member score / score_today / score_prev / runs / stance / origins, merged_from, merge;
-    # E14.8 (D64): v5 member weight_pct (momentum)
-    KindSpec("universe_tier", UniverseTierPayload, schema_version=5),
+    # E14.8 (D64): v5 member weight_pct (momentum); D138 (E13.7b): v6 merge.window_sessions
+    # (merge.window_h now optional; exactly one window is stored)
+    KindSpec("universe_tier", UniverseTierPayload, schema_version=6),
     # E13.4: model, dropped rank; E13.19 (D58): v3 member `inputs`; D64: v4 member scores;
     # E14.8: v5 member weight_pct; D67 (E14.9): v6 fill / open_slots / slots
     KindSpec("active_universe", ActiveUniverse, schema_version=6),
