@@ -700,7 +700,12 @@ def start_arms(
         runner, arms, live, experiment_id=experiment_id, t0_equity=t0_equity, probe=probe
     )
     plans = plans_at_start(control, st, runner, routines_path=routines_path)
-    codes = _allocate_codes(control, runner, arms)
+    # E15.11: an account probed flat with no running arm on it starts a new book epoch,
+    # so stopped arms of earlier epochs free their codes (D69 "stopped and flat")
+    flat_keys = {
+        k for k, a in accounts.items() if a.flat and not any(x.keys_env == k for x in live)
+    }
+    codes = _allocate_codes(control, runner, arms, flat_keys=flat_keys, now=now)
     created: list[Path] = []
     state = RoutineStateRepo(control)
     try:
@@ -774,24 +779,35 @@ def start_arms(
 
 
 def _allocate_codes(
-    control: sqlite3.Connection, runner: RunnerConfig, arms: Mapping[str, ArmRunner]
+    control: sqlite3.Connection,
+    runner: RunnerConfig,
+    arms: Mapping[str, ArmRunner],
+    *,
+    flat_keys: Iterable[str] = (),
+    now: _dt.datetime | None = None,
 ) -> dict[str, str]:
     """E15.2: one base62 arm code per shared-mode arm (``{}`` in dedicated mode).
 
     Codes held by an arm on the same account that is running, or stopped but not flat,
     are skipped; a stopped flat arm's code is reused. Fails closed (no free code).
+    E15.11: on an account in *flat_keys* (probed flat at *now*, no arm running) every
+    stopped arm's code is free: *now* starts a new book epoch.
     """
     if runner.account_mode != "shared":
         return {}
     from arc.experiments.attribution import CodeAllocationError, account_windows, free_codes
     from arc.experiments.attribution import held_codes as _held
 
+    flat = set(flat_keys)
     by_keys: dict[str, list[str]] = {}
     for name, arm in arms.items():
         by_keys.setdefault(arm.keys_env, []).append(name)
     out: dict[str, str] = {}
     for keys_env, names in by_keys.items():
-        taken = _held(account_windows(control, account_sha256=None, keys_env=keys_env))
+        taken = _held(
+            account_windows(control, account_sha256=None, keys_env=keys_env),
+            flat_at=now if keys_env in flat else None,
+        )
         try:
             out.update(zip(names, free_codes(taken, len(names)), strict=True))
         except CodeAllocationError as exc:
@@ -963,7 +979,12 @@ def _copy_entries(
     chain_run_id: str | None = None,
     run_ids: Mapping[str, str] | None = None,
 ) -> int:
-    """Insert control's context rows into the arm store (same ids), superseding like a write."""
+    """Insert control's context rows into the arm store (same ids), superseding like a write.
+
+    E15.11: a ``candidate`` entry brings its ``candidates`` row along in the same
+    transaction (:func:`_arm_candidate_payload`), so ``proposals.candidate_id`` always
+    resolves in the arm, whichever path copied the entry.
+    """
     from arc.context.store import Supersede
 
     n = 0
@@ -971,6 +992,9 @@ def _copy_entries(
         for r in rows:
             if arm.execute("SELECT 1 FROM context_entries WHERE id = ?", (r["id"],)).fetchone():
                 continue
+            payload = r["payload"]
+            if r["kind"] == "candidate":
+                payload = _arm_candidate_payload(control, arm, payload)
             policy = routines.context_ttl.get(r["kind"])
             if policy is None or policy.supersede is Supersede.LATEST:
                 arm.execute(
@@ -988,7 +1012,7 @@ def _copy_entries(
                     r["id"],
                     r["kind"],
                     r["subject"],
-                    r["payload"],
+                    payload,
                     r["schema_version"],
                     r["produced_by"],
                     run_id,
@@ -999,8 +1023,54 @@ def _copy_entries(
                 ),
             )
             n += 1
-    _ = control
     return n
+
+
+def _arm_candidate_payload(
+    control: sqlite3.Connection, arm: sqlite3.Connection, payload: str
+) -> str:
+    """E15.11: make a copied ``candidate`` entry's ``id`` resolve in the arm store.
+
+    ``proposals.candidate_id`` references ``candidates(id)`` and ``candidates`` is
+    unique per ``(ticker, day)``. Two paths used to leave the id dangling (``quant.propose``
+    then failed ``FOREIGN KEY constraint failed``, XP-1 2026-10-16 / XP-2 2026-10-20):
+
+    * the entry came through :func:`_reuse_upstream` (control's Research run, e.g. a
+      re-armed pullback watch's candidate), which copied entries but never their rows;
+    * the arm already holds its own row for that ``(ticker, day)`` under another id
+      (its own Research wrote it before a fork), so ``INSERT OR IGNORE`` of control's
+      row was a silent no-op.
+
+    Control's row is copied when the arm has none for the ticker/day; when the arm has
+    one under another id, the entry's ``id`` is pointed at the arm's row (the arm's view
+    of the same candidate). Called inside the caller's transaction.
+    """
+    try:
+        data = json.loads(payload)
+    except (TypeError, ValueError):
+        return payload
+    cid = data.get("id") if isinstance(data, dict) else None
+    if not cid or arm.execute("SELECT 1 FROM candidates WHERE id = ?", (cid,)).fetchone():
+        return payload
+    cur = control.execute("SELECT * FROM candidates WHERE id = ?", (cid,))
+    found = cur.fetchone()
+    if found is None:  # control has no row either: nothing to copy (propose skips it)
+        return payload
+    src = dict(zip([d[0] for d in cur.description], tuple(found), strict=True))
+    if src["day"] is not None:
+        mine = arm.execute(
+            "SELECT id FROM candidates WHERE ticker = ? AND day = ?", (src["ticker"], src["day"])
+        ).fetchone()
+        if mine is not None:
+            return json.dumps({**data, "id": mine[0]}, sort_keys=True)
+    arm_cols = {c[1] for c in arm.execute("PRAGMA table_info(candidates)")}
+    keep = [c for c in src if c in arm_cols]
+    arm.execute(
+        f"INSERT INTO candidates ({', '.join(keep)}) "  # noqa: S608 - column names from PRAGMA
+        f"VALUES ({', '.join('?' * len(keep))})",
+        tuple(src[c] for c in keep),
+    )
+    return payload
 
 
 def sync_shared_context(
