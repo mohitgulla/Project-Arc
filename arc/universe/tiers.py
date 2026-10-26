@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 import structlog
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
@@ -168,13 +168,27 @@ class TierMember(BaseModel):
 
 
 class CarryoverKnobs(BaseModel):
-    """D64: the carry-over knobs a merged ``universe_tier`` entry was built with."""
+    """D64: the carry-over knobs a merged ``universe_tier`` entry was built with.
+
+    D138: exactly one window is set: ``window_sessions`` (trading sessions) when the
+    session window is on, else ``window_h`` (clock hours). The unset one is left out of
+    the dump, so a ``window_sessions: null`` entry is byte-identical to a D64 one.
+    """
 
     model_config = _FORBID
 
-    window_h: int
+    window_h: int | None = None
+    window_sessions: int | None = None
     w_today: float
     w_prev: float
+
+    @model_serializer(mode="wrap")
+    def _drop_unset_window(self, handler: Any) -> dict[str, Any]:
+        out: dict[str, Any] = handler(self)
+        for k in ("window_h", "window_sessions"):
+            if out.get(k) is None:
+                out.pop(k, None)
+        return out
 
 
 class CarryoverSettings(BaseModel):
@@ -188,14 +202,28 @@ class CarryoverSettings(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     enabled: bool = True
+    # D64 clock-hour window; used only when ``window_sessions`` is unset.
     window_h: Annotated[int, Field(ge=24, le=96)] = 48
+    # D138: the previous run must be from the last N trading sessions (1 = the previous
+    # session, so Monday merges Friday). None (or 0, the registry's off value) = the D64
+    # ``window_h`` rule.
+    window_sessions: Annotated[int, Field(ge=1, le=3)] | None = 1
     w_today: Annotated[float, Field(ge=0.5, le=1.0)] = 0.6
+
+    @field_validator("window_sessions", mode="before")
+    @classmethod
+    def _zero_is_off(cls, v: Any) -> Any:
+        return None if v == 0 and not isinstance(v, bool) else v
 
     @property
     def w_prev(self) -> float:
         return round(1.0 - self.w_today, 6)
 
     def knobs(self) -> CarryoverKnobs:
+        if self.window_sessions is not None:
+            return CarryoverKnobs(
+                window_sessions=self.window_sessions, w_today=self.w_today, w_prev=self.w_prev
+            )
         return CarryoverKnobs(window_h=self.window_h, w_today=self.w_today, w_prev=self.w_prev)
 
 
