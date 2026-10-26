@@ -1965,6 +1965,16 @@ The treatment arm is the same trading loop on its own paper account
   `book_invariant: …`, journal `reconcile:book_invariant`, one `[Ops]` notice
   per arm; after fixing the cause, the owner resumes the arm with
   `ARC_DB_PATH=<arm store> arc resume --actor <owner>`.
+- Book epoch (E15.11, D135): "t0" above is the account's current *epoch*, which
+  starts at the latest arm t0 with no earlier arm still running (broker-flat by
+  the t0 rules). Arms stopped before it, their stale ledgers and the owner's
+  `owner-flatten-*` orders between experiments are out of the check, and their
+  arm codes are free again. Owner manual orders *during* an experiment still
+  halt every arm, so flatten only between experiments, after `arc experiment stop`.
+- Arm candidate rows (E15.11): every `candidate` context entry copied into an arm
+  (shared-context sync or `_reuse_upstream`) brings its `candidates` row, or is
+  re-pointed at the arm's own row for that ticker/day, so `quant.propose`'s
+  `proposals.candidate_id` FK always resolves.
 
 ### 5.20 Strategy-lane CI check: locked leaves + XP advisory (E21.1, D86; was E10.7 / D44)
 
