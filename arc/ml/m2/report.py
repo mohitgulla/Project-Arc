@@ -154,7 +154,14 @@ def render_card(vdir: Path, root: Path) -> str:
             f"{tw['start']} → {tw['end']} (dev; rows whose label crosses 2024 dropped)",
         ),
         ("calibration window", f"{cw['start']} → {cw['end']} ({cw['source']})"),
-        ("rows / n_eff (Σ weights)", f"{m['n_rows']:,} / {m['n_eff']:,.0f}"),
+        (
+            "rows used / ledger rows represented",
+            f"{m['n_rows']:,} / {m.get('n_raw_ledger_rows', m['n_rows']):,}",
+        ),
+        (
+            "Σ weights / n_eff (Kish)",
+            f"{m.get('sum_weights', m['n_rows']):,.0f} / {m['n_eff']:,.0f}",
+        ),
         ("per-day cap", str(m.get("n_raw_rows_per_day_cap"))),
         ("configs tried", str(m["configs_tried"])),
         (

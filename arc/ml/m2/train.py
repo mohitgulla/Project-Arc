@@ -447,7 +447,7 @@ def eval_rows(
         if m.sum() < 50:  # noqa: PLR2004
             continue
         dm = [dates[i] for i in np.flatnonzero(m)]
-        r: dict[str, Any] = {"fold": fold, **lab, "n": int(m.sum()), "n_eff": float(w[m].sum())}
+        r: dict[str, Any] = {"fold": fold, **lab, "n": int(m.sum()), "n_eff": v.kish_n_eff(w[m])}
         for k, val in v.prob_metrics(yw[m], s["p_win"].to_numpy()[m], w[m]).items():
             r[f"win_{k}"] = val
         for k, val in v.prob_metrics(ys[m], s["p_stop"].to_numpy()[m], w[m]).items():
@@ -721,7 +721,7 @@ def train_family(
     digest = data_digest(fr)
     t_load = time.monotonic() - t0
     say(
-        f"{family}: {len(fr.df)} rows, n_eff {fr.weights.sum():.0f}, "
+        f"{family}: {len(fr.df)} rows, n_eff {v.kish_n_eff(fr.weights):.0f}, "
         f"{len(fr.features)} features, digest {digest}"
     )
     folds = tuple(folds or v.walk_forward())
@@ -914,7 +914,9 @@ def train_family(
         },
         "folds": [f.name for f in folds],
         "n_rows": len(fr.df),
-        "n_eff": float(fr.weights.sum()),
+        "n_eff": v.kish_n_eff(fr.weights),
+        "sum_weights": float(fr.weights.sum()),
+        "n_raw_ledger_rows": int(fr.df["inv_keep"].sum()),
         "n_raw_rows_per_day_cap": cfg.cap_per_day,
         "configs_tried": len(trials),
         "timings": timings,

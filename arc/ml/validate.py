@@ -214,6 +214,13 @@ def sample_weights(df: pd.DataFrame, inv_keep: np.ndarray | None = None) -> np.n
     return w / m if m > 0 else w
 
 
+def kish_n_eff(w: np.ndarray) -> float:
+    """Kish effective sample size ``(Σw)² / Σw²`` (weights' information content)."""
+    w = np.asarray(w, dtype=float)
+    s2 = float(np.sum(w * w))
+    return float(np.sum(w)) ** 2 / s2 if s2 > 0 else 0.0
+
+
 # ---------------------------------------------------------------------------
 # Probabilistic metrics
 # ---------------------------------------------------------------------------
