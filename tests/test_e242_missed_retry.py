@@ -479,6 +479,18 @@ def test_research_lines_hold_waiting_and_list_due_retries() -> None:
     assert _retry_lines({}, [_missed_prior("retry")]) == []  # not in today's pool
 
 
+def test_research_lines_round_spot_to_cents() -> None:
+    """A float-derived spot (195.29000000000002) prints as 195.29, not the raw repr."""
+    from arc.pipeline.portfolio_context import PortfolioContext
+
+    cands = {"TSLA": Stance.BEARISH}
+    pctx = PortfolioContext.model_construct(positions=[])
+    now = dt.datetime(2026, 10, 12, 13, 30, tzinfo=ET)
+    prior = _missed_prior("wait").model_copy(update={"spot": D(str(195.29 + 1e-13))})
+    _, lines = _held_and_recent(cands, [prior], pctx, now, DedupeConfig())
+    assert "from 195.29 / regime changes" in lines[0]
+
+
 def test_retry_lines_cap_one_per_idea_five_total() -> None:
     priors = []
     cands: dict[str, Stance] = {}

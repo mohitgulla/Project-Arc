@@ -584,7 +584,7 @@ def check_idea(
             prior=prior,
             override=override,
             detail=(
-                f"re-admitted ({override}): spot {prior.spot} -> {spot}, "
+                f"re-admitted ({override}): spot {prior.spot:.2f} -> {Decimal(str(spot)):.2f}, "
                 f"regime {prior.regime} -> {regime}"
             ),
         )

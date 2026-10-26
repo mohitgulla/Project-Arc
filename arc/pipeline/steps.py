@@ -1279,7 +1279,7 @@ def _held_and_recent(
             f"- {fp.ticker} {fp.stance.value} {fp.structure_type}: {when}"
             + (f"; admissible again {until:%b %d}" if until else "")
             + (
-                f" (or if spot moves {cfg.reprice_move_pct:.0%} from {r.spot} / regime changes)"
+                f" (or if spot moves {cfg.reprice_move_pct:.0%} from {r.spot:.2f} / regime changes)"
                 if not r.open_structure and r.spot is not None
                 else ""
             )
