@@ -46,7 +46,7 @@ if TYPE_CHECKING:
 
 log = structlog.get_logger(__name__)
 
-PROTOCOL_REV = 2  # 2: classifiers ship the booster their isotonic map was fitted on
+PROTOCOL_REV = 1
 DEV_YEARS: tuple[int, ...] = (2020, 2021, 2022, 2023)
 QUANTILES: tuple[float, ...] = (0.1, 0.5, 0.9)
 #: target -> (objective kind, label key)
@@ -345,14 +345,11 @@ def fit_fold(
             shrink_k=cfg.calibration.shrink_k,
         )
         raw_val[t] = s
-    # refit the regressors on the full train window; the classifiers stay the inner
-    # boosters, so each isotonic map is applied to the model whose out-of-fold scores
-    # it was fitted on (refitting after calibrating mis-calibrates: E27.3 run 1).
+    # refit every target on the full train window (the isotonic maps stay the ones fitted
+    # on the inner model's out-of-fold scores; protocol rev 2, which shipped the inner
+    # classifier instead, scored worse in 3 of 4 dev fold-years: docs/RESEARCH/ml-m2.md)
     boosters = {}
     for t in TARGETS:
-        if t in ("win", "stop"):
-            boosters[t] = inner[t]
-            continue
         boosters[t], _ = fit_one(
             cfg, fr, t, points[t], train, None, rounds=rounds[t], monotone=monotone
         )
@@ -815,22 +812,20 @@ def train_family(
     table = pd.concat(metrics, ignore_index=True)
     checks = promote_checks(table)
 
-    # final model: regressors refit on every dev row at fold-2023's points; classifiers
-    # trained on rows before 2023 (fold-2023's full train window) and calibrated on their
-    # out-of-fold 2023 scores, so each map calibrates the booster it ships with.
+    # final model: every dev row at fold-2023's points; calibrators = fold-2023 test raw
+    # scores of the fold model (out of sample for it)
     say("  final fit")
     tf = time.monotonic()
     last_name = folds[-1].name
     last = fold_models[last_name]
     every = np.ones(len(fr.df), dtype=bool)
-    before_last = folds[-1].train_mask(fr.df, fr.sessions)
     boosters = {
         t: fit_one(
             cfg,
             fr,
             t,
             last.points[t],
-            before_last if t in ("win", "stop") else every,
+            every,
             None,
             rounds=last.rounds[t],
             monotone=cfg.monotone_default,
@@ -842,7 +837,7 @@ def train_family(
     calib, final_rep = {}, {}
     for t in ("win", "stop"):
         m = lt & target_mask(fr.df, fr.labels, t)
-        sraw = predict_raw(boosters[t], fr.x(m))
+        sraw = predict_raw(last.boosters[t], fr.x(m))
         calib[t], final_rep[t] = fit_family(
             sraw,
             target_values(fr.df[m], fr.labels, t),

@@ -3621,3 +3621,61 @@ selects it per arm (E27.5).
 **Stance proxy.** `m1_direction` (+1 / −1 / 0 = sign of the h21 median when |median| >
 0.25 × IQR) and `predict.m1_trend_labels()` (bull / bear / sideways) are the M1 proxy
 for the E7.20 grid; `arc/backtest/stance.py` does not exist yet, so E7.20 registers it.
+
+## E27.3 Model M2: calibrated candidate outcome model (D126, D133)
+
+Per candidate × day (one E7.21 ledger row): `p_win`, `p_stop` (isotonic-calibrated),
+`e_r` (Huber regressor on R = net P&L ÷ max loss, so credit and debit share a scale),
+`r_q10/q50/q90` (sorted quantiles), `e_days`, plus `e_r_mix = p_win·E[r|win] +
+(1−p_win)·E[r|loss]` as the cross-check. Research only: **never a gate input**
+(import-linter), nothing live reads it until E27.4 (shadow) and E27.5 (arms).
+
+- **Families.** One pooled LightGBM per family: `credit` = the `margin` ledger (credit
+  verticals, condors and the margin profile's debits), `debit` = `cash_debit`. No ticker
+  id; candidate features are scale-free (EV/premium/cost ÷ max loss), plus `kind`,
+  sleeve, direction, regime, the D128 filter code, `credit_only` and the D131 verdicts.
+  M1 outputs are not features (the registered M1 ships its baselines, which are already
+  panel features).
+- **Harness** (`arc/ml/validate.py`, numpy/pandas only, reused by E27.6): expanding
+  walk-forward → test 2022, test 2023; purge rows whose `label_end_date` reaches the
+  embargo; 10-session embargo; inner split = the last train year with the same purge;
+  weights `1/(1+n_concurrent)` normalised per day × the subsample's inverse keep.
+- **Selection** (pre-registered): grid leaves {15, 31, 63} × min_data {200, 1000},
+  lr 0.03, feature/bagging 0.7, early stopping on the inner fold; log-loss for the
+  classifiers, per-day IC for `e_r`; quantile/days/conditional regressors reuse the `r`
+  point. Every config is in `eval_configs_tried.csv`.
+- **Calibration** (`arc/ml/calibrate.py`): weighted PAV on the inner model's
+  out-of-fold scores of the last train year, applied to the booster refit on the whole
+  train window (shipping the inner booster instead scored worse in 3 of 4 dev
+  fold-years). Per-kind map only when the
+  kind's ECE > 2× the family's and above the binomial noise floor, shrunk by
+  `n_eff/(n_eff+2000)`.
+- **Promote rule `m2_promote`** (both dev test years): log-loss < logistic and <
+  managed PoP; `e_r` IC > 0 with NW t > 2; `ml_er` replay beats the incumbent
+  (`managed_net_ev`) on net **and** max DD. Pass → `shadow`, else `candidate`.
+- **Replays** (`arc/ml/m2/replay.py`): research replays (D121) through the
+  `run_sim(key_override=…)` hook on the E7.19 C500 sim; uses `ml_er` (rank by `e_r`),
+  `ml_er_pos` (skip `e_r ≤ 0`), `ml_pstop` (skip `p_stop ≥ τ`, τ = 80th pct of
+  train-window `p_stop`), against `incumbent` and the width rankers; scores are the
+  fold's out-of-sample scores, coverage reported.
+
+Commands (`ml` extra, `brew install libomp` on macOS; same etiquette as M1: no
+`data/backtest/queue.json`, `nice`, 6 threads, ~45 min per replay year on 6 workers):
+
+      .venv/bin/arc ml m2 train [--family credit,debit] [--overlay cfg.yaml] [--no-replay]
+      .venv/bin/arc ml m2 report --version credit/<v> --version debit/<v>
+      .venv/bin/arc ml registry list | verify <family> <version>
+      .venv/bin/arc ml m2 holdout <family> <version> --reason "<why>"   # once; owner
+      .venv/bin/arc ml promote <family> <version> --actor <owner id>     # owner only
+
+**Registry** (`arc/ml/registry.py`, `data/ml/models/<family>/`): `models.json` (stdlib
+JSON for the Tower), append-only `promotions.jsonl` and `holdout_reads.jsonl`; each
+version dir carries `manifest.json` (sha256 per file, `verify` re-hashes), boosters,
+`calibrators.json`, `features.json`, `feature_groups.json`, `vocab.json`, `eval_*.csv`,
+`oos_scores.parquet` and `folds/<fold>/` (the fold models the replays use).
+Candidate → shadow is automatic on the rule; shadow → champion is owner-only and needs
+a logged holdout read of that version (D133: the holdout is read only at promotion). A
+second holdout read of a family needs `--actor <owner> --ack "OWNER UPDATE: holdout
+re-read ok"`. `--overlay` (D133 studies) overrides params, grid, features and
+calibration; unknown keys and any `decision_rule` other than `m2_promote` are refused;
+the overlay is in the config digest, so it changes the version id.
