@@ -510,6 +510,20 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     feed: scout                 # slow feed (once a day)
     writes: []                  # queue.json / ledger.jsonl / run dirs; no context kind
     lane: background            # hours long; the routine lock keeps one runner at a time
+  backtest.recon:               # E7.22 (D125): live <-> sim reconciliation by replay (report only)
+    label: Live-sim recon
+    about: "Weekly replay of live fills, proposals, closed trades and stances through the EOD sim: slippage x per kind, menu overlap, exit timing"
+    schedule: ["10:00"]         # Sat 10:00 ET (card E7.22): the week's EOD books have landed; outside the 21:30-08:30 study window
+    days: [sat]
+    ttl: 2h
+    reference: true             # offline research report; never a gate input
+    feed: scout                 # slow feed (weekly)
+    writes: []                  # docs/RESEARCH/live-sim-recon.md + studies/reconciliation.json + data/backtest/recon/
+    lane: background            # menu builds per live proposal (a few minutes)
+    arm: all                    # D69: include the experiment arms' fills, tagged by arm
+    report: docs/RESEARCH/live-sim-recon.md
+    reconciliation: docs/RESEARCH/studies/reconciliation.json   # the Analyst's E7.14/E7.15 drift slot
+    out_dir: data/backtest/recon
   betas:                        # E3.6 (D62): 1y daily beta vs SPY -> betas table (beta-weighted delta cap); E28.4 (D131): + 60-session pair correlations -> correlations table (cluster cap)
     label: Betas
     about: "Daily 1y beta vs SPY per ticker + 60-session return correlation per pair (Alpaca adjusted closes) for the beta-weighted delta and cluster caps"

@@ -738,6 +738,7 @@ def test_optional_rule_fields_keep_old_hashes() -> None:
     doc = s.model_dump(mode="json")
     for k in ("ci_floor_frac_of_base", "dd_tolerance", "verbatim"):
         doc["decision_rule"].pop(k)
+    doc.pop("robustness")  # E7.20: absent from pre-E7.20 specs (test_backtest_e720)
     assert study_hash(s) == document_hash(doc)
     assert study_hash(_spec(decision_rule={"verbatim": "x"})) != study_hash(s)
 

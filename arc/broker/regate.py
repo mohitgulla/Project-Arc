@@ -322,7 +322,7 @@ def _run(
             }
         )
     decision = evaluate_with_halt(
-        HaltSwitch(HaltRepo(conn)),
+        HaltSwitch(HaltRepo(conn), now=now),
         regated,
         account,
         portfolio,

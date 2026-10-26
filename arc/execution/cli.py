@@ -111,7 +111,7 @@ def run_execute(args: argparse.Namespace, *, broker: BrokerAdapter | None = None
         conn=conn,
         broker=broker,
         config=settings,
-        halt=HaltSwitch(HaltRepo(conn)),
+        halt=HaltSwitch(HaltRepo(conn), now=now_et),
         clock=now_et,
         sleep=time.sleep,
         kind=kind,

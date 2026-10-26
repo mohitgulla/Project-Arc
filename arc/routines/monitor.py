@@ -254,7 +254,7 @@ def _record_heartbeat(
 
 
 def monitor(ctx: JobContext, env: PipelineEnv) -> JobResult:
-    from arc.gate.halt import HaltSwitch, daily_loss_breach
+    from arc.gate.halt import HaltSwitch, daily_loss_breach, session_rollover_notice
     from arc.pipeline.market import (
         PortfolioError,
         account_baseline,
@@ -270,7 +270,11 @@ def monitor(ctx: JobContext, env: PipelineEnv) -> JobResult:
     notices: list[str] = []
 
     info = env.account()
-    switch = HaltSwitch(HaltRepo(ctx.conn))
+    switch = HaltSwitch(HaltRepo(ctx.conn), now=now)
+    # E3.9a (D137): last session's daily-loss halt ends at this session (the tick
+    # clears it first; this covers a manual `arc routines run monitor`).
+    for expired in switch.expire_stale_session_halts(now):
+        notices.append(session_rollover_notice(expired))
     # E5.9b (D43): one start-of-day equity for the halt check, the summary, the
     # exits' gate snapshot and the heartbeat the tower reads.
     baseline = account_baseline(ctx.conn, info, now)

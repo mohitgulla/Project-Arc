@@ -69,20 +69,20 @@ def test_committed_xp1_is_the_k3_aa_of_d108() -> None:
     assert [sp.arm_id_for(a) for a in arms] == ["XP-1:control", "XP-1:t1", "XP-1:t2", "XP-1:t3"]
 
 
-def test_registry_reset_then_xp2_is_the_next_committed_id() -> None:
-    """D111: no verdicts / history left after the reset; D130 committed XP-2 (the margin
-    A/A), so the next adopted experiment is XP-3."""
+def test_registry_reset_then_xp3_is_the_next_committed_id() -> None:
+    """D111: no history left after the reset; D130 committed XP-2 (the margin A/A) and
+    D136 its restart XP-3, so the next adopted experiment is XP-4."""
     from arc.experiments import adopt as ad
     from arc.experiments.store import ExperimentStore
     from arc.store.migrate import migrate
 
     names = sorted(p.name for p in LIVE.iterdir() if p.name != "verdicts")
-    assert names == ["README.md", "xp1_aa_k3.yaml", "xp2_aa_margin.yaml"]
+    assert names == ["README.md", "xp1_aa_k3.yaml", "xp2_aa_margin.yaml", "xp3_aa_margin.yaml"]
     texts = ad.committed_texts(REPO)
-    assert ad._xp_numbers(texts) == {1, 2}
+    assert ad._xp_numbers(texts) == {1, 2, 3}
     conn = connect(":memory:")
     migrate(conn)
-    assert ad.next_free_id(ExperimentStore(conn), texts) == "XP-3"
+    assert ad.next_free_id(ExperimentStore(conn), texts) == "XP-4"
     conn.close()
 
 

@@ -48,7 +48,11 @@ def _st(legs: list[tuple[str, str, str]], delta: float) -> Structure:
     built = [
         Leg(occ_symbol=s, side=LegIntent(side), ratio=1, premium=D(prem)) for s, side, prem in legs
     ]
-    return analyze(built).model_copy(update={"greeks": Greeks(delta=delta, vega=1.0)})
+    # as_of pinned: the fixtures' expiries (MU 10-23, AAPL 10-30, INTC 11-20) must not
+    # turn into wall-clock time bombs
+    return analyze(built, as_of=NOW.date()).model_copy(
+        update={"greeks": Greeks(delta=delta, vega=1.0)}
+    )
 
 
 AAPL = _st(

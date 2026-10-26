@@ -192,7 +192,7 @@ class TestCategory:
 
     def test_kind_registered(self) -> None:
         assert KINDS["retail_buzz"].model is RetailBuzzPayload
-        assert KINDS["universe_tier"].schema_version == 5
+        assert KINDS["universe_tier"].schema_version == 6  # D138: merge.window_sessions
 
     def test_routines_yaml(self) -> None:
         r = load_routines(DEFAULT_ROUTINES_PATH)

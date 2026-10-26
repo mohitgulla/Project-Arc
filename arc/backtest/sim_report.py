@@ -50,7 +50,7 @@ from arc.gate.inputs import MarketTrend  # noqa: TC001 - pydantic field
 from arc.scanner.rank import Ranker  # noqa: TC001 - pydantic field
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
     from pathlib import Path
 
     from arc.backtest.costs import CostModel
@@ -302,12 +302,15 @@ def build_sim(
     workers: int = 1,
     cache: bool = True,
     cache_dir: Path | None = None,
+    stance_labels: frozenset[str] = frozenset(),
+    alt_x: Sequence[float] = (),
 ) -> SimBuild:
     """Build every ticker of *universe* (parallel) for *profiles* × their rankers.
 
     The profile's incumbent ranker always runs; *rankers* adds applicable ones
     (:func:`arc.backtest.ranking.rankers_for`). Shared by ``arc backtest sim`` and the
-    E7.12 study runner (:mod:`arc.backtest.study`).
+    E7.12 study runner (:mod:`arc.backtest.study`). E7.20: *stance_labels* / *alt_x*
+    make a robustness-grid build (:func:`arc.backtest.sim.sim_ticker_from_chains`).
     """
     t0 = time.monotonic()
     bt = cfg.backtest
@@ -356,6 +359,8 @@ def build_sim(
         "sim": bt.sim,
         "cache_dir": str(cache_dir or data_dir) if cache else None,
     }
+    if stance_labels or alt_x:  # E7.20: absent = the pre-E7.20 job arguments
+        job_kw |= {"stance_labels": frozenset(stance_labels), "alt_x": tuple(alt_x)}
     built = build_tickers(names, spec=spec, workers=workers, job_kw=job_kw)
     sessions = sorted({d for r in built.values() for d in r.closes.index if d >= start})
     gated = bt.sim.gate.apply(settings)  # E28.6: the arm's SMA length / switch
@@ -427,8 +432,17 @@ def _vix_high(
     return vix_high_days(closes, sessions, above)
 
 
-def walk(b: SimBuild, *, profile: str, ranker: Ranker, cfg: RankingFile, end: dt.date) -> SimRun:
-    """One profile × ranker walk over a :class:`SimBuild`."""
+def walk(
+    b: SimBuild,
+    *,
+    profile: str,
+    ranker: Ranker,
+    cfg: RankingFile,
+    end: dt.date,
+    stance_of: Mapping[str, pd.Series] | None = None,
+    fill_x: float | None = None,
+) -> SimRun:
+    """One profile × ranker walk over a :class:`SimBuild` (E7.20: one grid cell)."""
     from arc.universe.config import MomentumConfig
 
     return run_sim(
@@ -444,6 +458,8 @@ def walk(b: SimBuild, *, profile: str, ranker: Ranker, cfg: RankingFile, end: dt
         aliases=MomentumConfig().share_class_aliases,
         trends=b.trends,
         vix_high=b.vix_high,
+        stance_of=stance_of,
+        fill_x=fill_x,
     )
 
 

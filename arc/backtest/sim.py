@@ -76,6 +76,7 @@ from arc.backtest.engine import MULT, STRUCTURE_KIND, Trade, close_early, open_t
 from arc.backtest.entry_filter import (
     apply_be_filter,
     apply_entry_filter,
+    apply_spread_premium_filter,
     atr14_days,
     stretched_days,
 )
@@ -150,6 +151,8 @@ __all__ = [
     "SimTicker",
     "active_list",
     "capacity_cap",
+    "exit_search",
+    "exit_walk",
     "momentum_scores",
     "market_trends",
     "run_sim",
@@ -248,6 +251,20 @@ class SimCandidate(BaseModel):
     sleeve: str = Field(
         DEFAULT_SLEEVE, description="E7.19: entry-DTE sleeve (ArcSettings.sleeve_for_dte)"
     )
+    #: E7.20 (D125): the same candidate filled at other slippage x (``fill x -> outcome``);
+    #: exit timing is shared, only fills, max loss and marks differ. Empty = control x only.
+    alt: dict[float, SimOutcome | None] = Field(default_factory=dict)
+    #: E7.20: the stances (trend labels ``bull``/``bear``/``sideways``, or
+    #: :data:`arc.backtest.stance.ANY`) under which this candidate is in its name's top
+    #: ``per_name_depth``; the walk keeps it only on a session whose proxy stance is in
+    #: here. None = an untagged (pre-E7.20) build, stance already applied.
+    stances: frozenset[str] | None = None
+
+    def at_x(self, x: float | None) -> SimCandidate:
+        """This candidate with its outcome at fill slippage *x* (None = control x)."""
+        if x is None:
+            return self
+        return self.model_copy(update={"result": self.alt[x]})
 
 
 class DayInfo(BaseModel):
@@ -562,6 +579,134 @@ def range_proxy_rule(
     return None
 
 
+_Close = tuple[dt.date, ExitReason, dict[str, tuple[float, float]], float, str | None]
+
+
+def exit_search(
+    o: Any,
+    rules: ResolvedRules,
+    *,
+    entry_day: dt.date,
+    book: Mapping[dt.date, pd.DataFrame],
+    closes: pd.Series,
+    inside: Sequence[tuple[dt.date, float]],
+    settings: ArcSettings,
+    spread_rule: bool,
+    ranges: Mapping[dt.date, tuple[float, float]] | None = None,
+    rate: Callable[[dt.date], float] | float = 0.0,
+) -> tuple[_Close | None, dict[dt.date, float], int]:
+    """The session-by-session exit search of :func:`sim_outcomes` (E7.20/E7.22).
+
+    Walks *book* (``symbol``/``mid``/``spread`` per session) after *entry_day* and
+    before the expiry: the intraday range proxy first (*ranges*), then the EOD rules;
+    a fired exit waits for a tradeable session. Found on mids and quoted spreads only,
+    so it is the same for every fill model. Returns ``(close or None if nothing fired
+    before the book or the expiry ran out, structure mid value per marked session,
+    sessions an exit waited)``; ``close = (session, reason, per-leg (mid, spread) to
+    fill at, spot, proxy label or None)``. *inside* = split events inside the hold.
+    """
+    day_mids: dict[dt.date, float] = {}
+    peak: float | None = None
+    pending = None
+    delays = 0
+    for day in sorted(book):
+        if day <= entry_day:
+            continue
+        if day >= o.expiration:
+            break
+        f = math.prod(r for d, r in inside if d <= day)
+        sym = _restruck(o, f)
+        ch = book[day]
+        rows = ch[ch["symbol"].isin(list(sym.values()))]
+        raw_m = {str(x.symbol): (float(x.mid), float(x.spread)) for x in rows.itertuples()}
+        if not all(s in raw_m for s in sym.values()):
+            if pending is not None:
+                delays += 1
+            continue
+        # per original (pre-split) contract: price x f
+        m = {old: (raw_m[new][0] * f, raw_m[new][1] * f) for old, new in sym.items()}
+        spot = float(closes[day]) * f if day in closes.index else float("nan")
+        value_mid = sum(lg.side * m[lg.symbol][0] for lg in o.legs)
+        rng = None if ranges is None else ranges.get(day)
+        if pending is None and rng is not None and math.isfinite(spot):
+            hit = range_proxy_rule(
+                rules,
+                o.legs,
+                m,
+                spot=spot,
+                rng=(rng[0] * f, rng[1] * f),
+                expiration=o.expiration,
+                day=day,
+                r=float(rate(day)) if callable(rate) else float(rate),
+                peak=peak,
+            )
+            if hit is not None and (
+                not spread_rule or all(spread_ok(*raw_m[s], settings) for s in sym.values())
+            ):
+                rule, pm, x = hit
+                return (day, ExitReason(rule), pm, x, PROXY_EXITS[rule]), day_mids, delays
+        day_mids[day] = value_mid
+        if pending is None:
+            pnl = value_mid - rules.entry_net
+            pending = check_rules(rules, pnl=pnl, dte=(o.expiration - day).days, peak_pnl=peak)
+            peak = pnl if peak is None else max(peak, pnl)
+        if pending is not None:
+            if spread_rule and not all(spread_ok(*raw_m[s], settings) for s in sym.values()):
+                delays += 1
+                continue
+            return (day, pending, m, spot, None), day_mids, delays
+    return None, day_mids, delays
+
+
+def _close_trade(op: Any, close: _Close, *, cost: CostModel, fill_cost: CostModel | None) -> Trade:
+    """Price an :func:`exit_search` close for one fill model."""
+    day, reason, cm, spot, label = close
+    if fill_cost is not None:
+        cm = {k: (v[0], fill_cost.spread(v[0])) for k, v in cm.items()}
+    trade = close_early(op, day=day, marks=cm, spot=spot, reason=reason, cost=cost)
+    if label is not None:
+        trade = trade.model_copy(update={"exit_reason": label})
+    return trade
+
+
+def exit_walk(
+    o: Any,
+    rules: ResolvedRules,
+    *,
+    entry_day: dt.date,
+    book: Mapping[dt.date, pd.DataFrame],
+    closes: pd.Series,
+    inside: Sequence[tuple[dt.date, float]],
+    settings: ArcSettings,
+    spread_rule: bool,
+    cost: CostModel,
+    fill_cost: CostModel | None = None,
+    ranges: Mapping[dt.date, tuple[float, float]] | None = None,
+    rate: Callable[[dt.date], float] | float = 0.0,
+) -> tuple[Trade | None, dict[dt.date, float], int]:
+    """:func:`exit_search` priced under one fill model (E7.22: the recon's exit replay).
+
+    Returns ``(trade or None if nothing fired before the book or the expiry ran out,
+    unrealised net P&L per marked session, sessions an exit waited)``.
+    """
+    close, day_mids, delays = exit_search(
+        o,
+        rules,
+        entry_day=entry_day,
+        book=book,
+        closes=closes,
+        inside=inside,
+        settings=settings,
+        spread_rule=spread_rule,
+        ranges=ranges,
+        rate=rate,
+    )
+    entry_fill = sum(lg.side * lg.fill for lg in o.legs)
+    day_marks = {d: (v - entry_fill) * MULT - o.open_fees for d, v in day_mids.items()}
+    trade = None if close is None else _close_trade(o, close, cost=cost, fill_cost=fill_cost)
+    return trade, day_marks, delays
+
+
 def sim_outcome(
     c: Candidate,
     *,
@@ -600,31 +745,74 @@ def sim_outcome(
     check (:func:`range_proxy_rule`) on each session before its EOD rules; *rate* is
     the session's risk-free rate for it.
     """
+    return sim_outcomes(
+        c,
+        chains=chains,
+        closes=closes,
+        fills=[(cost, fill_cost)],
+        exits=exits,
+        settings=settings,
+        spread_rule=spread_rule,
+        marks=marks,
+        splits=splits,
+        ranges=ranges,
+        rate=rate,
+        sleeves=sleeves,
+    )[0]
+
+
+def sim_outcomes(
+    c: Candidate,
+    *,
+    chains: Mapping[dt.date, pd.DataFrame],
+    closes: pd.Series,
+    fills: Sequence[tuple[CostModel, CostModel | None]],
+    exits: ExitConfig,
+    settings: ArcSettings,
+    spread_rule: bool,
+    marks: Mapping[dt.date, pd.DataFrame] | None = None,
+    splits: Mapping[dt.date, float] | None = None,
+    ranges: Mapping[dt.date, tuple[float, float]] | None = None,
+    rate: Callable[[dt.date], float] | float = 0.0,
+    sleeves: bool = True,
+) -> list[SimOutcome | None]:
+    """:func:`sim_outcome` under several fill models ``(cost, fill_cost)`` at once (E7.20).
+
+    The exit rules trigger on mid marks and the spread rule on quoted spreads, so the
+    exit session, its reason and the delays do not depend on the fill slippage: they
+    are found once, and each fill model only prices the entry, the exit and the
+    unrealised marks. ``fills=[(cost, fill_cost)]`` is exactly :func:`sim_outcome`.
+    """
     spec_kind = StrategyKind(c.kind)
-    picks = c.picks
-    if fill_cost is not None:
-        picks = [p.model_copy(update={"spread": fill_cost.spread(p.mid)}) for p in picks]
-    o = open_trade(
-        picks,
-        spec=StrategySpec(kind=spec_kind),
-        underlying=c.underlying,
-        entry_date=c.day,
-        spot=float(closes[c.day]),
-        cost=cost,
-    )
+    opens = []
+    for cost, fill_cost in fills:
+        picks = c.picks
+        if fill_cost is not None:
+            picks = [p.model_copy(update={"spread": fill_cost.spread(p.mid)}) for p in picks]
+        opens.append(
+            open_trade(
+                picks,
+                spec=StrategySpec(kind=spec_kind),
+                underlying=c.underlying,
+                entry_date=c.day,
+                spot=float(closes[c.day]),
+                cost=cost,
+            )
+        )
+    none: list[SimOutcome | None] = [None] * len(fills)
+    o = next((x for x in opens if x is not None), None)
     if o is None:
-        return None
+        return none
     last_close = max(closes.index)
     if o.expiration > last_close:
-        return None
+        return none
     inside = sorted((d, r) for d, r in (splits or {}).items() if c.day < d <= o.expiration)
     if any(not _standard_split(r) for _, r in inside):
-        return None
+        return none
     total = math.prod(r for _, r in inside)
     past = closes[pd.Index(closes.index) <= o.expiration]
     if past.empty:
-        return None
-    held = settle(o, float(past.iloc[-1]) * total, cost)
+        return none
     entry_chain = chains.get(c.day)
     leg_oi: list[float | None] = []
     leg_vol: list[float | None] = []
@@ -639,82 +827,51 @@ def sim_outcome(
     structure = analyze(_legs(c.picks, c.underlying), as_of=c.day)
     block = settings.exit_block_for_dte(o.dte) if sleeves else None  # E7.19: once, at entry
     rules = resolve_rules(structure, exits.policy_for(STRUCTURE_KIND[spec_kind], block))
-    entry_fill = sum(lg.side * lg.fill for lg in o.legs)
-    book = chains if marks is None else marks
-    day_marks: dict[dt.date, float] = {}
-    trade: Trade | None = None
-    peak: float | None = None
-    pending = None
-    delays = 0
-    for day in sorted(book):
-        if day <= c.day:
+    close, day_mids, delays = exit_search(
+        o,
+        rules,
+        entry_day=c.day,
+        book=chains if marks is None else marks,
+        closes=closes,
+        inside=inside,
+        settings=settings,
+        spread_rule=spread_rule,
+        ranges=ranges,
+        rate=rate,
+    )
+    out: list[SimOutcome | None] = []
+    for (cost, fill_cost), op in zip(fills, opens, strict=True):
+        if op is None:
+            out.append(None)
             continue
-        if day >= o.expiration:
-            break
-        f = math.prod(r for d, r in inside if d <= day)
-        sym = _restruck(o, f)
-        ch = book[day]
-        rows = ch[ch["symbol"].isin(list(sym.values()))]
-        raw_m = {str(x.symbol): (float(x.mid), float(x.spread)) for x in rows.itertuples()}
-        if not all(s in raw_m for s in sym.values()):
-            if pending is not None:
-                delays += 1
-            continue
-        # per original (pre-split) contract: price x f
-        m = {old: (raw_m[new][0] * f, raw_m[new][1] * f) for old, new in sym.items()}
-        spot = float(closes[day]) * f if day in closes.index else float("nan")
-        value_mid = sum(lg.side * m[lg.symbol][0] for lg in o.legs)
-        rng = None if ranges is None else ranges.get(day)
-        if pending is None and rng is not None and math.isfinite(spot):
-            hit = range_proxy_rule(
-                rules,
-                o.legs,
-                m,
-                spot=spot,
-                rng=(rng[0] * f, rng[1] * f),
-                expiration=o.expiration,
-                day=day,
-                r=float(rate(day)) if callable(rate) else float(rate),
-                peak=peak,
-            )
-            if hit is not None and (
-                not spread_rule or all(spread_ok(*raw_m[s], settings) for s in sym.values())
-            ):
-                rule, pm, x = hit
-                if fill_cost is not None:
-                    pm = {k: (v[0], fill_cost.spread(v[0])) for k, v in pm.items()}
-                reason = ExitReason(rule)
-                trade = close_early(o, day=day, marks=pm, spot=x, reason=reason, cost=cost)
-                trade = trade.model_copy(update={"exit_reason": PROXY_EXITS[rule]})
-                break
-        day_marks[day] = (value_mid - entry_fill) * MULT - o.open_fees
-        if pending is None:
-            pnl = value_mid - rules.entry_net
-            pending = check_rules(rules, pnl=pnl, dte=(o.expiration - day).days, peak_pnl=peak)
-            peak = pnl if peak is None else max(peak, pnl)
-        if pending is not None:
-            if spread_rule and not all(spread_ok(*raw_m[s], settings) for s in sym.values()):
-                delays += 1
-                continue
-            fills = m
-            if fill_cost is not None:
-                fills = {k: (v[0], fill_cost.spread(v[0])) for k, v in m.items()}
-            trade = close_early(o, day=day, marks=fills, spot=spot, reason=pending, cost=cost)
-            break
-    if trade is None:
+        held = settle(op, float(past.iloc[-1]) * total, cost)
         trade = held
-    exit_day = trade.exit_date or trade.expiration
-    out = Outcome(
-        trade=trade,
-        exit_day=exit_day,
-        marks={d: v for d, v in day_marks.items() if d < exit_day},
-        hold_to_expiry_pnl=held.pnl,
-        entry_debit=entry_fill,
-        open_fees=o.open_fees,
-    )
-    return SimOutcome(
-        outcome=out, entry_ok=entry_ok, leg_oi=leg_oi, leg_volume=leg_vol, exit_delays=delays
-    )
+        if close is not None:
+            trade = _close_trade(op, close, cost=cost, fill_cost=fill_cost)
+        entry_fill = sum(lg.side * lg.fill for lg in op.legs)
+        exit_day = trade.exit_date or trade.expiration
+        res = Outcome(
+            trade=trade,
+            exit_day=exit_day,
+            marks={
+                d: (v - entry_fill) * MULT - op.open_fees
+                for d, v in day_mids.items()
+                if d < exit_day
+            },
+            hold_to_expiry_pnl=held.pnl,
+            entry_debit=entry_fill,
+            open_fees=op.open_fees,
+        )
+        out.append(
+            SimOutcome(
+                outcome=res,
+                entry_ok=entry_ok,
+                leg_oi=leg_oi,
+                leg_volume=leg_vol,
+                exit_delays=delays,
+            )
+        )
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -761,6 +918,8 @@ def sim_ticker_from_chains(
     provider: str | None = None,
     quotes: Mapping[dt.date, pd.DataFrame] | None = None,
     splits: Mapping[dt.date, float] | None = None,
+    stance_labels: frozenset[str] = frozenset(),
+    alt_x: Sequence[float] = (),
 ) -> SimTicker:
     """Menus (cached), stance/filters and outcome paths for one ticker.
 
@@ -777,6 +936,10 @@ def sim_ticker_from_chains(
     is tagged with its sleeve. A single-window profile is one ``default`` sleeve.
     With ``backtest.sim.intraday_proxy: range`` (cross_name only) outcomes add the
     daily-range check of intraday-flagged rules on *ohlc*.
+
+    E7.20 (D125): *stance_labels* (:func:`arc.backtest.stance.labels_needed`) tag the
+    menu per stance so the walk can apply any stance proxy; *alt_x* adds each kept
+    candidate's outcome at those fill slippage x. Both empty = the pre-E7.20 build.
     """
     closes = closes.sort_index()
     bt = cfg.backtest
@@ -849,6 +1012,8 @@ def sim_ticker_from_chains(
                 quotes=quotes,
                 splits=splits,
                 ranges=ranges,
+                stance_labels=stance_labels,
+                alt_x=alt_x,
             ).items():
                 per_day.setdefault(d, []).extend(kept)
         out[profile] = per_day
@@ -895,12 +1060,52 @@ def _sleeve_menu(
     quotes: Mapping[dt.date, pd.DataFrame] | None,
     splits: Mapping[dt.date, float] | None,
     ranges: Mapping[dt.date, tuple[float, float]] | None,
+    stance_labels: frozenset[str] = frozenset(),
+    alt_x: Sequence[float] = (),
 ) -> dict[dt.date, list[SimCandidate]]:
-    """One (profile, sleeve) menu per session: build, stance/filters, top keys, outcomes."""
+    """One (profile, sleeve) menu per session: build, stance/filters, top keys, outcomes.
+
+    E7.20 (D125): with *stance_labels* the menu is tagged per stance instead of being
+    cut to the session's own trend label (:func:`_tagged_menu`); with *alt_x* every kept
+    candidate also carries its outcome filled at each of those slippage x
+    (:attr:`SimCandidate.alt`; menus and ranking stay priced at the control cost model).
+    """
     bt = cfg.backtest
     lo, hi = sw.dte_min, sw.dte_max
     specs = bt.specs_for(profile, lo, hi, sw.exit_block)
     ck = kind_costs(specs, base, bt.slippage_by_kind) if bt.slippage_by_kind else {}
+
+    def outcome(c: Candidate, tags: frozenset[str] | None) -> SimCandidate:
+        own = ck.get(c.kind, base)
+        fills: list[tuple[CostModel, CostModel | None]] = [
+            (own, own if sim.fill_spread == "estimated" else None)
+        ]
+        for x in alt_x:  # E7.20: every kind at the grid's x
+            cx = base.model_copy(update={"slippage_frac": float(x)})
+            fills.append((cx, cx if sim.fill_spread == "estimated" else None))
+        res = sim_outcomes(
+            c,
+            chains=chains,
+            closes=closes,
+            fills=fills,
+            exits=exits,
+            settings=settings,
+            spread_rule=spread_rule,
+            marks=quotes,
+            splits=splits,
+            ranges=ranges,
+            rate=rate_of,
+        )
+        dte = (c.picks[0].expiration - c.day).days
+        tag = sleeve_name(settings, dte) if sw.name != DEFAULT_SLEEVE else DEFAULT_SLEEVE
+        return SimCandidate(
+            candidate=c,
+            result=res[0],
+            sleeve=tag,
+            alt={float(x): r for x, r in zip(alt_x, res[1:], strict=True)},
+            stances=tags,
+        )
+
     menus: dict[dt.date, list[Candidate]] = {}
     by_rate: dict[float, list[dt.date]] = {}
     for d in dd:  # build_menus takes one rate: group sessions by it (flat = one call)
@@ -924,9 +1129,41 @@ def _sleeve_menu(
             menus |= build_menus_by_kind(chains, closes, cost_by_kind=ck, **kw)
         else:
             menus |= build_menus(chains, closes, **kw)
+    if bt.max_spread_premium is not None:  # E7.20: stance-independent, before ranking
+        menus, _ = apply_spread_premium_filter(menus, bt.max_spread_premium)
     if stances is not None:
         gate = {str(k): frozenset(v) for k, v in bt.vol_gate.get(profile, {}).items()}
+        if stance_labels:
+            return _tagged_menu(
+                menus,
+                stance_labels,
+                kinds=stances[profile],
+                gate=gate,
+                vol=vol,
+                stretched=stretched,
+                atr=atr,
+                closes=closes,
+                cfg=cfg,
+                rankers=rankers,
+                sim=sim,
+                outcome=outcome,
+            )
         menus = apply_stance(menus, trend, stances[profile], vol=vol, vol_gate=gate or None)
+    elif stance_labels:
+        return _tagged_menu(
+            menus,
+            stance_labels,
+            kinds=None,
+            gate={},
+            vol=vol,
+            stretched=stretched,
+            atr=atr,
+            closes=closes,
+            cfg=cfg,
+            rankers=rankers,
+            sim=sim,
+            outcome=outcome,
+        )
     if stretched is not None:
         menus, _ = apply_entry_filter(menus, trend, stretched)
     if atr is not None and bt.max_be_atr is not None:
@@ -942,28 +1179,73 @@ def _sleeve_menu(
             cfg.ranking.vrp_threshold,
             sim.per_name_depth,
         )
-        kept: list[SimCandidate] = []
-        for c in menu:
-            if c.inputs.key not in keys:
-                continue
-            res = sim_outcome(
-                c,
-                chains=chains,
-                closes=closes,
-                cost=ck.get(c.kind, base),
-                exits=exits,
-                settings=settings,
-                spread_rule=spread_rule,
-                marks=quotes,
-                splits=splits,
-                fill_cost=ck.get(c.kind, base) if sim.fill_spread == "estimated" else None,
-                ranges=ranges,
-                rate=rate_of,
+        per_day[d] = [outcome(c, None) for c in menu if c.inputs.key in keys]
+    return per_day
+
+
+def _tagged_menu(
+    menus: Mapping[dt.date, list[Candidate]],
+    labels: frozenset[str],
+    *,
+    kinds: Mapping[str, frozenset[str]] | None,
+    gate: Mapping[str, frozenset[str]],
+    vol: pd.Series,
+    stretched: Any,
+    atr: Any,
+    closes: pd.Series,
+    cfg: RankingFile,
+    rankers: Sequence[Ranker],
+    sim: SimSettings,
+    outcome: Callable[[Candidate, frozenset[str] | None], SimCandidate],
+) -> dict[dt.date, list[SimCandidate]]:
+    """E7.20 (D125): one stance-independent menu per session, tagged per stance.
+
+    For every stance in *labels* the menu goes through exactly the filters the
+    untagged build applies for a session of that trend label (stance → structures,
+    vol gate, the anti-chase entry filter, breakeven realism) and its top
+    ``per_name_depth`` per ranker are found. Each kept candidate carries the stances it
+    is a top pick under (:attr:`SimCandidate.stances`); the walk keeps it on a session
+    whose proxy stance is one of them. So for the stance the session's own trend label
+    gives, the walk sees exactly the untagged build's candidates.
+    """
+    from arc.backtest.stance import ANY
+
+    bt = cfg.backtest
+    base: Mapping[dt.date, list[Candidate]] = menus
+    if atr is not None and bt.max_be_atr is not None:  # stance-independent: once
+        base, _ = apply_be_filter(menus, closes, atr, bt.max_be_atr)
+    days = list(base)
+    tags: dict[dt.date, dict[str, set[str]]] = {d: {} for d in days}
+    # "unknown" too: an unlabelled session trades the whole menu without a stance filter
+    # (stance none) and nothing with one, exactly as the untagged build
+    for lab in sorted(labels | {"unknown"}):
+        m: Mapping[dt.date, list[Candidate]] = base
+        if kinds is not None:
+            allowed = {ANY: frozenset().union(*kinds.values())} if lab == ANY else dict(kinds)
+            m = apply_stance(
+                m, pd.Series(lab, index=days, dtype=object), allowed, vol=vol, vol_gate=gate or None
             )
-            dte = (c.picks[0].expiration - c.day).days
-            tag = sleeve_name(settings, dte) if sw.name != DEFAULT_SLEEVE else DEFAULT_SLEEVE
-            kept.append(SimCandidate(candidate=c, result=res, sleeve=tag))
-        per_day[d] = kept
+        if stretched is not None:  # ANY = no stance: the entry filter keeps the menu
+            stance = "unknown" if lab == ANY else lab
+            m, _ = apply_entry_filter(m, pd.Series(stance, index=days, dtype=object), stretched)
+        for d, menu in m.items():
+            if not menu:
+                continue
+            for k in _top_keys(
+                menu,
+                rankers,
+                cfg.ranking.filters,
+                cfg.ranking.vrp_threshold,
+                sim.per_name_depth,
+            ):
+                tags[d].setdefault(k, set()).add(lab)
+    per_day: dict[dt.date, list[SimCandidate]] = {}
+    for d in days:
+        if not tags[d]:
+            continue
+        per_day[d] = [
+            outcome(c, frozenset(tags[d][c.inputs.key])) for c in base[d] if c.inputs.key in tags[d]
+        ]
     return per_day
 
 
@@ -1043,6 +1325,8 @@ def sim_ticker_job(
     stances: Mapping[str, Mapping[str, frozenset[str]]] | None,
     sim: SimSettings,
     cache_dir: str | None,
+    stance_labels: frozenset[str] = frozenset(),
+    alt_x: Sequence[float] = (),
 ) -> list[SimTicker]:
     """A batch of tickers through one view (safe in a worker process)."""
     view = build_view(spec, cfg, cost)
@@ -1090,6 +1374,8 @@ def sim_ticker_job(
                 provider=view.provider_for(t),
                 quotes=quotes,
                 splits=splits,
+                stance_labels=stance_labels,
+                alt_x=alt_x,
             )
         )
         view.evict(t)
@@ -1428,8 +1714,14 @@ def run_sim(
     momentum: Mapping[dt.date, list[str]] | None = None,
     trends: Mapping[dt.date, MarketTrend] | None = None,
     vix_high: Mapping[dt.date, bool] | None = None,
+    stance_of: Mapping[str, pd.Series] | None = None,
+    fill_x: float | None = None,
 ) -> SimRun:
     """Walk *sessions*; open on decision sessions ≤ *end* (see the module docstring).
+
+    E7.20 (D125): *stance_of* (ticker → session → stance, :mod:`arc.backtest.stance`)
+    and *fill_x* (a slippage x the build carries in :attr:`SimCandidate.alt`) select one
+    robustness-grid cell of a grid build; both None = the control cell.
 
     *tickers* order never matters: names are always handled in sorted order and the
     cross-name pool is sorted by (ranker key, liquidity desc, symbol, key).
@@ -1533,6 +1825,8 @@ def run_sim(
                 vix=None
                 if sim.gate.regime_vix_pct_above is None or vix_high is None
                 else vix_high.get(day, True),
+                stance_of=stance_of,
+                fill_x=fill_x,
             )
             open_ = open_ + opened
         eq[day] = start_eq + realised + unrealised(day)
@@ -1587,12 +1881,18 @@ def _decide(
     regime: tuple[MarketTrend | None] | None = None,
     pit_corr: _PitCorr | None = None,
     vix: bool | None = None,
+    stance_of: Mapping[str, pd.Series] | None = None,
+    fill_x: float | None = None,
 ) -> list[_Pos]:
     """One decision session: funnel → pool → open. Returns the new positions.
 
     *regime*: ``(today's market trend or None,)`` applies ``short_premium_regime``;
     ``None`` skips the rule (no market reference loaded). *vix* (E28.6): today's VIX-high
     flag for the sim-only regime variant; ``None`` = the live rule alone.
+
+    E7.20: on a stance-tagged build a candidate competes only when the session's stance
+    (*stance_of*, a proxy; default the ticker's own *trend* label) is one it was tagged
+    for; *fill_x* takes each candidate's outcome at that slippage x (:attr:`SimCandidate.alt`).
     """
     infos = {t: i for t in names if (i := tickers[t].days.get(day)) is not None}
     eligible = [t for t in names if t in infos and infos[t].eligible]
@@ -1631,6 +1931,9 @@ def _decide(
     pool: list[tuple[tuple[object, ...], SimCandidate, float]] = []
     for t in active:
         menu = tickers[t].menus.get(profile, {}).get(day) or []
+        if any(sc.stances is not None for sc in menu):  # E7.20: a stance-tagged build
+            lab = str((stance_of or trend)[t].get(day, "unknown"))
+            menu = [sc for sc in menu if sc.stances is None or lab in sc.stances]
         if legacy:
             ranked = rank(
                 [c.candidate.inputs for c in menu],
@@ -1677,7 +1980,8 @@ def _decide(
         pool.sort(key=lambda e: e[0])  # type: ignore[arg-type, return-value]
     funnel["candidates"] = len(pool)
     sleeved = not legacy and settings.profile.has_sleeves
-    for i, (_, sc, liq) in enumerate(pool):
+    for i, (_, sc0, liq) in enumerate(pool):
+        sc = sc0.at_x(fill_x) if fill_x is not None and fill_x in sc0.alt else sc0
         c = sc.candidate
         t = c.underlying
         if sc.result is None:

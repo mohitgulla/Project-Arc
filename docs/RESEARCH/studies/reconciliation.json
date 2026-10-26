@@ -1,0 +1,50 @@
+{
+  "generated_at": "2026-10-19T04:48:14.672997-04:00",
+  "git_sha": "5f58fb9940e3ef2dd419012202c14dcf6f2d8a85",
+  "rows": [
+    {
+      "entry_actual": 8.825,
+      "entry_pred": 9.9688,
+      "exit_actual": -8.2,
+      "exit_pred": -6.9375,
+      "exit_reason_match": 0.0,
+      "kind": "long_call",
+      "n": 2,
+      "pnl_bias": null,
+      "pnl_tracking_error": null,
+      "regime": "transitional"
+    },
+    {
+      "entry_actual": 4.025,
+      "entry_pred": 3.5375,
+      "exit_actual": -3.44,
+      "exit_pred": -4.2375,
+      "exit_reason_match": 0.0,
+      "kind": "long_put",
+      "n": 2,
+      "pnl_bias": -1187.34,
+      "pnl_tracking_error": 1187.34,
+      "regime": "transitional"
+    },
+    {
+      "entry_actual": 4.31,
+      "entry_pred": 4.2628,
+      "exit_actual": -3.25,
+      "exit_pred": -3.6189,
+      "exit_reason_match": 0.125,
+      "kind": "vertical_debit",
+      "n": 8,
+      "pnl_bias": 50.81,
+      "pnl_tracking_error": 50.81,
+      "regime": "transitional"
+    }
+  ],
+  "sim_slippage_frac": 0.25,
+  "summary": [
+    "E7.22 live<->sim recon (docs/RESEARCH/live-sim-recon.md); paper fills are a lower bound on live slippage",
+    "x_eod per kind (fill vs EOD close book; sim assumes 0.25): long_call 0.574 [-1.778, 3.633] (\u00b12.706) n=5 insufficient, long_put 2.348 [0.739, 4.006] (\u00b11.633) n=7 insufficient, vertical_debit 1.460 [0.803, 2.134] (\u00b10.666) n=20 insufficient",
+    "sim-menu overlap of live picks: exact 0.122, kind present 1.000, n=49",
+    "exit replay: tracking error sum $-1,136.53 over 2 trades; same exit day 0.500",
+    "LLM stance agreement: trend_v2 0.194 (n=98), market_v2 0.000 (n=103), m1_direction n/a (n=0)"
+  ]
+}

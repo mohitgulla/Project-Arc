@@ -359,6 +359,7 @@ class TestRegistry:
             "universe_floor_trending",
             "universe.carryover.enabled",
             "universe.carryover.window_h",
+            "universe.carryover.window_sessions",  # D138
             "universe.carryover.w_today",
             "universe.trending.scoring",
         }

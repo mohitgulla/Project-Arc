@@ -2944,8 +2944,8 @@ _CARRYOVER_TUNABLES: tuple[Tunable, ...] = (
         key="universe.carryover.enabled",
         group=Group.UNIVERSE,
         type=_B,
-        description="Discovery + trending entries merge the previous run's names (48 h, 0.6 x "
-        "today + 0.4 x previous). Off = each run's list only.",
+        description="Discovery + trending entries merge the previous run's names (previous "
+        "trading session, 0.6 x today + 0.4 x previous). Off = each run's list only.",
         target=Target.UNIVERSE,
         risk=Risk.TRUE,
         path=("carryover", "enabled"),
@@ -2957,7 +2957,8 @@ _CARRYOVER_TUNABLES: tuple[Tunable, ...] = (
         group=Group.UNIVERSE,
         type=_I,
         description="The previous run is merged only when written this many hours before the new "
-        "run (strict clock hours; Monday's run has no previous run at 48).",
+        "run (strict clock hours; Monday's run has no previous run at 48). Used only when "
+        "window_sessions is 0 (off).",
         target=Target.UNIVERSE,
         risk=Risk.UP,
         unit="h",
@@ -2967,6 +2968,22 @@ _CARRYOVER_TUNABLES: tuple[Tunable, ...] = (
         hard_ceiling=96,
         aliases=("routines.universe.carryover.window_h", "carryover.window_h"),
         ref="D64",
+    ),
+    Tunable(
+        key="universe.carryover.window_sessions",
+        group=Group.UNIVERSE,
+        type=_I,
+        description="The previous run is merged only when written in the last this many trading "
+        "sessions (1 = the previous session, so Monday merges Friday). 0 = off: the clock-hour "
+        "window_h rule.",
+        target=Target.UNIVERSE,
+        risk=Risk.UP,
+        path=("carryover", "window_sessions"),
+        min=0,
+        max=3,
+        hard_ceiling=3,
+        aliases=("carryover.window_sessions",),
+        ref="D138",
     ),
     Tunable(
         key="universe.carryover.w_today",

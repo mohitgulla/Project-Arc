@@ -65,6 +65,10 @@ backtest:
   # E16.5 (D76): the same breakeven-realism filter as scanner.max_be_atr, ATR14 from
   # split-adjusted daily OHLC <= the decision day. null = off (E7.5 run unchanged).
   max_be_atr: null
+  # E7.20 (D125): E7.18's spread-to-premium cap for BT studies. Drop a candidate whose
+  # sum of leg quoted spreads / |net mid| is > this, before ranking (the next-ranked
+  # candidate refills the slot). null = off; backtest-only (no live rule).
+  max_spread_premium: null
   # E7.7 (D84): the point-in-time backtest universe, built by
   # `arc history universe build` (arc/backtest/universe.py) into
   # data/backtest_universe/<version>.parquet. Exactly target_size names, stocks and

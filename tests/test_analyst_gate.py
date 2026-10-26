@@ -569,6 +569,29 @@ def _bt_line(
     }  # fmt: skip
 
 
+def _fragile(line: dict[str, Any]) -> dict[str, Any]:
+    """E7.20 (D125): a robust study's line whose t1 wins the control cell only."""
+    v = line["verdicts"]["margin"]["t1"]
+    v |= {"robust_call": "fragile", "grid": {"call": "fragile", "cells_won": 5, "cells": 12}}
+    return line
+
+
+def test_fragile_holdout_is_never_evidence() -> None:
+    s = _studies(_bt_line(phase="dev", universe="c125"), _fragile(_bt_line(switch=False)),
+                 current={"BT-3": {"spec_hash": "a" * 64}})[0]  # fmt: skip
+    assert not s["holdout"]["passes"] and s["holdout"]["fragile"]
+    assert aa.study_evidence_class(s).startswith("C500 holdout: FRAGILE")
+    r = s["holdout"]["verdicts"][0]
+    assert "FRAGILE (wins the control cell, fails the robustness grid: won 5/12" in (
+        aa._verdict_text(r)
+    )
+    robust = _bt_line()
+    robust["verdicts"]["margin"]["t1"] |= {"robust_call": "switch"}
+    ok = _studies(robust, current={"BT-3": {"spec_hash": "a" * 64}})[0]
+    assert ok["holdout"]["passes"] and not ok["holdout"]["fragile"]
+    assert "SWITCH candidate (robust)" in aa._verdict_text(ok["holdout"]["verdicts"][0])
+
+
 def _studies(*lines: dict[str, Any], current: dict[str, dict[str, Any]] | None = None) -> list:
     return aa.study_overview(list(lines), current or {})
 
@@ -1076,12 +1099,12 @@ def test_owner_approve_drop_reprioritise_backlog(
     b = aa.empty_backlog()
     aa.apply_backlog(b, {"findings": [_prop(key="xp-proposal:a"),
                                       _prop(key="xp-proposal:b", p_success=0.6)]},
-                     "r", "t", used={1, 2})  # fmt: skip  # XP-1/XP-2: committed A/A specs
-    assert [e["id"] for e in b["items"].values()] == ["XP-3", "XP-4"]
+                     "r", "t", used={1, 2, 3})  # fmt: skip  # XP-1..3: committed A/A specs
+    assert [e["id"] for e in b["items"].values()] == ["XP-4", "XP-5"]
     aa.save_json(p.backlog, b)
     assert aa.main(["approve", "XP-9", "--approval", "slack:1791668051.305679"], p, NOW) == 2
     assert "no proposal XP-9" in capsys.readouterr().out
-    assert aa.main(["approve", "XP-3", "go"], p, NOW) == 2  # E21.4: the owner's Slack ts
+    assert aa.main(["approve", "XP-4", "go"], p, NOW) == 2  # E21.4: the owner's Slack ts
     assert "needs --approval slack:<ts>" in capsys.readouterr().out
     calls: list[tuple[str, Path, str]] = []
 
@@ -1095,41 +1118,41 @@ def test_owner_approve_drop_reprioritise_backlog(
 
     monkeypatch.setattr(aa, "adopt_proposal", fake_adopt)
     approval = ["--approval", "slack:1791668051.305679"]
-    assert aa.main(["approve", "XP-3", "go", *approval], p, NOW) == 0
+    assert aa.main(["approve", "XP-4", "go", *approval], p, NOW) == 0
     out = capsys.readouterr().out
-    spec_path = p.home / "proposals" / "XP-3.yaml"
-    assert calls == [("XP-3", spec_path, "slack:1791668051.305679")]
-    assert "XP-3 [registered], area exits, 4 arms" in out  # D121: same id, no "->"
+    spec_path = p.home / "proposals" / "XP-4.yaml"
+    assert calls == [("XP-4", spec_path, "slack:1791668051.305679")]
+    assert "XP-4 [registered], area exits, 4 arms" in out  # D121: same id, no "->"
     assert "Spec PR: https://github.com/o/r/pull/9" in out
-    assert "owner to start: `arc experiment start XP-3`" in out
+    assert "owner to start: `arc experiment start XP-4`" in out
     spec = yaml.safe_load(spec_path.read_text())
     # D121: the spec carries its reserved id; adopt registers it with --id
-    assert spec["id"] == "XP-3" and spec["kind"] == "ab" and spec["spec_version"] == 3
-    assert "--id XP-3" in spec_path.read_text()
+    assert spec["id"] == "XP-4" and spec["kind"] == "ab" and spec["spec_version"] == 3
+    assert "--id XP-4" in spec_path.read_text()
     assert spec["arms"]["control"] == {"overlay": {}}  # D108: control runs as its own arm
     from arc.experiments.models import ExperimentSpec
 
     adopted = ExperimentSpec.model_validate(spec)
     assert len(adopted.arms.treatments) == 3 and adopted.control_runs
     b = aa.load_backlog(p.backlog)
-    entry = aa.backlog_by_id(b, "XP-3")
-    assert entry["status"] == "registered" and entry["experiment_id"] == "XP-3"
-    assert aa.main(["approve", "XP-3", *approval], p, NOW) == 2  # already registered
-    assert "XP-3 is registered (XP-3); nothing to do" in capsys.readouterr().out
-    aa.backlog_by_id(b, "XP-3")["status"] = "approved"  # back to approved for the ranking part
+    entry = aa.backlog_by_id(b, "XP-4")
+    assert entry["status"] == "registered" and entry["experiment_id"] == "XP-4"
+    assert aa.main(["approve", "XP-4", *approval], p, NOW) == 2  # already registered
+    assert "XP-4 is registered (XP-4); nothing to do" in capsys.readouterr().out
+    aa.backlog_by_id(b, "XP-4")["status"] = "approved"  # back to approved for the ranking part
     aa.save_json(p.backlog, b)
-    assert aa.main(["reprioritise", "XP-3", "owner wants exits first"], p, NOW) == 0
-    assert "XP-3 -> rank #1" in capsys.readouterr().out
-    assert aa.main(["reprioritise", "XP-4", "why", "--score", "x"], p, NOW) == 2
-    assert aa.main(["drop", "XP-4", ""], p, NOW) == 2
-    assert aa.main(["drop", "XP-4", "superseded"], p, NOW) == 0
-    assert aa.backlog_by_id(aa.load_backlog(p.backlog), "XP-4")["status"] == "dropped"
+    assert aa.main(["reprioritise", "XP-4", "owner wants exits first"], p, NOW) == 0
+    assert "XP-4 -> rank #1" in capsys.readouterr().out
+    assert aa.main(["reprioritise", "XP-5", "why", "--score", "x"], p, NOW) == 2
+    assert aa.main(["drop", "XP-5", ""], p, NOW) == 2
+    assert aa.main(["drop", "XP-5", "superseded"], p, NOW) == 0
+    assert aa.backlog_by_id(aa.load_backlog(p.backlog), "XP-5")["status"] == "dropped"
     capsys.readouterr()
     assert aa.main(["backlog"], p, NOW) == 0
     out = capsys.readouterr().out
-    assert "#1 XP-3 [approved] exits: Take-profit level" in out and "XP-4 [dropped]" in out
-    # D121: a dropped number is never reused: the next proposal reserves XP-4
-    assert "next proposal id: XP-5 (reserved at record)" in out
+    assert "#1 XP-4 [approved] exits: Take-profit level" in out and "XP-5 [dropped]" in out
+    # D121: a dropped number is never reused: the next proposal reserves XP-6
+    assert "next proposal id: XP-6 (reserved at record)" in out
 
 
 def test_owner_commands_route_on_the_id_prefix(
@@ -1259,7 +1282,7 @@ def test_v1_backlog_migrates_to_xp_ids(tmp_path: Path, capsys: pytest.CaptureFix
     aa.save_json(p.backlog, v1)
     assert aa.main(["backlog"], p, NOW) == 0
     out = capsys.readouterr().out
-    assert "#1 XP-4 [proposed]" in out and not re.search(r"(?<!X)P-[0-9]", out)
+    assert "#1 XP-5 [proposed]" in out and not re.search(r"(?<!X)P-[0-9]", out)
     saved = aa.load_json(p.backlog, {})
     assert saved["version"] == 2
     assert {e["legacy_id"] for e in saved["items"].values()} == {"P-1", "P-2", "P-3"}
@@ -1541,6 +1564,10 @@ def test_checkpoints_and_drift_sections(tmp_path: Path) -> None:
         " · exit pred 1.60 vs actual 1.50 (-0.10) · exit-reason match 75%"
         " · P&L tracking error 18.40 (bias -12.00)"
     )
+    # E7.22: the recon's summary lines ride in the same slot, after the rows
+    doc = json.loads(rec.read_text())
+    rec.write_text(json.dumps({**doc, "summary": ["x_eod per kind: long_call 0.2", 3]}))
+    assert aa.drift_lines(rec)[2:] == ["- x_eod per kind: long_call 0.2"]
 
 
 @pytest.mark.parametrize(
@@ -1557,6 +1584,8 @@ def test_checkpoints_and_drift_sections(tmp_path: Path) -> None:
         (_studies(_bt_line()), _prop(), "no loadable spec file"),
         (_studies(_bt_line(switch=False), current={"BT-3": {"spec_hash": "a" * 64}}),
          _prop(), "holdout verdict is keep-control"),
+        (_studies(_fragile(_bt_line(switch=False)), current={"BT-3": {"spec_hash": "a" * 64}}),
+         _prop(), "holdout verdict is fragile (wins the control cell, fails the D125"),
         (BT3, _prop(spec=_spec(arms={"control": {}, "treatments": {
             f"t{i}": {"overlay": {"ranking": {"rank_by": v}}}
             for i, v in enumerate("abcd", 1)}})), "the proposal varies ['ranking.rank_by']"),
@@ -1725,6 +1754,27 @@ def test_study_spec_mirror_tracks_the_model() -> None:
     assert StudySpec.model_fields["universe_ladder"].get_default(call_default_factory=True) == (
         aa.STUDY_LADDER
     )
+    from arc.backtest.stance import PROXIES
+    from arc.backtest.study import StudyRobustness
+
+    assert tuple(p for p in PROXIES if p != "live_llm") == aa.STUDY_STANCE_PROXIES
+    assert set(aa.STUDY_ROBUSTNESS_KEYS) == set(StudyRobustness.model_fields)
+    assert aa.validate_study_spec  # the grid validator agrees with the model on samples:
+    for rob, ok in (
+        ({}, True),
+        ({"stance": ["trend_v2", "both"], "slippage_x": [0, 0.5]}, True),
+        ({"stance": ["noisy_0.2"]}, False),
+        ({"slippage_x": [0.25, 0.25]}, False),
+        ({"min_cell_win_frac": 0}, False),
+        ({"cells": 3}, False),
+    ):
+        assert (aa._validate_robustness(rob, "r") == []) is ok, rob
+        try:
+            StudyRobustness.model_validate(rob)
+            model_ok = True
+        except ValueError:
+            model_ok = False
+        assert model_ok is ok, rob
 
 
 @pytest.mark.usefixtures("_stub_views")

@@ -170,6 +170,12 @@ tunable). Per `(ticker, session d)` it serves only what was known at d's close:
   <T>/<day>/<key hash>.parquet`. Key = ticker, day, specs + costs + rate + stance/tilt
   + content of the day's chain and trailing closes, marks mode, exit + MC config,
   paths, seed, provider. Ranking/portfolio-only changes reuse every menu.
+  E7.20 (D125): the cached menu is stance- and slippage-independent. The stance filter
+  (and the robustness grid's stance proxies) is applied after the cache, at build/walk
+  time, and the grid's fill slippage x only reprices outcomes, so neither changes a key:
+  a grid build reads exactly the files an E7.18/E7.19 build wrote (golden test on the key
+  path). The one stance input left in the key is `backtest.direction_tilt > 0` (tilted
+  ranker keys), which a robustness grid refuses.
 
 No look-ahead is enforced by a test that multiplies every row after d by 3 and
 asserts the day-d view is unchanged. `data check` prints aggregates only (ThetaData

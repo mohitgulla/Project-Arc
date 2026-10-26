@@ -1230,7 +1230,7 @@ def _portfolio_context(
         settings,
         info=info,
         now=ctx.now,
-        halted=HaltSwitch(HaltRepo(ctx.conn)).opens_blocked(),  # E11.4: opens stop either way
+        halted=HaltSwitch(HaltRepo(ctx.conn), now=ctx.now).opens_blocked(),  # E11.4 / D137
         budget_tier=budget.tier.value,
         portfolio=portfolio,
         snapshot=ctx.snapshot,
@@ -1279,7 +1279,7 @@ def _held_and_recent(
             f"- {fp.ticker} {fp.stance.value} {fp.structure_type}: {when}"
             + (f"; admissible again {until:%b %d}" if until else "")
             + (
-                f" (or if spot moves {cfg.reprice_move_pct:.0%} from {r.spot} / regime changes)"
+                f" (or if spot moves {cfg.reprice_move_pct:.0%} from {r.spot:.2f} / regime changes)"
                 if not r.open_structure and r.spot is not None
                 else ""
             )
@@ -2785,7 +2785,7 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
     from arc.gate.halt import HaltSwitch
     from arc.store.repos import HaltRepo
 
-    halt_state = HaltSwitch(HaltRepo(ctx.conn)).state()
+    halt_state = HaltSwitch(HaltRepo(ctx.conn), now=ctx.now).state()
     if halt_state.opens_only and not halt_state.halted:
         return _research_halted(ctx, budget, notice, len(cands))
 
@@ -5164,7 +5164,7 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
     earnings = next_earnings(ctx.conn, list(by_ticker), _today(ctx))
     trend = market_trend(ctx.conn, settings, now=now)  # D131 (E28.2): None when off
     cmatrix = cluster_matrix(ctx.conn, settings, today=_today(ctx))  # D131 (E28.5)
-    switch = HaltSwitch(HaltRepo(ctx.conn))
+    switch = HaltSwitch(HaltRepo(ctx.conn), now=now)
     exits = exit_config(settings)  # D26: exits/costs yaml + control-panel overrides
     cost_model = cost_config(settings)
     ranking = ranking_config(settings)  # E6.4a: live Net EV floor (ranking.yaml filters)

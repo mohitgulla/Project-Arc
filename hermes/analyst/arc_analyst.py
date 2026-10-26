@@ -305,7 +305,12 @@ BT_CHECKPOINTS = Path("data") / "backtest_universe" / "checkpoints.json"  # E7.9
 # E7.14's backtest<->live reconciliation, aggregates only:
 # {"generated_at", "git_sha", "sim_slippage_frac",
 #  "rows": [{"kind", "regime", "n", "entry_pred", "entry_actual", "exit_pred", "exit_actual",
-#            "exit_reason_match", "pnl_tracking_error", "pnl_bias"}]}  ($ per unit / per trade)
+#            "exit_reason_match", "pnl_tracking_error", "pnl_bias"}],
+#  "summary": [str]}  ($ per unit / per trade). E7.22's `arc backtest recon` writes it
+# (rows = closed live trades replayed through the sim, `exit_reason_match` = the share
+# whose sim exit falls on live's exit day -- live's reasons (research_review) and the
+# sim's (take_profit/stop/dte_exit) are different vocabularies; summary = slippage x,
+# menu overlap, stance agreement).
 BT_RECONCILIATION = BT_REPORTS / "reconciliation.json"
 BT_SECTION_MAX = 4_000
 BT_CHECKPOINT_NAMES = ("c125", "c250", "c500")
@@ -327,6 +332,7 @@ STUDY_SPEC_KEYS = (
     "decision_rule",
     "primary_metric",
     "max_variants",
+    "robustness",
 )
 STUDY_SPEC_FILLED = {
     "id": "the id is assigned by `record` (BT-<next>); omit it",
@@ -1608,9 +1614,7 @@ def _hist(entry: dict, when: str, event: str, **extra) -> None:
 
 def backlog_by_id(backlog: dict, pid: str) -> dict | None:
     """The XP entry holding *pid* (``kind: bt`` studies: :func:`bt_by_id`)."""
-    return next(
-        (e for e in backlog["items"].values() if e.get("id") == pid and not is_bt(e)), None
-    )
+    return next((e for e in backlog["items"].values() if e.get("id") == pid and not is_bt(e)), None)
 
 
 def bt_by_id(backlog: dict, sid: str) -> dict | None:
@@ -2357,7 +2361,9 @@ def sync_bt_queue(backlog: dict, queue: dict, when: str) -> list[str]:
     concluded / stopped / failed, E26.3). Returns change lines."""
     out = []
     by_id = {
-        e.get("id"): e for e in backlog["items"].values() if is_bt(e) and e.get("status") != "dropped"
+        e.get("id"): e
+        for e in backlog["items"].values()
+        if is_bt(e) and e.get("status") != "dropped"
     }
     for q in queue.get("entries") or []:
         entry = by_id.get(q.get("id"))
@@ -2433,7 +2439,8 @@ def bt_queue_lines(queue_view: dict | None, errors: str = "") -> list[str]:
         s = (est.get(rung) or {}).get("seconds")
         parts.append(f"{rung} {s / 3600:.1f} h" if _is_num(s) else f"{rung} ?")
     out.append(
-        "- compute per rung (median of recent ledger runs x 1.2): " + ", ".join(parts)
+        "- compute per rung (median of recent ledger runs x 1.2): "
+        + ", ".join(parts)
         + "; one night = 11 h (21:30-08:30 ET). nights_needed = the ladder's sum / 11 h"
     )
     return out
@@ -2852,7 +2859,10 @@ def _run_summary(e: dict) -> dict:
         "spec_hash": e.get("spec_hash"),
         "overfit_warning": bool(e.get("overfit_warning")),
         "verdicts": rows,
+        # E7.20 (D125): a robust spec's `switch` is already its robust call, so a
+        # `fragile` arm (wins the control cell, fails the robustness grid) never passes
         "passes": any(bool(r.get("switch")) for r in rows),
+        "fragile": any(r.get("robust_call") == "fragile" for r in rows),
     }
 
 
@@ -2902,7 +2912,16 @@ def study_overview(entries: list[dict], current: dict[str, dict]) -> list[dict]:
 
 
 def _verdict_text(r: dict) -> str:
-    call = "SWITCH candidate" if r.get("switch") else "keep control"
+    if r.get("robust_call") == "fragile":
+        g = r.get("grid") or {}
+        call = (
+            f"FRAGILE (wins the control cell, fails the robustness grid: won "
+            f"{g.get('cells_won')}/{g.get('cells')} cells)"
+        )
+    elif r.get("switch"):
+        call = "SWITCH candidate (robust)" if r.get("robust_call") else "SWITCH candidate"
+    else:
+        call = "keep control"
     return (
         f"{r.get('profile')}/{r.get('treatment')} {call} diff {_num(r.get('pnl_diff'), '+,.0f')} "
         f"CI [{_num(r.get('ci_lo'), ',.0f')}, {_num(r.get('ci_hi'), ',.0f')}]"
@@ -2918,6 +2937,8 @@ def study_evidence_class(s: dict) -> str:
         return f"hypothesis only ({h.get('universe')} holdout, not C500)"
     if s.get("hash_changed"):
         return "NOT citable (spec edited since the holdout)"
+    if not h.get("passes") and h.get("fragile"):
+        return "C500 holdout: FRAGILE (fails the robustness grid; not evidence)"
     if not h.get("passes"):
         return "C500 holdout: keep control (evidence against)"
     return "C500 holdout PASS (may back an XP proposal)"
@@ -3026,6 +3047,8 @@ def drift_lines(path: Path) -> list[str]:
             f" · P&L tracking error {_num(r.get('pnl_tracking_error'), ',.2f')}"
             f" (bias {_num(r.get('pnl_bias'), '+,.2f')})"
         )
+    # E7.22 (D125): the live<->sim recon adds its aggregate summary to the same slot
+    out += [f"- {s}" for s in d.get("summary") or [] if isinstance(s, str)]
     return out
 
 
@@ -3180,7 +3203,12 @@ def check_bt_evidence(ref: str, spec, studies: list[dict]) -> list[str]:
             f"BT-REF: {ref}'s spec hash changed since its holdout "
             f"({str(h.get('spec_hash'))[:12]} -> {s['current_hash'][:12]})"
         )
-    if not h.get("passes"):
+    if not h.get("passes") and h.get("fragile"):
+        errs.append(
+            f"BT-REF: {ref}'s holdout verdict is fragile (wins the control cell, fails the "
+            "D125 robustness grid): not evidence"
+        )
+    elif not h.get("passes"):
         errs.append(f"BT-REF: {ref}'s holdout verdict is keep-control (no treatment passed D25)")
     want = set()
     for v in s.get("variables") or []:
@@ -3227,6 +3255,7 @@ def validate_study_spec(spec, where: str = "study_spec") -> list[str]:
     if "max_variants" in spec and (not isinstance(mv, int) or isinstance(mv, bool) or mv < 1):
         errs.append(f"{where}.max_variants must be an int >= 1")
     errs += _validate_study_period(spec.get("period"), f"{where}.period")
+    errs += _validate_robustness(spec.get("robustness"), f"{where}.robustness")
     arms = spec.get("arms")
     if not isinstance(arms, dict) or set(arms) - {"control", "treatments"}:
         return [*errs, f"{where}.arms holds control and treatments only"]
@@ -3275,6 +3304,43 @@ def validate_study_spec(spec, where: str = "study_spec") -> list[str]:
     return errs
 
 
+#: Mirrors arc.backtest.stance.StanceProxy minus the reserved E7.22 slot (a test pins it).
+STUDY_STANCE_PROXIES = ("trend_v2", "noisy_0.2", "noisy_0.35", "lagged_5", "market_v2", "both")
+STUDY_ROBUSTNESS_KEYS = ("stance", "slippage_x", "min_cell_win_frac", "max_cell_loss_ci")
+
+
+def _validate_robustness(rob, where: str) -> list[str]:
+    """E7.20 (D125): an optional robustness grid (``{}`` = the default 4 × 3 grid)."""
+    if rob is None:
+        return []
+    if not isinstance(rob, dict):
+        return [f"{where} must be a mapping ({{}} = the default D125 grid)"]
+    errs = []
+    extra = sorted(set(rob) - set(STUDY_ROBUSTNESS_KEYS))
+    if extra:
+        errs.append(f"{where} has unknown keys {extra}")
+    st = rob.get("stance")
+    if st is not None and (
+        not isinstance(st, list)
+        or "trend_v2" not in st
+        or len(set(st)) != len(st)
+        or any(s not in STUDY_STANCE_PROXIES for s in st)
+    ):
+        errs.append(f"{where}.stance must be a unique list of {STUDY_STANCE_PROXIES} with trend_v2")
+    xs = rob.get("slippage_x")
+    if xs is not None and (
+        not isinstance(xs, list)
+        or not xs
+        or len(set(xs)) != len(xs)
+        or any(isinstance(x, bool) or not isinstance(x, int | float) or not 0 <= x <= 1 for x in xs)
+    ):
+        errs.append(f"{where}.slippage_x must be distinct numbers in [0, 1]")
+    f = rob.get("min_cell_win_frac")
+    if f is not None and (isinstance(f, bool) or not isinstance(f, int | float) or not 0 < f <= 1):
+        errs.append(f"{where}.min_cell_win_frac must be in (0, 1]")
+    return errs
+
+
 def _validate_study_period(period, where: str) -> list[str]:
     if period is None:
         return []
@@ -3312,7 +3378,11 @@ def write_study_spec(run_dir: Path, sid: str, spec: dict, f: dict, aid: str, now
         "arms": spec["arms"],
         "profiles": spec["profiles"],
         "universe_ladder": list(STUDY_LADDER),
-        **{k: spec[k] for k in ("period", "primary_metric", "max_variants") if k in spec},
+        **{
+            k: spec[k]
+            for k in ("period", "primary_metric", "max_variants", "robustness")
+            if k in spec
+        },
     }
     path = run_dir / STUDY_SPECS_DIR / f"{sid}.yaml"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -3322,9 +3392,7 @@ def write_study_spec(run_dir: Path, sid: str, spec: dict, f: dict, aid: str, now
         f"{sid}` in #arc-analyst commits it to\n"
         f"# config/backtest_studies/{sid}.yaml (auto-merged PR) and queues it for the nightly\n"
         "# study runner: c125 dev -> c500 dev -> one c500 holdout (E26.2/E26.3, D121). The D25\n"
-        "# rule is the default.\n"
-        + json.dumps(doc, indent=2, sort_keys=True)
-        + "\n"
+        "# rule is the default.\n" + json.dumps(doc, indent=2, sort_keys=True) + "\n"
     )
     return path
 
@@ -3869,7 +3937,9 @@ def cmd_stop(p: Paths, sid: str, why: str, now: dt.datetime) -> int:
     (the runner obeys at its next check). A draft that was never committed is dropped
     with ``drop BT-<n>`` instead."""
     if owner_id_kind(sid) != "bt":
-        print("`stop` is for backtest studies (BT-<n>); an XP is stopped with `arc experiment stop`")
+        print(
+            "`stop` is for backtest studies (BT-<n>); an XP is stopped with `arc experiment stop`"
+        )
         return 2
     if not why.strip():
         print("stop needs a reason")
@@ -4661,8 +4731,10 @@ def build_verdict_context(
         *(xp_verdict_lines(p.xp_verdicts, decision["new_xp_verdicts"]) or ["- none"]),
         "",
         "## Backlog entries these verdicts touch (status changes go in backlog_drops)",
-        *([f"- {e['id']} [{e['status']}] key={e['key']} | {value_formula(e)}" for e in related]
-          or ["- none"]),  # fmt: skip
+        *(
+            [f"- {e['id']} [{e['status']}] key={e['key']} | {value_formula(e)}" for e in related]
+            or ["- none"]
+        ),  # fmt: skip
         "",
         f"## Open backlog (ids only; do not re-propose these; cap {BACKLOG_CAP} XP)",
         *(open_titles or ["- empty"]),
