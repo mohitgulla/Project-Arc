@@ -1,0 +1,11 @@
+# XP-2: invalid (K=3 A/A calibration on the margin profile, control arm plus three identical treatments).
+# Written by arc.experiments.verdicts (E21.4, PLAN D86) when the experiment stopped at 2026-10-26T10:51:38.631828-04:00 by U0C5KUMH28G.
+# Owner 2026-10-26 (#project-arc 1791573604.189879): every arm was halted from t0 by book_invariant (91 violations). The stopped XP-1 arm ledgers and the untagged owner-flatten fills from before t0 were still in the shared-account invariant. 0 orders in 4 sessions. Fix, then restart under a new id.
+# Not a promotion: this file only unlocks the spec's leaves (E21.1).
+experiment_id: XP-2
+verdict: invalid
+report_hash: d30362b67b530c0b1a7b909c9d99789db729a5a37c8f27fcac68e746e36fc576
+kind: aa
+area: other
+spec_hash: 6cc8edbd0957960c63c439019adbc3836a52ff275b8c3ca66a9f2be009c670ee
+reference: control
