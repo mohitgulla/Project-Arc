@@ -24,7 +24,7 @@ import subprocess
 import sys
 import time
 from concurrent.futures import ProcessPoolExecutor
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 import structlog
@@ -462,8 +462,12 @@ def walk(
     end: dt.date,
     stance_of: Mapping[str, pd.Series] | None = None,
     fill_x: float | None = None,
+    key_override: Any = None,
 ) -> SimRun:
-    """One profile × ranker walk over a :class:`SimBuild` (E7.20: one grid cell)."""
+    """One profile × ranker walk over a :class:`SimBuild` (E7.20: one grid cell).
+
+    *key_override*: :func:`arc.backtest.sim.run_sim`'s research re-ranking hook (E27.3).
+    """
     from arc.universe.config import MomentumConfig
 
     return run_sim(
@@ -481,6 +485,7 @@ def walk(
         vix_high=b.vix_high,
         stance_of=stance_of,
         fill_x=fill_x,
+        key_override=key_override,
     )
 
 
