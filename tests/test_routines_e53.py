@@ -169,6 +169,7 @@ class TestShippedDefaults:
             "monitor",
             "research",
             "scalp",
+            "scout.rescreen",  # E13.7c (D138): the 10:00 RTH re-screen (no LLM)
         ]
 
     def test_halt_skips_chain_but_not_monitor_auditor(self, shipped: RoutinesConfig) -> None:
@@ -1044,6 +1045,7 @@ def test_yaml_comment_overview_matches_config() -> None:
         "research_idea_pool", "research_compact_prompt", "exit_path",
     } == {
         "scout", "scalp", "research", "monitor", "broker.reconcile", "scorecard",
+        "scout.rescreen",  # E13.7c (D138): 10:00 RTH re-screen of the Scout's screen drops
         "broker",
         "positions.evaluate", "experiments.evaluate",
         "reconcile.intraday",  # E11.1 (D71): event-driven
