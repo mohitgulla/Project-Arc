@@ -96,6 +96,7 @@ from arc.backtest.sim_config import SimSettings
 from arc.backtest.strategies import StrategyKind, StrategySpec
 from arc.exits.policy import ExitReason, check_rules, lock_fires, resolve_rules
 from arc.features.correlation import MIN_OBS, WINDOW, return_corr
+from arc.features.vol import rolling_historical_vol
 from arc.gate.caps import alloc_pct_for, deployed_max_loss, open_risk
 from arc.gate.cluster import corr_key
 from arc.gate.inputs import AccountSnapshot, MarketSnapshot, MarketTrend, Portfolio, Position
@@ -112,6 +113,8 @@ from arc.gate.rules import (
     check_short_premium_regime,
     check_sleeve_positions,
     price_ceiling,
+    regime_blocked_kinds,
+    short_premium_kind,
 )
 from arc.models import Proposal, Structure
 from arc.pricing.bs import price_vectorized
@@ -214,7 +217,10 @@ SKIP_REASONS: tuple[str, ...] = (
     "gate_short_premium_regime",
     "gate_open_risk_cap",
     "gate_cluster_cap",
+    "vrp_cap",
 )
+#: E28.6 (D131): sessions in the HV leg of the sim-only VRP cap (IV30 - HV20).
+VRP_HV_WINDOW = 20
 #: E7.19: exit labels of the intraday-rule daily-range proxy (trades.csv exit_reason).
 PROXY_EXITS: dict[str, str] = {"stop": "stop_intraday_proxy", "profit_lock": "lock_intraday_proxy"}
 DEFAULT_SLEEVE = "default"
@@ -273,6 +279,16 @@ class DayInfo(BaseModel):
     liquidity: float = Field(0.0, description="That session's option contract volume")
     earnings_known: bool = True
     next_earnings: dt.date | None = None
+    # E28.6 (D131): the sim-only VRP cap's inputs (None = unknown: never skipped)
+    iv30: float | None = Field(None, description="E7.10 constant-maturity ATM IV30")
+    hv20: float | None = Field(None, description="20-session close-to-close vol")
+
+    @property
+    def vrp(self) -> float | None:
+        """IV30 - HV20 in vol points as a fraction, or ``None`` when either is unknown."""
+        if self.iv30 is None or self.hv20 is None:
+            return None
+        return self.iv30 - self.hv20
 
 
 class SimTicker(BaseModel):
@@ -1407,12 +1423,16 @@ def _tagged_menu(
     return per_day
 
 
-def _day_info(view: HistoryView, ticker: str, day: dt.date) -> DayInfo:
+def _day_info(
+    view: HistoryView, ticker: str, day: dt.date, hv20: Mapping[dt.date, float] | None = None
+) -> DayInfo:
     e = view.eligibility(ticker, day)
-    raw = view.load(ticker).raw_day(day)
+    h = view.load(ticker)
+    raw = h.raw_day(day)
     liq = float(pd.to_numeric(raw["volume"], errors="coerce").fillna(0).sum()) if len(raw) else 0.0
     etf = view.is_etf(ticker)
     ne: NextEarnings = view.next_earnings(ticker, day)
+    ivp = h.iv.get(day)
     return DayInfo(
         eligible=e.eligible,
         screen_pass=e.screen_pass,
@@ -1421,7 +1441,20 @@ def _day_info(view: HistoryView, ticker: str, day: dt.date) -> DayInfo:
         liquidity=liq,
         earnings_known=ne.basis != "unknown",
         next_earnings=ne.day,
+        iv30=None if ivp is None else ivp.iv30,
+        hv20=None if hv20 is None else hv20.get(day),
     )
+
+
+def hv20_series(closes: pd.Series, ohlc: pd.DataFrame | None) -> dict[dt.date, float]:
+    """E28.6: HV20 per session from the split-adjusted closes (raw when no OHLC file),
+    the E7.16 ``rv20`` definition (each value reads closes on or before its session)."""
+    s = ohlc["close"].dropna() if ohlc is not None and len(ohlc) else closes
+    s = s[s > 0].sort_index()
+    if len(s) < VRP_HV_WINDOW + 1:
+        return {}
+    hv = rolling_historical_vol(s.astype(float), VRP_HV_WINDOW)
+    return {d: float(v) for d, v in hv.items() if pd.notna(v)}
 
 
 class ViewSpec(BaseModel):
@@ -1506,7 +1539,8 @@ def sim_ticker_job(
     for t in tickers:
         h = view.load(t)
         sessions = [d for d in h.closes.index if spec.start <= d <= spec.end]
-        days = {d: _day_info(view, t, d) for d in sessions}
+        hv = hv20_series(h.closes, h.ohlc)
+        days = {d: _day_info(view, t, d, hv) for d in sessions}
         cache = MenuCache(cache_dir) if cache_dir is not None else None
         ctx = menu_cache_ctx(h, cfg, exits)
         quotes, splits = ticker_books(h, cfg, sim)
@@ -1759,14 +1793,34 @@ def market_trends(
 
 
 def _regime_blocked(
-    c: Candidate, d: Derived, trend: MarketTrend | None, settings: ArcSettings
+    c: Candidate,
+    d: Derived,
+    trend: MarketTrend | None,
+    settings: ArcSettings,
+    *,
+    vix: bool | None = None,
+    combine: str = "and",
 ) -> bool:
-    """The live ``short_premium_regime`` rule on one sim open (decided at the close)."""
+    """The live ``short_premium_regime`` rule on one sim open (decided at the close).
+
+    E28.6: *vix* (today's VIX-high flag, ``None`` = the live rule alone) adds the
+    sim-only VIX condition: ``and`` blocks only when the live rule and VIX both say so,
+    ``or`` when either does (on the rule's blocked kinds, with the rule enabled).
+    *combine* is ``sim.gate.regime_vix_combine``.
+    """
     legs = _legs(c.picks, c.underlying)
     proposal = Proposal.model_construct(structure=Structure.model_construct(legs=legs))
     now = dt.datetime.combine(c.day, dt.time(16, 0), tzinfo=ET)
     market = MarketSnapshot(market_trend=trend)
-    return bool(check_short_premium_regime(proposal, d, market, settings, now))
+    spy = bool(check_short_premium_regime(proposal, d, market, settings, now))
+    if vix is None:
+        return spy
+    if combine == "and":
+        return spy and vix
+    if not settings.regime_gate_enabled:
+        return False
+    kind = short_premium_kind(proposal, d)
+    return spy or (vix and kind is not None and kind in regime_blocked_kinds(settings))
 
 
 def _trade_row(
@@ -1894,6 +1948,7 @@ def run_sim(
     aliases: Mapping[str, str] | None = None,
     momentum: Mapping[dt.date, list[str]] | None = None,
     trends: Mapping[dt.date, MarketTrend] | None = None,
+    vix_high: Mapping[dt.date, bool] | None = None,
     stance_of: Mapping[str, pd.Series] | None = None,
     fill_x: float | None = None,
 ) -> SimRun:
@@ -1912,9 +1967,21 @@ def run_sim(
 
     D131 (E28.5): with ``cluster_cap_enabled`` the ``cluster_cap`` rule runs on the
     held book with point-in-time correlations from the walk's own closes (:class:`_PitCorr`).
+
+    E28.6 (D131): ``sim.gate`` overrides the D131 rule knobs on *settings* (``None``
+    fields keep them); *trends* must then be built for the overridden SMA length
+    (:func:`arc.backtest.sim_report.build_sim` does). With ``sim.gate.regime_vix_pct_above``
+    set, *vix_high* (:func:`arc.backtest.market_index.vix_high_days`) adds the sim-only VIX
+    condition to the regime rule (``regime_vix_combine``); a session missing from it counts
+    as VIX high. ``sim.vrp_max`` drops a name-day's credit candidates when its IV30 - HV20
+    is above the cap (skip ``vrp_cap``, once per name-day).
     """
     from arc.account_profiles import BuyingPower
 
+    settings = sim.gate.apply(settings)
+    if sim.gate.regime_vix_pct_above is not None and vix_high is None:
+        msg = "sim.gate.regime_vix_pct_above is set but no VIX percentile series was given"
+        raise ValueError(msg)
     names = sorted(tickers)
     start_eq = sim.equity if starting_equity is None else starting_equity
     legacy = sim.selection == "per_ticker"
@@ -1990,6 +2057,9 @@ def run_sim(
                 vol=vol,
                 regime=None if trends is None else (trends.get(day),),
                 pit_corr=pit_corr,
+                vix=None
+                if sim.gate.regime_vix_pct_above is None or vix_high is None
+                else vix_high.get(day, True),
                 stance_of=stance_of,
                 fill_x=fill_x,
             )
@@ -2045,13 +2115,15 @@ def _decide(
     vol: Mapping[str, pd.Series],
     regime: tuple[MarketTrend | None] | None = None,
     pit_corr: _PitCorr | None = None,
+    vix: bool | None = None,
     stance_of: Mapping[str, pd.Series] | None = None,
     fill_x: float | None = None,
 ) -> list[_Pos]:
     """One decision session: funnel → pool → open. Returns the new positions.
 
     *regime*: ``(today's market trend or None,)`` applies ``short_premium_regime``;
-    ``None`` skips the rule (no market reference loaded).
+    ``None`` skips the rule (no market reference loaded). *vix* (E28.6): today's VIX-high
+    flag for the sim-only regime variant; ``None`` = the live rule alone.
 
     E7.20: on a stance-tagged build a candidate competes only when the session's stance
     (*stance_of*, a proxy; default the ticker's own *trend* label) is one it was tagged
@@ -2104,9 +2176,15 @@ def _decide(
             pool.append(((), best, 0.0))
             continue
         liq = infos[t].liquidity if t in infos else 0.0
+        vrp = infos[t].vrp if t in infos else None
+        vrp_capped = sim.vrp_max is not None and vrp is not None and vrp > sim.vrp_max
         keyed = []
+        vrp_dropped = False
         for sc in menu:
             if sc.candidate.kind in sim.exclude_kinds:
+                continue
+            if vrp_capped and sc.candidate.inputs.credit:  # E28.6: sim-only VRP cap
+                vrp_dropped = True
                 continue
             if not passes_filters(sc.candidate.inputs, filters):
                 continue
@@ -2114,6 +2192,8 @@ def _decide(
             if k is not None:
                 keyed.append((k, sc))
         keyed.sort(key=lambda ks: ks[0])
+        if vrp_dropped:
+            skip(day, t, "vrp_cap", "", f"iv30 - hv20 {vrp:.4f} > {sim.vrp_max}")
         if not keyed:
             skip(day, t, "no_candidate")
             continue
@@ -2221,7 +2301,9 @@ def _decide(
             if sim.earnings_blackout and _blackout(c, d, tickers[t].days[day], settings):
                 skip(day, t, "blackout", c.inputs.key)
                 continue
-            if regime is not None and _regime_blocked(c, d, regime[0], settings):
+            if regime is not None and _regime_blocked(
+                c, d, regime[0], settings, vix=vix, combine=sim.gate.regime_vix_combine
+            ):
                 skip(day, t, "gate_short_premium_regime", c.inputs.key)
                 continue
             if pit_corr is not None:  # D131 (E28.5): the held names' cluster, as of `day`

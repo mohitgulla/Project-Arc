@@ -280,6 +280,9 @@ class SimBuild(BaseModel):
     #: D131 (E28.2): SPY close vs its SMA per session for short_premium_regime; None =
     #: the rule is off or no SPY closes in the data dir (rule not applied, logged).
     trends: dict[dt.date, MarketTrend] | None = None
+    #: E28.6 (D131): VIX-high flag per session for the sim-only regime variant
+    #: (``backtest.sim.gate.regime_vix_pct_above``); None = the variant is off.
+    vix_high: dict[dt.date, bool] | None = None
 
 
 def study_inputs(
@@ -381,7 +384,9 @@ def build_sim(
         job_kw |= {"stance_labels": frozenset(stance_labels), "alt_x": tuple(alt_x)}
     built = build_tickers(names, spec=spec, workers=workers, job_kw=job_kw)
     sessions = sorted({d for r in built.values() for d in r.closes.index if d >= start})
-    trends = _market_trends(data_dir, settings, sessions, start, end)
+    gated = bt.sim.gate.apply(settings)  # E28.6: the arm's SMA length / switch
+    trends = _market_trends(data_dir, gated, sessions, start, end)
+    vix_high = _vix_high(data_dir, bt.sim.gate.regime_vix_pct_above, sessions)
     return SimBuild(
         built=built,
         sessions=sessions,
@@ -392,6 +397,7 @@ def build_sim(
         rankers=rk,
         build_s=time.monotonic() - t0,
         trends=trends,
+        vix_high=vix_high,
     )
 
 
@@ -424,6 +430,29 @@ def _market_trends(
     return market_trends(closes, settings.regime_gate_ma, sessions)
 
 
+def _vix_high(
+    data_dir: Path, above: float | None, sessions: Sequence[dt.date]
+) -> dict[dt.date, bool] | None:
+    """E28.6 (D131): the sim-only VIX condition per session, read offline.
+
+    ``None`` when the knob is off. Refuses (``FileNotFoundError``) when it is on and
+    ``<data-dir>/market_index/VIX.parquet`` is missing, so a study arm never silently
+    runs the plain rule.
+    """
+    if above is None:
+        return None
+    from arc.backtest.market_index import index_path, read_index_closes, vix_high_days
+
+    closes = read_index_closes(data_dir, "VIX")
+    if closes is None or closes.empty:
+        msg = (
+            f"backtest.sim.gate.regime_vix_pct_above needs {index_path(data_dir, 'VIX')} "
+            "(run scripts/fetch_vix_history.py)"
+        )
+        raise FileNotFoundError(msg)
+    return vix_high_days(closes, sessions, above)
+
+
 def walk(
     b: SimBuild,
     *,
@@ -449,6 +478,7 @@ def walk(
         end=end,
         aliases=MomentumConfig().share_class_aliases,
         trends=b.trends,
+        vix_high=b.vix_high,
         stance_of=stance_of,
         fill_x=fill_x,
     )
