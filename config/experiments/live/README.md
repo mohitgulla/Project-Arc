@@ -41,6 +41,8 @@ file was removed and the live registry cleared; XP-1 is the K=3 calibration A/A
 (`xp1_aa_k3.yaml`, card E15.9), and ids are never reused after this. XP-1 was stopped by
 the owner on 2026-10-17 after D128 switched the default profile to margin mid-run; XP-2
 (`xp2_aa_margin.yaml`, PLAN D130) is the same K=3 A/A restarted on the margin profile.
+XP-2 was stopped `invalid` on 2026-10-26: a book-invariant scoping bug halted every arm from
+t0. After the E15.11 fix (D135) it restarts as XP-3 (`xp3_aa_margin.yaml`, PLAN D136).
 
 Fork at any persona (E13.12, D56): `arc experiment start` computes each arm's plan
 (`arc.experiments.runner.arm_plan`) and stores it on the arm's identity and in the

@@ -176,6 +176,7 @@ def test_committed_specs_are_all_covered() -> None:
     assert {f"{p.relative_to(REPO)}" for p in LIVE.glob("*.yaml")} == {
         "config/experiments/live/xp1_aa_k3.yaml",
         "config/experiments/live/xp2_aa_margin.yaml",  # D130: the margin A/A restart
+        "config/experiments/live/xp3_aa_margin.yaml",  # D136: XP-2 restarted after E15.11
     }
     assert not [p for p in V1_HASHES if p.startswith("config/")]
 
