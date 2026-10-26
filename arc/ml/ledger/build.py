@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 import structlog
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -77,7 +78,7 @@ from arc.structures import analyze
 from arc.structures.analytics import buying_power
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Iterator, Mapping, Sequence
 
     from arc.backtest.ranking import Candidate, RankingFile
     from arc.backtest.sim import ViewSpec
@@ -998,6 +999,78 @@ class HoldoutRefusedError(RuntimeError):
     """A ledger read asked for holdout rows without an explicit, logged reason."""
 
 
+def _check_split(split: str, allow_holdout: bool, reason: str | None) -> None:
+    if split not in ("dev", "holdout", "all"):
+        msg = f"split must be dev, holdout or all, not {split!r}"
+        raise ValueError(msg)
+    if split != "dev":
+        if not allow_holdout or not reason:
+            msg = "holdout rows need allow_holdout=True and a reason (D84)"
+            raise HoldoutRefusedError(msg)
+        log.warning("ml.ledger.holdout_read", reason=reason, split=split)
+
+
+def _vdir(root: Path) -> Path:
+    if (root / "manifest.json").exists() or root.name.startswith("v"):
+        return root
+    return version_dir(root)
+
+
+def iter_ledger(
+    root: Path,
+    *,
+    split: str = "dev",
+    profiles: Sequence[str] | None = None,
+    years: Sequence[int] | None = None,
+    columns: Sequence[str] | None = None,
+    allow_holdout: bool = False,
+    reason: str | None = None,
+) -> Iterator[tuple[str, int, pd.DataFrame]]:
+    """Yield ``(profile, year, rows)`` partitions of *split*, one at a time.
+
+    The bounded-memory reader for whole-ledger aggregates (the C500 ledger is ~56 M
+    rows, more than fits in RAM at once). Same D84 rule as :func:`load_ledger`. Years
+    wholly on the other side of the holdout boundary are skipped unread, and the
+    ``split`` column is always read, so a column projection can't leak holdout rows.
+    Columns a part file lacks are left out rather than failing the read.
+    """
+    _check_split(split, allow_holdout, reason)
+    vdir = _vdir(root)
+    cols = list(dict.fromkeys([*columns, "split"])) if columns else None
+    parts: dict[tuple[str, int], list[Path]] = {}
+    for f in sorted(vdir.glob("profile=*/year=*/part-*.parquet")):
+        p = f.parent.parent.name.removeprefix("profile=")
+        y = int(f.parent.name.removeprefix("year="))
+        if profiles is not None and p not in profiles:
+            continue
+        if years is not None and y not in years:
+            continue
+        if split == "dev" and dt.date(y, 1, 1) >= HOLDOUT_START:
+            continue
+        if split == "holdout" and dt.date(y, 12, 31) < HOLDOUT_START:
+            continue
+        parts.setdefault((p, y), []).append(f)
+    for (p, y), files in sorted(parts.items()):
+        frames = []
+        for f in files:
+            want = cols
+            if cols is not None:
+                have = set(pq.read_schema(f).names)
+                want = [c for c in cols if c in have]
+            df = pd.read_parquet(f, columns=want)
+            if not df.empty:
+                frames.append(df)
+        if not frames:
+            continue
+        out = pd.concat(frames, ignore_index=True)
+        if split != "all" and "split" in out:
+            out = out[out["split"] == split].reset_index(drop=True)
+        if columns and "split" not in columns:
+            out = out.drop(columns="split", errors="ignore")
+        if not out.empty:
+            yield p, y, out
+
+
 def load_ledger(
     root: Path,
     *,
@@ -1014,38 +1087,24 @@ def load_ledger(
     Holdout rows (D84) are refused unless ``allow_holdout=True`` with a *reason*,
     which is logged. With ``active.parquet`` present the cross-name context columns
     are joined; *features_root* (an E27.1 ``v<schema>`` dir) joins the feature panel
-    on (date, ticker).
+    on (date, ticker). Whole-ledger aggregates should use :func:`iter_ledger`.
     """
-    if split not in ("dev", "holdout", "all"):
-        msg = f"split must be dev, holdout or all, not {split!r}"
-        raise ValueError(msg)
-    if split != "dev":
-        if not allow_holdout or not reason:
-            msg = "holdout rows need allow_holdout=True and a reason (D84)"
-            raise HoldoutRefusedError(msg)
-        log.warning("ml.ledger.holdout_read", reason=reason, split=split)
-    vdir = (
-        root
-        if (root / "manifest.json").exists() or root.name.startswith("v")
-        else version_dir(root)
-    )
-    files = sorted(vdir.glob("profile=*/year=*/part-*.parquet"))
-    frames = []
-    for f in files:
-        p = f.parent.parent.name.removeprefix("profile=")
-        y = int(f.parent.name.removeprefix("year="))
-        if profiles is not None and p not in profiles:
-            continue
-        if years is not None and y not in years:
-            continue
-        df = pd.read_parquet(f, columns=list(columns) if columns else None)
-        if not df.empty:
-            frames.append(df)
+    vdir = _vdir(root)
+    frames = [
+        df
+        for _, _, df in iter_ledger(
+            vdir,
+            split=split,
+            profiles=profiles,
+            years=years,
+            columns=columns,
+            allow_holdout=allow_holdout,
+            reason=reason,
+        )
+    ]
     out = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
     if out.empty:
         return out
-    if split != "all" and "split" in out:
-        out = out[out["split"] == split].reset_index(drop=True)
     act = vdir / "active.parquet"
     if act.exists() and {"date", "ticker"} <= set(out.columns):
         a = pd.read_parquet(act)
@@ -1058,31 +1117,44 @@ def load_ledger(
 
 
 def ledger_stats(root: Path, *, split: str = "dev", reason: str | None = None) -> str:
-    """Counts, label base rates per profile/sleeve/kind/year and mean ``r_net`` per x."""
-    df = load_ledger(
-        root,
-        split=split,
-        allow_holdout=split != "dev",
-        reason=reason,
-    )
-    if df.empty:
+    """Counts, label base rates per profile/sleeve/kind/year and mean ``r_net`` per x.
+
+    Streams one ``(profile, year)`` partition at a time (:func:`iter_ledger`): every
+    group is inside one partition, so the per-partition aggregates are exact.
+    """
+    groups: list[pd.DataFrame] = []
+    rows = 0
+    wsum = 0.0
+    xs: list[str] = []
+    rsum: dict[str, float] = {}
+    rcnt: dict[str, int] = {}
+    for _, _, df in iter_ledger(root, split=split, allow_holdout=split != "dev", reason=reason):
+        df["year"] = pd.to_datetime(df["date"]).dt.year
+        if not xs:
+            xs = sorted(
+                c.removeprefix("label_r_net_") for c in df.columns if c.startswith("label_r_net_")
+            )
+        rows += len(df)
+        wsum += float(df.get("sample_weight", pd.Series(1, index=df.index)).astype(float).sum())
+        agg: dict[str, tuple[str, str]] = {"n": ("key", "size")}
+        for tg in xs:
+            agg[f"r_{tg}"] = (f"label_r_net_{tg}", "mean")
+            agg[f"win_{tg}"] = (f"label_win_{tg}", "mean")
+            col = df[f"label_r_net_{tg}"]
+            rsum[tg] = rsum.get(tg, 0.0) + float(col.sum())
+            rcnt[tg] = rcnt.get(tg, 0) + int(col.notna().sum())
+        agg["stop"] = ("label_hit_stop", "mean")
+        agg["tp"] = ("label_hit_tp", "mean")
+        agg["days"] = ("label_days_held", "mean")
+        groups.append(df.groupby(["profile", "sleeve", "kind", "year"]).agg(**agg))  # type: ignore[call-overload]
+    if not rows:
         return f"ledger {root}: no rows ({split})\n"
-    df["year"] = pd.to_datetime(df["date"]).dt.year
-    xs = sorted(c.removeprefix("label_r_net_") for c in df.columns if c.startswith("label_r_net_"))
-    w = df.get("sample_weight", pd.Series(1, index=df.index)).astype(float)
-    lines = [f"ledger {root} · split {split} · {len(df)} rows · weight sum {w.sum():.0f}"]
-    agg: dict[str, tuple[str, str]] = {"n": ("key", "size")}
-    for tg in xs:
-        agg[f"r_{tg}"] = (f"label_r_net_{tg}", "mean")
-        agg[f"win_{tg}"] = (f"label_win_{tg}", "mean")
-    agg["stop"] = ("label_hit_stop", "mean")
-    agg["tp"] = ("label_hit_tp", "mean")
-    agg["days"] = ("label_days_held", "mean")
-    g = df.groupby(["profile", "sleeve", "kind", "year"]).agg(**agg).round(3)  # type: ignore[call-overload]
+    g = pd.concat(groups).sort_index().round(3)
+    lines = [f"ledger {root} · split {split} · {rows} rows · weight sum {wsum:.0f}"]
     with pd.option_context("display.width", 250, "display.max_rows", 500):
         lines.append(g.to_string())
     lines.append(
-        "mean r_net per x: " + ", ".join(f"{tg}={df[f'label_r_net_{tg}'].mean():+.4f}" for tg in xs)
+        "mean r_net per x: " + ", ".join(f"{tg}={rsum[tg] / max(rcnt[tg], 1):+.4f}" for tg in xs)
     )
     return "\n".join(lines) + "\n"
 

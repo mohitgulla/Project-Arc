@@ -200,12 +200,17 @@ def _ledger(args: argparse.Namespace) -> int:
         sys.stdout.write(ledger_stats(out, split=args.split, reason=args.reason).rstrip() + "\n")
         return 0
     if args.ledger_command == "report":
-        from arc.ml.ledger.build import load_ledger, version_dir
-        from arc.ml.ledger.report import render_report
+        from arc.ml.ledger.build import iter_ledger, version_dir, xtag
+        from arc.ml.ledger.report import ReportAccumulator, report_columns
 
         vdir = out if (out / "manifest.json").exists() else version_dir(out)
         manifest = json.loads((vdir / "manifest.json").read_text())
-        Path(args.doc).write_text(render_report(load_ledger(vdir), manifest))
+        xs = [xtag(float(x)) for x in manifest.get("xs", [0.0, 0.25, 0.5])]
+        acc = ReportAccumulator(xs)
+        for profile, year, part in iter_ledger(vdir, columns=report_columns(xs)):
+            acc.add(part)
+            sys.stderr.write(f"report: {profile} {year} {len(part):,} rows\n")
+        Path(args.doc).write_text(acc.render(manifest))
         sys.stdout.write(f"wrote {args.doc}\n")
         return 0
     from arc.backtest.costs import load_cost_model

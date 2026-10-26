@@ -13,6 +13,7 @@ import datetime as dt
 import math
 from typing import TYPE_CHECKING
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -304,3 +305,124 @@ def test_report_rank_ic_sign_and_cost_share() -> None:
     md = render_report(df, {"universe": "c125"})
     assert "Rank IC" in md
     assert "managed_net_ev" in md
+
+
+def _synthetic_ledger(seed: int = 7) -> pd.DataFrame:
+    """Random dev/holdout rows over two profiles, three years, stocks and ETFs, with
+    ties and NaNs in the ranker keys (what the real ledger carries)."""
+    rng = np.random.default_rng(seed)
+    rows = []
+    for year in (2022, 2023, 2024):
+        for i in range(6):
+            day = dt.date(year, 3, 1) + dt.timedelta(days=i)
+            for profile in ("margin", "cash_debit"):
+                for sleeve in ("short", "swing"):
+                    for j in range(int(rng.integers(3, 12))):
+                        r = float(rng.normal(-0.1, 0.5))
+                        rows.append(
+                            {
+                                "date": day,
+                                "ticker": f"T{j % 4}",
+                                "profile": profile,
+                                "sleeve": sleeve,
+                                "kind": ("bull_put", "long_call")[j % 2],
+                                "split": "holdout" if year >= 2024 else "dev",
+                                "key": f"{day}-{profile}-{sleeve}-{j}",
+                                "anchor_delta": float(rng.uniform(0.05, 0.9)),
+                                "sample_weight": 1,
+                                "ctx_etf": j % 4 == 3,
+                                "ctx_in_topk": j < 2,
+                                "managed_net_ev": float(rng.integers(0, 4)),
+                                "credit_width": (
+                                    float("nan") if profile == "cash_debit" else rng.normal()
+                                ),
+                                "debit_width": float(rng.normal()),
+                                "ev_proxy": float(rng.normal()),
+                                "rorc_day": r + float(rng.normal(0, 0.2)),
+                                "static_net_ev": float(rng.normal()),
+                                "label_r_net_x000": r + 0.1,
+                                "label_r_net_x025": r,
+                                "label_win_x000": r + 0.1 > 0,
+                                "label_win_x025": r > 0,
+                                "label_r_at_mid": r + 0.12,
+                                "label_hit_stop": r < -0.5,
+                                "label_hit_tp": r > 0.3,
+                                "label_days_held": float(rng.integers(1, 20)),
+                                "label_exit_reason": ("tp", "stop", "expiry")[j % 3],
+                            }
+                        )
+    return pd.DataFrame(rows)
+
+
+def _write_partitions(tmp: Path, df: pd.DataFrame) -> Path:
+    v = tmp / "v1"
+    for (p, y), g in df.groupby(["profile", pd.to_datetime(df["date"]).dt.year]):
+        for t, gt in g.groupby("ticker"):
+            f = v / f"profile={p}" / f"year={y}" / f"part-{t}.parquet"
+            f.parent.mkdir(parents=True, exist_ok=True)
+            gt.to_parquet(f, index=False)
+    return v
+
+
+def test_vectorised_daily_ic_equals_naive_spearman() -> None:
+    from arc.ml.ledger.report import RANK_KEYS, daily_ic
+
+    df = _synthetic_ledger()
+    got = daily_ic(df).set_index(["profile", "sleeve", "date", "key"])["ic"]
+    n_checked = 0
+    for (p, s, d), g in df.groupby(["profile", "sleeve", "date"]):
+        for k in RANK_KEYS:
+            sub = g[[k, "label_r_net_x025"]].dropna()
+            if len(sub) < 5 or sub[k].nunique() < 2:
+                assert (p, s, d, k) not in got.index
+                continue
+            want = sub[k].rank().corr(sub["label_r_net_x025"].rank())
+            assert got[(p, s, d, k)] == pytest.approx(want, abs=1e-9)
+            n_checked += 1
+    assert n_checked > 50
+
+
+def test_streamed_report_equals_one_pass_and_never_reads_holdout(tmp_path: Path) -> None:
+    """The CLI aggregates one (profile, year) partition at a time, reading only the
+    report columns; the result equals one pass over all dev rows, and a column
+    projection without ``split`` still cannot pull holdout rows in."""
+    from arc.ml.ledger.build import iter_ledger
+    from arc.ml.ledger.report import ReportAccumulator, report_columns
+
+    df = _synthetic_ledger()
+    v = _write_partitions(tmp_path, df)
+    xs = ["x000", "x025"]
+    cols = report_columns(xs)
+    parts = list(iter_ledger(v, columns=cols))
+    assert {y for _, y, _ in parts} == {2022, 2023}
+    assert all("split" not in p.columns for _, _, p in parts)
+    acc = ReportAccumulator(xs)
+    for _, _, p in parts:
+        acc.add(p)
+    dev = df[df["split"] == "dev"].reset_index(drop=True)
+    one = ReportAccumulator(xs)
+    one.add(dev[cols])
+    assert acc.rows == one.rows == len(dev)
+    a, b = acc.tables(), one.tables()
+    for name in ("base", "ic", "cost", "head", "kind_year", "exit"):
+        pd.testing.assert_frame_equal(a[name], b[name], check_exact=False, rtol=1e-9)
+    assert set(a["ic"]["cls"].astype(str)) == {"All", "Stocks", "ETFs"}
+    md = acc.render({"universe": "test", "xs": [0.0, 0.25]})
+    assert "| ETFs |" in md
+    assert "years [2022, 2023]" in md
+    assert "| 2024 |" not in md
+    # load_ledger with a projection that omits ``split`` keeps the D84 filter.
+    got = load_ledger(v, columns=["date", "key"])
+    assert set(got["key"]) == set(dev["key"])
+
+
+def test_streamed_stats_counts_dev_rows_only(tmp_path: Path) -> None:
+    from arc.ml.ledger.build import ledger_stats
+
+    df = _synthetic_ledger()
+    v = _write_partitions(tmp_path, df)
+    dev = df[df["split"] == "dev"]
+    out = ledger_stats(v)
+    assert f"{len(dev)} rows" in out
+    assert f"x025={dev['label_r_net_x025'].mean():+.4f}" in out
+    assert "2024" not in out
