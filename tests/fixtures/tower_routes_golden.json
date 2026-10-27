@@ -768,14 +768,16 @@
      "next_expiry": null,
      "readers": [
       "Trending tier",
-      "Scout"
+      "Scout",
+      "Scout re-screen"
      ],
      "remaining_fraction": null,
      "ttl": "1 session",
      "writers": [
       "Momentum tier",
       "Trending tier",
-      "Scout"
+      "Scout",
+      "Scout re-screen"
      ]
     },
     {
@@ -789,7 +791,8 @@
      "latest_subject": null,
      "next_expiry": null,
      "readers": [
-      "Scout"
+      "Scout",
+      "Scout re-screen"
      ],
      "remaining_fraction": null,
      "ttl": "1 session",
@@ -798,6 +801,7 @@
       "Momentum tier",
       "Trending tier",
       "Scout",
+      "Scout re-screen",
       "Scalp"
      ]
     },
@@ -812,6 +816,7 @@
      "latest_subject": null,
      "next_expiry": null,
      "readers": [
+      "Scout re-screen",
       "Trade Loop",
       "Quant exit"
      ],

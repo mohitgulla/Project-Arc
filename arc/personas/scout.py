@@ -644,9 +644,36 @@ def discovery_members(
     the market reference; *screen* runs the ``loose`` liquidity screen (called only
     for names that passed every cheaper rule, so no market data is spent on them).
     """
+    return discovery_rules(
+        out.discovery,
+        calls,
+        higher_tier=higher_tier,
+        excluded=excluded,
+        floor=floor,
+        max_discovery=max_discovery,
+        screen=screen,
+    )
+
+
+def discovery_rules(
+    names: Sequence[str],
+    calls: Sequence[ScoutTickerCall],
+    *,
+    higher_tier: Mapping[str, str],
+    excluded: frozenset[str],
+    floor: float,
+    max_discovery: int,
+    screen: Callable[[str], ScreenResult],
+    taken: int = 0,
+) -> DiscoveryResult:
+    """The discovery rules of :func:`discovery_members` over *names* in order.
+
+    *taken* (D138, ``scout.rescreen``) counts names already in today's discovery tier
+    against *max_discovery*, so a re-screen only fills the room the 06:00 run left.
+    """
     by_ticker = {c.ticker: c for c in calls}
     res = DiscoveryResult()
-    for raw in out.discovery:
+    for raw in names:
         sym = raw.strip().upper()
         if sym in res.screened_out or sym in res.tickers:
             continue
@@ -665,7 +692,7 @@ def discovery_members(
             res.screened_out[sym] = f"{DROP_BELOW_FLOOR}: {call.confidence:.2f} < {floor:.2f}"
             res.journal.append((sym, DROP_BELOW_FLOOR, f"{call.confidence:.2f} < {floor:.2f}"))
             continue
-        if len(res.members) >= max_discovery:
+        if taken + len(res.members) >= max_discovery:
             res.screened_out[sym] = DROP_OVER_CAP
             continue
         result = screen(sym)

@@ -2767,13 +2767,11 @@ def scout_persona(
     from arc.pipeline.store import PersonaCallRepo, sha256
     from arc.slack.digests import TrendingFact, scout_card
     from arc.store.repos import CandidateRepo
-    from arc.universe.carryover import apply_carryover, journal_carried
     from arc.universe.config import universe_config
     from arc.universe.guard import UniverseGuard
     from arc.universe.tiers import (
         Tier,
         TierMember,
-        UniverseTierPayload,
         load_tier_inputs,
         market_reference,
         tier_floor,
@@ -2955,33 +2953,7 @@ def scout_persona(
         )
         for i, c in enumerate(disc.members, 1)
     ]
-    # D64 (E14.7): merge the previous run's discovery entry (<= 48 h, earlier ET day);
-    # carried names are re-checked against today's exclusions only (never re-screened)
-    # and get no candidate row (they are in the active list).
-    tier_payload, merged = apply_carryover(
-        ctx.conn,
-        UniverseTierPayload(
-            tier=Tier.DISCOVERY,
-            members=members,
-            fetched_at=ctx.now,
-            source="scout",
-            digest=sha256(",".join(disc.tickers)),
-        ),
-        now=ctx.now,
-        cfg=ucfg.carryover,
-        size=ucfg.sizes.discovery,
-        excluded=lambda sym: "excluded" if sym in excluded else None,
-    )
-    journal_carried(
-        ctx.conn,
-        merged,
-        tier=Tier.DISCOVERY,
-        at=ctx.now,
-        run_id=ctx.run_id,
-        chain_run_id=ctx.chain_run_id,
-    )
-    ctx.write("universe_tier", Tier.DISCOVERY.value, tier_payload)
-    active = resolve_universe(ctx)
+    active = _write_discovery_tier(ctx, members, excluded=excluded)
 
     # -- candidates (feed=scout) -------------------------------------------
     membership = tier_membership(ctx.conn, settings, ctx.now)  # discovery now written
@@ -3169,6 +3141,281 @@ def _scout_note(ctx: JobContext, out: ScoutReadPayload, session: str, about: lis
     ctx.write("note", "market", payload)
 
 
+def _write_discovery_tier(
+    ctx: JobContext,
+    members: list[Any],
+    *,
+    excluded: frozenset[str],
+    ttl: Ttl | None = None,
+) -> ActiveUniverse:
+    """The one discovery-tier writer: the Scout (06:00) and ``scout.rescreen`` (D138).
+
+    *members* are this run's own names (``score_today`` set, ranked). D64 (E14.7): the
+    previous run's discovery entry (earlier ET day, inside the carry-over window) is
+    merged in; carried names are re-checked against today's exclusions only (never
+    re-screened) and get no candidate row (they are in the active list). Writes the
+    ``universe_tier discovery`` entry (*ttl* can only shorten the job's policy, see
+    :meth:`JobContext.write`) and re-resolves the active list.
+    """
+    from arc.pipeline.store import sha256
+    from arc.universe.carryover import apply_carryover, journal_carried
+    from arc.universe.config import universe_config
+    from arc.universe.tiers import Tier, UniverseTierPayload
+
+    ucfg = universe_config(ctx.settings)
+    tier_payload, merged = apply_carryover(
+        ctx.conn,
+        UniverseTierPayload(
+            tier=Tier.DISCOVERY,
+            members=members,
+            fetched_at=ctx.now,
+            source="scout",
+            digest=sha256(",".join(m.ticker for m in members)),
+        ),
+        now=ctx.now,
+        cfg=ucfg.carryover,
+        size=ucfg.sizes.discovery,
+        excluded=lambda sym: "excluded" if sym in excluded else None,
+    )
+    journal_carried(
+        ctx.conn,
+        merged,
+        tier=Tier.DISCOVERY,
+        at=ctx.now,
+        run_id=ctx.run_id,
+        chain_run_id=ctx.chain_run_id,
+    )
+    ctx.write("universe_tier", Tier.DISCOVERY.value, tier_payload, ttl=ttl)
+    return resolve_universe(ctx)
+
+
+# ---------------------------------------------------------------------------
+# E13.7c (D138): RTH re-screen of the Scout's 06:00 liquidity-screen drops
+# ---------------------------------------------------------------------------
+
+SCOUT_RESCREEN_JOB = "scout.rescreen"
+#: ``reason_text`` prefix of a re-screen's ``scout_discovery_screened_out`` rows.
+RESCREEN_PREFIX = "rescreen:"
+#: Jobs whose same-day ``universe_tier discovery`` entry is today's Scout tier.
+DISCOVERY_WRITERS: frozenset[str] = frozenset({SCOUT_JOB, SCOUT_RESCREEN_JOB})
+
+
+def scout_rescreen(ctx: JobContext, guard: UniverseGuard | None = None) -> JobResult:
+    """``scout.rescreen`` (E13.7c, D138): re-screen, in RTH, today's Scout discovery
+    nominations the 06:00 run dropped **only** on the liquidity screen. No LLM.
+
+    The candidate set is today's ``scout_read.screened_out`` names whose reason starts
+    with ``screened_out:`` (nomination order) and that are not in today's discovery
+    tier yet; nothing else is ever revived. Each goes through the Scout's own rules
+    (:func:`arc.personas.scout.discovery_rules`: higher tier, exclusions, floor, the
+    discovery cap counting today's own members) and the ``loose`` screen. Passed names
+    are appended to today's own discovery members (score = the call's confidence) and
+    written through :func:`_write_discovery_tier` (D64 carry-over, active list
+    re-resolved) with the 06:00 entry's expiry. A screen that hits a data error (401
+    etc.) admits nothing for that name and the summary says ``data error``. Journal
+    rows are idempotent per ET day; ``scout_read`` is never changed. *guard* overrides
+    the universe guard (tests).
+    """
+    import datetime as dt
+
+    from arc.context.kinds import ScoutReadPayload
+    from arc.context.ttl import Ttl as _Ttl
+    from arc.personas.scout import DROP_SCREENED, discovery_rules
+    from arc.pipeline.market import ETF_UNDERLYINGS
+    from arc.universe.config import universe_config
+    from arc.universe.guard import UniverseGuard
+    from arc.universe.tiers import Tier, TierMember, market_reference, tier_membership
+
+    today = ctx.now.astimezone(ET).date()
+    read_entry = ctx.snapshot.latest("scout_read", "session")
+    read = ScoutReadPayload.model_validate(read_entry.payload) if read_entry else None
+    if read_entry is None or read is None or read.session != today.isoformat():
+        raise JobSkippedError("no scout_read today")
+
+    funnel = ctx.routines.funnel.scout
+    # nomination order: the stored screened_out map is key-sorted (canonical JSON), so
+    # order by the read's ticker_calls (the reply's own order), then by ticker
+    call_rank = {c.ticker: i for i, c in enumerate(read.ticker_calls)}
+    dropped = sorted(
+        (s for s, why in read.screened_out.items() if why.startswith(f"{DROP_SCREENED}:")),
+        key=lambda s: (call_rank.get(s, len(call_rank)), s),
+    )
+    tier_entry = next(
+        (
+            e
+            for e in reversed(
+                ContextStore(ctx.conn).query(
+                    as_of=ctx.now, kinds=["universe_tier"], subjects=[Tier.DISCOVERY.value]
+                )
+            )
+            if e.produced_by in DISCOVERY_WRITERS and e.valid_from.astimezone(ET).date() == today
+        ),
+        None,
+    )
+    current = (
+        sorted(
+            (TierMember.model_validate(m) for m in tier_entry.payload.get("members", [])),
+            key=lambda m: m.rank,
+        )
+        if tier_entry is not None
+        else []
+    )
+    own = [  # this day's own names; carried ones re-merge through the carry-over
+        m.model_copy(update={"rank": i})
+        for i, m in enumerate((m for m in current if m.score_today is not None), 1)
+    ]
+    todo = [s for s in dropped if s not in {m.ticker for m in current}]
+
+    admitted: list[str] = []
+    failed: dict[str, str] = {}
+    data_errors: dict[str, str] = {}
+    if todo:
+        settings = ctx.settings
+        membership = tier_membership(ctx.conn, settings, ctx.now)
+        higher = {
+            t: tier.value for t, tier in membership.items() if tier in (Tier.CORE, Tier.MOMENTUM)
+        }
+        excluded = frozenset(ETF_UNDERLYINGS | set(market_reference(settings)))
+        if guard is None:
+            guard = UniverseGuard.from_settings(settings, now=ctx.now, conn=ctx.conn)
+        screener = guard
+
+        def screen(sym: str) -> Any:
+            res = screener.screen(sym, "loose")
+            if res.metrics.error:
+                data_errors[sym] = res.detail()
+            return res
+
+        rules = discovery_rules(
+            todo,
+            read.ticker_calls,
+            higher_tier=higher,
+            excluded=excluded,
+            floor=universe_config(settings).floors.discovery,
+            max_discovery=funnel.max_discovery,
+            screen=screen,
+            taken=len(own),
+        )
+        passed = [c for c in rules.members if c.ticker not in data_errors]
+        admitted = [c.ticker for c in passed]
+        failed = dict(rules.screened_out)  # rule reason, e.g. "screened_out: ATM spread …"
+        _rescreen_journal(ctx, read_entry.id, passed, failed)
+        if passed:
+            stamp = f"{ctx.now.astimezone(ET):%H:%M}"
+            new = [
+                TierMember(
+                    ticker=c.ticker,
+                    tier=Tier.DISCOVERY,
+                    rank=len(own) + i,
+                    source="scout",
+                    reason=(
+                        f"{c.stance.value} · {', '.join(c.origins)} · rescreen {stamp} "
+                        f"· score {c.confidence:.2f}"
+                    ),
+                    as_of=today,
+                    score=round(c.confidence, 4),
+                    score_today=round(c.confidence, 4),
+                    runs=[today],
+                    stance=c.stance.value,
+                    origins=list(c.origins),
+                )
+                for i, c in enumerate(passed, 1)
+            ]
+            # a re-screened name expires with the 06:00 Scout entry (same TTL)
+            ttl = None
+            if tier_entry is not None and tier_entry.expires_at is not None:
+                left = tier_entry.expires_at - ctx.now
+                if left > dt.timedelta(0):
+                    ttl = _Ttl(duration=left)
+            _write_discovery_tier(ctx, [*own, *new], excluded=excluded, ttl=ttl)
+            own = [*own, *new]
+        if data_errors:
+            log.warning("scout.rescreen_data_error", errors=data_errors)
+
+    summary = (
+        f"rescreen {len(dropped)} dropped → +{len(admitted)} admitted"
+        + (f" ({', '.join(admitted)})" if admitted else "")
+        + f" · discovery {len(own)}/{funnel.max_discovery}"
+        + (f" · data error ({', '.join(sorted(data_errors))})" if data_errors else "")
+    )
+    return JobResult(
+        summary=summary,
+        metrics={
+            "dropped": len(dropped),
+            "rescreened": len(todo),
+            "admitted": admitted,
+            "failed": sorted(failed),
+            "data_errors": sorted(data_errors),
+            "warning": bool(data_errors),
+            "discovery_fill": len(own),
+            "max_discovery": funnel.max_discovery,
+        },
+    )
+
+
+def _rescreen_journal(
+    ctx: JobContext, read_id: str, passed: list[Any], failed: Mapping[str, str]
+) -> int:
+    """``scout_discovery_rescreened`` per admitted name, ``scout_discovery_screened_out``
+    (``rescreen: <detail>``) per name still out: one row per (name, code) per ET day, so
+    a manual re-run journals nothing twice. Never commits."""
+    import datetime as dt
+
+    from arc.context.ttl import to_db
+    from arc.journal.reasons import Choice, JournalPersona, ReasonCode, Stage
+    from arc.journal.store import Recorder
+
+    local = ctx.now.astimezone(ET)
+    start = dt.datetime(local.year, local.month, local.day, tzinfo=ET)
+    seen = {
+        (r[0], r[1])
+        for r in ctx.conn.execute(
+            "SELECT subject, reason_code FROM decisions WHERE at >= ? AND at < ? AND "
+            "(reason_code = ? OR (reason_code = ? AND reason_text LIKE ?))",
+            (
+                to_db(start),
+                to_db(start + dt.timedelta(days=1)),
+                ReasonCode.SCOUT_DISCOVERY_RESCREENED.value,
+                ReasonCode.SCOUT_DISCOVERY_SCREENED_OUT.value,
+                f"{RESCREEN_PREFIX}%",
+            ),
+        ).fetchall()
+    }
+    rec = Recorder(
+        ctx.conn,
+        at=ctx.now,
+        chain_run_id=ctx.chain_run_id,
+        run_id=ctx.run_id,
+        inputs_snapshot_id=ctx.snapshot.id,
+    )
+    for c in passed:
+        if (c.ticker, ReasonCode.SCOUT_DISCOVERY_RESCREENED.value) in seen:
+            continue
+        rec.add(
+            JournalPersona.SCOUT,
+            Stage.CANDIDATE,
+            c.ticker,
+            Choice.SELECTED,
+            ReasonCode.SCOUT_DISCOVERY_RESCREENED,
+            reason_text=f"{RESCREEN_PREFIX} passed the loose screen · {', '.join(c.origins)}",
+            confidence=c.confidence,
+            payload={"origins": list(c.origins), "scout_read": read_id},
+        )
+    for sym, detail in failed.items():
+        if (sym, ReasonCode.SCOUT_DISCOVERY_SCREENED_OUT.value) in seen:
+            continue
+        rec.add(
+            JournalPersona.SCOUT,
+            Stage.CANDIDATE,
+            sym,
+            Choice.REJECTED,
+            ReasonCode.SCOUT_DISCOVERY_SCREENED_OUT,
+            reason_text=f"{RESCREEN_PREFIX} {detail}",
+            payload={"rescreen": detail, "scout_read": read_id},
+        )
+    return len(rec.records)
+
+
 BUILTIN_HANDLERS: Mapping[str, str] = {
     "rss": "arc.routines.handlers:rss_source",
     "edgar": "arc.routines.handlers:edgar_source",
@@ -3206,6 +3453,8 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "scalp": "arc.routines.handlers:scalp_persona",
     # E13.7 (D56): the daily Scout (YouTube + options_slow)
     "scout": "arc.routines.handlers:scout_persona",
+    # E13.7c (D138): no-LLM RTH re-screen of the Scout's 06:00 liquidity-screen drops
+    "scout.rescreen": "arc.routines.handlers:scout_rescreen",
     # E5.2 pipeline chain: research → quant.open → risk.open → [quant.revise] →
     # quant.propose (arc/pipeline/steps.py; E13.9 / D56 step names)
     "research": "arc.pipeline.steps:research_step",

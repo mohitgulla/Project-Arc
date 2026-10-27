@@ -187,7 +187,7 @@ PERSONA_OVERLAY_PREFIXES: dict[str, tuple[str, ...]] = {
 }
 # The routine jobs each arm persona runs (D91: the 30-min Scalp is one job, 06:30-20:00).
 PERSONA_JOBS: dict[str, tuple[str, ...]] = {
-    "scout": ("scout",),
+    "scout": ("scout", "scout.rescreen"),  # E13.7c: the re-screen extends the Scout's tier
     "scalp": ("scalp",),
     "trending": ("universe.trending",),
 }

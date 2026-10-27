@@ -702,6 +702,20 @@ personas:
     writes: [scout_read, candidate, note, universe_tier, active_universe]   # universe_tier: discovery only; active_universe: re-resolve after
     context_kinds:              # D64 (E14.7): discovery lives 48 h and merges the previous run (universe.yaml carryover)
       universe_tier: {ttl: 48h, supersede: latest}
+  scout.rescreen:               # E13.7c (D138): RTH re-screen of the 06:00 Scout's liquidity-screen drops (no LLM)
+    label: Scout re-screen
+    about: "Re-screens, in market hours, the Scout's discovery picks that failed only the 06:00 liquidity screen; adds the ones that pass"
+    group: scout
+    persona: scout
+    schedule: ["10:00"]         # after the open settles; another slot = config only. Off = enabled: false
+    days: trading
+    ttl: 1h                     # a missed slot is skipped, never caught up
+    llm: false                  # deterministic: today's scout_read + the loose screen
+    notify: summary
+    reads: [scout_read, universe_tier, active_universe]
+    writes: [universe_tier, active_universe]   # discovery only (same writer as the Scout); never scout_read
+    context_kinds:              # same policy as the Scout's entry; a revived name keeps the 06:00 entry's expiry
+      universe_tier: {ttl: 48h, supersede: latest}
   scalp:                        # D31/D91: every 30 min 06:30-20:00 (28 runs), after the fast sources; one job (scalp.overnight dropped, D91)
     label: Scalp
     about: "Reads fresh news and filings while the news sources run (06:30-20:00); writes candidate ideas and story digests"
