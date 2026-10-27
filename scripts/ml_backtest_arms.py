@@ -168,6 +168,30 @@ def split_table(run_dir: Path, profile: str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def year_table(run_dir: Path, profile: str) -> pd.DataFrame:
+    """arm × entry year (net / trades / net per risk), All / Stocks / ETFs nets."""
+    rows = []
+    for arm in ARMS:
+        f = run_dir / profile / arm / "trades.csv"
+        t = pd.read_csv(f) if f.is_file() and f.stat().st_size > 1 else pd.DataFrame()
+        if t.empty or "pnl" not in t:
+            continue
+        t["year"] = t["entry_date"].astype(str).str[:4]
+        etf = t["etf"].astype(str).str.lower().isin(["true", "1"])
+        for y, g in t.groupby("year"):
+            e = etf.loc[g.index]
+            rows.append(
+                {
+                    "arm": arm,
+                    "year": y,
+                    **_row(g),
+                    "net_stocks": round(float(g.loc[~e, "pnl"].sum()), 0),
+                    "net_etfs": round(float(g.loc[e, "pnl"].sum()), 0),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
 def _md(df: pd.DataFrame) -> str:
     cols = list(df.columns)
     out = ["| " + " | ".join(cols) + " |", "|" + "---|" * len(cols)]
@@ -177,15 +201,51 @@ def _md(df: pd.DataFrame) -> str:
 
 
 def replay_rows(models: Path, profile: str) -> pd.DataFrame:
-    """E27.3's eval_replay.csv of the family's newest version, summed over 2022-2023."""
+    """E27.3's eval_replay.csv of the family's newest version: per year + both years summed.
+
+    E27.3 walked a fresh book per test year on C500; this study walks one book through
+    both years, so only the 2022 rows start from the same state.
+    """
     from arc.ml.registry import pick_version
 
     fam = FAMILY[profile]
     ver = pick_version(models, fam)
     df = pd.read_csv(models / fam / ver / "eval_replay.csv")
-    g = df.groupby("use").agg(trades=("trades", "sum"), net=("net_pnl", "sum")).reset_index()
-    g.insert(0, "version", ver)
-    return g
+    df["year"] = df["year"].astype(str)
+    per = df[["year", "use", "trades", "net_pnl"]].rename(columns={"net_pnl": "net"})
+    tot = per.groupby("use").agg(trades=("trades", "sum"), net=("net", "sum")).reset_index()
+    tot.insert(0, "year", "2022+2023")
+    out = pd.concat([per, tot], ignore_index=True)
+    out["net"] = out["net"].round(0)
+    out.insert(0, "version", ver)
+    return out
+
+
+def sign_checks(rr: pd.DataFrame, years: pd.DataFrame, verdicts: dict[str, Any]) -> list[str]:
+    """Sim treatment − control vs replay use − incumbent: 2022 (same start) and total."""
+    flags = []
+    for arm, use in REPLAY_USE.items():
+        for label in ("2022", "2022+2023"):
+            r = rr[rr["year"] == label].set_index("use")["net"]
+            if "incumbent" not in r or use not in r:
+                continue
+            rdiff = float(r[use] - r["incumbent"])
+            if label == "2022":
+                y = years[years["year"] == "2022"].set_index("arm")["net"] if len(years) else None
+                if y is None or "control" not in y:
+                    continue
+                sdiff = float(y.get(arm, 0.0) - y["control"])
+            else:
+                d = (verdicts.get(arm) or {}).get("pnl_diff")
+                if d is None:
+                    continue
+                sdiff = float(d)
+            agree = (rdiff > 0) == (sdiff > 0)
+            flags.append(
+                f"- {label} · {arm} vs replay `{use}`: sim diff {sdiff:+.0f}, replay diff "
+                f"{rdiff:+.0f} → {'agree' if agree else '**DISAGREE**'}"
+            )
+    return flags
 
 
 def _tables(args: argparse.Namespace) -> int:
@@ -248,22 +308,14 @@ def _tables(args: argparse.Namespace) -> int:
             "",
             _md(split_table(run_dir, p)),
             "",
+            "Per entry year (control cell; one book across both years)",
+            "",
+            _md(year_table(run_dir, p)),
+            "",
         ]
         rr = replay_rows(args.data_dir / "ml" / "models", p)
-        lines += ["E27.3 decision-value replay (2022 + 2023 summed)", "", _md(rr), ""]
-        base = rr.loc[rr["use"] == "incumbent", "net"]
-        flags = []
-        for arm, use in REPLAY_USE.items():
-            got = rr.loc[rr["use"] == use, "net"]
-            diff = (v.get(arm) or {}).get("pnl_diff")
-            if base.empty or got.empty or diff is None:
-                continue
-            rdiff = float(got.iloc[0] - base.iloc[0])
-            agree = (rdiff > 0) == (float(diff) > 0)
-            flags.append(
-                f"- {arm} vs replay `{use}`: sim diff {float(diff):+.0f}, replay diff "
-                f"{rdiff:+.0f} → {'agree' if agree else '**DISAGREE**'}"
-            )
+        lines += ["E27.3 decision-value replay (fresh C500 book per year)", "", _md(rr), ""]
+        flags = sign_checks(rr, year_table(run_dir, p), v)
         lines += ["Sign check vs E27.3", "", *flags, ""]
     out = run_dir / "tables.md"
     out.write_text("\n".join(lines) + "\n")
