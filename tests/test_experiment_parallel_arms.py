@@ -355,6 +355,9 @@ def test_arm_tick_cli_skips_when_the_arm_lock_is_held(
     _k4(tmp_path).close()
     locks = tmp_path / "locks"
     before = (tmp_path / "control.db").stat().st_mtime_ns
+    # Setup above logs migrate lines to stdout (structlog's default config) unless an earlier
+    # test on the worker reconfigured it; drain them so only the CLI's JSON is parsed below.
+    capsys.readouterr()
     with LockManager(locks).hold(arm_tick_lock("XP-20:t2")):
         code = _arc("experiment", "arm-tick", "XP-20:t2", "--db", str(tmp_path / "control.db"),
                     "--lock-dir", str(locks), "--now", AT.isoformat(), "--json")  # fmt: skip
