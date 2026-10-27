@@ -149,6 +149,12 @@ def add_ml_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> N
     pr.add_argument("--data", type=Path, default=DEFAULT_DATA)
     pr.add_argument("--out", type=Path, default=None, help="Default <data>/ml/models")
 
+    mo = msub.add_parser("monitor", help="Live shadow-score coverage / calibration (E27.4)")
+    mo.add_argument("--db", type=Path, default=None, help="Store (read-only; default data/arc.db)")
+    mo.add_argument("--day", type=_dt.date.fromisoformat, default=None, help="Default today ET")
+    mo.add_argument("--days", type=int, default=20, help="Window length in calendar days")
+    mo.add_argument("--json", action="store_true", help="Print the ml_health record as JSON")
+
 
 def run_ml(args: argparse.Namespace) -> int:
     if args.ml_command == "m2":
@@ -161,6 +167,8 @@ def run_ml(args: argparse.Namespace) -> int:
         return _m1(args)
     if args.ml_command == "ledger":
         return _ledger(args)
+    if args.ml_command == "monitor":
+        return _monitor(args)
     cmd = args.features_command
     if cmd == "list":
         return _list(args)
@@ -538,3 +546,24 @@ def _parity(args: argparse.Namespace) -> int:
     else:
         w("input OHLC: identical in both stores over the window\n")
     return 0 if bool(rep["ok"].all()) else 1
+
+
+def _monitor(args: argparse.Namespace) -> int:
+    import json
+    import sqlite3
+
+    from arc.ml.monitor import health, render
+    from arc.utils.calendar import now_et
+
+    day = args.day or now_et().date()
+    db = Path(args.db) if args.db else REPO / "data" / "arc.db"
+    conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)  # read-only: never writes
+    try:
+        rec = health(conn, day=day, since=day - _dt.timedelta(days=args.days))
+    finally:
+        conn.close()
+    if args.json:
+        sys.stdout.write(json.dumps(rec, indent=2, sort_keys=True, default=str) + "\n")
+    else:
+        sys.stdout.write(render(rec))
+    return 0
