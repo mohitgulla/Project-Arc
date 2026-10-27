@@ -130,6 +130,26 @@ def add_ml_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> N
     r2.add_argument("--cards", type=Path, default=REPO / "docs" / "RESEARCH" / "models")
     r2.add_argument("--extra", type=Path, default=None, help="Extra markdown appended to the doc")
 
+    dlp = msub.add_parser("dl", help="Deep-learning challengers vs M2 (E27.6, research only)")
+    dlsub = dlp.add_subparsers(dest="dl_command", required=True)
+    dt_ = dlsub.add_parser("train", help="Challengers × families × dev folds + replays + rule")
+    dt_.add_argument("--family", default="credit,debit", help="credit, debit or both")
+    dt_.add_argument(
+        "--challenger", default="mlp,ft,temporal,surface", help="Comma list (stack is automatic)"
+    )
+    dt_.add_argument("--data", type=Path, default=DEFAULT_DATA, help="History data dir")
+    dt_.add_argument("--out", type=Path, default=None, help="Default <data>/ml/dl")
+    dt_.add_argument("--tickers", default=None, help="Comma list (default: every ledger ticker)")
+    dt_.add_argument("--workers", type=int, default=6, help="Sim build processes (≤ 6)")
+    dt_.add_argument("--no-replay", action="store_true", help="Skip the decision-value replays")
+    dt_.add_argument("--no-m1", action="store_true", help="Skip the surface → M1 test")
+    dr_ = dlsub.add_parser("report", help="Render docs/RESEARCH/ml-dl-challengers.md from a run")
+    dr_.add_argument("run", type=Path, help="Run dir (<data>/ml/dl/dl-<hash>)")
+    dr_.add_argument(
+        "--doc", type=Path, default=REPO / "docs" / "RESEARCH" / "ml-dl-challengers.md"
+    )
+    dr_.add_argument("--extra", type=Path, default=None, help="Extra markdown appended to the doc")
+
     rg = msub.add_parser("registry", help="Model registry: list / verify (E27.3)")
     rgsub = rg.add_subparsers(dest="registry_command", required=True)
     rl = rgsub.add_parser("list", help="models.json per family")
@@ -151,6 +171,8 @@ def add_ml_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> N
 
 
 def run_ml(args: argparse.Namespace) -> int:
+    if args.ml_command == "dl":
+        return _dl(args)
     if args.ml_command == "m2":
         return _m2(args)
     if args.ml_command == "registry":
@@ -264,6 +286,46 @@ def _m2(args: argparse.Namespace) -> int:
             f"{fam}: {r['vdir']} m2_promote {'PASSED' if r['rule_passed'] else 'failed'} "
             f"({r['timings']['total_s']:.0f}s, peak rss {r['timings']['peak_rss_mb']:.0f} MB)\n"
         )
+    return 0
+
+
+def _dl(args: argparse.Namespace) -> int:
+    from arc.utils.calendar import now_et
+
+    def progress(s: str) -> None:
+        sys.stderr.write(s + "\n")
+
+    if args.dl_command == "report":
+        from arc.ml.dl.report import write_doc
+
+        p = write_doc(Path(args.run), Path(args.doc), extra=args.extra)
+        sys.stdout.write(f"wrote {p}\n")
+        return 0
+    from arc.ml.dl.config import CHALLENGERS, DLConfig
+    from arc.ml.dl.run import dev_run
+    from arc.ml.m2.config import FAMILIES
+
+    fams = [f.strip() for f in args.family.split(",") if f.strip()]
+    chals = [c.strip() for c in args.challenger.split(",") if c.strip()]
+    bad = [f for f in fams if f not in FAMILIES] + [c for c in chals if c not in CHALLENGERS]
+    if bad:
+        sys.stderr.write(f"unknown family/challenger {bad}\n")
+        return 2
+    out = dev_run(
+        fams,
+        DLConfig(),
+        data_dir=Path(args.data),
+        out_root=Path(args.out) if args.out else None,
+        code_sha=_git_sha(),
+        now=now_et(),
+        challengers=chals,
+        tickers=_split(args.tickers) if args.tickers else None,
+        workers=args.workers,
+        do_replay=not args.no_replay,
+        m1_surface=not args.no_m1,
+        say=progress,
+    )
+    sys.stdout.write(f"wrote {out}\n")
     return 0
 
 
