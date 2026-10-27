@@ -25,6 +25,7 @@ import here.
 
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import json
 from typing import TYPE_CHECKING, Literal
@@ -32,7 +33,6 @@ from typing import TYPE_CHECKING, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 if TYPE_CHECKING:
-    import datetime as dt
     from pathlib import Path
 
 Status = Literal["candidate", "shadow", "champion", "retired"]
@@ -247,6 +247,139 @@ def promote(
         },
     )
     return idx
+
+
+# ---------------------------------------------------------------------------
+# Point-in-time model selection (E27.5, D126): the backtest's only way to a model
+# ---------------------------------------------------------------------------
+
+#: Sessions between a fold's last training label and its test block: M1 purges rows
+#: dated before ``sessions[idx(b) − h − 5]`` (labels end ≤ 5 sessions before the block,
+#: :mod:`arc.ml.m1.train`); M2 purges on ``label_end_date`` with a 10-session embargo
+#: (:func:`arc.ml.validate.embargo_start`).
+LABEL_EMBARGO: dict[str, int] = {"m1": 5}
+
+
+class ModelAsOf(BaseModel):
+    """The model a sim session may use (:func:`model_asof`).
+
+    ``labels_before``: every training label of this model ended strictly before this
+    date (purge + embargo), and ``labels_before <= serves_from <= d`` for every session
+    *d* it serves. ``fold`` is the walk-forward fold dir (``test2022``) or ``None`` for
+    the version's final fit; ``path`` the model directory.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    family: str
+    version: str
+    fold: str | None
+    path: str
+    labels_before: dt.date
+    serves_from: dt.date
+    serves_to: dt.date | None = Field(None, description="None = open-ended (final fit)")
+
+
+def pick_version(root: Path, family: str, version: str | None = None) -> str:
+    """*version*, else the family's newest non-retired registered version (``created``,
+    then name); a family without an index (M1) falls back to its last version dir by
+    name. Never the champion pointer: a backtest names its version or takes the newest."""
+    if version is not None:
+        if not (root / family / version / "manifest.json").is_file():
+            msg = f"{family}/{version}: no manifest.json under {root}"
+            raise RegistryError(msg)
+        return version
+    idx = load_index(root, family)
+    live = [(e.created, v) for v, e in idx.versions.items() if e.status != "retired"]
+    if live:
+        return max(live)[1]
+    dirs = sorted(p.parent.name for p in (root / family).glob("*/manifest.json"))
+    if not dirs:
+        msg = f"no {family} model under {root}"
+        raise RegistryError(msg)
+    return dirs[-1]
+
+
+def asof_table(
+    root: Path, family: str, sessions: list[dt.date], version: str | None = None
+) -> list[ModelAsOf]:
+    """Every model of one version with the session block it may serve, oldest first.
+
+    A fold ``test<Y>`` serves its own test year (as E27.3 scored it out of sample); the
+    final fit serves from the day after its train window (and after the last fold).
+    ``labels_before`` is the fold's purge bound (:data:`LABEL_EMBARGO`).
+    """
+    from arc.ml import validate as v
+
+    ver = pick_version(root, family, version)
+    vdir = root / family / ver
+    man = json.loads((vdir / "manifest.json").read_text())
+    folds = man.get("folds") or [f"test{y}" for y in v.TEST_YEARS]
+    emb = LABEL_EMBARGO.get(family, v.EMBARGO)
+    out: list[ModelAsOf] = []
+    last_end: dt.date | None = None
+    for name in sorted(folds):
+        y = int(str(name).removeprefix("test"))
+        start, end = dt.date(y, 1, 1), dt.date(y, 12, 31)
+        lb = v.embargo_start(sessions, start, emb)
+        fdir = vdir / "folds" / str(name)
+        out.append(
+            ModelAsOf(
+                family=family,
+                version=ver,
+                fold=str(name),
+                path=str(fdir if fdir.is_dir() else vdir),
+                labels_before=min(lb, start),
+                serves_from=start,
+                serves_to=end,
+            )
+        )
+        last_end = end if last_end is None else max(last_end, end)
+    tw = man.get("train_window") or {}
+    if tw.get("end"):
+        lb = dt.date.fromisoformat(str(tw["end"])) + dt.timedelta(days=1)
+        frm = lb if last_end is None else max(lb, last_end + dt.timedelta(days=1))
+        out.append(
+            ModelAsOf(
+                family=family,
+                version=ver,
+                fold=None,
+                path=str(vdir),
+                labels_before=lb,
+                serves_from=frm,
+                serves_to=None,
+            )
+        )
+    return out
+
+
+def model_asof(
+    root: Path,
+    family: str,
+    d: dt.date,
+    *,
+    sessions: list[dt.date] | None = None,
+    version: str | None = None,
+    table: list[ModelAsOf] | None = None,
+) -> ModelAsOf | None:
+    """The walk-forward model a sim session *d* may use: trained only on labels that
+    ended before *d* (``None`` = no such model, e.g. before the first test year).
+
+    Pass *table* (:func:`asof_table`) to look up many sessions without re-reading the
+    manifest. The backtest's ML arms read models only through this function.
+    """
+    if table is None:
+        if sessions is None:
+            from arc.utils.calendar import sessions_between
+
+            sessions = sessions_between(dt.date(2019, 1, 1), max(d, dt.date(2024, 12, 31)))
+        table = asof_table(root, family, sessions, version)
+    hits = [
+        m
+        for m in table
+        if m.serves_from <= d and (m.serves_to is None or d <= m.serves_to) and m.labels_before <= d
+    ]
+    return max(hits, key=lambda m: m.labels_before) if hits else None
 
 
 def holdout_reads(root: Path, family: str) -> list[dict[str, object]]:

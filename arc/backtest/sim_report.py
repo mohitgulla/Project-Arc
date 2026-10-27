@@ -338,6 +338,7 @@ def build_sim(
     cache_dir: Path | None = None,
     stance_labels: frozenset[str] = frozenset(),
     alt_x: Sequence[float] = (),
+    ml_root: Path | None = None,
 ) -> SimBuild:
     """Build every ticker of *universe* (parallel) for *profiles* × their rankers.
 
@@ -345,6 +346,8 @@ def build_sim(
     (:func:`arc.backtest.ranking.rankers_for`). Shared by ``arc backtest sim`` and the
     E7.12 study runner (:mod:`arc.backtest.study`). E7.20: *stance_labels* / *alt_x*
     make a robustness-grid build (:func:`arc.backtest.sim.sim_ticker_from_chains`).
+    E27.5: with ``exits.model.path_vol: m1`` the menus' Monte Carlo paths read the
+    point-in-time M1 outputs under *ml_root* (default ``<data_dir>/ml``).
     """
     t0 = time.monotonic()
     bt = cfg.backtest
@@ -382,6 +385,9 @@ def build_sim(
     }
     if stance_labels or alt_x:  # E7.20: absent = the pre-E7.20 job arguments
         job_kw |= {"stance_labels": frozenset(stance_labels), "alt_x": tuple(alt_x)}
+    if exits.model.path_vol == "m1":  # E27.5: absent = the pre-E27.5 job arguments
+        root = ml_root or data_dir / "ml"
+        job_kw["m1"] = (str(root), bt.ml_versions.get("m1"))
     built = build_tickers(names, spec=spec, workers=workers, job_kw=job_kw)
     sessions = sorted({d for r in built.values() for d in r.closes.index if d >= start})
     gated = bt.sim.gate.apply(settings)  # E28.6: the arm's SMA length / switch
@@ -463,10 +469,12 @@ def walk(
     stance_of: Mapping[str, pd.Series] | None = None,
     fill_x: float | None = None,
     key_override: Any = None,
+    size_override: Any = None,
 ) -> SimRun:
     """One profile × ranker walk over a :class:`SimBuild` (E7.20: one grid cell).
 
-    *key_override*: :func:`arc.backtest.sim.run_sim`'s research re-ranking hook (E27.3).
+    *key_override*: :func:`arc.backtest.sim.run_sim`'s research re-ranking hook (E27.3);
+    *size_override*: its E27.5 ``ml_size`` hook.
     """
     from arc.universe.config import MomentumConfig
 
@@ -486,6 +494,7 @@ def walk(
         stance_of=stance_of,
         fill_x=fill_x,
         key_override=key_override,
+        size_override=size_override,
     )
 
 

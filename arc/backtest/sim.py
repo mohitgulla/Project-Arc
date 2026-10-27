@@ -1026,6 +1026,7 @@ def sim_ticker_from_chains(
     splits: Mapping[dt.date, float] | None = None,
     stance_labels: frozenset[str] = frozenset(),
     alt_x: Sequence[float] = (),
+    m1_rows: Mapping[dt.date, Mapping[str, float]] | None = None,
 ) -> SimTicker:
     """Menus (cached), stance/filters and outcome paths for one ticker.
 
@@ -1046,6 +1047,9 @@ def sim_ticker_from_chains(
     E7.20 (D125): *stance_labels* (:func:`arc.backtest.stance.labels_needed`) tag the
     menu per stance so the walk can apply any stance proxy; *alt_x* adds each kept
     candidate's outcome at those fill slippage x. Both empty = the pre-E7.20 build.
+
+    E27.5 (D126): *m1_rows* (session → the ticker's point-in-time M1 outputs,
+    :func:`arc.backtest.ml_arms.load_m1_outputs`) feed ``exits.model.path_vol: m1``.
     """
     closes = closes.sort_index()
     bt = cfg.backtest
@@ -1101,6 +1105,7 @@ def sim_ticker_from_chains(
                 ranges=ranges,
                 stance_labels=stance_labels,
                 alt_x=alt_x,
+                m1_rows=m1_rows,
             ).items():
                 per_day.setdefault(d, []).extend(kept)
         out[profile] = per_day
@@ -1134,6 +1139,7 @@ def sleeve_menus(
     day_stance: Mapping[dt.date, str] | None,
     cache: MenuCache | None,
     cache_ctx: MenuCacheContext | None,
+    m1_rows: Mapping[dt.date, Mapping[str, float]] | None = None,
 ) -> tuple[dict[dt.date, list[Candidate]], dict[str, CostModel]]:
     """The raw (profile, sleeve) menus per session, before stance and filters.
 
@@ -1141,6 +1147,8 @@ def sleeve_menus(
     :mod:`arc.ml.ledger.build`): ``build_menus`` (or ``build_menus_by_kind`` with
     ``backtest.slippage_by_kind``) on the sleeve's window and exit block, sessions grouped
     by rate. Returns the menus and the per-kind cost models (empty = *base* for all).
+    *m1_rows* (E27.5): session → this ticker's point-in-time M1 outputs, for the
+    ``exits.model.path_vol: m1`` Monte Carlo paths (None = the build without M1).
     """
     bt = cfg.backtest
     lo, hi = sw.dte_min, sw.dte_max
@@ -1164,6 +1172,8 @@ def sleeve_menus(
             "cache": cache,
             "cache_ctx": cache_ctx,
         }
+        if m1_rows is not None:  # E27.5: absent = the pre-E27.5 call, unchanged
+            kw["m1_rows"] = m1_rows
         # exactly the E7.5 ticker_job calls, so per_ticker mode reproduces its menus
         if ck:
             menus |= build_menus_by_kind(chains, closes, cost_by_kind=ck, **kw)
@@ -1248,6 +1258,7 @@ def _sleeve_menu(
     ranges: Mapping[dt.date, tuple[float, float]] | None,
     stance_labels: frozenset[str] = frozenset(),
     alt_x: Sequence[float] = (),
+    m1_rows: Mapping[dt.date, Mapping[str, float]] | None = None,
 ) -> dict[dt.date, list[SimCandidate]]:
     """One (profile, sleeve) menu per session: build, stance/filters, top keys, outcomes.
 
@@ -1271,6 +1282,7 @@ def _sleeve_menu(
         day_stance=day_stance,
         cache=cache,
         cache_ctx=cache_ctx,
+        m1_rows=m1_rows,
     )
     bt = cfg.backtest
 
@@ -1532,13 +1544,28 @@ def sim_ticker_job(
     cache_dir: str | None,
     stance_labels: frozenset[str] = frozenset(),
     alt_x: Sequence[float] = (),
+    m1: tuple[str, str | None] | None = None,
 ) -> list[SimTicker]:
-    """A batch of tickers through one view (safe in a worker process)."""
+    """A batch of tickers through one view (safe in a worker process).
+
+    *m1* (E27.5): ``(ml root, version or None)`` loads each ticker's point-in-time M1
+    outputs (:func:`arc.backtest.ml_arms.load_m1_outputs`) for the ``m1`` path source.
+    """
     view = build_view(spec, cfg, cost)
     out: list[SimTicker] = []
     for t in tickers:
         h = view.load(t)
         sessions = [d for d in h.closes.index if spec.start <= d <= spec.end]
+        m1_rows = None
+        if m1 is not None:
+            from pathlib import Path
+
+            from arc.backtest.ml_arms import load_m1_outputs, m1_rows_of
+
+            got = load_m1_outputs(
+                ml_root=Path(m1[0]), tickers=[t], sessions=sessions, version=m1[1]
+            )
+            m1_rows = m1_rows_of(got.get(t.upper()))
         hv = hv20_series(h.closes, h.ohlc)
         days = {d: _day_info(view, t, d, hv) for d in sessions}
         cache = MenuCache(cache_dir) if cache_dir is not None else None
@@ -1568,6 +1595,7 @@ def sim_ticker_job(
                 splits=splits,
                 stance_labels=stance_labels,
                 alt_x=alt_x,
+                m1_rows=m1_rows,
             )
         )
         view.evict(t)
@@ -1952,6 +1980,7 @@ def run_sim(
     stance_of: Mapping[str, pd.Series] | None = None,
     fill_x: float | None = None,
     key_override: Callable[[SimCandidate, tuple[Any, ...]], tuple[Any, ...] | None] | None = None,
+    size_override: Callable[[SimCandidate, int], int] | None = None,
 ) -> SimRun:
     """Walk *sessions*; open on decision sessions ≤ *end* (see the module docstring).
 
@@ -1959,6 +1988,11 @@ def run_sim(
     the ranker's filters and the ranker's own sort key; its return replaces that key
     (same ``(group, primary, tie, key)`` shape), ``None`` drops the candidate. ``None``
     (the default) leaves the walk unchanged.
+
+    *size_override* (E27.5 ``ml_size``, D126): called with each candidate and its D18
+    contracts (after the account, buying-power and ``size_scale`` fits); its return
+    replaces them and is capped at them, so it can only shrink a size. ``None`` (the
+    default) leaves the walk unchanged.
 
     E7.20 (D125): *stance_of* (ticker → session → stance, :mod:`arc.backtest.stance`)
     and *fill_x* (a slippage x the build carries in :attr:`SimCandidate.alt`) select one
@@ -2069,6 +2103,7 @@ def run_sim(
                 stance_of=stance_of,
                 fill_x=fill_x,
                 key_override=key_override,
+                size_override=size_override,
             )
             open_ = open_ + opened
         eq[day] = start_eq + realised + unrealised(day)
@@ -2126,6 +2161,7 @@ def _decide(
     stance_of: Mapping[str, pd.Series] | None = None,
     fill_x: float | None = None,
     key_override: Callable[[SimCandidate, tuple[Any, ...]], tuple[Any, ...] | None] | None = None,
+    size_override: Callable[[SimCandidate, int], int] | None = None,
 ) -> list[_Pos]:
     """One decision session: funnel → pool → open. Returns the new positions.
 
@@ -2283,6 +2319,11 @@ def _decide(
             n = math.floor(n * sim.size_scale + 1e-9)
             if n < 1:
                 skip(day, t, "sizing", c.inputs.key, f"size_scale {sim.size_scale}")
+                continue
+        if not legacy and size_override is not None:  # E27.5 ml_size: shrink only
+            n = min(n, size_override(sc, n))
+            if n < 1:
+                skip(day, t, "sizing", c.inputs.key, "ml_size")
                 continue
         clipped = False
         if not legacy:
