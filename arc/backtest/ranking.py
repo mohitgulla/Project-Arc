@@ -55,7 +55,7 @@ import numpy as np
 import pandas as pd
 import structlog
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from arc.account_profiles import BuyingPower, load_account_profiles
 from arc.backtest.data import DataSettings
@@ -75,6 +75,7 @@ from arc.backtest.marks import (  # E7.10: moved to arc.backtest.marks, re-expor
     smile_marks,
 )
 from arc.backtest.menucache import MenuCache, MenuCacheContext, config_hash, frame_hash
+from arc.backtest.ml_config import MlFilter, MlRanker, MlSize, ml_versions_ok
 from arc.backtest.regime import BacktestRegimeModel, regime_labels
 from arc.backtest.sim_config import SimSettings
 from arc.backtest.strategies import (
@@ -417,6 +418,38 @@ class BacktestSettings(BaseModel):
         default_factory=lambda: CreditWings(),
         description="Overrides of every credit menu block's wing mode / pct / cap / floor",
     )
+    # -- E27.5 (D126): backtest-only ML arm options (default off; omitted from dumps at
+    # their defaults so existing config/study hashes and menu-cache keys are unchanged) --
+    ml_ranker: MlRanker = Field(
+        "incumbent",
+        exclude_if=lambda v: v == "incumbent",
+        description="incumbent = the arm's ranker; ml_er = sort the cross-name pool by the "
+        "point-in-time M2 e_r (model_asof), then the incumbent's tie-breaks",
+    )
+    ml_filter: MlFilter = Field(
+        default_factory=lambda: MlFilter(),
+        exclude_if=lambda v: v.off,
+        description="Drop candidates by M2 e_r / p_stop (null legs = off)",
+    )
+    ml_size: MlSize = Field(
+        default_factory=lambda: MlSize(),
+        exclude_if=lambda v: v.is_default,
+        description="shrink = D18 contracts x clip(e_r / median positive e_r, floor, cap)",
+    )
+    ml_versions: dict[str, str] = Field(
+        default_factory=dict,
+        exclude_if=lambda v: not v,
+        description="family (m1 / credit / debit) -> pinned model version; unset = newest",
+    )
+
+    @field_validator("ml_versions")
+    @classmethod
+    def _ml_versions(cls, v: dict[str, str]) -> dict[str, str]:
+        return ml_versions_ok(v)
+
+    @property
+    def uses_m2(self) -> bool:
+        return self.ml_ranker == "ml_er" or not self.ml_filter.off or self.ml_size.mode != "off"
 
     def window_for(self, profile: str, default: tuple[int, int]) -> tuple[int, int]:
         lo, hi = self.dte_windows.get(profile, default)
@@ -577,6 +610,7 @@ def build_menu(
     r: float,
     stance: str | None = None,
     tilt: float = 0.0,
+    m1_row: Mapping[str, float] | None = None,
 ) -> list[Candidate]:
     """Every candidate for one session from information known at its close.
 
@@ -584,6 +618,9 @@ def build_menu(
     close into IV, the realised-vol forecast or the model. *stance* (bullish /
     bearish / neutral, from the trend label at this close) and *tilt* feed only the
     ``*_tilted`` ranker keys; without a tilt they equal the untilted keys.
+    *m1_row* (E27.5): the session's point-in-time M1 outputs for this name; with
+    ``mc.path_vol: m1`` the managed-exit paths move at M1's vol / tails
+    (:func:`arc.ml.m1.predict.path_params`), else (or without a row) unchanged.
     """
     past = closes[pd.Index(closes.index) <= day]
     if day not in past.index:
@@ -611,6 +648,7 @@ def build_menu(
             if structure.max_loss is None or structure.max_loss <= 0:
                 continue
             policy = exits.policy_for(STRUCTURE_KIND[spec.kind], spec.exit_block)
+            m1 = _m1_params(m1_row, structure.dte) if mc.path_vol == "m1" else None
             res = model_exits(
                 structure,
                 policy,
@@ -621,6 +659,7 @@ def build_menu(
                 cfg=mc,
                 spreads={_legs([p], underlying)[0].occ_symbol: p.spread for p in picks},
                 realized_vol=rv,
+                m1=m1,
             )
             t_ev, t_rorc = res.managed.net_ev, res.rorc_day
             kind = STRUCTURE_KIND[spec.kind]
@@ -643,6 +682,7 @@ def build_menu(
                     spreads={_legs([p], underlying)[0].occ_symbol: p.spread for p in picks},
                     realized_vol=rv,
                     drift=mu,
+                    m1=m1,
                 )
                 t_ev, t_rorc = tres.managed.net_ev, tres.rorc_day
             entry_mid = sum(p.side * p.mid for p in picks)
@@ -691,6 +731,21 @@ def build_menu(
     return out
 
 
+def _m1_params(row: Mapping[str, float] | None, dte: int) -> Any:
+    """E27.5: :class:`arc.exits.model.M1PathParams` from one M1 output row, or None when
+    the row is missing or incomplete (the paths then fall back to the HV forecast)."""
+    if row is None:
+        return None
+    from arc.ml.m1.predict import path_params
+
+    try:
+        p = path_params(pd.Series(dict(row)), dte)
+    except (KeyError, ValueError, TypeError):
+        return None
+    vals = (p.sigma, p.drift, p.nu)
+    return p if all(math.isfinite(v) for v in vals) and p.sigma > 0 else None
+
+
 def kind_costs(
     specs: Sequence[StrategySpec], cost: CostModel, by_kind: Mapping[StructureKind, float]
 ) -> dict[str, CostModel]:
@@ -719,6 +774,7 @@ def build_menus_by_kind(
     tilt: float = 0.0,
     cache: MenuCache | None = None,
     cache_ctx: MenuCacheContext | None = None,
+    m1_rows: Mapping[dt.date, Mapping[str, float]] | None = None,
 ) -> dict[dt.date, list[Candidate]]:
     """:func:`build_menus` with each structure priced at its own cost model.
 
@@ -742,6 +798,7 @@ def build_menus_by_kind(
             tilt=tilt,
             cache=cache,
             cache_ctx=cache_ctx,
+            m1_rows=m1_rows,
         )
         for g, ss in groups.items()
     }
@@ -768,6 +825,7 @@ def build_menus(
     tilt: float = 0.0,
     cache: MenuCache | None = None,
     cache_ctx: MenuCacheContext | None = None,
+    m1_rows: Mapping[dt.date, Mapping[str, float]] | None = None,
 ) -> dict[dt.date, list[Candidate]]:
     """:func:`build_menu` per session; *stances* (day → stance) feed the tilted keys.
 
@@ -776,6 +834,8 @@ def build_menus(
     the day's stance, tilt, marks, exits, MC paths/seed, provider) plus a hash of the
     day's marked chain and the trailing closes its HV forecast reads, so refreshed
     history or a different ``--from`` can never be served a stale menu.
+    E27.5: *m1_rows* (session → M1 outputs) feed ``mc.path_vol: m1``; only then does
+    the day's M1 row join the cache key (every other menu keeps its key).
     """
     closes = closes.sort_index()
     out: dict[dt.date, list[Candidate]] = {}
@@ -783,10 +843,15 @@ def build_menus(
         if d not in chains:
             continue
         stance = (stances or {}).get(d)
+        m1_row = None
+        if m1_rows is not None and mc.path_vol == "m1":
+            m1_row = m1_rows.get(d)
         key = None
         if cache is not None and cache_ctx is not None:
             past = closes[pd.Index(closes.index) <= d].iloc[-(_HV_LONG + 1) :]
             data = frame_hash(chains[d]) + frame_hash(past.to_frame())
+            if m1_row is not None:
+                data += config_hash(sorted(m1_row.items()))
             key = cache_ctx.key(
                 underlying, d, menu_hash=config_hash(list(specs), cost, r, stance, tilt, data)
             )
@@ -806,6 +871,7 @@ def build_menus(
             r=r,
             stance=stance,
             tilt=tilt,
+            m1_row=m1_row,
         )
         if key is not None and cache is not None:
             cache.put(key, menu)

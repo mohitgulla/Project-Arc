@@ -1255,8 +1255,14 @@ def _proxy_labels(
     end: dt.date,
     seed_key: str,
     model: str,
+    ml_root: Path | None = None,
+    m1_version: str | None = None,
 ) -> dict[str, dict[str, pd.Series]]:
-    """proxy -> ticker -> session -> stance for every built ticker (E7.20)."""
+    """proxy -> ticker -> session -> stance for every built ticker (E7.20).
+
+    E27.5: ``m1_direction`` reads the point-in-time M1 outputs under *ml_root*
+    (default ``<data_dir>/ml``) through ``model_asof``.
+    """
     from arc.backtest.ranking import labels_for
     from arc.backtest.stance import proxy_labels
 
@@ -1274,15 +1280,81 @@ def _proxy_labels(
                 msg = f"market_v2 stance proxy: no {MARKET_PROXY_TICKER} closes in {data_dir}"
                 raise StudyRefusedError(msg)
             market, _ = labels_for(closes.sort_index(), model)  # type: ignore[arg-type]
+    m1: dict[str, pd.Series] = {}
+    if "m1_direction" in proxies:
+        from arc.backtest.ml_arms import load_m1_outputs, m1_direction_of
+
+        sessions = [d for d in b.sessions if start <= d <= end]
+        m1 = m1_direction_of(
+            load_m1_outputs(
+                ml_root=ml_root or data_dir / "ml",
+                tickers=list(b.built),
+                sessions=sessions,
+                version=m1_version,
+            )
+        )
     out: dict[str, dict[str, pd.Series]] = {}
     for s in dict.fromkeys(proxies):
         if s == CONTROL_PROXY:
             continue
         out[s] = {
-            t: proxy_labels(s, tk.trend, ticker=t, market=market, seed_key=seed_key)
+            t: proxy_labels(
+                s, tk.trend, ticker=t, market=market, seed_key=seed_key, m1=m1.get(t.upper())
+            )
             for t, tk in b.built.items()
         }
     return out
+
+
+def _uses_ml(plan: _ArmPlan) -> bool:
+    """E27.5: does this arm read a model (M2 options or the M1 path source)?"""
+    return bool(plan.cfg.backtest.uses_m2 or plan.exits.model.path_vol == "m1")
+
+
+#: E27.5: walk-only ranking keys (the M2 hooks): arms differing only by these share a build.
+_WALK_ONLY_KEYS = ("ml_ranker", "ml_filter", "ml_size")
+
+
+def _build_overlay(overlay: dict[str, Any]) -> dict[str, Any]:
+    """*overlay* without its walk-only keys (the build-sharing key; empty blocks dropped)."""
+    bt = (overlay.get("ranking") or {}).get("backtest")
+    if not isinstance(bt, dict) or not set(_WALK_ONLY_KEYS) & set(bt):
+        return overlay
+    out = {k: v for k, v in overlay.items() if k != "ranking"}
+    rk = {k: v for k, v in overlay["ranking"].items() if k != "backtest"}
+    rest = {k: v for k, v in bt.items() if k not in _WALK_ONLY_KEYS}
+    if rest:
+        rk["backtest"] = rest
+    if rk:
+        out["ranking"] = rk
+    return out
+
+
+def _family_of(profile: str) -> str:
+    from arc.backtest.ml_arms import family_for
+
+    return family_for(profile)
+
+
+class _Hooks:
+    """The walk hooks of one ML arm walk (``h`` None = a plain walk)."""
+
+    def __init__(self, h: Any) -> None:
+        self.h = h
+
+    def kw(self) -> dict[str, Any]:
+        if self.h is None:
+            return {}
+        return {"key_override": self.h.key_override, "size_override": self.h.size_override}
+
+
+def _ml_hooks(cfg: RankingFile, scores: Any) -> _Hooks:
+    if scores is None:
+        return _Hooks(None)
+    from arc.backtest.ml_arms import MlHooks
+
+    bt = cfg.backtest
+    return _Hooks(MlHooks(scores, ranker=bt.ml_ranker, flt=bt.ml_filter, size=bt.ml_size))
 
 
 #: E7.20: the market reference the ``market_v2`` stance proxy reads.
@@ -1316,11 +1388,13 @@ def run_study(  # noqa: PLR0913
     cache: bool = True,
     cache_dir: Path | None = None,
     git_sha: str | None = None,
+    ml_root: Path | None = None,
 ) -> LedgerEntry:
     """Run *spec* once under the protocol, append the ledger line, write the report.
 
     *now* stamps the ledger line (tests inject it); *latest* is the last data session
-    available (the holdout's open end).
+    available (the holdout's open end). *ml_root* (E27.5, default ``<data_dir>/ml``)
+    holds the models the ML arm options read through ``model_asof``.
     """
     from arc.backtest.ranking import profile_allows_credit
     from arc.backtest.sim_report import _git_sha, _write_run, build_sim, walk
@@ -1344,7 +1418,7 @@ def run_study(  # noqa: PLR0913
     plans: list[_ArmPlan] = []
     for arm in spec.arms.names:
         cfg, exits, cost = arm_configs(spec, arm, paths=paths)
-        key = document_hash(spec.arms.arm(arm).model_dump(mode="json")["overlay"])
+        key = document_hash(_build_overlay(spec.arms.arm(arm).model_dump(mode="json")["overlay"]))
         plans.append(_ArmPlan(arm=arm, cfg=cfg, exits=exits, cost=cost, overlay_key=key))
     allows = {p: profile_allows_credit(p, settings.account_profiles_file) for p in spec.profiles}
     for arm in spec.arms.names:
@@ -1354,6 +1428,16 @@ def run_study(  # noqa: PLR0913
                 msg = f"{spec.id}: arm {arm} ranker {r.value} does not apply to profile {p}"
                 raise StudyRefusedError(msg)
 
+    mlr = ml_root or data_dir / "ml"
+    uses_ml = any(_uses_ml(p) for p in plans) or (
+        spec.robustness is not None and "m1_direction" in spec.robustness.stance
+    )
+    if uses_ml and phase == "holdout":
+        msg = (
+            f"{spec.id}: ML arm options are dev-only (D84/D126: only E27.3's single logged "
+            "holdout read may score holdout days)"
+        )
+        raise StudyRefusedError(msg)
     run_dir = runs_dir / spec.id / f"{now:%Y%m%dT%H%M%S}-{phase}-{uni}-{h[:8]}"
     rob = spec.robustness
     ctrl_plan = next(p for p in plans if p.arm == "control")
@@ -1381,6 +1465,8 @@ def run_study(  # noqa: PLR0913
     built: dict[str, Any] = {}  # overlay key -> SimBuild (arms differing by ranker share it)
     proxies: dict[str, dict[str, dict[str, pd.Series]]] = {}  # overlay key -> proxy -> labels
     walk_s = 0.0
+    m2_cache: dict[tuple[str, str | None], Any] = {}  # (profile, version) -> MlScores
+    ml_info: dict[str, dict[str, Any]] = {}  # profile -> arm -> ML hook summary
     for plan in plans:
         want = sorted({r for x in spec.arms.names if (r := spec.arms.arm(x).ranker) is not None})
         if plan.overlay_key not in built:
@@ -1402,6 +1488,7 @@ def run_study(  # noqa: PLR0913
                 cache_dir=cache_dir,
                 stance_labels=labels,
                 alt_x=alt_x,
+                ml_root=mlr if plan.exits.model.path_vol == "m1" else None,
             )
             if grid_cells:
                 proxies[plan.overlay_key] = _proxy_labels(
@@ -1412,15 +1499,35 @@ def run_study(  # noqa: PLR0913
                     end=end,
                     seed_key=h,
                     model=plan.cfg.backtest.sim.regime_model,
+                    ml_root=mlr,
+                    m1_version=plan.cfg.backtest.ml_versions.get("m1"),
                 )
         b = built[plan.overlay_key]
         version, partitions = b.universe_version, b.partitions
         equity0 = plan.cfg.backtest.sim.equity
         for p in spec.profiles:
             r = spec.arms.arm(plan.arm).ranker_for(allows_credit=allows[p])
-            run = walk(b, profile=p, ranker=r, cfg=plan.cfg, end=end)
+            scores = None
+            if plan.cfg.backtest.uses_m2:
+                from arc.backtest.ml_arms import load_m2_scores
+
+                fam = plan.cfg.backtest.ml_versions.get(_family_of(p))
+                skey = (p, fam)
+                if skey not in m2_cache:
+                    m2_cache[skey] = load_m2_scores(
+                        ml_root=mlr,
+                        profile=p,
+                        sessions=[d for d in b.sessions if start <= d <= end],
+                        tickers=sorted(b.built),
+                        version=fam,
+                    )
+                scores = m2_cache[skey]
+            hooks = _ml_hooks(plan.cfg, scores)
+            run = walk(b, profile=p, ranker=r, cfg=plan.cfg, end=end, **hooks.kw())
             _write_run(run, run_dir / p / plan.arm)
             runs[p][plan.arm] = run
+            if hooks.h is not None:
+                ml_info.setdefault(p, {})[plan.arm] = hooks.h.summary()
             for s, x in grid_cells:
                 cid = cell_id(s, x)
                 if cid == control_cell:
@@ -1435,6 +1542,7 @@ def run_study(  # noqa: PLR0913
                     end=end,
                     stance_of=None if s == CONTROL_PROXY else proxies[plan.overlay_key][s],
                     fill_x=None if x == control_x else x,
+                    **_ml_hooks(plan.cfg, scores).kw(),
                 )
                 walk_s += time.monotonic() - w0
 
@@ -1520,6 +1628,8 @@ def run_study(  # noqa: PLR0913
         run_dir.mkdir(parents=True, exist_ok=True)
         (run_dir / "report.json").write_text(json.dumps(payload, indent=1, default=str) + "\n")
         (run_dir / "report.md").write_text(md)
+        if ml_info:  # E27.5: which model served which sessions, score coverage
+            (run_dir / "ml_arms.json").write_text(json.dumps(ml_info, indent=1) + "\n")
         if report_dir is not None:
             report_dir.mkdir(parents=True, exist_ok=True)
             (report_dir / f"{spec.id}.json").write_text(

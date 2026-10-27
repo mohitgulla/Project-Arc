@@ -22,6 +22,10 @@ profile trades competes).
 * ``lagged_<k>``: ``trend_v2`` from *k* sessions earlier (a slow analyst).
 * ``market_v2``: the market reference's (SPY) ``trend_v2`` label for every name.
 * ``both``: no stance filter (an upper bound on menu breadth).
+* ``m1_direction`` (E27.2/E27.5, D126): the sign of the point-in-time M1 21-session
+  median (+1 bull, −1 bear, 0 sideways; :func:`arc.ml.m1.predict.direction`), from the
+  walk-forward M1 model that may serve that session (``model_asof``); a session without
+  a servable model or forecast is ``unknown`` (traded like any unlabelled session).
 * ``live_llm``: replay of the live Research stances (E7.22). Reserved: refused until
   that card lands.
 
@@ -49,7 +53,14 @@ __all__ = [
 
 #: The stance proxies a robustness grid may name (E7.20; ``live_llm`` is E7.22's slot).
 StanceProxy = Literal[
-    "trend_v2", "noisy_0.2", "noisy_0.35", "lagged_5", "market_v2", "both", "live_llm"
+    "trend_v2",
+    "noisy_0.2",
+    "noisy_0.35",
+    "lagged_5",
+    "market_v2",
+    "both",
+    "m1_direction",
+    "live_llm",
 ]
 PROXIES: tuple[str, ...] = get_args(StanceProxy)
 #: The proxy of the control cell (the sim's stance before E7.20).
@@ -59,6 +70,8 @@ ANY = "*"
 #: Every stance a proxy can give a session (``unknown`` = no trade, never menu-tagged).
 LABELS: tuple[str, ...] = ("bull", "bear", "sideways", ANY)
 _FLIP = {"bull": "bear", "bear": "bull"}
+#: ``m1_direction`` value → trend label (E27.2 ``m1_trend_labels``).
+_M1_LABEL = {1.0: "bull", -1.0: "bear", 0.0: "sideways"}
 
 
 def _param(proxy: str) -> float:
@@ -108,11 +121,14 @@ def proxy_labels(
     ticker: str,
     market: pd.Series | None = None,
     seed_key: str = "",
+    m1: pd.Series | None = None,
 ) -> pd.Series:
     """Session → stance for one ticker under *proxy* (see the module docstring).
 
     *trend* is the ticker's own ``trend_v2`` label per session (closes ≤ that session),
-    *market* the market reference's. The index of the result is *trend*'s.
+    *market* the market reference's, *m1* the ticker's point-in-time ``m1_direction``
+    per session (``m1_direction`` only; None = no forecast for the name: ``unknown``).
+    The index of the result is *trend*'s.
     """
     if proxy not in PROXIES:
         msg = f"unknown stance proxy {proxy!r} (one of {', '.join(PROXIES)})"
@@ -128,6 +144,16 @@ def proxy_labels(
             raise ValueError(msg)
         m = market.astype(str)
         return pd.Series([m.get(d, "unknown") for d in t.index], index=t.index, dtype=object)
+    if proxy == "m1_direction":
+        mv = m1 if m1 is not None else pd.Series(dtype=float)
+
+        def lab(d: dt.date) -> str:
+            v = mv.get(d)
+            if v is None or pd.isna(v):
+                return "unknown"
+            return _M1_LABEL.get(float(v), "unknown")
+
+        return pd.Series([lab(d) for d in t.index], index=t.index, dtype=object)
     if proxy.startswith("lagged_"):
         k = int(_param(proxy))
         vals = list(t.to_numpy())
