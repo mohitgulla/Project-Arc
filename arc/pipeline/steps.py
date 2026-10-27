@@ -221,6 +221,7 @@ if TYPE_CHECKING:
     from arc.personas.schemas import PoolItem
     from arc.pipeline.env import PipelineEnv
     from arc.pipeline.market import PricedStructure
+    from arc.pipeline.ml_shadow import ShadowResult
     from arc.positions.evaluate import PositionReview
     from arc.positions.exit_case import ExitCase
     from arc.routines.config import ResearchDiversificationSettings
@@ -3451,6 +3452,9 @@ class _QuantMenus:
     regime_dropped: list[str] = dataclasses.field(default_factory=list)
     # D131 (E28.5): budgeted names the cluster cap blocks (no menu), by ticker
     cluster_blocked: dict[str, ClusterCheck] = dataclasses.field(default_factory=dict)
+    # E27.4 (D126): id(candidate) -> its managed cost estimate ($ per unit), for the
+    # shadow ML rows only (the ledger's est_cost); never read by a decision
+    est_cost: dict[int, float] = dataclasses.field(default_factory=dict)
 
 
 def _be_filter(
@@ -3705,6 +3709,9 @@ def _quant_menus(
         for c in cands:
             if id(c) in models:
                 summaries[id(c)] = ExitSummary.from_result(models[id(c)])
+                costs = models[id(c)].managed.costs
+                if costs is not None:
+                    m.est_cost[id(c)] = round(costs.total, 4)
         by = exits.pipeline.rank_menu_by
         if by != "scanner" and not full:
             cands.sort(key=lambda c: _menu_rank_key(summaries.get(id(c)), by))
@@ -3889,6 +3896,37 @@ def _alpaca_oi_alert(ctx: JobContext, env: PipelineEnv, today: _dt.date) -> None
         log.warning("pipeline.oi_alert_failed", error=str(exc))
 
 
+def _ml_link(ctx: JobContext, st: Structure) -> dict[str, Any]:
+    """E27.4 (D126): the PROPOSED decision's link to this chain's ``ml_scores`` entry
+    (+ the chosen structure's score, copied). ``{}`` when the chain scored nothing."""
+    from arc.ml.scores import legs_key
+    from arc.pipeline.ml_shadow import link_from_snapshot
+
+    key = legs_key([(leg.occ_symbol, leg.side.value) for leg in st.legs])
+    return link_from_snapshot(ctx.snapshot, key)
+
+
+def _ml_key(c: ScanCandidate) -> str:
+    """E27.4: a menu item's ``ml_scores`` key (its legs)."""
+    from arc.ml.scores import legs_key
+
+    return legs_key([(leg.occ_symbol, leg.side.value) for leg in c.structure.legs])
+
+
+def _ml_shadow(ctx: JobContext, m: _QuantMenus, credit_only: Collection[str]) -> ShadowResult:
+    """E27.4 (D126): ``ml.score`` on the built menus (never raises; shadow only)."""
+    from arc.pipeline.ml_shadow import ShadowResult as _Shadow
+    from arc.pipeline.ml_shadow import filter_reasons, score_menus
+
+    if not ctx.settings.ml_shadow:
+        return _Shadow()
+    try:
+        reasons = filter_reasons(ctx.conn, ctx.chain_run_id, credit_only)
+    except sqlite3.Error:
+        reasons = {}
+    return score_menus(ctx, m, credit_only=credit_only, filter_reasons=reasons)
+
+
 def quant_open(ctx: JobContext, env: PipelineEnv) -> JobResult:
     """``quant.open`` (was ``quant``): choose one structure per budgeted shortlist name."""
     settings = ctx.settings
@@ -4003,6 +4041,10 @@ def quant_open(ctx: JobContext, env: PipelineEnv) -> JobResult:
             metrics={"structures": 0, "no_chain": len(no_chain), "no_profile": len(no_profile)},
         )
 
+    # E27.4 (D126): shadow M2 scores of every menu item (ml_scores context; fail open).
+    # After the menus, before the Quant call; nothing below reads the scores but the
+    # journal links, so the prompt, the choice, the gate and sizing are unchanged.
+    shadow = _ml_shadow(ctx, m, shortlist.credit_only)
     inputs = {
         "chains_json": json.dumps(chains, indent=2, sort_keys=True),
         "underlying_prices_json": json.dumps(spots, sort_keys=True),
@@ -4114,7 +4156,8 @@ def quant_open(ctx: JobContext, env: PipelineEnv) -> JobResult:
                     persona_call_id=call_id,
                     payload=q.model_dump(mode="json")
                     | {"strategy": entry["strategy"]}
-                    | ({"sleeve": entry["sleeve"]} if "sleeve" in entry else {}),
+                    | ({"sleeve": entry["sleeve"]} if "sleeve" in entry else {})
+                    | shadow.link(_ml_key(c)),
                 )
             else:
                 j.add(
@@ -4124,7 +4167,7 @@ def quant_open(ctx: JobContext, env: PipelineEnv) -> JobResult:
                     Choice.REJECTED,
                     ReasonCode.MENU_NOT_CHOSEN,
                     persona_call_id=call_id,
-                    payload=entry,
+                    payload=entry | shadow.link(_ml_key(c)),
                 )
     for s, reason in rejected:
         j.add(
@@ -5520,7 +5563,8 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
                 "limit_price": str(proposal.limit_price),
                 "band": band.model_dump(mode="json"),
                 "quant": proposal.quant.model_dump(mode="json"),
-            },
+            }
+            | _ml_link(ctx, st),
         )
         j.add(
             JournalPersona.SIZING,

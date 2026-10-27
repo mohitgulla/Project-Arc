@@ -1,0 +1,486 @@
+{
+  "$defs": {
+    "M1Summary": {
+      "additionalProperties": false,
+      "description": "One ticker's M1 read at the panel date (E27.2), context only.",
+      "properties": {
+        "direction": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "+1 up / 0 flat / -1 down (21 sessions)",
+          "title": "Direction"
+        },
+        "move_vs_implied_h21": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Move Vs Implied H21"
+        },
+        "p_up_h21": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "P Up H21"
+        },
+        "q10_h21": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Q10 H21"
+        },
+        "q50_h21": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Q50 H21"
+        },
+        "q90_h21": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Q90 H21"
+        },
+        "rv_h21": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rv H21"
+        },
+        "ticker": {
+          "title": "Ticker",
+          "type": "string"
+        },
+        "version": {
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ticker",
+        "version"
+      ],
+      "title": "M1Summary",
+      "type": "object"
+    },
+    "ScoredCandidate": {
+      "additionalProperties": false,
+      "description": "An :class:`MlScore` plus the live and M2 ranks within its ticker's menu.",
+      "properties": {
+        "e_days": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "E Days"
+        },
+        "e_r": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "E[R], realised P&L / max loss",
+          "title": "E R"
+        },
+        "family": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Family"
+        },
+        "feature_digest": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "12-hex sha256 of the model inputs",
+          "title": "Feature Digest"
+        },
+        "feature_schema": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Feature Schema"
+        },
+        "key": {
+          "description": "Menu item id: its legs, `+OCC,-OCC` sorted (legs_key)",
+          "title": "Key",
+          "type": "string"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "managed_net_ev": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Live ranker key, $ per unit",
+          "title": "Managed Net Ev"
+        },
+        "missing_features": {
+          "default": 0,
+          "description": "Model features that were NaN on this row",
+          "title": "Missing Features",
+          "type": "integer"
+        },
+        "model_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model Version"
+        },
+        "p_stop": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "P Stop"
+        },
+        "p_win": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "P Win"
+        },
+        "r_q10": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "R Q10"
+        },
+        "r_q50": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "R Q50"
+        },
+        "r_q90": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "R Q90"
+        },
+        "rank_live": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Position on the live menu (1 = top)",
+          "title": "Rank Live"
+        },
+        "rank_m2": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Rank M2 would give it by e_r (1 = best)",
+          "title": "Rank M2"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Why unavailable (bundle / row error)",
+          "title": "Reason"
+        },
+        "sleeve": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sleeve"
+        },
+        "status": {
+          "enum": [
+            "ok",
+            "unavailable"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "ticker": {
+          "title": "Ticker",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "ticker",
+        "kind",
+        "status"
+      ],
+      "title": "ScoredCandidate",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The ``ml_scores`` context entry (one per ``quant.open`` run, subject session).",
+  "properties": {
+    "as_of": {
+      "format": "date",
+      "title": "As Of",
+      "type": "string"
+    },
+    "family": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Family"
+    },
+    "feature_schema": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Feature Schema"
+    },
+    "latency_ms": {
+      "default": 0,
+      "title": "Latency Ms",
+      "type": "integer"
+    },
+    "m1": {
+      "items": {
+        "$ref": "#/$defs/M1Summary"
+      },
+      "title": "M1",
+      "type": "array"
+    },
+    "m1_version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "M1 Version"
+    },
+    "model_version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Model Version"
+    },
+    "n": {
+      "default": 0,
+      "title": "N",
+      "type": "integer"
+    },
+    "n_ok": {
+      "default": 0,
+      "title": "N Ok",
+      "type": "integer"
+    },
+    "panel_date": {
+      "anyOf": [
+        {
+          "format": "date",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Session the panel features are from",
+      "title": "Panel Date"
+    },
+    "panel_source": {
+      "default": "none",
+      "enum": [
+        "stored",
+        "computed",
+        "none"
+      ],
+      "title": "Panel Source",
+      "type": "string"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Why unavailable (bundle refusal, error)",
+      "title": "Reason"
+    },
+    "scores": {
+      "items": {
+        "$ref": "#/$defs/ScoredCandidate"
+      },
+      "title": "Scores",
+      "type": "array"
+    },
+    "status": {
+      "enum": [
+        "ok",
+        "partial",
+        "unavailable"
+      ],
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "as_of",
+    "status"
+  ],
+  "title": "MlScoresPayload",
+  "type": "object"
+}

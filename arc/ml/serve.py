@@ -17,54 +17,28 @@ import hashlib
 import json
 import math
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-from pydantic import BaseModel, ConfigDict, Field
 
 from arc.ml.calibrate import FamilyCalibrator
 from arc.ml.lgbm_text import LgbmTextError, TextBooster
 from arc.ml.m2.config import FAMILIES, FAMILY_PROFILE
 from arc.ml.m2.predict import OUTPUTS, score_rows
 from arc.ml.registry import RegistryError, load_index, verify
+from arc.ml.scores import MlScore
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     import pandas as pd
 
-ScoreStatus = Literal["ok", "unavailable"]
 # Preference when the family has no champion: a shadow version, then the newest candidate.
 _STATUS_RANK = {"champion": 0, "shadow": 1, "candidate": 2}
 
 
 class BundleError(RuntimeError):
     """The bundle is missing, changed on disk, or built on another feature schema."""
-
-
-class MlScore(BaseModel):
-    """One menu candidate's shadow score (the ``ml_scores`` context row)."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    key: str = Field(..., description="Candidate key (kind|legs), as on the menu / ledger")
-    ticker: str
-    kind: str
-    sleeve: str | None = None
-    status: ScoreStatus
-    reason: str | None = Field(None, description="Why unavailable (bundle / row error)")
-    p_win: float | None = None
-    p_stop: float | None = None
-    e_r: float | None = Field(None, description="E[R], realised P&L / max loss")
-    r_q10: float | None = None
-    r_q50: float | None = None
-    r_q90: float | None = None
-    e_days: float | None = None
-    family: str | None = None
-    model_version: str | None = None
-    feature_schema: str | None = None
-    feature_digest: str | None = Field(None, description="12-hex sha256 of the model inputs")
-    missing_features: int = Field(0, description="Model features that were NaN on this row")
 
 
 @dataclass(frozen=True)

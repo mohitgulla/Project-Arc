@@ -50,6 +50,8 @@ class DecisionTrail:
     risk: dict[str, Any] | None = None  # RiskAssessment
     features: dict[str, Any] | None = None  # regime/vol subset of a FeatureSnapshot
     analytics: ProposalAnalytics | None = None  # E6.1a: stored with the MarketContext
+    # E27.4 (D126): the shadow M2 score copied on the PROPOSED decision (display only)
+    ml: dict[str, Any] | None = None
 
 
 def _first(
@@ -72,8 +74,20 @@ def _features(mc: MarketContext | None) -> dict[str, Any] | None:
     }
 
 
-def load_trail(conn: sqlite3.Connection, proposal_hash: str, ticker: str) -> DecisionTrail:
-    """Trail for *proposal_hash*; an empty trail when the chain can't be found."""
+def _ml(decisions: list[DecisionRecord], proposal_hash: str) -> dict[str, Any] | None:
+    for d in decisions:
+        if d.reason_code is ReasonCode.PROPOSED and d.proposal_hash == proposal_hash:
+            ml = (d.payload or {}).get("ml")
+            return ml if isinstance(ml, dict) else None
+    return None
+
+
+def load_trail(
+    conn: sqlite3.Connection, proposal_hash: str, ticker: str, *, ml: bool = False
+) -> DecisionTrail:
+    """Trail for *proposal_hash*; an empty trail when the chain can't be found.
+
+    ``ml`` (the ``ml_card_line`` setting, E27.4) adds the proposal's shadow score."""
     journal = JournalStore(conn)
     chain = journal.chain_for_proposal(proposal_hash)
     if not chain:
@@ -109,6 +123,7 @@ def load_trail(conn: sqlite3.Connection, proposal_hash: str, ticker: str) -> Dec
             ),
             features=_features(mc),
             analytics=mc.analytics if mc else None,
+            ml=_ml(decisions, proposal_hash) if ml else None,
         )
     except (ValueError, TypeError) as exc:  # a malformed row must not block the card
         log.warning("approvals.trail_unreadable", proposal_hash=proposal_hash, error=str(exc))

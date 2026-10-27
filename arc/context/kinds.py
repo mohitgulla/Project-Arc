@@ -26,6 +26,7 @@ from arc.features.market_health import (
     PcHistoryPayload,
 )
 from arc.features.snapshot import FeatureSnapshot
+from arc.ml.scores import MlScoresPayload
 from arc.models import Candidate, CatalystType, ChannelBrief, Proposal, Stance
 from arc.personas.schemas import (
     ExitWatchItem,
@@ -1076,6 +1077,9 @@ KINDS: Mapping[str, KindSpec] = _registry(
     KindSpec("risk_exit_review", RiskExitReviewPayload),
     # E23.2 (D98): anti-chase drops on watch for a pullback; subject = "<TICKER>:<stance>"
     KindSpec("pullback_watch", PullbackWatchPayload),
+    # E27.4 (D126): quant.open's shadow M2 scores of every menu item; subject = "session".
+    # Context only: never rendered into a prompt, never a gate / sizing / ranking input.
+    KindSpec("ml_scores", MlScoresPayload),
 )
 
 

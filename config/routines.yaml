@@ -156,6 +156,7 @@ context_ttl:
   exit_case:     {ttl: 30m, supersede: latest}             # E13.17 (D56) Quant exit case; subject = open structure id
   risk_exit_review: {ttl: 30m, supersede: latest}          # E13.18 (D56) Risk exit verdicts; subject = session
   pullback_watch: {ttl: 8 sessions, supersede: latest}     # E23.2 (D98) anti-chase drops on watch; subject = TICKER:stance; outlives drop session + ttl_sessions (max 5) + 1 so expiry is journaled
+  ml_scores:     {ttl: 30m, supersede: latest}             # E27.4 (D126) shadow M2 scores of the Quant menu (TTL = the tick); subject = session. Context only
 
 # Source categories (D47/D49/D56), weighted EQUALLY. A source's `weight:` is its share
 # inside its category. `max_age` is the freshness window: older docs are never stored or
@@ -848,12 +849,12 @@ personas:
 
 steps:                          # per-step settings for chain-only steps (E5.2, arc/pipeline/steps.py)
   # E13.9 (D56) open path.
-  quant.open:    {reads: [shortlist, regime], writes: [structures, note], notify: card}
+  quant.open:    {reads: [shortlist, regime], writes: [structures, note, ml_scores], notify: card}
   risk.open:     {reads: [structures, ex_dividend, macro_calendar], writes: [risk_review, note], notify: card}
   # One Quant revision round after Risk's verdicts; skipped when no structure is
   # `revise`, on a no-change loop, or with < 90 s of loop.max_runtime left.
   quant.revise:  {reads: [shortlist, regime, structures, risk_review], writes: [structures, note], notify: card, on_no_change: skip, min_remaining_s: 90}
-  quant.propose: {reads: [candidate, regime, shortlist, structures, risk_review, exit_case, risk_exit_review, position_review], writes: [proposal], llm: false, notify: summary}  # posts the proposal cards; fingerprint dedupe (E5.9); close branch (E13.18)
+  quant.propose: {reads: [candidate, regime, shortlist, structures, risk_review, exit_case, risk_exit_review, position_review, ml_scores], writes: [proposal], llm: false, notify: summary}  # posts the proposal cards; fingerprint dedupe (E5.9); close branch (E13.18)
   # E13.17 (D56) exit path: Quant judges one exit case per position Research flagged
   # `review`, with a discretionary signal, or paired with a capacity rejection.
   quant.exit:    {reads: [position_review, exit_watchlist, portfolio_context, regime, ex_dividend, story, scout_read], writes: [exit_case, note], notify: card, on_no_change: skip, min_remaining_s: 60}

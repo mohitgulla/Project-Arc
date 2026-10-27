@@ -126,6 +126,10 @@ def _lgb() -> Any:
     return lightgbm
 
 
+def _lgb_from_text(text: str) -> Any:
+    return _lgb().Booster(model_str=text)
+
+
 # ---------------------------------------------------------------------------
 # Folds
 # ---------------------------------------------------------------------------
@@ -776,25 +780,35 @@ def write_model(
     return man
 
 
-def load_model(vdir: Path, *, check_schema: bool = True) -> M1Model:
-    """Read an artefact directory (text dumps only; refuses a stale feature schema)."""
+def load_model(vdir: Path, *, check_schema: bool = True, text: bool = False) -> M1Model:
+    """Read an artefact directory (text dumps only; refuses a stale feature schema).
+
+    ``text=True`` (E27.4 live serving) evaluates the dumps with the pure-numpy
+    :class:`~arc.ml.lgbm_text.TextBooster` instead of ``lightgbm`` (absent in prod/CI).
+    """
     from arc.ml.features.registry import require_schema
 
     man = M1Manifest.model_validate_json((vdir / "manifest.json").read_text())
     if check_schema:
         require_schema(man.feature_schema)
-    lgb = _lgb()
+    make: Callable[[str], Any]
+    if text:
+        from arc.ml.lgbm_text import TextBooster
+
+        make = TextBooster
+    else:
+        make = _lgb_from_text
     boosters = {}
     for t in man.targets:
         if t.source != "lgbm":
             continue
         for p in man.levels:
             name = booster_file(t.kind, t.h, p)
-            text = (vdir / name).read_text()
-            if hashlib.sha256(text.encode()).hexdigest() != man.files[name]:
+            text_ = (vdir / name).read_text()
+            if hashlib.sha256(text_.encode()).hexdigest() != man.files[name]:
                 msg = f"{name}: sha256 mismatch with manifest"
                 raise ValueError(msg)
-            boosters[(t.kind, t.h, float(p))] = lgb.Booster(model_str=text)
+            boosters[(t.kind, t.h, float(p))] = make(text_)
     return M1Model(man, boosters)
 
 

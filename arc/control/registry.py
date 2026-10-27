@@ -222,6 +222,7 @@ NOT_EXPOSED: dict[str, str] = {
     "scanner_risk_free_rate": "pricing input",
     "scanner_iv_lookback": "IV-rank statistics window",
     "scanner_iv_history_dir": "path",
+    "ml_data_dir": "path (E27.4 ML artefacts root)",
     "iv_min_obs_rank": "IV-rank statistics guard (D55); change by PR",
     "iv_series_sources": "IV series source precedence (E7.13, D84; data provenance); change by PR",
     "iv_crosscheck_max_pts": "data-quality alert threshold (context data only)",
@@ -2096,6 +2097,26 @@ liquidity; a leg passes if within this OR spread_max_abs).",
         field="auto_exit_defined_risk",
         env="live",
         ref="D24",
+    ),
+    # -- ML shadow scoring (E27.4, D126): context only, never a decision input -----------
+    _s(
+        "ml.shadow",
+        Group.ROUTINES,
+        _B,
+        "Shadow-score every Quant menu item with the registered M2 model (`ml_scores` context, "
+        "journal links, outcome copies). Never a gate, sizing, ranking or prompt input.",
+        Risk.NONE,
+        field="ml_shadow",
+        ref="D126",
+    ),
+    _s(
+        "ml.card_line",
+        Group.APPROVALS,
+        _B,
+        "Display only: the `ML (shadow): p_win · E[R] · p_stop` line on Quant proposal cards.",
+        Risk.NONE,
+        field="ml_card_line",
+        ref="D126",
     ),
 )
 

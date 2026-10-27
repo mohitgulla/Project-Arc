@@ -238,15 +238,42 @@ class JournalStore:
 
     # -- outcomes ------------------------------------------------------------
 
+    def _ml_at_entry(self, proposal_hash: str) -> dict[str, Any]:
+        """E27.4: the ``ml`` block of *proposal_hash*'s PROPOSED decision as outcome
+        fields (``{}`` when the chain had no shadow score for it)."""
+        row = self.conn.execute(
+            """SELECT json_extract(payload, '$.ml') FROM decisions
+               WHERE proposal_hash = ? AND reason_code = 'proposed'
+               ORDER BY at DESC, rowid DESC LIMIT 1""",
+            (proposal_hash,),
+        ).fetchone()
+        if row is None or row[0] is None:
+            return {}
+        ml = json.loads(row[0])
+        if not isinstance(ml, dict) or not ml.get("model_version"):
+            return {}
+        return {
+            "ml_p_win": ml.get("p_win"),
+            "ml_e_r": ml.get("e_r"),
+            "ml_p_stop": ml.get("p_stop"),
+            "ml_model_version": str(ml["model_version"]),
+        }
+
     def record_outcome(self, o: OutcomeRecord) -> str:
+        if o.ml_model_version is None:
+            # E27.4 (D126): copy the shadow score at entry from the proposal's PROPOSED
+            # decision (written once per proposal), so every outcome writer carries it.
+            o = o.model_copy(update=self._ml_at_entry(o.proposal_hash))
         row_id = _new_id("out")
         self.conn.execute(
             """INSERT INTO outcomes
                (id, proposal_hash, status, contracts, limit_price, entry_fill, slippage_usd,
                 slippage_bps, cost_bps, exit_fill, realised_pnl, max_adverse_excursion,
                 days_held, exit_reason, ev_total, pnl_vs_ev, hold_to_expiry_shadow_pnl,
-                supersedes_id, at, max_favourable_excursion)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                supersedes_id, at, max_favourable_excursion,
+                ml_p_win, ml_e_r, ml_p_stop, ml_model_version)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                       ?, ?, ?, ?)""",
             (
                 row_id,
                 o.proposal_hash,
@@ -268,6 +295,10 @@ class JournalStore:
                 o.supersedes_id,
                 to_db(o.at),
                 _dec(o.max_favourable_excursion),
+                o.ml_p_win,
+                o.ml_e_r,
+                o.ml_p_stop,
+                o.ml_model_version,
             ),
         )
         return row_id
@@ -327,6 +358,10 @@ class JournalStore:
             hold_to_expiry_shadow_pnl=d("hold_to_expiry_shadow_pnl"),
             supersedes_id=row["supersedes_id"],
             at=from_db(row["at"]),
+            ml_p_win=row["ml_p_win"],
+            ml_e_r=row["ml_e_r"],
+            ml_p_stop=row["ml_p_stop"],
+            ml_model_version=row["ml_model_version"],
         )
 
     # -- reviews -------------------------------------------------------------
