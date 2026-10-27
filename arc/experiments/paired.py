@@ -56,18 +56,60 @@ def _columns(conn: sqlite3.Connection, schema: str, table: str) -> list[str]:
     return [r[1] for r in conn.execute(f'PRAGMA "{schema}".table_info("{table}")')]
 
 
-def _arm_paths(conn: sqlite3.Connection) -> list[Path]:
-    return [p for p in arm_stores(conn).values() if p.is_file()]
+class ArmAttachLimitError(RuntimeError):
+    """More arm stores than SQLite can ATTACH on one connection (E15.12).
+
+    Raised before any ATTACH so the caller sees the count, not SQLite's bare
+    ``too many attached databases``. Arms are never silently dropped.
+    """
 
 
-def attach_arms(conn: sqlite3.Connection, paths: list[Path] | None = None) -> dict[str, str]:
+def _arm_paths(conn: sqlite3.Connection, experiment_id: str | None = None) -> list[Path]:
+    """Existing arm store files recorded in the control store, in key order.
+
+    With *experiment_id*: that experiment's arms only (E15.12). Without: every arm
+    store of every experiment ever started, which outgrows SQLite's ATTACH limit
+    once a few experiments have run; :func:`attach_arms` refuses that with
+    :class:`ArmAttachLimitError`.
+    """
+    stores = arm_stores(conn, experiment_id)
+    return [stores[k] for k in sorted(stores) if stores[k].is_file()]
+
+
+def _attach_room(conn: sqlite3.Connection) -> int:
+    """How many more databases *conn* can ATTACH (``SQLITE_LIMIT_ATTACHED`` minus in use)."""
+    in_use = sum(1 for r in conn.execute("PRAGMA database_list") if r[1] not in ("main", "temp"))
+    return conn.getlimit(sqlite3.SQLITE_LIMIT_ATTACHED) - in_use
+
+
+def _check_room(conn: sqlite3.Connection, paths: list[Path], experiment_id: str | None) -> None:
+    room = _attach_room(conn)
+    if len(paths) > room:
+        scope = f"experiment {experiment_id}" if experiment_id else "all recorded experiments"
+        msg = (
+            f"{len(paths)} arm stores for {scope} exceed the {room} SQLite can ATTACH on one "
+            "connection; scope the paired view to one experiment (experiment_id)"
+        )
+        raise ArmAttachLimitError(msg)
+
+
+def attach_arms(
+    conn: sqlite3.Connection,
+    paths: list[Path] | None = None,
+    *,
+    experiment_id: str | None = None,
+) -> dict[str, str]:
     """ATTACH each arm store on *conn* and shadow :data:`PAIRED_TABLES` with TEMP views.
 
     Returns ``{schema alias: arm_id}``. *paths* defaults to the arm stores the
-    control store recorded at t0. A store without an ``arm_identity`` is skipped.
+    control store recorded at t0 (only *experiment_id*'s when given). A store without
+    an ``arm_identity`` is skipped. More stores than SQLite can ATTACH raises
+    :class:`ArmAttachLimitError` before anything is attached.
     """
+    arms = paths if paths is not None else _arm_paths(conn, experiment_id)
+    _check_room(conn, arms, experiment_id)
     attached: dict[str, str] = {}
-    for i, path in enumerate(paths if paths is not None else _arm_paths(conn)):
+    for i, path in enumerate(arms):
         alias = f"arm{i}"
         conn.execute("ATTACH DATABASE ? AS " + alias, (str(path.resolve()),))
         ident = conn.execute(f"SELECT arm_id FROM {alias}.arm_identity WHERE id = 1").fetchone()  # noqa: S608
@@ -105,16 +147,28 @@ def _lit(text: str) -> str:
 
 @contextlib.contextmanager
 def paired_view(
-    conn: sqlite3.Connection, paths: list[Path] | None = None
+    conn: sqlite3.Connection,
+    paths: list[Path] | None = None,
+    *,
+    experiment_id: str | None = None,
 ) -> Iterator[sqlite3.Connection]:
-    """A read-only connection to *conn*'s store with every arm attached.
+    """A read-only connection to *conn*'s store with the arm stores attached.
+
+    *experiment_id* scopes the union to that experiment's arms (E15.12): every
+    report/evaluate caller passes it, so finished experiments' stores never count
+    against SQLite's ATTACH limit. Without it every recorded arm store is attached,
+    and more than the limit raises :class:`ArmAttachLimitError`.
 
     *paths* overrides the arm stores recorded at t0 (``repair-ledger`` on a
     scratch copy). Yields *conn* itself when the store is not a file (tests,
     ``:memory:``), is an arm store, or has no arm store: there is nothing to union.
     """
     path = _db_file(conn)
-    arms = (paths if paths is not None else _arm_paths(conn)) if path is not None else []
+    arms = (
+        (paths if paths is not None else _arm_paths(conn, experiment_id))
+        if path is not None
+        else []
+    )
     if path is None or not arms or read_identity(conn) is not None:
         yield conn
         return
