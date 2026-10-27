@@ -3305,7 +3305,16 @@ def validate_study_spec(spec, where: str = "study_spec") -> list[str]:
 
 
 #: Mirrors arc.backtest.stance.StanceProxy minus the reserved E7.22 slot (a test pins it).
-STUDY_STANCE_PROXIES = ("trend_v2", "noisy_0.2", "noisy_0.35", "lagged_5", "market_v2", "both")
+#: ``m1_direction`` (E27.5) reads the point-in-time M1 model: dev-phase studies only.
+STUDY_STANCE_PROXIES = (
+    "trend_v2",
+    "noisy_0.2",
+    "noisy_0.35",
+    "lagged_5",
+    "market_v2",
+    "both",
+    "m1_direction",
+)
 STUDY_ROBUSTNESS_KEYS = ("stance", "slippage_x", "min_cell_win_frac", "max_cell_loss_ci")
 
 
