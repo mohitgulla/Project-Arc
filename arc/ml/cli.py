@@ -99,8 +99,64 @@ def add_ml_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> N
     lr.add_argument("--data", type=Path, default=DEFAULT_DATA)
     lr.add_argument("--doc", type=Path, default=REPO / "docs" / "RESEARCH" / "candidate-ledger.md")
 
+    m2 = msub.add_parser("m2", help="Model M2: calibrated candidate outcome model (E27.3)")
+    m2sub = m2.add_subparsers(dest="m2_command", required=True)
+    t2 = m2sub.add_parser("train", help="Walk-forward eval + replays + m2_promote + register (dev)")
+    t2.add_argument("--family", default="credit,debit", help="credit, debit or both")
+    t2.add_argument(
+        "--overlay", type=Path, default=None, help="Training-config overlay YAML (D133)"
+    )
+    t2.add_argument("--data", type=Path, default=DEFAULT_DATA, help="History data dir")
+    t2.add_argument("--out", type=Path, default=None, help="Default <data>/ml/models")
+    t2.add_argument("--tickers", default=None, help="Comma list (default: every ledger ticker)")
+    t2.add_argument("--workers", type=int, default=6, help="Sim build processes (≤ 6)")
+    t2.add_argument("--no-replay", action="store_true", help="Skip the decision-value replays")
+    t2.add_argument("--no-register", action="store_true", help="Don't add to models.json")
+    h2 = m2sub.add_parser("holdout", help="Score the 2024+ holdout once with a registered version")
+    h2.add_argument("family", choices=["credit", "debit"])
+    h2.add_argument("version")
+    h2.add_argument("--reason", required=True, help="Why (logged in holdout_reads.jsonl)")
+    h2.add_argument("--actor", default=None, help="Owner id (re-reads only)")
+    h2.add_argument("--ack", default=None, help="'OWNER UPDATE: holdout re-read ok' (re-reads)")
+    h2.add_argument("--data", type=Path, default=DEFAULT_DATA)
+    h2.add_argument("--out", type=Path, default=None, help="Default <data>/ml/models")
+    h2.add_argument("--workers", type=int, default=6)
+    h2.add_argument("--no-replay", action="store_true")
+    r2 = m2sub.add_parser("report", help="Render the model cards + docs/RESEARCH/ml-m2.md")
+    r2.add_argument("--version", action="append", required=True, help="<family>/<version> (repeat)")
+    r2.add_argument("--data", type=Path, default=DEFAULT_DATA)
+    r2.add_argument("--out", type=Path, default=None, help="Default <data>/ml/models")
+    r2.add_argument("--doc", type=Path, default=REPO / "docs" / "RESEARCH" / "ml-m2.md")
+    r2.add_argument("--cards", type=Path, default=REPO / "docs" / "RESEARCH" / "models")
+    r2.add_argument("--extra", type=Path, default=None, help="Extra markdown appended to the doc")
+
+    rg = msub.add_parser("registry", help="Model registry: list / verify (E27.3)")
+    rgsub = rg.add_subparsers(dest="registry_command", required=True)
+    rl = rgsub.add_parser("list", help="models.json per family")
+    rl.add_argument("--data", type=Path, default=DEFAULT_DATA)
+    rl.add_argument("--out", type=Path, default=None, help="Default <data>/ml/models")
+    rv = rgsub.add_parser("verify", help="Re-hash every file of a version")
+    rv.add_argument("family")
+    rv.add_argument("version")
+    rv.add_argument("--data", type=Path, default=DEFAULT_DATA)
+    rv.add_argument("--out", type=Path, default=None, help="Default <data>/ml/models")
+
+    pr = msub.add_parser("promote", help="Owner only: shadow -> champion (E27.3, D126/D133)")
+    pr.add_argument("family", choices=["credit", "debit"])
+    pr.add_argument("version")
+    pr.add_argument("--actor", required=True, help="Must be the owner's Slack id")
+    pr.add_argument("--reason", default="", help="Logged with the promotion")
+    pr.add_argument("--data", type=Path, default=DEFAULT_DATA)
+    pr.add_argument("--out", type=Path, default=None, help="Default <data>/ml/models")
+
 
 def run_ml(args: argparse.Namespace) -> int:
+    if args.ml_command == "m2":
+        return _m2(args)
+    if args.ml_command == "registry":
+        return _registry(args)
+    if args.ml_command == "promote":
+        return _promote(args)
     if args.ml_command == "m1":
         return _m1(args)
     if args.ml_command == "ledger":
@@ -127,6 +183,134 @@ def _git_sha() -> str:
     except (OSError, subprocess.SubprocessError):
         return "unknown"
     return out.stdout.strip()
+
+
+def _models_root(args: argparse.Namespace) -> Path:
+    return Path(args.out) if args.out else Path(args.data) / "ml" / "models"
+
+
+def _owner_id() -> str:
+    from arc.config import ArcSettings
+
+    return ArcSettings().owner_slack_user_id
+
+
+def _m2(args: argparse.Namespace) -> int:
+    from arc.utils.calendar import now_et
+
+    root = _models_root(args)
+
+    def progress(s: str) -> None:
+        sys.stderr.write(s + "\n")
+
+    if args.m2_command == "report":
+        from arc.ml.m2.report import write_reports
+
+        pairs = [tuple(v.split("/", 1)) for v in args.version]
+        paths = write_reports(
+            root, pairs, doc=Path(args.doc), cards=Path(args.cards), extra=args.extra
+        )
+        sys.stdout.write("".join(f"wrote {p}\n" for p in paths))
+        return 0
+    if args.m2_command == "holdout":
+        from arc.ml.m2.pipeline import holdout_run
+        from arc.ml.registry import HoldoutReadRefusedError
+
+        try:
+            res = holdout_run(
+                args.family,
+                args.version,
+                data_dir=Path(args.data),
+                out_root=root,
+                code_sha=_git_sha(),
+                now=now_et(),
+                reason=args.reason,
+                actor=args.actor,
+                owner=_owner_id(),
+                ack=args.ack,
+                workers=args.workers,
+                replay=not args.no_replay,
+                say=progress,
+            )
+        except HoldoutReadRefusedError as e:
+            sys.stderr.write(f"refused: {e}\n")
+            return 2
+        sys.stdout.write(f"{args.family}/{args.version}: holdout read #{res['reads']} logged\n")
+        return 0
+    from arc.ml.m2.config import FAMILIES, load_config
+    from arc.ml.m2.pipeline import dev_run
+
+    fams = [f.strip() for f in args.family.split(",") if f.strip()]
+    bad = [f for f in fams if f not in FAMILIES]
+    if bad:
+        sys.stderr.write(f"unknown family {bad}; expected {list(FAMILIES)}\n")
+        return 2
+    cfg = load_config(Path(args.overlay) if args.overlay else None)
+    out = dev_run(
+        fams,
+        cfg,
+        data_dir=Path(args.data),
+        out_root=root,
+        code_sha=_git_sha(),
+        now=now_et(),
+        tickers=_split(args.tickers) if args.tickers else None,
+        workers=args.workers,
+        replay=not args.no_replay,
+        register=not args.no_register,
+        say=progress,
+    )
+    for fam, r in out.items():
+        sys.stdout.write(
+            f"{fam}: {r['vdir']} m2_promote {'PASSED' if r['rule_passed'] else 'failed'} "
+            f"({r['timings']['total_s']:.0f}s, peak rss {r['timings']['peak_rss_mb']:.0f} MB)\n"
+        )
+    return 0
+
+
+def _registry(args: argparse.Namespace) -> int:
+    from arc.ml.registry import RegistryError, load_index, verify
+
+    root = _models_root(args)
+    if args.registry_command == "verify":
+        try:
+            files = verify(root, args.family, args.version)
+        except RegistryError as e:
+            sys.stderr.write(f"FAILED: {e}\n")
+            return 1
+        sys.stdout.write(f"{args.family}/{args.version}: {len(files)} files match their sha256\n")
+        return 0
+    for fam in (
+        sorted(p.name for p in root.iterdir() if (p / "models.json").is_file())
+        if root.is_dir()
+        else []
+    ):
+        idx = load_index(root, fam)
+        sys.stdout.write(f"{fam}: champion {idx.champion or '-'}\n")
+        for ver, e in sorted(idx.versions.items(), key=lambda kv: kv[1].created):
+            ok = "pass" if e.rule_passed else "fail"
+            sys.stdout.write(f"  {ver}  {e.status:<9} {e.rule} {ok}  {e.created}\n")
+    return 0
+
+
+def _promote(args: argparse.Namespace) -> int:
+    from arc.ml.registry import RegistryError, promote
+    from arc.utils.calendar import now_et
+
+    try:
+        promote(
+            _models_root(args),
+            args.family,
+            args.version,
+            actor=args.actor,
+            owner=_owner_id(),
+            now=now_et(),
+            reason=args.reason,
+        )
+    except RegistryError as e:
+        sys.stderr.write(f"refused: {e}\n")
+        return 2
+    sys.stdout.write(f"{args.family}: {args.version} is now champion\n")
+    return 0
 
 
 def _m1(args: argparse.Namespace) -> int:

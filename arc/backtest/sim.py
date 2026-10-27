@@ -1951,8 +1951,14 @@ def run_sim(
     vix_high: Mapping[dt.date, bool] | None = None,
     stance_of: Mapping[str, pd.Series] | None = None,
     fill_x: float | None = None,
+    key_override: Callable[[SimCandidate, tuple[Any, ...]], tuple[Any, ...] | None] | None = None,
 ) -> SimRun:
     """Walk *sessions*; open on decision sessions ≤ *end* (see the module docstring).
+
+    *key_override* (E27.3 research replays, D126): called with each candidate that passed
+    the ranker's filters and the ranker's own sort key; its return replaces that key
+    (same ``(group, primary, tie, key)`` shape), ``None`` drops the candidate. ``None``
+    (the default) leaves the walk unchanged.
 
     E7.20 (D125): *stance_of* (ticker → session → stance, :mod:`arc.backtest.stance`)
     and *fill_x* (a slippage x the build carries in :attr:`SimCandidate.alt`) select one
@@ -2062,6 +2068,7 @@ def run_sim(
                 else vix_high.get(day, True),
                 stance_of=stance_of,
                 fill_x=fill_x,
+                key_override=key_override,
             )
             open_ = open_ + opened
         eq[day] = start_eq + realised + unrealised(day)
@@ -2118,6 +2125,7 @@ def _decide(
     vix: bool | None = None,
     stance_of: Mapping[str, pd.Series] | None = None,
     fill_x: float | None = None,
+    key_override: Callable[[SimCandidate, tuple[Any, ...]], tuple[Any, ...] | None] | None = None,
 ) -> list[_Pos]:
     """One decision session: funnel → pool → open. Returns the new positions.
 
@@ -2189,6 +2197,8 @@ def _decide(
             if not passes_filters(sc.candidate.inputs, filters):
                 continue
             k = keyfn(sc.candidate.inputs)
+            if k is not None and key_override is not None:
+                k = key_override(sc, k)
             if k is not None:
                 keyed.append((k, sc))
         keyed.sort(key=lambda ks: ks[0])
