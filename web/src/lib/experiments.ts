@@ -1031,14 +1031,19 @@ export interface RegimeRow {
   n: number;
   xps: number;
   thin: boolean;
-  dPC: string;
-  tiC: string;
+  dPC: MeanCi;
+  tiC: MeanCi;
 }
 
-function meanCiText(m: { mean?: number | null; ci?: { lo: number; hi: number } | null } | undefined): string {
-  if (!m || m.mean === null || m.mean === undefined) return "n/a";
-  const ci = m.ci ? ` [${pct(m.ci.lo)}, ${pct(m.ci.hi)}]` : "";
-  return `${pct(m.mean)}${ci}`;
+/** A mean with its 95% range on a separate line (`ci` null when there is no range). */
+export interface MeanCi {
+  value: string;
+  ci: string | null;
+}
+
+function meanCi(m: { mean?: number | null; ci?: { lo: number; hi: number } | null } | undefined): MeanCi {
+  if (!m || m.mean === null || m.mean === undefined) return { value: "n/a", ci: null };
+  return { value: pct(m.mean), ci: m.ci ? `${pct(m.ci.lo)} to ${pct(m.ci.hi)}` : null };
 }
 
 /** E25.5 regime table (one grouping, default trend × vol): P − C and pooled Ti − C per bucket. */
@@ -1051,7 +1056,7 @@ export function regimeRows(p: RegimePanel | null | undefined, grouping = "trend_
       n: b.n,
       xps: (b.xps ?? []).length,
       thin: b.thin,
-      dPC: meanCiText(b.d_p_c),
-      tiC: meanCiText(b.ti_minus_c?.all),
+      dPC: meanCi(b.d_p_c),
+      tiC: meanCi(b.ti_minus_c?.all),
     }));
 }
