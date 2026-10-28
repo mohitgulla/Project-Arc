@@ -28,7 +28,15 @@ YAML_ROUTES = ("/api/meta", "/api/ops/config", "/api/ops/session", "/api/ops/sou
                "/api/ops/universe")  # fmt: skip
 #: D124: the backtest routes read the repo's study files (``config/backtest_studies``, the
 #: research ledger), not the store; added after the golden, pinned by their own tests.
-GOLDEN_SKIP = ("/api/backtests", "/api/backtests/nope")
+GOLDEN_SKIP = (
+    "/api/backtests",
+    "/api/backtests/nope",
+    # D133: the ML routes read data/ml/ + config/ml_studies/; pinned by test_tower_ml.py.
+    "/api/ml/models",
+    "/api/ml/models/nope/nope",
+    "/api/ml/studies",
+    "/api/ml/studies/nope",
+)
 _HEX_ID = re.compile(r"\b(os-)?[0-9a-f]{16}\b|\b[0-9a-f]{32}\b")
 _VOLATILE = {"git_sha", "version", "db", "db_path", "created_at", "as_of"}
 
@@ -51,7 +59,8 @@ def route_urls(client: TestClient, phash: str) -> list[str]:
     out = []
     for path in sorted(spec["paths"]):
         url = path.replace("{proposal_hash}", phash).replace("{experiment_id}", "XP-1")
-        url = url.replace("{study_id}", "nope")
+        url = url.replace("{study_id}", "nope").replace("{family}", "nope")
+        url = url.replace("{version}", "nope")
         out.append(url.replace("{run_id}", "nope").replace("{entry_id}", "nope"))
     return out
 

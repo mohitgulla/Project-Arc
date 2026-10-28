@@ -1,0 +1,9 @@
+kind,h,source,test2022_pass,test2023_pass,test2022_detail,test2023_detail
+log_ret,5,baseline,False,False,"pinball 0.01756 vs 0.01486, DM p 1, cov err 22.8 pts","pinball 0.01235 vs 0.01163, DM p 1, cov err 12.1 pts"
+log_ret,10,baseline,False,False,"pinball 0.02434 vs 0.02105, DM p 0.992, cov err 25.7 pts","pinball 0.01770 vs 0.01699, DM p 1, cov err 9.3 pts"
+log_ret,21,baseline,False,False,"pinball 0.03821 vs 0.03140, DM p 0.979, cov err 31.2 pts","pinball 0.03092 vs 0.02663, DM p 1, cov err 19.6 pts"
+log_ret,42,baseline,False,False,"pinball 0.05329 vs 0.04582, DM p 0.916, cov err 32.4 pts","pinball 0.04515 vs 0.04364, DM p 0.899, cov err 24.2 pts"
+rv,5,baseline,False,False,"pinball 0.04091 vs 0.04382, DM p 3.41e-05, cov err 5.3 pts","pinball 0.03218 vs 0.03836, DM p 6.09e-44, cov err 8.4 pts"
+rv,10,baseline,False,False,"pinball 0.03521 vs 0.03988, DM p 7.04e-05, cov err 11.5 pts","pinball 0.02760 vs 0.03643, DM p 2.78e-30, cov err 11.4 pts"
+rv,21,baseline,False,False,"pinball 0.03525 vs 0.03798, DM p 0.00016, cov err 24.0 pts","pinball 0.02651 vs 0.03954, DM p 9.73e-18, cov err 23.8 pts"
+rv,42,baseline,False,False,"pinball 0.03735 vs 0.04101, DM p 3.46e-05, cov err 35.4 pts","pinball 0.03323 vs 0.04939, DM p 5.11e-14, cov err 34.2 pts"

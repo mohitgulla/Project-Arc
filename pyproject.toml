@@ -258,6 +258,8 @@ forbidden_modules = [
     "arc.data",
     "arc.personas",
     "arc.llm_routing",
+    # D133: model files are read as JSON/CSV; never the training code or a model load.
+    "arc.ml",
     "alpaca",
     "slack_sdk",
 ]
@@ -271,4 +273,6 @@ forbidden_modules = [
 ignore_imports = [
     "arc.context.kinds -> arc.personas.schemas",
     "arc.experiments.evaluate -> arc.routines.manifest",
+    # D133: the context-kind registry types ml_scores rows (arc.ml.scores is pydantic only).
+    "arc.context.kinds -> arc.ml.scores",
 ]

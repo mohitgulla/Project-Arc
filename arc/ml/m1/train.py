@@ -839,6 +839,9 @@ def write_model(
     (vdir / "manifest.json").write_text(man.model_dump_json(indent=2) + "\n")
     (vdir / "FEATURE_SCHEMA_VERSION").write_text(fschema + "\n")
     (vdir / "features.json").write_text(json.dumps(list(features), indent=2) + "\n")
+    # D133: the Tower counts features by FeatureSpec.group without importing the registry.
+    groups = {f.name: f.group for f in FEATURES if f.name in set(features)}
+    (vdir / "feature_groups.json").write_text(json.dumps(groups, indent=1, sort_keys=True) + "\n")
     return man
 
 
