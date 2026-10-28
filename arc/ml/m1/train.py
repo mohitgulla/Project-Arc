@@ -77,7 +77,7 @@ from arc.ml.m1.predict import (
 from arc.utils.calendar import sessions_between
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Sequence
+    from collections.abc import Callable, Collection, Iterable, Sequence
     from pathlib import Path
 
 log = structlog.get_logger(__name__)
@@ -243,16 +243,17 @@ def fit_target(
     levels: Sequence[float] = M1_QUANTILES,
     params: dict[str, Any] | None = None,
     rounds: int = NUM_ROUNDS,
+    workers: int = MAX_WORKERS,
 ) -> dict[float, Any]:
     """One booster per level. Each is single-threaded and deterministic; the levels run
-    on up to :data:`MAX_WORKERS` processes (a fixed thread count per booster keeps the
-    dumps byte-identical regardless of the pool size)."""
+    on up to *workers* (≤ :data:`MAX_WORKERS`) processes (a fixed thread count per
+    booster keeps the dumps byte-identical regardless of the pool size)."""
     lgb = _lgb()
     x = feature_matrix(tr, features)
     y = std_target(tr, kind, h)
     base = dict(params or LGB_PARAMS)
     jobs = [(x, y, list(features), {**base, "alpha": float(p)}, rounds) for p in levels]
-    workers = min(MAX_WORKERS, len(jobs))
+    workers = min(MAX_WORKERS, max(1, workers), len(jobs))
     if workers <= 1 or len(y) < 50_000:  # noqa: PLR2004 - small fits: no pool overhead
         texts = [_fit_one(j) for j in jobs]
     else:
@@ -275,8 +276,13 @@ def fit_set(
     rounds: int = NUM_ROUNDS,
     lgbm: bool = True,
     progress: Callable[[str], None] | None = None,
+    workers: int = MAX_WORKERS,
+    lgbm_targets: Collection[tuple[str, int]] | None = None,
 ) -> FitSet:
-    """Train everything on the rows of *train_mask(h)* (dated ≥ TRAIN_START) per horizon."""
+    """Train everything on the rows of *train_mask(h)* (dated ≥ TRAIN_START) per horizon.
+
+    E27.7: LightGBM boosters only for the (kind, h) in *lgbm_targets* (a study's target
+    subset; None = every target); every target keeps its baseline (HAR-IV, row counts)."""
     fs = FitSet()
     t0 = time.monotonic()
     after_start = (df["date"] >= TRAIN_START).to_numpy()
@@ -288,8 +294,11 @@ def fit_set(
         for kind in KINDS:
             tr = rv_rows if kind == "rv" else sub[np.isfinite(std_target(sub, kind, h))]
             fs.n_rows[(kind, h)] = len(tr)
-            if lgbm:
-                for p, b in fit_target(tr, kind, h, features, params=params, rounds=rounds).items():
+            if lgbm and (lgbm_targets is None or (kind, h) in lgbm_targets):
+                fitted = fit_target(
+                    tr, kind, h, features, params=params, rounds=rounds, workers=workers
+                )
+                for p, b in fitted.items():
                     fs.boosters[(kind, h, p)] = b
             if progress is not None:
                 progress(f"  fit {kind} h{h}: {len(tr)} rows")
@@ -303,7 +312,7 @@ def raw_predictions(
     """Uncalibrated (n, K) quantiles of every model for *df*'s rows."""
     lv = list(M1_QUANTILES)
     out: dict[str, np.ndarray] = {}
-    if fs.boosters:
+    if any(k == kind and hh == h for k, hh, _p in fs.boosters):
         out["lgbm"] = raw_lgbm(fs.boosters, kind, h, feature_matrix(df, features), df, lv)
     out["baseline"] = raw_baseline(kind, h, df, fs.har_iv.get(h), lv)
     if kind == "log_ret":
@@ -338,7 +347,18 @@ class FoldResult:
     q_roll: dict[tuple[str, int, str], np.ndarray] = field(default_factory=dict)
     crossing: dict[tuple[str, int], float] = field(default_factory=dict)
     cal_cov_err: dict[tuple[str, int, str], float] = field(default_factory=dict)
+    #: E27.7: pinball of the cross-fitted (raw) LightGBM quantiles on the calibration
+    #: block, i.e. before the test cut: an ML study's inner selection metric.
+    inner_pinball: dict[tuple[str, int], float] = field(default_factory=dict)
     fit_seconds: float = 0.0
+
+
+#: E27.7 (D133) calibration modes: ``annual`` = the pre-registered CQR (offsets fitted
+#: once on the block before the test year); ``rolling_monthly`` = offsets refitted at the
+#: start of every test month on the last *cal_sessions* sessions of out-of-sample
+#: predictions whose labels end before the month (purge h + EMBARGO), the protocol the
+#: ml-m1 diagnostic measured post hoc.
+CALIBRATIONS: tuple[str, ...] = ("annual", "rolling_monthly")
 
 
 def run_fold(
@@ -350,8 +370,15 @@ def run_fold(
     params: dict[str, Any] | None = None,
     rounds: int = NUM_ROUNDS,
     progress: Callable[[str], None] | None = None,
+    calibration: str = "annual",
+    cal_sessions: int = CAL_SESSIONS,
+    workers: int = MAX_WORKERS,
+    lgbm_targets: Collection[tuple[str, int]] | None = None,
     dev_end: dt.date = DEV_END,
 ) -> tuple[FoldResult, FitSet]:
+    if calibration not in CALIBRATIONS:
+        msg = f"calibration {calibration!r}: one of {CALIBRATIONS}"
+        raise ValueError(msg)
     s = dev_sessions(dev_end)
     si = session_index(df, s)
     say = progress or (lambda _m: None)
@@ -372,6 +399,8 @@ def run_fold(
                 params=params,
                 rounds=rounds,
                 progress=progress,
+                workers=workers,
+                lgbm_targets=lgbm_targets,
             )
         )
     say(f"{plan.name}: test models")
@@ -383,6 +412,8 @@ def run_fold(
         params=params,
         rounds=rounds,
         progress=progress,
+        workers=workers,
+        lgbm_targets=lgbm_targets,
     )
     res = FoldResult(plan.name, fit_seconds=sum(f.seconds for f in cal_fs) + test_fs.seconds)
     lv = list(M1_QUANTILES)
@@ -410,6 +441,11 @@ def run_fold(
             d_cal = np.concatenate([c["date"].to_numpy() for c, _ in parts])
             y_test = target(test, kind, h)
             d_test = test["date"].to_numpy()
+            if "lgbm" in raw_cal:
+                okc = np.isfinite(y_cal) & np.isfinite(raw_cal["lgbm"]).all(axis=1)
+                res.inner_pinball[(kind, h)] = float(
+                    mt.pinball(y_cal[okc], np.sort(raw_cal["lgbm"][okc], axis=1), lv).mean()
+                )
             for name, qt in raw_test.items():
                 res.q_raw[(kind, h, name)] = qt
                 if name == "iv_lognormal":
@@ -422,10 +458,11 @@ def run_fold(
                 res.cal_cov_err[(kind, h, name)] = coverage_error(
                     mt.coverage(y_cal[ok], apply_offsets(raw_cal[name][ok], offs, lv))
                 )
-                # DIAGNOSTIC ONLY (post-hoc, not the keep rule): rolling CQR. Per test
-                # month, the last CAL_SESSIONS sessions of OOS predictions whose labels end
-                # before the month (cal block ∪ earlier test months): what a nightly live
-                # refresh of the offsets would hold.
+                # Rolling CQR. Per test month, the last cal_sessions sessions of OOS
+                # predictions whose labels end before the month (cal block ∪ earlier test
+                # months): what a nightly live refresh of the offsets would hold. A
+                # post-hoc DIAGNOSTIC under the pre-registered ``annual`` protocol; the
+                # evaluated forecast itself under ``rolling_monthly`` (E27.7 studies).
                 pool_q = np.vstack([raw_cal[name], qt])
                 pool_y = np.concatenate([y_cal, y_test])
                 pool_d = np.concatenate([d_cal, d_test])
@@ -433,9 +470,11 @@ def run_fold(
                 out = np.empty_like(qt)
                 for m0, idx in rolling_blocks(d_test):
                     hi = _idx(s, m0) - h - EMBARGO
-                    sel = (pool_i >= hi - CAL_SESSIONS) & (pool_i < hi)
+                    sel = (pool_i >= hi - cal_sessions) & (pool_i < hi)
                     out[idx] = apply_offsets(qt[idx], fit_offsets(pool_q[sel], pool_y[sel], lv), lv)
                 res.q_roll[(kind, h, name)] = out
+                if calibration == "rolling_monthly":
+                    res.q[(kind, h, name)] = out
             if "lgbm" in raw_test:
                 res.crossing[(kind, h)] = sort_quantiles(raw_test["lgbm"])[1]
     return res, test_fs
@@ -724,10 +763,20 @@ def protocol_hash() -> str:
     return hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()[:16]
 
 
-def version_of(feature_schema: str, digest: str, params: dict[str, Any], rounds: int) -> str:
-    blob = json.dumps(
-        [feature_schema, digest, params, rounds, protocol_hash()], sort_keys=True, default=str
-    ).encode()
+def version_of(
+    feature_schema: str,
+    digest: str,
+    params: dict[str, Any],
+    rounds: int,
+    extra: dict[str, Any] | None = None,
+) -> str:
+    """The version id. *extra* (E27.7: a study's training overlay beyond params/rounds,
+    e.g. its calibration protocol) joins the hash only when set, so a plain
+    ``arc ml m1 train`` keeps its id."""
+    body: list[Any] = [feature_schema, digest, params, rounds, protocol_hash()]
+    if extra:
+        body.append(extra)
+    blob = json.dumps(body, sort_keys=True, default=str).encode()
     return "m1-" + hashlib.sha256(blob).hexdigest()[:12]
 
 
@@ -748,10 +797,15 @@ def write_model(
     feature_manifest_sha: str,
     train_window: dict[str, str],
     calibration_window: dict[str, str],
+    extra: dict[str, Any] | None = None,
+    study: str | None = None,
 ) -> M1Manifest:
-    """Write ``lgbm/*.txt`` (text dumps), ``manifest.json``; returns the manifest."""
+    """Write ``lgbm/*.txt`` (text dumps), ``manifest.json``; returns the manifest.
+
+    E27.7: *extra* is the study's overlay beyond params/rounds (in the version id and
+    the manifest's ``overlay``); *study* stamps ``study: ML-<n>``."""
     fschema = schema_version()
-    version = version_of(fschema, digest, params, rounds)
+    version = version_of(fschema, digest, params, rounds, extra)
     vdir = out_dir / version
     (vdir / "lgbm").mkdir(parents=True, exist_ok=True)
     files: dict[str, str] = {}
@@ -779,6 +833,8 @@ def write_model(
         },
         data_digest=digest,
         files=files,
+        study=study,
+        overlay=extra or None,
     )
     (vdir / "manifest.json").write_text(man.model_dump_json(indent=2) + "\n")
     (vdir / "FEATURE_SCHEMA_VERSION").write_text(fschema + "\n")
@@ -863,6 +919,7 @@ __all__ = [
     "direction",
     "fit_set",
     "keep_decisions",
+    "load_dev_dataset",
     "load_model",
     "metric_rows",
     "model_features",
@@ -904,6 +961,27 @@ def _feature_manifest_sha(features_root: Path) -> str:
     return hashlib.sha256(p.read_bytes()).hexdigest()[:16] if p.is_file() else "none"
 
 
+def load_dev_dataset(
+    data_dir: Path,
+    features_root: Path,
+    *,
+    tickers: Sequence[str] | None = None,
+    horizons: Sequence[int] = M1_HORIZONS,
+    dev_end: dt.date = DEV_END,
+    holdout_reason: str | None = None,
+) -> pd.DataFrame:
+    """The M1 dev panel + labels (2020 → *dev_end*, default :data:`DEV_END`; the
+    loaders refuse the holdout unless the D140 retrain passes its *holdout_reason*, D84)."""
+    from arc.ml.m1.dataset import attach_targets, load_panel
+
+    panel = load_panel(features_root, dt.date(2020, 1, 1), dev_end, holdout_reason=holdout_reason)
+    if tickers is not None:
+        panel = panel[panel["ticker"].isin(set(tickers))].reset_index(drop=True)
+    return attach_targets(
+        panel, data_dir, dev_end, horizons=horizons, holdout_reason=holdout_reason
+    )
+
+
 def train_m1(
     data_dir: Path,
     features_root: Path,
@@ -915,6 +993,14 @@ def train_m1(
     rounds: int = NUM_ROUNDS,
     horizons: Sequence[int] = M1_HORIZONS,
     progress: Callable[[str], None] | None = None,
+    features: Sequence[str] | None = None,
+    calibration: str = "annual",
+    cal_sessions: int = CAL_SESSIONS,
+    lgbm_targets: Collection[tuple[str, int]] | None = None,
+    extra: dict[str, Any] | None = None,
+    study: str | None = None,
+    workers: int = MAX_WORKERS,
+    df: pd.DataFrame | None = None,
     dev_end: dt.date = DEV_END,
     folds: Sequence[FoldPlan] = FOLDS,
     holdout_reason: str | None = None,
@@ -923,17 +1009,26 @@ def train_m1(
 
     The D140 monthly retrain passes a later *dev_end* (its rolling train end), its own
     *folds* and the *holdout_reason* that lets the dataset read past the D84 boundary.
-    """
-    from arc.ml.m1.dataset import attach_targets, load_panel
 
+    E27.7 (D133) study overlays: *features* (default :func:`model_features`),
+    *calibration* (:data:`CALIBRATIONS`) with its *cal_sessions*, *lgbm_targets* (the
+    (kind, h) LightGBM may serve; the rest stay on their baseline), *extra* (the overlay
+    beyond params/rounds, in the version id) and *study* (``ML-<n>`` in the manifest).
+    Every default reproduces a plain ``arc ml m1 train`` and its version id. *df* is a
+    pre-loaded dev dataset (a study loads it once for all its variants)."""
     say = progress or (lambda _m: None)
     prm = dict(params or LGB_PARAMS)
     t0 = time.monotonic()
-    panel = load_panel(features_root, dt.date(2020, 1, 1), dev_end, holdout_reason=holdout_reason)
-    if tickers is not None:
-        panel = panel[panel["ticker"].isin(set(tickers))].reset_index(drop=True)
-    df = attach_targets(panel, data_dir, dev_end, horizons=horizons, holdout_reason=holdout_reason)
-    features = model_features()
+    if df is None:
+        df = load_dev_dataset(
+            data_dir,
+            features_root,
+            tickers=tickers,
+            horizons=horizons,
+            dev_end=dev_end,
+            holdout_reason=holdout_reason,
+        )
+    features = list(features) if features is not None else model_features()
     digest = data_digest(df, features)
     t_load = time.monotonic() - t0
     say(f"dataset: {len(df)} rows, {df['ticker'].nunique()} tickers, digest {digest}")
@@ -949,6 +1044,10 @@ def train_m1(
             params=prm,
             rounds=rounds,
             progress=progress,
+            calibration=calibration,
+            cal_sessions=cal_sessions,
+            workers=workers,
+            lgbm_targets=lgbm_targets,
             dev_end=dev_end,
         )
         results.append(res)
@@ -969,6 +1068,8 @@ def train_m1(
         params=prm,
         rounds=rounds,
         progress=progress,
+        workers=workers,
+        lgbm_targets=lgbm_targets,
     )
     last = results[-1]
     targets = [
@@ -979,7 +1080,7 @@ def train_m1(
             offsets={
                 qtag(p): v
                 for p, v in final_offsets(
-                    last, str(r.kind), int(r.h), str(r.source), dev_end=dev_end
+                    last, str(r.kind), int(r.h), str(r.source), cal_sessions, dev_end=dev_end
                 ).items()
             },
             har_iv=final.har_iv[int(r.h)] if r.kind == "rv" else None,
@@ -1002,6 +1103,8 @@ def train_m1(
             "end": str(dev_end),
             "source": f"fold {folds[-1].name} residuals of the model trained before it",
         },
+        extra=extra,
+        study=study,
     )
     vdir = out_dir / man.version
 
@@ -1017,7 +1120,14 @@ def train_m1(
 
     # diagnostics
     regimes = pd.concat(
-        [regime_table(r, kind, h, "lgbm") for r in results for kind in KINDS for h in horizons],
+        [
+            regime_table(r, kind, h, "lgbm")
+            for r in results
+            for kind in KINDS
+            for h in horizons
+            if (kind, h, "lgbm") in r.q
+        ]
+        or [pd.DataFrame()],
         ignore_index=True,
     )
     gains, perms, others = [], [], []
@@ -1027,6 +1137,8 @@ def train_m1(
             gains.append(pd.DataFrame({"kind": kind, "h": h, "feature": g.index, "gain": g.values}))
     for res, fs in zip(results, fitsets, strict=True):
         for kind in KINDS:
+            if (kind, 21, 0.5) not in fs.boosters:  # a study's target subset without it
+                continue
             g = gain_importance(fs, features, kind, 21).sort_values(ascending=False)
             top = list(g.index[:15])
             for lvl in (0.05, 0.5, 0.95):
@@ -1063,7 +1175,8 @@ def train_m1(
     day = df[df["date"] == last_day].reset_index(drop=True)
     publish(model, day)
     t_pred = time.monotonic() - t_pred
-    # the all-LightGBM path (what a future version that keeps every target would cost)
+    # the all-LightGBM path (what a future version that keeps every target would cost);
+    # a target a study left off LightGBM (E27.7 target subset) stays on its own source
     t_lgbm = time.monotonic()
     all_lgbm = M1Model(
         man.model_copy(
@@ -1075,11 +1188,13 @@ def train_m1(
                             "offsets": {
                                 qtag(p): v
                                 for p, v in final_offsets(
-                                    last, t.kind, t.h, "lgbm", dev_end=dev_end
+                                    last, t.kind, t.h, "lgbm", cal_sessions, dev_end=dev_end
                                 ).items()
                             },
                         }
                     )
+                    if (t.kind, t.h, "lgbm") in last.q_raw
+                    else t
                     for t in man.targets
                 ]
             }
@@ -1109,7 +1224,7 @@ def train_m1(
         decisions=decisions,
         regimes=regimes,
         gain=pd.concat(gains, ignore_index=True),
-        permutation=pd.concat(perms, ignore_index=True),
+        permutation=pd.concat(perms or [pd.DataFrame()], ignore_index=True),
         others=pd.DataFrame(others),
         crossing=crossing,
         timings=timings,

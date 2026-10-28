@@ -1094,6 +1094,26 @@ class StudyFailRule(BaseModel):
 _WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 
 
+class MlStudiesSettings(BaseModel):
+    """E27.7 (D133): ``backtest_studies.ml_studies`` (``ML-<n>`` model studies on the
+    shared nightly runner). Offline infra: change by PR."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    # most overlay variants one study may grid (each is one walk-forward fit per rung)
+    max_grid: Annotated[int, Field(ge=1, le=48)] = 12
+    # clear dev fail on dev_2022: every variant misses the family rule by more than this
+    # (relative, on the rule's primary loss vs the bar it must beat)
+    fail_margin: Annotated[float, Field(ge=0.0, le=1.0)] = 0.05
+    # training processes per rung (M1 quantile boosters; M2 replay sim builds)
+    workers: Annotated[int, Field(ge=1, le=6)] = 6
+    # first-run estimate per rung and variant when the ML ledger has no runtime yet
+    default_rung_s: Annotated[int, Field(ge=60)] = 2400
+    ledger: str = "data/ml/studies/ledger.jsonl"
+    runs_dir: str = "data/ml/studies"
+    models_dir: str = "data/ml/models"
+
+
 class BacktestStudiesSettings(BaseModel):
     """E26.3 (D121): the ``backtest_studies:`` block (the nightly study runner).
 
@@ -1123,6 +1143,8 @@ class BacktestStudiesSettings(BaseModel):
     # A rung's estimate is the median runtime_s of recent ledger rows x this margin.
     runtime_margin: Annotated[float, Field(ge=1.0, le=5.0)] = 1.2
     fail_rule: StudyFailRule = Field(default_factory=StudyFailRule)
+    # E27.7 (D133): ML-<n> studies share this runner, its window and queue
+    ml_studies: MlStudiesSettings = Field(default_factory=MlStudiesSettings)
     # Repo-relative paths (the E7.14 queue's layout).
     queue: str = "data/backtest/queue.json"
     ledger: str = "data/backtest/ledger.jsonl"

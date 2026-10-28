@@ -224,6 +224,11 @@ backtest_studies:
   runtime_margin: 1.2           # fit-or-defer: median measured runtime of the rung x this
   fail_rule:
     ci_hi_below: 0.0            # clear dev fail: every treatment non-switch, CI hi < 0, primary diff < 0
+  ml_studies:                   # E27.7 (D133): ML-<n> model studies on this runner (dev_2022 -> dev_2023 -> verdict)
+    max_grid: 12                # overlay variants per study at most
+    fail_margin: 0.05           # clear dev fail on dev_2022: every variant misses the family rule by > 5%
+    workers: 6                  # training processes per rung
+    default_rung_s: 2400        # fit-or-defer estimate per rung x variant until the ML ledger has runtimes
 
 # D30 source registry: every raw_doc_ref source (each RSS feed separately) is a Scalp
 # source and declares exactly one of `category:` or `reference: true`. Knobs: weight,

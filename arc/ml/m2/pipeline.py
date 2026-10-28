@@ -149,7 +149,10 @@ def dev_run(
     replay: bool = True,
     register: bool = True,
     say: Callable[[str], None] = lambda _m: None,
+    manifest_extra: dict[str, Any] | None = None,
 ) -> dict[str, dict[str, Any]]:
+    """Train + replay + rule (+ register) per family. *manifest_extra* (E27.7: a study's
+    ``study``/``overlay`` stamp) is added to each version's manifest."""
     from arc.ml.m2.train import train_family
 
     ledger_root = data_dir / "ml" / "ledger"
@@ -188,7 +191,10 @@ def dev_run(
             rule = rp.apply_rule(run.checks, rp.replay_checks(fr))
         rule.to_csv(vdir / "eval_rule.csv", index=False)
         passed = rp.rule_passed(rule) if rep is not None else False
-        man = finalize_manifest(vdir, {"rule_passed": passed, "replayed": rep is not None})
+        man = finalize_manifest(
+            vdir,
+            {"rule_passed": passed, "replayed": rep is not None, **(manifest_extra or {})},
+        )
         if register:
             all_row = run.metrics[(run.metrics.split == "All") & (run.metrics.group == "all")]
             reg.register(

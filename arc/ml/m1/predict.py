@@ -80,6 +80,10 @@ class M1Manifest(BaseModel):
     config_hashes: dict[str, str]
     data_digest: str
     files: dict[str, str] = Field(default_factory=dict, description="file -> sha256")
+    #: E27.7 (D133): the ``ML-<n>`` study that trained it, and its overlay beyond
+    #: params/rounds (both None for a plain ``arc ml m1 train``).
+    study: str | None = None
+    overlay: dict[str, Any] | None = None
 
     def target(self, kind: str, h: int) -> TargetModel:
         for t in self.targets:

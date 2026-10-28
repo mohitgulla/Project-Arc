@@ -1,0 +1,10 @@
+# Retired ML studies (E27.7, PLAN D133; same shape as config/backtest_studies/retired.yaml).
+# A retired study is history, not evidence: `arc ml study adopt|run` and the nightly
+# runner refuse it. Nothing is deleted: its spec, ledger rows and model versions stay.
+# Ids are never reused, so a new study takes the next number above every id here.
+#
+# Keep the body JSON (valid YAML): the Analyst gate reads it with the stdlib
+# (`#` comment lines dropped). Only ML-<n> ids belong here.
+{
+  "retired": []
+}

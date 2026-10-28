@@ -129,4 +129,10 @@ def load_config(overlay: Path | None = None) -> M2Config:
         msg = f"{overlay}: decision_rule is fixed to {RULE_KIND!r}"
         raise ValueError(msg)
     raw.pop("decision_rule", None)
-    return M2Config.model_validate(_merge(base.model_dump(mode="json"), raw))
+    return apply_overlay(base, raw)
+
+
+def apply_overlay(base: M2Config, overlay: dict[str, Any]) -> M2Config:
+    """*overlay* deep-merged on *base* and re-validated (unknown keys refused); E27.7
+    studies lay their overlay on the incumbent's pinned config."""
+    return M2Config.model_validate(_merge(base.model_dump(mode="json"), overlay))

@@ -30,8 +30,10 @@ import yaml
 
 from arc.backtest.queue import (
     APPROVAL_RE,
+    WEEKLY_APPROVAL_CAP,
     QueueEntry,
     QueueError,
+    check_weekly_cap,
     eta_rows,
     load_queue,
     rung_estimates,
@@ -65,6 +67,7 @@ __all__ = [
     "check_not_retired",
     "spec_file_text",
     "study_pr_body",
+    "weekly_cap_or_raise",
 ]
 
 log = structlog.get_logger(__name__)
@@ -191,17 +194,28 @@ def _retired(studies_dir: Path, main: MainView | None) -> dict[str, RetiredStudy
 def check_not_retired(study_id: str, retired: Mapping[str, RetiredStudy], *, queued: bool) -> None:
     """Refuse a retired id, and (ids are never reused) a new id at or below the highest
     retired one unless it is already queued (a retry of an earlier adoption)."""
+    prefix = study_id.split("-", 1)[0]
     r = retired.get(study_id)
     if r is not None:
-        msg = f"{retired_message(r)}; a new study takes a new BT id"
+        msg = f"{retired_message(r)}; a new study takes a new {prefix} id"
         raise AdoptStudyError(msg)
     top = max((int(k.split("-", 1)[1]) for k in retired), default=0)
     if not queued and int(study_id.split("-", 1)[1]) <= top:
         msg = (
-            f"{study_id} is at or below the highest retired id BT-{top} (D127: ids are "
-            f"never reused); the Analyst re-drafts under BT-{top + 1} or above"
+            f"{study_id} is at or below the highest retired id {prefix}-{top} (D127: ids are "
+            f"never reused); the Analyst re-drafts under {prefix}-{top + 1} or above"
         )
         raise AdoptStudyError(msg)
+
+
+def weekly_cap_or_raise(
+    queue_path: Path, study_id: str, now: dt.datetime, cap: int = WEEKLY_APPROVAL_CAP
+) -> None:
+    """The shared D121/D133 weekly approval cap (BT + ML) as an :class:`AdoptStudyError`."""
+    try:
+        check_weekly_cap(load_queue(queue_path), study_id, now, cap)
+    except QueueError as exc:
+        raise AdoptStudyError(str(exc)) from exc
 
 
 def adopt_study(  # noqa: PLR0913
@@ -219,9 +233,12 @@ def adopt_study(  # noqa: PLR0913
     dry_run: bool = False,
     dry_run_pr: bool = False,
     paths: Mapping[str, Path | None] | None = None,
+    weekly_cap: int = WEEKLY_APPROVAL_CAP,
 ) -> AdoptStudyResult:
     """Adopt the draft at *spec_path* as *study_id* (see the module doc). ``dry_run``
-    writes nothing; ``dry_run_pr`` skips only the PR (the queue entry is written)."""
+    writes nothing; ``dry_run_pr`` skips only the PR (the queue entry is written).
+    A new id is refused once *now*'s ISO week holds *weekly_cap* approvals, BT and ML
+    together (D121, D133; :func:`arc.backtest.queue.check_weekly_cap`)."""
     approval = (approval or "").strip()
     if not APPROVAL_RE.match(approval):
         msg = (
@@ -280,6 +297,7 @@ def adopt_study(  # noqa: PLR0913
                 f"{h[:12]}; the Analyst re-drafts under the next free BT id"
             )
             raise AdoptStudyError(msg)
+    weekly_cap_or_raise(queue_path, study_id, now, weekly_cap)
 
     text = spec_file_text(spec, approval=approval)
     path = f"{SPECS_DIR}/{study_id}.yaml"
@@ -320,6 +338,7 @@ def adopt_study(  # noqa: PLR0913
         from arc.backtest.queue import enqueue
 
         try:
+            check_weekly_cap(q, study_id, now, weekly_cap)  # re-checked under the lock
             return enqueue(q, entry)
         except QueueError as exc:  # pragma: no cover - checked above, re-checked under lock
             raise AdoptStudyError(str(exc)) from exc
