@@ -9846,6 +9846,69 @@
         "title": "MetaResponse",
         "type": "object"
       },
+      "MlShadowView": {
+        "additionalProperties": false,
+        "description": "The proposal's shadow M2 score: the PROPOSED decision payload, else the copy on\nthe outcome row (migration 041).",
+        "properties": {
+          "e_r": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "E R"
+          },
+          "model_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Version"
+          },
+          "p_stop": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P Stop"
+          },
+          "p_win": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P Win"
+          },
+          "rank_m2": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rank M2"
+          }
+        },
+        "title": "MlShadowView",
+        "type": "object"
+      },
       "ModelCard": {
         "additionalProperties": false,
         "properties": {
@@ -14042,6 +14105,17 @@
               }
             ],
             "title": "Max Loss"
+          },
+          "ml": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MlShadowView"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "E27.4 (D126): the shadow M2 score at proposal time (display only; never a decision input). None when shadow scoring was off or unavailable"
           },
           "net_ev_hold": {
             "anyOf": [

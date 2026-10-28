@@ -489,6 +489,19 @@ class PayoffSection(BaseModel):
     error: str | None = Field(default=None, description="Why no payoff could be computed")
 
 
+class MlShadowView(BaseModel):
+    """The proposal's shadow M2 score: the PROPOSED decision payload, else the copy on
+    the outcome row (migration 041)."""
+
+    model_config = _STRICT
+
+    p_win: float | None = None
+    e_r: float | None = None
+    p_stop: float | None = None
+    rank_m2: int | None = None
+    model_version: str | None = None
+
+
 class QuantSection(BaseModel):
     model_config = _STRICT
 
@@ -515,6 +528,11 @@ class QuantSection(BaseModel):
         default=None,
         description="E23.3 (D98): `BE beyond POC 186.1 (+0.4 ATR) · short strike at call "
         "wall 190`, the trade card's Levels fact; None when no level was stored",
+    )
+    ml: MlShadowView | None = Field(
+        default=None,
+        description="E27.4 (D126): the shadow M2 score at proposal time (display only; "
+        "never a decision input). None when shadow scoring was off or unavailable",
     )
 
 
@@ -1547,7 +1565,7 @@ def _latest_mc(conn: sqlite3.Connection, h: str) -> sqlite3.Row | None:
     ).fetchone()
 
 
-def _quant(p: sqlite3.Row, mc: sqlite3.Row | None) -> QuantSection:
+def _quant(conn: sqlite3.Connection, p: sqlite3.Row, mc: sqlite3.Row | None) -> QuantSection:
     quant = _json(p["quant_json"], {})
     sizing = _json(p["sizing_json"], {})
     st = _json(p["structure_json"], {})
@@ -1582,7 +1600,42 @@ def _quant(p: sqlite3.Row, mc: sqlite3.Row | None) -> QuantSection:
         levels_text=(levels_text(analytics.levels) or None)
         if analytics is not None and analytics.levels
         else None,
+        ml=_ml_shadow(conn, p["proposal_hash"]),
     )
+
+
+def _ml_shadow(conn: sqlite3.Connection, h: str) -> MlShadowView | None:
+    """E27.4: the PROPOSED decision's ``ml`` payload, else the outcome's copied columns."""
+    if _has_table(conn, "decisions"):
+        r = conn.execute(
+            """SELECT json_extract(payload, '$.ml') FROM decisions
+               WHERE proposal_hash = ? AND reason_code = 'proposed'
+               ORDER BY at DESC, rowid DESC LIMIT 1""",
+            (h,),
+        ).fetchone()
+        ml = _json(r[0], None) if r is not None else None
+        if isinstance(ml, dict) and ml.get("p_win") is not None:
+            return MlShadowView(
+                p_win=_f(ml.get("p_win")),
+                e_r=_f(ml.get("e_r")),
+                p_stop=_f(ml.get("p_stop")),
+                rank_m2=ml.get("rank_m2") if isinstance(ml.get("rank_m2"), int) else None,
+                model_version=ml.get("model_version"),
+            )
+    if _has_table(conn, "outcomes"):
+        cols = {c[1] for c in conn.execute("PRAGMA table_info(outcomes)")}
+        if "ml_p_win" in cols:
+            r = conn.execute(
+                """SELECT ml_p_win, ml_e_r, ml_p_stop, ml_model_version FROM outcomes
+                   WHERE proposal_hash = ? AND ml_p_win IS NOT NULL
+                   ORDER BY at DESC, rowid DESC LIMIT 1""",
+                (h,),
+            ).fetchone()
+            if r is not None:
+                return MlShadowView(
+                    p_win=_f(r[0]), e_r=_f(r[1]), p_stop=_f(r[2]), model_version=r[3]
+                )
+    return None
 
 
 def _chain_id(conn: sqlite3.Connection, p: sqlite3.Row) -> str | None:
@@ -2341,7 +2394,7 @@ def load_trade(
         as_of=now.astimezone(ET),
         header=header,
         payoff=_payoff(conn, p, header, market, pos),
-        quant=_quant(p, mc),
+        quant=_quant(conn, p, mc),
         decisions=trail,
         gate=_gate(conn, proposal_hash),
         approval=approval,
