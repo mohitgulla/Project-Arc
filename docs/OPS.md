@@ -3714,10 +3714,18 @@ contract `arc.ml.* never imported by the decision path`). Every step fails open.
   session both stores hold (the history store is first extended to the cache's last
   session; `atm_spread_pct` and option volume are known live ≠ EOD gaps, see the E27.1
   tolerances) and the `data/ml/health/<day>.json` record. A run that writes no health
-  record fails; any other step error is listed in the summary and the record.
+  record fails; any other step error is listed in the summary and the record. A parity
+  breach opens one informational ops alert per day, `ml:parity_breach:<day>`, naming
+  the features over tolerance (recorded resolved; it never fails the run).
+- **`ml_health` record, `schema` 2** (stdlib JSON; E27.8 Analyst ML LIVE and the E27.9
+  Tower Model tab read it): `coverage` (+ `by_split.{all,stocks,etfs}`), `calibration.
+  {all,stocks,etfs}.{p_win,p_stop,e_r}`, `feature_drift`, `parity` (+ `breached`),
+  `score_drift.{all,by_split.{stocks,etfs},by_kind}`, `serving`, `refresh`,
+  `last_retrain`. Stocks / ETFs split on `ETF_UNDERLYINGS`; every slice carries its n
+  and says `insufficient` below 30.
 - **`arc ml monitor [--db P] [--day D]`** renders coverage, live calibration (n and CI;
   `insufficient` below 30 closed trades), drift, parity and the last retrain from the
-  nightly record (recomputing what the record lacks).
+  nightly record (recomputing what the record lacks), each split All / Stocks / ETFs.
 - **`ml.retrain`** (first Saturday 10:00 ET; `arc/ml/retrain.py`, D140):
   1. extends the E7.21 ledger to the history cache's last session (candidates through
      `data_end − 62 d`; clears the open year's `_done` markers once and resumes from

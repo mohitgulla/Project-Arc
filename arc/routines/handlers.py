@@ -1248,7 +1248,41 @@ def ml_refresh_source(
     if res.health_path is None:
         msg = f"ml.refresh wrote no ml_health record ({res.errors})"
         raise RuntimeError(msg)
+    _ml_parity_alert(ctx, (res.health or {}).get("parity") or {})
     return JobResult(summary=res.summary(), metrics=res.metrics())
+
+
+def _ml_parity_alert(ctx: JobContext, parity: dict[str, Any]) -> None:
+    """One informational ``ml:parity_breach:<day>`` ops alert per day on a parity
+    breach, naming the features over tolerance. Never fails the run."""
+    import sqlite3
+
+    from arc.ml.refresh import parity_alert_message
+    from arc.monitoring.store import AlertRepo
+
+    msg = parity_alert_message(parity)
+    if msg is None:
+        return
+    day = ctx.now.astimezone(ET).date().isoformat()
+    key = f"ml:parity_breach:{day}"
+    try:
+        repo = AlertRepo(ctx.conn)
+        if repo.seen(key):
+            return
+        repo.open(
+            key,
+            "ml:parity_breach",
+            msg[:500],
+            at=ctx.now,
+            correlation={
+                "session": day,
+                "parity_day": parity.get("day"),
+                "breached": list(parity.get("breached") or [])[:20],
+            },
+            resolved=True,
+        )
+    except sqlite3.Error as exc:
+        log.warning("ml.parity_alert_failed", error=str(exc))
 
 
 def ml_retrain_source(

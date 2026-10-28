@@ -34,7 +34,7 @@ import structlog
 
 if TYPE_CHECKING:
     import sqlite3
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Mapping, Sequence
 
     import pandas as pd
 
@@ -150,29 +150,60 @@ def train_sample(
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
+#: score-drift group keys for the All / Stocks / ETFs splits (kinds use their own name)
+SPLIT_KEYS = {"stocks": "split:stocks", "etfs": "split:etfs"}
+
+
 def score_drift_ref(
-    models_root: Path, family: str, version: str, month: int
+    models_root: Path,
+    family: str,
+    version: str,
+    month: int,
+    etfs: frozenset[str] = frozenset(),
 ) -> dict[str, dict[str, list[float]]]:
-    """The serving model's out-of-fold (backtest) ``e_r``/``p_win`` for calendar *month*,
-    by kind (``all`` + each kind)."""
+    """The serving model's out-of-fold (backtest) ``e_r``/``p_win`` for calendar *month*:
+    ``all``, each kind, and ``split:stocks`` / ``split:etfs`` (by ticker)."""
     import pandas as pd
 
     p = Path(models_root) / family / version / "oos_scores.parquet"
     if not p.is_file():
         return {}
-    df = pd.read_parquet(p, columns=["date", "kind", "e_r", "p_win"])
+    import pyarrow.parquet as pq
+
+    cols = ["date", "kind", "e_r", "p_win"]
+    if "ticker" in pq.read_schema(p).names:
+        cols.append("ticker")
+    df = pd.read_parquet(p, columns=cols)
     df = df[pd.to_datetime(df["date"]).dt.month == month]
-    out = {"all": {k: df[k].dropna().astype(float).tolist() for k in ("e_r", "p_win")}}
+
+    def vals(g: pd.DataFrame) -> dict[str, list[float]]:
+        return {k: g[k].dropna().astype(float).tolist() for k in ("e_r", "p_win")}
+
+    out = {"all": vals(df)}
     for kind, g in df.groupby(df["kind"].astype(str)):
-        out[str(kind)] = {k: g[k].dropna().astype(float).tolist() for k in ("e_r", "p_win")}
+        out[str(kind)] = vals(g)
+    if "ticker" in df.columns:
+        is_etf = df["ticker"].astype(str).str.upper().isin(etfs)
+        out[SPLIT_KEYS["stocks"]] = vals(df[~is_etf])
+        out[SPLIT_KEYS["etfs"]] = vals(df[is_etf])
     return out
 
 
 def live_score_values(
-    entries: Sequence[dict[str, Any]], month: int
+    entries: Sequence[dict[str, Any]], month: int, etfs: frozenset[str] = frozenset()
 ) -> dict[str, dict[str, list[float]]]:
-    """Live ``ok`` scores of calendar *month* (``as_of``), ``all`` + by kind."""
-    out: dict[str, dict[str, list[float]]] = {"all": {"e_r": [], "p_win": []}}
+    """Live ``ok`` scores of calendar *month* (``as_of``): ``all``, by kind, and
+    ``split:stocks`` / ``split:etfs`` (by the score's ticker)."""
+    from arc.ml.monitor import split_of
+
+    def empty() -> dict[str, list[float]]:
+        return {"e_r": [], "p_win": []}
+
+    out: dict[str, dict[str, list[float]]] = {
+        "all": empty(),
+        SPLIT_KEYS["stocks"]: empty(),
+        SPLIT_KEYS["etfs"]: empty(),
+    }
     for e in entries:
         try:
             m = dt.date.fromisoformat(str(e.get("as_of"))[:10]).month
@@ -184,23 +215,32 @@ def live_score_values(
             if s.get("status") != "ok":
                 continue
             kind = str(s.get("kind"))
+            split = SPLIT_KEYS[split_of(s.get("ticker"), etfs)]
             for k in ("e_r", "p_win"):
                 if s.get(k) is not None:
-                    out["all"][k].append(float(s[k]))
-                    out.setdefault(kind, {"e_r": [], "p_win": []})[k].append(float(s[k]))
+                    v = float(s[k])
+                    out["all"][k].append(v)
+                    out[split][k].append(v)
+                    out.setdefault(kind, empty())[k].append(v)
     return out
 
 
 def score_drift_by_kind(
     live: dict[str, dict[str, list[float]]], ref: dict[str, dict[str, list[float]]]
 ) -> dict[str, Any]:
-    """:func:`arc.ml.monitor.score_drift` for ``all`` and every kind either side has."""
+    """:func:`arc.ml.monitor.score_drift` for ``all``, the Stocks / ETFs splits
+    (``by_split``) and every kind either side has (``by_kind``)."""
     from arc.ml.monitor import score_drift
 
     empty: dict[str, list[float]] = {"e_r": [], "p_win": []}
-    kinds = sorted((set(live) | set(ref)) - {"all"})
+    splits = set(SPLIT_KEYS.values())
+    kinds = sorted((set(live) | set(ref)) - {"all"} - splits)
     return {
         "all": score_drift(live.get("all", empty), ref.get("all", empty)),
+        "by_split": {
+            name: score_drift(live.get(key, empty), ref.get(key, empty))
+            for name, key in SPLIT_KEYS.items()
+        },
         "by_kind": {k: score_drift(live.get(k, empty), ref.get(k, empty)) for k in kinds},
     }
 
@@ -223,8 +263,25 @@ def parity_check(
         "names": int(lv["ticker"].nunique()),
         "features": len(rep),
         "over_tolerance": int(len(bad)),
+        "breached": bad["feature"].astype(str).tolist(),
         "detail": ", ".join(bad["feature"].astype(str).head(5)) if len(bad) else "",
     }
+
+
+def parity_alert_message(parity: Mapping[str, Any]) -> str | None:
+    """The ops-alert text for a parity breach (``None`` unless ``status`` is ``breach``)."""
+    if parity.get("status") != "breach":
+        return None
+    feats = [str(f) for f in parity.get("breached") or []] or [
+        f.strip() for f in str(parity.get("detail") or "").split(",") if f.strip()
+    ]
+    shown = ", ".join(feats[:10]) + (f" (+{len(feats) - 10} more)" if len(feats) > 10 else "")  # noqa: PLR2004
+    return (
+        f"ML feature parity breach on {parity.get('day')}: {parity.get('over_tolerance')} of "
+        f"{parity.get('features')} features over tolerance (live vs history store, "
+        f"{parity.get('names')} names): {shown or 'unnamed'}; shadow scoring only, trading "
+        "is unaffected"
+    )
 
 
 def history_cache_end(
@@ -409,8 +466,8 @@ def run_refresh(
             return {}
         since = day - dt.timedelta(days=31)
         entries = mon.score_entries(conn, since)
-        live = live_score_values(entries, day.month)
-        ref = score_drift_ref(models_root, bundle.family, bundle.version, day.month)  # type: ignore[union-attr]
+        live = live_score_values(entries, day.month, etfs)
+        ref = score_drift_ref(models_root, bundle.family, bundle.version, day.month, etfs)  # type: ignore[union-attr]
         return score_drift_by_kind(live, ref)
 
     sdrift = _step(res, "score_drift", _score_drift, clock)
@@ -454,6 +511,7 @@ def run_refresh(
                 else {"status": "error", "detail": res.errors.get("parity")}
             ),
             extra=extra,
+            etfs=etfs,
         )
         res.health = rec
         return mon.write_health(data_dir, rec)

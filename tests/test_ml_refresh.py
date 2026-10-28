@@ -149,7 +149,101 @@ def test_score_drift_reference_and_live_values_by_kind(tmp_path: Path) -> None:
     assert live["all"] == {"e_r": [0.3], "p_win": [0.55]} and "x" not in live
     out = rf.score_drift_by_kind(live, ref)
     assert set(out["by_kind"]) == {"bull_put", "iron_condor"}
+    assert set(out["by_split"]) == {"stocks", "etfs"}
     assert out["all"]["e_r"]["status"] == "insufficient"
+
+
+def test_score_drift_splits_stocks_and_etfs(tmp_path: Path) -> None:
+    vdir = tmp_path / "credit" / "m2-a"
+    vdir.mkdir(parents=True)
+    pd.DataFrame(
+        {
+            "date": [dt.date(2022, 10, 3)] * 3,
+            "ticker": ["SPY", "AAPL", "MSFT"],
+            "kind": ["iron_condor", "bull_put", "bull_put"],
+            "e_r": [0.1, 0.2, 0.3],
+            "p_win": [0.6, 0.7, 0.8],
+        }
+    ).to_parquet(vdir / "oos_scores.parquet")
+    etfs = frozenset({"SPY"})
+    ref = rf.score_drift_ref(tmp_path, "credit", "m2-a", 10, etfs)
+    assert ref["split:etfs"]["e_r"] == [0.1] and ref["split:stocks"]["e_r"] == [0.2, 0.3]
+    entries = [
+        {
+            "as_of": "2026-10-20",
+            "scores": [
+                {"status": "ok", "ticker": "SPY", "kind": "iron_condor", "e_r": 0.5, "p_win": 0.5},
+                {"status": "ok", "ticker": "TSLA", "kind": "bull_put", "e_r": 0.4, "p_win": 0.4},
+            ],
+        }
+    ]
+    live = rf.live_score_values(entries, 10, etfs)
+    out = rf.score_drift_by_kind(live, ref)
+    assert out["by_split"]["etfs"]["e_r"]["n_live"] == 1
+    assert out["by_split"]["etfs"]["e_r"]["live_mean"] == 0.5  # noqa: PLR2004
+    assert out["by_split"]["stocks"]["e_r"]["n_ref"] == 2  # noqa: PLR2004
+    assert set(out["by_kind"]) == {"bull_put", "iron_condor"}  # split keys are not kinds
+    text = mon.render(
+        {
+            "coverage": mon.coverage([]),
+            "calibration": {},
+            "feature_drift": {"status": "not_run"},
+            "parity": {"status": "ok"},
+            "score_drift": out,
+            "window_start": "2026-10-01",
+            "day": "2026-10-20",
+            "model_versions": [],
+        }
+    )
+    assert "score drift e_r [etfs]: live n=1 mean 0.5" in text
+    assert "score drift e_r [stocks]: live n=1 mean 0.4" in text
+
+
+def test_parity_breach_raises_one_ops_alert_per_day(refreshed, monkeypatch) -> None:
+    """A parity breach opens one ``ml:parity_breach:<day>`` alert naming the features
+    over tolerance; a second run the same day adds none; the run never fails."""
+    from types import SimpleNamespace
+
+    import arc.ml.refresh as refresh
+    from arc.routines.handlers import ml_refresh_source
+    from arc.utils.calendar import ET
+
+    hdir, conn, _ = refreshed
+    breach = {
+        "status": "breach",
+        "day": END.isoformat(),
+        "names": 4,
+        "features": 60,
+        "over_tolerance": 2,
+        "breached": ["atm_spread_pct", "iv_rank_252"],
+        "detail": "atm_spread_pct, iv_rank_252",
+    }
+
+    def fake_run(c: Any, **kw: Any) -> rf.RefreshResult:
+        out = rf.RefreshResult(day=kw["day"], panel_rows=4)
+        out.health_path = hdir / "x.json"
+        out.health = {"parity": breach}
+        return out
+
+    monkeypatch.setattr(refresh, "run_refresh", fake_run)
+    monkeypatch.setattr(refresh, "refresh_tickers", lambda *_a: ["AAA"])
+    ctx = SimpleNamespace(
+        spec=SimpleNamespace(options={}),
+        now=dt.datetime(2026, 9, 30, 20, 45, tzinfo=ET),
+        conn=conn,
+        settings=SimpleNamespace(account_profile="margin", ml_data_dir=hdir),
+    )
+    ml_refresh_source(ctx, data_dir=hdir)  # type: ignore[arg-type]
+    ml_refresh_source(ctx, data_dir=hdir)  # type: ignore[arg-type]
+    rows = conn.execute(
+        "SELECT key, kind, message FROM ops_alerts WHERE kind = 'ml:parity_breach'"
+    ).fetchall()
+    assert len(rows) == 1
+    key, _, message = rows[0]
+    assert key == "ml:parity_breach:2026-09-30"
+    assert "atm_spread_pct, iv_rank_252" in message and "2 of 60 features" in message
+    assert rf.parity_alert_message({"status": "ok"}) is None
+    assert rf.parity_alert_message({"status": "not_run"}) is None
 
 
 def test_refresh_tickers_cover_active_reference_and_open(monkeypatch) -> None:

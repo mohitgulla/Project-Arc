@@ -2,7 +2,9 @@
 
 ``arc ml monitor`` and the nightly ``ml_health`` record share :func:`health`. Every
 number carries ``n``; a section below :data:`MIN_N` says ``insufficient`` instead of a
-verdict. Read-only on the store; the output is a stdlib-JSON dict (E27.8 / E27.9 read it).
+verdict. Coverage, calibration, E[R] vs realised R and score drift are split into
+All / Stocks / ETFs (:data:`SPLITS`, owner rule), each slice with its own ``n``.
+Read-only on the store; the output is a stdlib-JSON dict (E27.8 / E27.9 read it).
 """
 
 from __future__ import annotations
@@ -27,7 +29,19 @@ PSI_WARN = 0.25
 PSI_BINS = 10
 REL_BINS = 5
 EPS = 1e-6
-HEALTH_SCHEMA = 1
+#: v2: All / Stocks / ETFs splits (``coverage.by_split``, ``calibration.<split>``,
+#: ``score_drift.by_split``); v1 had the pooled numbers only.
+HEALTH_SCHEMA = 2
+SPLITS = ("all", "stocks", "etfs")
+
+
+def split_of(ticker: str | None, etfs: frozenset[str]) -> str:
+    """``etfs`` or ``stocks`` for one underlying (``ETF_UNDERLYINGS`` membership)."""
+    return "etfs" if str(ticker or "").upper() in etfs else "stocks"
+
+
+def in_split(split: str, ticker: str | None, etfs: frozenset[str]) -> bool:
+    return split == "all" or split_of(ticker, etfs) == split
 
 
 def wilson(k: float, n: int, z: float = 1.96) -> tuple[float, float] | None:
@@ -164,8 +178,17 @@ def score_entries(conn: sqlite3.Connection, since: dt.date) -> list[dict[str, An
     return [json.loads(r[0]) for r in rows]
 
 
-def coverage(entries: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
-    """% of menu candidates scored, latency p95, and the reasons for ``unavailable``."""
+def _slice_coverage(scores: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    n = len(scores)
+    ok = sum(1 for x in scores if x.get("status") == "ok")
+    return {"candidates": n, "scored": ok, "pct_scored": round(100.0 * ok / n, 1) if n else None}
+
+
+def coverage(
+    entries: Sequence[Mapping[str, Any]], etfs: frozenset[str] = frozenset()
+) -> dict[str, Any]:
+    """% of menu candidates scored, latency p95, and the reasons for ``unavailable``
+    (pooled, plus ``by_split`` All / Stocks / ETFs from each score's ticker)."""
     n = sum(int(e.get("n", 0)) for e in entries)
     ok = sum(int(e.get("n_ok", 0)) for e in entries)
     reasons: Counter[str] = Counter()
@@ -177,6 +200,7 @@ def coverage(entries: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     by_kind: Counter[str] = Counter(
         str(s.get("kind")) for e in entries for s in e.get("scores", []) if s.get("status") == "ok"
     )
+    rows = [s for e in entries for s in e.get("scores", [])]
     return {
         "ticks": len(entries),
         "candidates": n,
@@ -185,6 +209,10 @@ def coverage(entries: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         "latency_ms_p95": int(np.percentile(lat, 95)) if lat else None,
         "unavailable_reasons": dict(reasons.most_common(5)),
         "scored_by_kind": dict(sorted(by_kind.items())),
+        "by_split": {
+            sp: _slice_coverage([r for r in rows if in_split(sp, r.get("ticker"), etfs)])
+            for sp in SPLITS
+        },
     }
 
 
@@ -196,7 +224,7 @@ def closed_trades(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     q = """
         SELECT o.ml_p_win, o.ml_p_stop, o.ml_e_r, o.realised_pnl, o.exit_reason,
                json_extract(p.structure_json, '$.max_loss'), o.contracts, o.arm_id,
-               json_extract(p.structure_json, '$.kind')
+               json_extract(p.structure_json, '$.kind'), p.ticker
         FROM outcomes o JOIN proposals p ON p.proposal_hash = o.proposal_hash
         WHERE o.ml_model_version IS NOT NULL AND o.realised_pnl IS NOT NULL
           AND o.status IN ('closed', 'expired_worthless')
@@ -205,7 +233,7 @@ def closed_trades(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     if "ml_model_version" not in cols:  # a store not yet migrated to 041
         return []
     out = []
-    for pw, ps, er, pnl, reason, ml, n, arm, kind in conn.execute(q):
+    for pw, ps, er, pnl, reason, ml, n, arm, kind, ticker in conn.execute(q):
         pnl_f = float(pnl)
         risk = float(ml) * max(int(n or 1), 1) if ml not in (None, "") else None
         out.append(
@@ -218,12 +246,13 @@ def closed_trades(conn: sqlite3.Connection) -> list[dict[str, Any]]:
                 "r": pnl_f / risk if risk else None,
                 "arm": arm,
                 "kind": kind,
+                "ticker": ticker,
             }
         )
     return out
 
 
-def live_calibration(trades: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+def _calibration_slice(trades: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     pw = [t for t in trades if t["p_win"] is not None]
     ps = [t for t in trades if t["p_stop"] is not None]
     er = [t for t in trades if t["e_r"] is not None and t["r"] is not None]
@@ -231,6 +260,16 @@ def live_calibration(trades: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         "p_win": calibration([t["p_win"] for t in pw], [t["won"] for t in pw]),
         "p_stop": calibration([t["p_stop"] for t in ps], [t["stopped"] for t in ps]),
         "e_r": er_vs_realised([t["e_r"] for t in er], [t["r"] for t in er]),
+    }
+
+
+def live_calibration(
+    trades: Sequence[Mapping[str, Any]], etfs: frozenset[str] = frozenset()
+) -> dict[str, Any]:
+    """``{all|stocks|etfs: {p_win, p_stop, e_r}}``; each slice is ``insufficient`` < 30."""
+    return {
+        sp: _calibration_slice([t for t in trades if in_split(sp, t.get("ticker"), etfs)])
+        for sp in SPLITS
     }
 
 
@@ -242,8 +281,10 @@ def health(
     drift: Mapping[str, Any] | None = None,
     parity: Mapping[str, Any] | None = None,
     extra: Mapping[str, Any] | None = None,
+    etfs: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
-    """The ``ml_health`` record (stable shape, ``schema`` bumps on change)."""
+    """The ``ml_health`` record (stable shape, ``schema`` bumps on change). *etfs* is
+    ``ETF_UNDERLYINGS``, passed in so this module stays free of pipeline imports."""
     entries = score_entries(conn, since)
     versions = sorted({str(e.get("model_version")) for e in entries if e.get("model_version")})
     live: dict[str, list[float]] = {"e_r": [], "p_win": []}
@@ -257,8 +298,8 @@ def health(
         "day": day.isoformat(),
         "window_start": since.isoformat(),
         "model_versions": versions,
-        "coverage": coverage(entries),
-        "calibration": live_calibration(closed_trades(conn)),
+        "coverage": coverage(entries, etfs),
+        "calibration": live_calibration(closed_trades(conn), etfs),
         "feature_drift": dict(drift) if drift is not None else {"status": "not_run"},
         "parity": dict(parity) if parity is not None else {"status": "not_run"},
         "live_scores": {k: len(v) for k, v in live.items()},
@@ -285,6 +326,30 @@ def write_health(data_dir: Path, rec: Mapping[str, Any]) -> Path:
 WARN_SHOWN = 10
 
 
+def _render_calibration(split: str, cal: Mapping[str, Any]) -> list[str]:
+    lines = []
+    for k in ("p_win", "p_stop"):
+        s = cal[k]
+        if s["status"] == "insufficient":
+            lines.append(
+                f"calibration {k} [{split}]: insufficient (n={s['n']} < {MIN_N} closed trades)"
+            )
+        else:
+            lines.append(
+                f"calibration {k} [{split}]: n={s['n']} mean p {s['mean_p']} vs rate "
+                f"{s['base_rate']} CI {s['base_rate_ci']}; Brier {s['brier']} vs base "
+                f"{s['brier_base']}"
+            )
+    s = cal["e_r"]
+    lines.append(
+        f"E[R] vs realised R [{split}]: insufficient (n={s['n']} < {MIN_N})"
+        if s["status"] == "insufficient"
+        else f"E[R] vs realised R [{split}]: n={s['n']} mean e_r {s['mean_e_r']} vs mean R "
+        f"{s['mean_r']} CI {s['mean_r_ci']}"
+    )
+    return lines
+
+
 def render(rec: Mapping[str, Any]) -> str:
     """Plain-text ``arc ml monitor`` output (n and CI everywhere; ``insufficient`` < 30)."""
     c = rec["coverage"]
@@ -303,23 +368,21 @@ def render(rec: Mapping[str, Any]) -> str:
         lines.append(
             "  scored by kind: " + ", ".join(f"{k} {v}" for k, v in c["scored_by_kind"].items())
         )
-    cal = rec["calibration"]
-    for k in ("p_win", "p_stop"):
-        s = cal[k]
-        if s["status"] == "insufficient":
-            lines.append(f"calibration {k}: insufficient (n={s['n']} < {MIN_N} closed trades)")
-        else:
-            lines.append(
-                f"calibration {k}: n={s['n']} mean p {s['mean_p']} vs rate {s['base_rate']} "
-                f"CI {s['base_rate_ci']}; Brier {s['brier']} vs base {s['brier_base']}"
+    bs = c.get("by_split") or {}
+    if bs:
+        lines.append(
+            "  by split: "
+            + " · ".join(
+                f"{sp} {bs[sp]['scored']}/{bs[sp]['candidates']}"
+                + (f" ({bs[sp]['pct_scored']}%)" if bs[sp]["pct_scored"] is not None else "")
+                for sp in SPLITS
+                if sp in bs
             )
-    s = cal["e_r"]
-    lines.append(
-        f"E[R] vs realised R: insufficient (n={s['n']} < {MIN_N})"
-        if s["status"] == "insufficient"
-        else f"E[R] vs realised R: n={s['n']} mean e_r {s['mean_e_r']} vs mean R "
-        f"{s['mean_r']} CI {s['mean_r_ci']}"
-    )
+        )
+    cal = rec["calibration"]
+    for sp in SPLITS:
+        if sp in cal:
+            lines.extend(_render_calibration(sp, cal[sp]))
     d = rec["feature_drift"]
     if d.get("status") == "not_run":
         lines.append("feature drift: not run")
@@ -336,11 +399,13 @@ def render(rec: Mapping[str, Any]) -> str:
         )
     sd = rec.get("score_drift")
     if sd:
-        groups = [("all", sd.get("all", {}))] + [
-            (k, v) for k, v in sorted((sd.get("by_kind") or {}).items())
-        ]
+        groups = (
+            [("all", sd.get("all", {}))]
+            + [(k, v) for k, v in (sd.get("by_split") or {}).items() if k != "all"]
+            + [(k, v) for k, v in sorted((sd.get("by_kind") or {}).items())]
+        )
         idle = [n for n, g in groups if g and all(not v["n_live"] for v in g.values())]
-        if idle:  # no live scores yet: one line, not two per kind
+        if idle:  # no live scores yet: one line, not two per group
             lines.append(
                 f"score drift: no live scores yet (backtest ref n="
                 f"{(sd.get('all') or {}).get('e_r', {}).get('n_ref', 0)}; {len(idle)} groups)"

@@ -650,6 +650,7 @@ def _monitor(args: argparse.Namespace) -> int:
 
     from arc.ml.monitor import health, render
     from arc.ml.refresh import latest_health
+    from arc.pipeline.market import ETF_UNDERLYINGS
     from arc.utils.calendar import now_et
 
     day = args.day or now_et().date()
@@ -667,6 +668,7 @@ def _monitor(args: argparse.Namespace) -> int:
             drift=nightly.get("feature_drift"),
             parity=nightly.get("parity"),
             extra=extra,
+            etfs=frozenset(ETF_UNDERLYINGS),
         )
     finally:
         conn.close()
