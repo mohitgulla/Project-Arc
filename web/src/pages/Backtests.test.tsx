@@ -15,7 +15,6 @@ import {
   metricRows,
   money,
   overlayLines,
-  parseFilter,
   periodText,
   profileOrder,
   rangeText,
@@ -23,8 +22,8 @@ import {
   runsCaption,
   splitRetired,
   stageRows,
-  summaryStrip,
 } from "../lib/backtests";
+import { backtestStrip, liveStrip, parseTab } from "../lib/ml";
 import { BT7_DETAIL, BT_LIST } from "../lib/backtests.fixture";
 import { BacktestBody, BacktestListRow } from "./Backtests";
 
@@ -63,13 +62,16 @@ describe("backtests model", () => {
     expect(runsCaption(r)).toBe("Last run 10/16 · 3 runs");
   });
 
-  it("summary strip counts live and backtests separately", () => {
+  it("per-tab strips: live and backtests never share a strip", () => {
     const live = [{ experiment_id: "XP-1", status: "running", verdict: "continue", sessions: 3, max_sessions: 10 }];
-    const s = summaryStrip(live, BT_LIST);
-    expect(s.map((x) => x.label)).toEqual(["Live Running", "Live Decided", "Backtests Done", "Backtest Switches", "Queue", "Tonight"]);
-    expect(s[0]).toMatchObject({ value: "1", sub: "XP-1 · day 3/10" });
-    expect(s[2]!.value).toBe("1 / 2");
-    expect(s[3]!.sub).toBe("on Cash Debit holdout");
+    const l = liveStrip(live);
+    expect(l.map((x) => x.label)).toEqual(["Live Running", "Live Decided", "Sessions", "Proposed", "Queued", "Next Review"]);
+    expect(l[0]).toMatchObject({ value: "1", sub: "XP-1 · day 3/10" });
+    expect(l[2]).toMatchObject({ value: "3 / 10", sub: "XP-1, running" });
+    const s = backtestStrip(BT_LIST);
+    expect(s.map((x) => x.label)).toEqual(["Backtests Done", "Backtest Switches", "Queue", "Current", "Retired", "Tonight"]);
+    expect(s[0]!.value).toBe("1 / 2");
+    expect(s[1]!.sub).toBe("on Cash Debit holdout");
     expect(s[5]).toMatchObject({ value: "Idle", sub: "next slot 21:30 ET" });
   });
 
@@ -94,8 +96,8 @@ describe("backtests model", () => {
     expect(isBacktestId("BT-7")).toBe(true);
     expect(isBacktestId("XP-7")).toBe(false);
     expect(isBacktestId("BT-0")).toBe(false);
-    expect(parseFilter("backtest")).toBe("backtest");
-    expect(parseFilter("x")).toBe("all");
+    expect(parseTab(null, "backtest")).toBe("backtest");
+    expect(parseTab(null, "x")).toBe("live");
     expect(overlayLines({ regime: { version: 2 } })).toEqual(["regime.version = 2"]);
     expect(overlayLines({})).toEqual(["No change (same as control)"]);
   });
@@ -145,7 +147,7 @@ describe("retired backtests", () => {
     const { current, retired } = splitRetired(items);
     expect(retired.map((i) => i.study_id)).toEqual(["BT-7"]);
     expect(current.some((i) => i.study_id === "BT-7")).toBe(false);
-    expect(summaryStrip([], { ...BT_LIST, items })[2]!.value).toBe(`0 / ${current.length}`);
+    expect(backtestStrip({ ...BT_LIST, items })[0]!.value).toBe(`0 / ${current.length}`);
     expect(retiredText({ retired: RETIRED })).toBe("Retired 2026-10-17: harness evolved");
     expect(retiredText({ retired: null })).toBeNull();
   });

@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 
 import { Card } from "../components/Card";
@@ -61,9 +62,11 @@ import {
   type MeanCi,
 } from "../lib/experiments";
 import { formatEt, titleCase } from "../lib/format";
-import { isBacktestId, parseFilter, splitRetired, summaryStrip, FILTERS, type ListFilter } from "../lib/backtests";
-import { useBacktests, useExperiment, useExperiments } from "../lib/useApi";
+import { isBacktestId, splitRetired } from "../lib/backtests";
+import { backtestStrip, isMlStudyId, liveStrip, parseTab, TABS, type ExperimentsTab } from "../lib/ml";
+import { useBacktests, useExperiment, useExperiments, useMlModels, useMlStudies } from "../lib/useApi";
 import { BacktestDetailView, BacktestListRow } from "./Backtests";
+import { ModelDetailView, ModelTab, StudyDetailView } from "./Models";
 
 const DAY_S = 86_400;
 
@@ -71,7 +74,15 @@ const DAY_S = 86_400;
 export function ExperimentsPage() {
   const { experimentId } = useParams();
   if (!experimentId) return <ExperimentList />;
-  return isBacktestId(experimentId) ? <BacktestDetailView id={experimentId} /> : <ExperimentDetailView id={experimentId} />;
+  if (isBacktestId(experimentId)) return <BacktestDetailView id={experimentId} />;
+  if (isMlStudyId(experimentId)) return <StudyDetailView id={experimentId} />;
+  return <ExperimentDetailView id={experimentId} />;
+}
+
+/** `/experiments/model/<family>/<version>`: one model version's page. */
+export function ModelPage() {
+  const { family, version } = useParams();
+  return <ModelDetailView family={family ?? ""} version={version ?? ""} />;
 }
 
 // ---------------------------------------------------------------------------
@@ -79,63 +90,100 @@ export function ExperimentsPage() {
 // ---------------------------------------------------------------------------
 
 function ExperimentList() {
-  const q = useExperiments();
-  const bq = useBacktests();
-  const [params] = useSearchParams();
-  const filter: ListFilter = parseFilter(params.get("show"));
-  const rows = q.data?.items ?? [];
-  const allBts = bq.data?.items ?? [];
-  const { current: bts, retired } = splitRetired(allBts);
-  const groups = groupExperiments(rows);
-  const latest = rows.map((r) => r.evaluated_at).filter(Boolean).sort().at(-1);
-  const showLive = filter !== "backtest";
-  const showBt = filter !== "live";
-  const total = (showLive ? rows.length : 0) + (showBt ? allBts.length : 0);
-  const loading = q.isLoading || bq.isLoading;
+  const [params, setParams] = useSearchParams();
+  const tab: ExperimentsTab = parseTab(params.get("tab"), params.get("show"));
+  // An old `?show=` link lands on its tab; rewrite it so the URL carries `?tab=` only.
+  useEffect(() => {
+    if (params.has("show")) {
+      const next = new URLSearchParams(params);
+      next.delete("show");
+      next.set("tab", tab);
+      setParams(next, { replace: true });
+    }
+  }, [params, setParams, tab]);
   return (
     <div className="grid gap-4" data-testid="experiments-page">
-      <Strip cols={6} testid="experiments-summary" items={summaryStrip(rows, bq.data)} />
+      <div className="flex flex-wrap items-center gap-3">
+        <SegmentedControl label="Experiments view" param="tab" fallback="live" value={tab} options={TABS.map((t) => ({ value: t.key, label: t.label }))} testid="experiments-tabs" />
+      </div>
+      {tab === "live" && <LiveTab />}
+      {tab === "backtest" && <BacktestTab />}
+      {tab === "model" && <ModelTabRoute />}
+    </div>
+  );
+}
+
+function LiveTab() {
+  const q = useExperiments();
+  const rows = q.data?.items ?? [];
+  const groups = groupExperiments(rows);
+  const latest = rows.map((r) => r.evaluated_at).filter(Boolean).sort().at(-1);
+  return (
+    <>
+      <Strip cols={6} testid="experiments-summary" items={liveStrip(rows)} />
       <Card
-        title="Experiments"
+        title="Live Experiments"
         testid="experiments-list"
         freshness={{ at: latest ?? null, cadenceS: DAY_S, label: "EOD evaluation" }}
-        headerExtra={
-          <>
-            {total > 0 && <Pill v={{ label: String(total), tone: "neutral" }} />}
-            <SegmentedControl size="sm" label="Show" param="show" fallback="all" options={FILTERS.map((f) => ({ value: f.key, label: f.label }))} testid="experiments-filter" />
-          </>
-        }
+        headerExtra={rows.length > 0 && <Pill v={{ label: String(rows.length), tone: "neutral" }} />}
       >
-        {q.isError && showLive && <EmptyState caption={`Could not load experiments: ${String(q.error)}`} />}
-        {bq.isError && showBt && <EmptyState caption={`Could not load backtests: ${String(bq.error)}`} />}
-        {total === 0 && !q.isError && !bq.isError ? (
-          <EmptyState caption={loading ? "Loading…" : "No experiments yet."} />
+        {q.isError ? (
+          <EmptyState caption={`Could not load experiments: ${String(q.error)}`} />
+        ) : rows.length === 0 ? (
+          <EmptyState caption={q.isLoading ? "Loading…" : "No experiments yet."} />
         ) : (
           <div className="grid gap-4">
-            {showLive &&
-              groups.map((g) => (
-                <section key={g.title} data-testid="experiment-group">
-                  <Eyebrow>
-                    Live · {g.title} · {g.rows.length}
-                  </Eyebrow>
-                  <div className="divide-y divide-line border-y border-line">
-                    {g.rows.map((r) => (
-                      <ExperimentListRow key={r.experiment_id} r={r} />
-                    ))}
-                  </div>
-                </section>
-              ))}
-            {showBt && bts.length > 0 && (
+            {groups.map((g) => (
+              <section key={g.title} data-testid="experiment-group">
+                <Eyebrow>
+                  {g.title} · {g.rows.length}
+                </Eyebrow>
+                <div className="divide-y divide-line border-y border-line">
+                  {g.rows.map((r) => (
+                    <ExperimentListRow key={r.experiment_id} r={r} />
+                  ))}
+                </div>
+              </section>
+            ))}
+          </div>
+        )}
+        {rows.length > 0 && (
+          <p className="mt-3 text-micro text-muted" data-testid="experiments-footnote">
+            Paired daily P&amp;L difference vs control (%/day, always-valid range).
+          </p>
+        )}
+      </Card>
+    </>
+  );
+}
+
+function BacktestTab() {
+  const bq = useBacktests();
+  const allBts = bq.data?.items ?? [];
+  const { current: bts, retired } = splitRetired(allBts);
+  return (
+    <>
+      <Strip cols={6} testid="experiments-summary" items={backtestStrip(bq.data)} />
+      <Card title="Backtests" testid="experiments-list" headerExtra={allBts.length > 0 && <Pill v={{ label: String(allBts.length), tone: "neutral" }} />}>
+        {bq.isError ? (
+          <EmptyState caption={`Could not load backtests: ${String(bq.error)}`} />
+        ) : allBts.length === 0 ? (
+          <EmptyState caption={bq.isLoading ? "Loading…" : "No backtests yet."} />
+        ) : (
+          <div className="grid gap-4">
+            {bts.length > 0 ? (
               <section data-testid="backtest-group">
-                <Eyebrow>Backtests · {bts.length}</Eyebrow>
+                <Eyebrow>Current · {bts.length}</Eyebrow>
                 <div className="divide-y divide-line border-y border-line">
                   {bts.map((r) => (
                     <BacktestListRow key={r.study_id} r={r} />
                   ))}
                 </div>
               </section>
+            ) : (
+              <p className="text-caption text-muted">No current studies. The weekly audit proposes BT-&lt;n&gt;; nothing runs without approve BT-&lt;n&gt;.</p>
             )}
-            {showBt && retired.length > 0 && (
+            {retired.length > 0 && (
               <details data-testid="backtest-retired-group">
                 <summary className="flex min-h-[32px] cursor-pointer items-center text-caption font-semibold text-secondary max-tablet:min-h-[44px]">
                   Retired backtests · {retired.length}
@@ -150,17 +198,20 @@ function ExperimentList() {
             )}
           </div>
         )}
-        {total > 0 && (
+        {allBts.length > 0 && (
           <p className="mt-3 text-micro text-muted" data-testid="experiments-footnote">
-            Live: paired daily P&amp;L difference vs control (%/day, always-valid range).
-            <br />
-            Backtests: net P&amp;L difference over the simulated period on the backtest account (block-bootstrap range). The two are
-            never pooled.
+            Net P&amp;L difference over the simulated period on the backtest account (block-bootstrap range). Never pooled with live results.
           </p>
         )}
       </Card>
-    </div>
+    </>
   );
+}
+
+function ModelTabRoute() {
+  const mq = useMlModels();
+  const sq = useMlStudies();
+  return <ModelTab models={mq.data} studies={sq.data} loading={mq.isLoading || sq.isLoading} error={mq.isError ? mq.error : null} />;
 }
 
 function ExperimentListRow({ r }: { r: ExperimentRow }) {

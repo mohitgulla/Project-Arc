@@ -64,6 +64,7 @@ SHARED = {
     "/api/performance/funnel", "/api/ops/session", "/api/ops/health", "/api/ops/alerts",
     "/api/ops/sources", "/api/ops/llm", "/api/ops/config", "/api/ops/universe",
     "/api/experiments", "/api/backtests",
+    "/api/ml/models", "/api/ml/studies",
 }  # fmt: skip
 
 

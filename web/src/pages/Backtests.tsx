@@ -108,7 +108,7 @@ export function BacktestDetailView({ id }: { id: string }) {
   const q = useBacktest(id);
   return (
     <div className="grid gap-6 desktop:gap-10" data-testid="backtest-page">
-      <Link to="/experiments?show=backtest" className="arc-action arc-hit w-fit">
+      <Link to="/experiments?tab=backtest" className="arc-action arc-hit w-fit">
         ← Experiments
       </Link>
       {q.isError ? (

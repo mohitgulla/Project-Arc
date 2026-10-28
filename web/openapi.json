@@ -3765,6 +3765,112 @@
         "title": "CoreOverrideIgnored",
         "type": "object"
       },
+      "Cost": {
+        "additionalProperties": false,
+        "properties": {
+          "boosters": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Boosters"
+          },
+          "final_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Final S"
+          },
+          "folds_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Folds S"
+          },
+          "peak_rss_mb": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Peak Rss Mb"
+          },
+          "predict_all_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Predict All S"
+          },
+          "predict_rows": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Predict Rows"
+          },
+          "predict_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Predict S"
+          },
+          "size_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size Bytes"
+          },
+          "train_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Train S"
+          }
+        },
+        "title": "Cost",
+        "type": "object"
+      },
       "CostBar": {
         "additionalProperties": false,
         "properties": {
@@ -4109,6 +4215,49 @@
           "ci_shrink"
         ],
         "title": "CovariateCheck",
+        "type": "object"
+      },
+      "CoverageSeries": {
+        "additionalProperties": false,
+        "properties": {
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "points": {
+            "description": "(nominal, empirical)",
+            "items": {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            "title": "Points",
+            "type": "array"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          },
+          "year": {
+            "title": "Year",
+            "type": "string"
+          }
+        },
+        "required": [
+          "target",
+          "year",
+          "model",
+          "points"
+        ],
+        "title": "CoverageSeries",
         "type": "object"
       },
       "CumulativePoint": {
@@ -6817,6 +6966,48 @@
         "title": "ExperimentsResponse",
         "type": "object"
       },
+      "FamilyCounts": {
+        "additionalProperties": false,
+        "properties": {
+          "champion": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Champion"
+          },
+          "counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Counts",
+            "type": "object"
+          },
+          "family": {
+            "title": "Family",
+            "type": "string"
+          },
+          "holdout_reads": {
+            "default": 0,
+            "title": "Holdout Reads",
+            "type": "integer"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "family",
+          "label"
+        ],
+        "title": "FamilyCounts",
+        "type": "object"
+      },
       "FeeBreakdown": {
         "additionalProperties": false,
         "description": "Dollar fees of one or more trades, by type (all \u2265 0).",
@@ -8394,6 +8585,47 @@
         "title": "HealthStripResponse",
         "type": "object"
       },
+      "Importance": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "enum": [
+              "gain",
+              "permutation"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "rows": {
+            "items": {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "target",
+          "kind",
+          "rows"
+        ],
+        "title": "Importance",
+        "type": "object"
+      },
       "Interval": {
         "additionalProperties": false,
         "description": "A confidence interval ``[lo, hi]`` around ``estimate`` (fractions).",
@@ -8466,6 +8698,25 @@
           }
         },
         "title": "IvModel",
+        "type": "object"
+      },
+      "KV": {
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "value"
+        ],
+        "title": "KV",
         "type": "object"
       },
       "LegAnalytics": {
@@ -9064,6 +9315,199 @@
         "title": "LinkedExperiment",
         "type": "object"
       },
+      "LiveBlock": {
+        "additionalProperties": false,
+        "description": "The latest ``ml_health`` record, for the family it serves (``arc ml monitor``).",
+        "properties": {
+          "brier": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brier"
+          },
+          "brier_base": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brier Base"
+          },
+          "calibration": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calibration"
+          },
+          "calibration_n": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calibration N"
+          },
+          "candidates": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidates"
+          },
+          "day": {
+            "format": "date",
+            "title": "Day",
+            "type": "string"
+          },
+          "drift_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Drift Status"
+          },
+          "drift_warn": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Drift Warn"
+          },
+          "last_retrain": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Retrain"
+          },
+          "latency_ms_p95": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latency Ms P95"
+          },
+          "parity": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parity"
+          },
+          "pct_scored": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pct Scored"
+          },
+          "score_psi": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score Psi"
+          },
+          "serving": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Serving"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "'unavailable' when the model did not load",
+            "title": "Status"
+          },
+          "worst_psi": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Worst Psi"
+          },
+          "worst_psi_feature": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Worst Psi Feature"
+          }
+        },
+        "required": [
+          "day"
+        ],
+        "title": "LiveBlock",
+        "type": "object"
+      },
       "LlmDay": {
         "additionalProperties": false,
         "properties": {
@@ -9281,6 +9725,38 @@
           "fields"
         ],
         "title": "LogLine",
+        "type": "object"
+      },
+      "LossBar": {
+        "additionalProperties": false,
+        "description": "One bar: the model's loss relative to a baseline (negative = better).",
+        "properties": {
+          "group": {
+            "description": "'Vol' / 'Return' (M1) or the split (M2)",
+            "title": "Group",
+            "type": "string"
+          },
+          "label": {
+            "description": "'h21' or the baseline name",
+            "title": "Label",
+            "type": "string"
+          },
+          "rel": {
+            "title": "Rel",
+            "type": "number"
+          },
+          "year": {
+            "title": "Year",
+            "type": "string"
+          }
+        },
+        "required": [
+          "group",
+          "label",
+          "year",
+          "rel"
+        ],
+        "title": "LossBar",
         "type": "object"
       },
       "ManagedStats": {
@@ -9846,6 +10322,90 @@
         "title": "MetaResponse",
         "type": "object"
       },
+      "MlModelDetailResponse": {
+        "additionalProperties": false,
+        "description": "``/api/ml/models/{family}/{version}``: the detail, discriminated on family_kind.",
+        "properties": {
+          "detail": {
+            "discriminator": {
+              "mapping": {
+                "outcome": "#/components/schemas/OutcomeDetail",
+                "quantile": "#/components/schemas/QuantileDetail"
+              },
+              "propertyName": "family_kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/QuantileDetail"
+              },
+              {
+                "$ref": "#/components/schemas/OutcomeDetail"
+              }
+            ],
+            "title": "Detail"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Production's data (shared inputs)",
+            "title": "Shared From Control",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "MlModelDetailResponse",
+        "type": "object"
+      },
+      "MlModelsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "families": {
+            "items": {
+              "$ref": "#/components/schemas/FamilyCounts"
+            },
+            "title": "Families",
+            "type": "array"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ModelRow"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Production's data (shared inputs)",
+            "title": "Shared From Control",
+            "type": "boolean"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/MlSummary"
+          }
+        },
+        "required": [
+          "as_of",
+          "summary",
+          "families",
+          "items"
+        ],
+        "title": "MlModelsResponse",
+        "type": "object"
+      },
       "MlShadowView": {
         "additionalProperties": false,
         "description": "The proposal's shadow M2 score: the PROPOSED decision payload, else the copy on\nthe outcome row (migration 041).",
@@ -9907,6 +10467,481 @@
           }
         },
         "title": "MlShadowView",
+        "type": "object"
+      },
+      "MlStudiesResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MlStudyItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "proposed": {
+            "default": 0,
+            "title": "Proposed",
+            "type": "integer"
+          },
+          "queued": {
+            "default": 0,
+            "title": "Queued",
+            "type": "integer"
+          },
+          "running": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Running"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Production's data (shared inputs)",
+            "title": "Shared From Control",
+            "type": "boolean"
+          },
+          "window_start": {
+            "default": "21:30",
+            "title": "Window Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "as_of",
+          "items"
+        ],
+        "title": "MlStudiesResponse",
+        "type": "object"
+      },
+      "MlStudyDetailResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "expected_effect": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Effect"
+          },
+          "grid": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Grid",
+            "type": "array"
+          },
+          "overlay": {
+            "additionalProperties": true,
+            "title": "Overlay",
+            "type": "object"
+          },
+          "rule": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rule"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeInfo",
+            "description": "E15.6 (D69)"
+          },
+          "shared_from_control": {
+            "default": false,
+            "description": "True when an arm view serves Production's data (shared inputs)",
+            "title": "Shared From Control",
+            "type": "boolean"
+          },
+          "spec": {
+            "items": {
+              "$ref": "#/components/schemas/KV"
+            },
+            "title": "Spec",
+            "type": "array"
+          },
+          "spec_file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spec File"
+          },
+          "study": {
+            "$ref": "#/components/schemas/MlStudyItem"
+          }
+        },
+        "required": [
+          "as_of",
+          "study",
+          "spec"
+        ],
+        "title": "MlStudyDetailResponse",
+        "type": "object"
+      },
+      "MlStudyItem": {
+        "additionalProperties": false,
+        "properties": {
+          "change_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Kind"
+          },
+          "created": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created"
+          },
+          "eta_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Estimated runner seconds left",
+            "title": "Eta S"
+          },
+          "evidence": {
+            "description": "One line per rung run",
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "family": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Family"
+          },
+          "family_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Family Label"
+          },
+          "hypothesis": {
+            "title": "Hypothesis",
+            "type": "string"
+          },
+          "incumbent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Incumbent"
+          },
+          "last_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last At"
+          },
+          "nights_needed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nights Needed"
+          },
+          "queue_position": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Queue Position"
+          },
+          "retired": {
+            "default": false,
+            "title": "Retired",
+            "type": "boolean"
+          },
+          "runtime_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runtime S"
+          },
+          "stage": {
+            "description": "Label of the furthest step reached",
+            "title": "Stage",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "proposed",
+              "queued",
+              "running",
+              "concluded",
+              "stopped",
+              "failed",
+              "dropped",
+              "approved"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/StudyStep"
+            },
+            "title": "Steps",
+            "type": "array"
+          },
+          "study_id": {
+            "title": "Study Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "variants": {
+            "default": 1,
+            "title": "Variants",
+            "type": "integer"
+          },
+          "verdict": {
+            "anyOf": [
+              {
+                "enum": [
+                  "pass",
+                  "fail",
+                  "dropped"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verdict"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The version its verdict registered",
+            "title": "Version"
+          }
+        },
+        "required": [
+          "study_id",
+          "title",
+          "hypothesis",
+          "status",
+          "steps",
+          "stage"
+        ],
+        "title": "MlStudyItem",
+        "type": "object"
+      },
+      "MlSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "champion_families": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Champion Families",
+            "type": "array"
+          },
+          "champions": {
+            "title": "Champions",
+            "type": "integer"
+          },
+          "families": {
+            "title": "Families",
+            "type": "integer"
+          },
+          "health_day": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Health Day"
+          },
+          "in_shadow": {
+            "default": 0,
+            "title": "In Shadow",
+            "type": "integer"
+          },
+          "live_calibration": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "'ok' | 'insufficient' | None (no live record yet)",
+            "title": "Live Calibration"
+          },
+          "live_calibration_n": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Live Calibration N"
+          },
+          "queued": {
+            "default": 0,
+            "description": "Approved studies (BT and ML) waiting for a night",
+            "title": "Queued",
+            "type": "integer"
+          },
+          "running": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Study the shared nightly runner is on",
+            "title": "Running"
+          },
+          "studies_proposed": {
+            "default": 0,
+            "title": "Studies Proposed",
+            "type": "integer"
+          },
+          "studies_queued": {
+            "default": 0,
+            "title": "Studies Queued",
+            "type": "integer"
+          },
+          "window_start": {
+            "default": "21:30",
+            "title": "Window Start",
+            "type": "string"
+          },
+          "worst_psi": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Worst Psi"
+          },
+          "worst_psi_feature": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Worst Psi Feature"
+          }
+        },
+        "required": [
+          "champions",
+          "families"
+        ],
+        "title": "MlSummary",
         "type": "object"
       },
       "ModelCard": {
@@ -10057,6 +11092,121 @@
           "realised"
         ],
         "title": "ModelPoint",
+        "type": "object"
+      },
+      "ModelRow": {
+        "additionalProperties": false,
+        "description": "One model on the Models card (a family's version, or a planned family).",
+        "properties": {
+          "created": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created"
+          },
+          "family": {
+            "title": "Family",
+            "type": "string"
+          },
+          "family_kind": {
+            "enum": [
+              "quantile",
+              "outcome"
+            ],
+            "title": "Family Kind",
+            "type": "string"
+          },
+          "holdout_reads": {
+            "default": 0,
+            "title": "Holdout Reads",
+            "type": "integer"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "purpose": {
+            "title": "Purpose",
+            "type": "string"
+          },
+          "rule": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rule"
+          },
+          "rule_passed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rule Passed"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "stats": {
+            "description": "The row's three numbers",
+            "items": {
+              "$ref": "#/components/schemas/Stat"
+            },
+            "title": "Stats",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "champion",
+              "shadow",
+              "candidate",
+              "retired",
+              "planned"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "required": [
+          "family",
+          "label",
+          "family_kind",
+          "purpose",
+          "status"
+        ],
+        "title": "ModelRow",
         "type": "object"
       },
       "MoverTile": {
@@ -10722,6 +11872,291 @@
           "updated_at"
         ],
         "title": "OrderView",
+        "type": "object"
+      },
+      "OutcomeDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "cost": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Cost"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "family_kind": {
+            "const": "outcome",
+            "default": "outcome",
+            "title": "Family Kind",
+            "type": "string"
+          },
+          "feature_groups": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Feature Groups",
+            "type": "object"
+          },
+          "headline": {
+            "items": {
+              "$ref": "#/components/schemas/Stat"
+            },
+            "title": "Headline",
+            "type": "array"
+          },
+          "importance": {
+            "items": {
+              "$ref": "#/components/schemas/Importance"
+            },
+            "title": "Importance",
+            "type": "array"
+          },
+          "live": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LiveBlock"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "loss": {
+            "items": {
+              "$ref": "#/components/schemas/LossBar"
+            },
+            "title": "Loss",
+            "type": "array"
+          },
+          "model": {
+            "$ref": "#/components/schemas/ModelRow"
+          },
+          "regimes": {
+            "items": {
+              "$ref": "#/components/schemas/RegimeRow"
+            },
+            "title": "Regimes",
+            "type": "array"
+          },
+          "reliability": {
+            "items": {
+              "$ref": "#/components/schemas/ReliabilityBin"
+            },
+            "title": "Reliability",
+            "type": "array"
+          },
+          "replay": {
+            "items": {
+              "$ref": "#/components/schemas/ReplayRow"
+            },
+            "title": "Replay",
+            "type": "array"
+          },
+          "rule": {
+            "items": {
+              "$ref": "#/components/schemas/OutcomeRuleRow"
+            },
+            "title": "Rule",
+            "type": "array"
+          },
+          "spec": {
+            "items": {
+              "$ref": "#/components/schemas/KV"
+            },
+            "title": "Spec",
+            "type": "array"
+          },
+          "versions": {
+            "items": {
+              "$ref": "#/components/schemas/VersionRow"
+            },
+            "title": "Versions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "as_of",
+          "model",
+          "headline",
+          "spec"
+        ],
+        "title": "OutcomeDetail",
+        "type": "object"
+      },
+      "OutcomeRuleRow": {
+        "additionalProperties": false,
+        "properties": {
+          "beats_logistic": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Beats Logistic"
+          },
+          "beats_managed_pop": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Beats Managed Pop"
+          },
+          "dd_incumbent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dd Incumbent"
+          },
+          "dd_model": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dd Model"
+          },
+          "er_ic": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Er Ic"
+          },
+          "er_ic_t": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Er Ic T"
+          },
+          "ic_pass": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ic Pass"
+          },
+          "ll_logistic": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ll Logistic"
+          },
+          "ll_managed_pop": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ll Managed Pop"
+          },
+          "ll_model": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ll Model"
+          },
+          "net_incumbent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Incumbent"
+          },
+          "net_model": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Model"
+          },
+          "passed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passed"
+          },
+          "replay_pass": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replay Pass"
+          },
+          "year": {
+            "title": "Year",
+            "type": "string"
+          }
+        },
+        "required": [
+          "year"
+        ],
+        "title": "OutcomeRuleRow",
         "type": "object"
       },
       "OutcomeSection": {
@@ -14200,6 +15635,231 @@
         "title": "QuantSection",
         "type": "object"
       },
+      "QuantileDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "cost": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Cost"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "coverage": {
+            "items": {
+              "$ref": "#/components/schemas/CoverageSeries"
+            },
+            "title": "Coverage",
+            "type": "array"
+          },
+          "family_kind": {
+            "const": "quantile",
+            "default": "quantile",
+            "title": "Family Kind",
+            "type": "string"
+          },
+          "feature_groups": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Feature Groups",
+            "type": "object"
+          },
+          "headline": {
+            "items": {
+              "$ref": "#/components/schemas/Stat"
+            },
+            "title": "Headline",
+            "type": "array"
+          },
+          "importance": {
+            "items": {
+              "$ref": "#/components/schemas/Importance"
+            },
+            "title": "Importance",
+            "type": "array"
+          },
+          "live": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LiveBlock"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "loss": {
+            "items": {
+              "$ref": "#/components/schemas/LossBar"
+            },
+            "title": "Loss",
+            "type": "array"
+          },
+          "model": {
+            "$ref": "#/components/schemas/ModelRow"
+          },
+          "regimes": {
+            "items": {
+              "$ref": "#/components/schemas/RegimeRow"
+            },
+            "title": "Regimes",
+            "type": "array"
+          },
+          "rolling": {
+            "items": {
+              "$ref": "#/components/schemas/RollingCalibration"
+            },
+            "title": "Rolling",
+            "type": "array"
+          },
+          "rule": {
+            "items": {
+              "$ref": "#/components/schemas/QuantileRuleRow"
+            },
+            "title": "Rule",
+            "type": "array"
+          },
+          "spec": {
+            "items": {
+              "$ref": "#/components/schemas/KV"
+            },
+            "title": "Spec",
+            "type": "array"
+          },
+          "versions": {
+            "items": {
+              "$ref": "#/components/schemas/VersionRow"
+            },
+            "title": "Versions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "as_of",
+          "model",
+          "headline",
+          "spec"
+        ],
+        "title": "QuantileDetail",
+        "type": "object"
+      },
+      "QuantileRuleCell": {
+        "additionalProperties": false,
+        "properties": {
+          "beats": {
+            "default": false,
+            "title": "Beats",
+            "type": "boolean"
+          },
+          "cov_err": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "LightGBM coverage error after CQR",
+            "title": "Cov Err"
+          },
+          "cov_ok": {
+            "default": false,
+            "title": "Cov Ok",
+            "type": "boolean"
+          },
+          "dm_p": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dm P"
+          },
+          "passed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passed"
+          },
+          "pinball_rel": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "LightGBM pinball / baseline \u2212 1",
+            "title": "Pinball Rel"
+          },
+          "year": {
+            "title": "Year",
+            "type": "string"
+          }
+        },
+        "required": [
+          "year"
+        ],
+        "title": "QuantileRuleCell",
+        "type": "object"
+      },
+      "QuantileRuleRow": {
+        "additionalProperties": false,
+        "properties": {
+          "h": {
+            "title": "H",
+            "type": "integer"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "ships": {
+            "description": "'baseline' | 'lgbm'",
+            "title": "Ships",
+            "type": "string"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          },
+          "years": {
+            "items": {
+              "$ref": "#/components/schemas/QuantileRuleCell"
+            },
+            "title": "Years",
+            "type": "array"
+          }
+        },
+        "required": [
+          "target",
+          "kind",
+          "h",
+          "ships",
+          "years"
+        ],
+        "title": "QuantileRuleRow",
+        "type": "object"
+      },
       "RampPoint": {
         "additionalProperties": false,
         "description": "Control's ramp at one session index since t0 (0 = first session).",
@@ -14372,6 +16032,87 @@
           }
         },
         "title": "RegimePanel",
+        "type": "object"
+      },
+      "RegimeRow": {
+        "additionalProperties": false,
+        "properties": {
+          "cov_err": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cov Err"
+          },
+          "ece": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Win ECE in the regime (M2)",
+            "title": "Ece"
+          },
+          "er_ic": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Er Ic"
+          },
+          "n": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N"
+          },
+          "regime": {
+            "title": "Regime",
+            "type": "string"
+          },
+          "rel": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Loss vs baseline, relative (M1)",
+            "title": "Rel"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          },
+          "year": {
+            "title": "Year",
+            "type": "string"
+          }
+        },
+        "required": [
+          "regime",
+          "target",
+          "year"
+        ],
+        "title": "RegimeRow",
         "type": "object"
       },
       "RegimeView": {
@@ -14564,6 +16305,114 @@
         "title": "RegimeView",
         "type": "object"
       },
+      "ReliabilityBin": {
+        "additionalProperties": false,
+        "properties": {
+          "bin": {
+            "title": "Bin",
+            "type": "string"
+          },
+          "mean_p": {
+            "title": "Mean P",
+            "type": "number"
+          },
+          "n": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N"
+          },
+          "observed": {
+            "title": "Observed",
+            "type": "number"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          },
+          "year": {
+            "title": "Year",
+            "type": "string"
+          }
+        },
+        "required": [
+          "year",
+          "target",
+          "bin",
+          "mean_p",
+          "observed"
+        ],
+        "title": "ReliabilityBin",
+        "type": "object"
+      },
+      "ReplayRow": {
+        "additionalProperties": false,
+        "properties": {
+          "max_dd_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Dd Pct"
+          },
+          "net_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Pnl"
+          },
+          "trades": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trades"
+          },
+          "use": {
+            "title": "Use",
+            "type": "string"
+          },
+          "win_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Win Rate"
+          },
+          "year": {
+            "title": "Year",
+            "type": "string"
+          }
+        },
+        "required": [
+          "year",
+          "use"
+        ],
+        "title": "ReplayRow",
+        "type": "object"
+      },
       "RetiredInfo": {
         "additionalProperties": false,
         "description": "A retired study (history only; the strategy and harness moved on since).",
@@ -14649,6 +16498,49 @@
           "at"
         ],
         "title": "ReviewView",
+        "type": "object"
+      },
+      "RollingCalibration": {
+        "additionalProperties": false,
+        "properties": {
+          "annual": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Annual"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "rolling": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rolling"
+          },
+          "year": {
+            "title": "Year",
+            "type": "string"
+          }
+        },
+        "required": [
+          "year",
+          "label",
+          "annual",
+          "rolling"
+        ],
+        "title": "RollingCalibration",
         "type": "object"
       },
       "RunDetailResponse": {
@@ -16409,6 +18301,90 @@
         "title": "StartRow",
         "type": "object"
       },
+      "Stat": {
+        "additionalProperties": false,
+        "description": "One headline number; the UI formats it by *unit* (pct = fraction, pts = fraction\nshown in points, ratio = plain number, count = ``value / of``).",
+        "properties": {
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "of": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Denominator for unit 'count' (e.g. 0 / 8)",
+            "title": "Of"
+          },
+          "sub": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sub"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Pre-formatted value for unit 'text'",
+            "title": "Text"
+          },
+          "tone": {
+            "default": "neutral",
+            "enum": [
+              "pos",
+              "neg",
+              "neutral"
+            ],
+            "title": "Tone",
+            "type": "string"
+          },
+          "unit": {
+            "default": "ratio",
+            "enum": [
+              "pct",
+              "pts",
+              "ratio",
+              "count",
+              "usd",
+              "text"
+            ],
+            "title": "Unit",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "label"
+        ],
+        "title": "Stat",
+        "type": "object"
+      },
       "StaticStats": {
         "additionalProperties": false,
         "description": "Hold to expiry.",
@@ -16996,6 +18972,46 @@
           "status"
         ],
         "title": "StructureView",
+        "type": "object"
+      },
+      "StudyStep": {
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "state": {
+            "enum": [
+              "done",
+              "failed",
+              "pending"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "step": {
+            "title": "Step",
+            "type": "string"
+          }
+        },
+        "required": [
+          "step",
+          "label",
+          "state"
+        ],
+        "title": "StudyStep",
         "type": "object"
       },
       "SwapView": {
@@ -19388,6 +21404,89 @@
         "title": "ValidationError",
         "type": "object"
       },
+      "VersionRow": {
+        "additionalProperties": false,
+        "properties": {
+          "created": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "rule_passed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rule Passed"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "'card' or the ML-<n> study that made it",
+            "title": "Source"
+          },
+          "status": {
+            "enum": [
+              "champion",
+              "shadow",
+              "candidate",
+              "retired",
+              "planned"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "train_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Train S"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "status"
+        ],
+        "title": "VersionRow",
+        "type": "object"
+      },
       "ViolationView": {
         "additionalProperties": false,
         "properties": {
@@ -20027,6 +22126,325 @@
         "summary": "Meta",
         "tags": [
           "meta"
+        ]
+      }
+    },
+    "/api/ml/models": {
+      "get": {
+        "description": "Every model family: champion / shadow / candidate versions and the strip numbers.",
+        "operationId": "ml_models_api_ml_models_get",
+        "parameters": [
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+              "title": "Arm"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MlModelsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Ml Models",
+        "tags": [
+          "experiments"
+        ]
+      }
+    },
+    "/api/ml/models/{family}/{version}": {
+      "get": {
+        "description": "One version: spec, rule table, calibration, loss vs baseline, importance, live.",
+        "operationId": "ml_model_api_ml_models__family___version__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "family",
+            "required": true,
+            "schema": {
+              "title": "Family",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "title": "Version",
+              "type": "string"
+            }
+          },
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+              "title": "Arm"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MlModelDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Ml Model",
+        "tags": [
+          "experiments"
+        ]
+      }
+    },
+    "/api/ml/studies": {
+      "get": {
+        "description": "Every ``ML-<n>``: proposed drafts, queued / running studies and verdicts.",
+        "operationId": "ml_studies_api_ml_studies_get",
+        "parameters": [
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+              "title": "Arm"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MlStudiesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Ml Studies",
+        "tags": [
+          "experiments"
+        ]
+      }
+    },
+    "/api/ml/studies/{study_id}": {
+      "get": {
+        "description": "One study: its ladder, spec and evidence lines.",
+        "operationId": "ml_study_api_ml_studies__study_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "study_id",
+            "required": true,
+            "schema": {
+              "title": "Study Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108).",
+              "title": "Arm"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MlStudyDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Ml Study",
+        "tags": [
+          "experiments"
         ]
       }
     },

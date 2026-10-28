@@ -127,6 +127,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ml/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Ml Models
+         * @description Every model family: champion / shadow / candidate versions and the strip numbers.
+         */
+        get: operations["ml_models_api_ml_models_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ml/models/{family}/{version}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Ml Model
+         * @description One version: spec, rule table, calibration, loss vs baseline, importance, live.
+         */
+        get: operations["ml_model_api_ml_models__family___version__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ml/studies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Ml Studies
+         * @description Every ``ML-<n>``: proposed drafts, queued / running studies and verdicts.
+         */
+        get: operations["ml_studies_api_ml_studies_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ml/studies/{study_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Ml Study
+         * @description One study: its ladder, spec and evidence lines.
+         */
+        get: operations["ml_study_api_ml_studies__study_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ops/alerts": {
         parameters: {
             query?: never;
@@ -2232,6 +2312,27 @@ export interface components {
             /** Note */
             note: string;
         };
+        /** Cost */
+        Cost: {
+            /** Boosters */
+            boosters?: number | null;
+            /** Final S */
+            final_s?: number | null;
+            /** Folds S */
+            folds_s?: number | null;
+            /** Peak Rss Mb */
+            peak_rss_mb?: number | null;
+            /** Predict All S */
+            predict_all_s?: number | null;
+            /** Predict Rows */
+            predict_rows?: number | null;
+            /** Predict S */
+            predict_s?: number | null;
+            /** Size Bytes */
+            size_bytes?: number | null;
+            /** Train S */
+            train_s?: number | null;
+        };
         /** CostBar */
         CostBar: {
             /**
@@ -2472,6 +2573,23 @@ export interface components {
              * @description Residual sd of d = a + b1 SPY + b2 ΔVIX
              */
             sigma_spy_vix: number;
+        };
+        /** CoverageSeries */
+        CoverageSeries: {
+            /** Model */
+            model: string;
+            /**
+             * Points
+             * @description (nominal, empirical)
+             */
+            points: [
+                number,
+                number
+            ][];
+            /** Target */
+            target: string;
+            /** Year */
+            year: string;
         };
         /**
          * CumulativePoint
@@ -3476,6 +3594,24 @@ export interface components {
              */
             shared_from_control: boolean;
         };
+        /** FamilyCounts */
+        FamilyCounts: {
+            /** Champion */
+            champion?: string | null;
+            /** Counts */
+            counts?: {
+                [key: string]: number;
+            };
+            /** Family */
+            family: string;
+            /**
+             * Holdout Reads
+             * @default 0
+             */
+            holdout_reads: number;
+            /** Label */
+            label: string;
+        };
         /**
          * FeeBreakdown
          * @description Dollar fees of one or more trades, by type (all ≥ 0).
@@ -4138,6 +4274,21 @@ export interface components {
              */
             shared_from_control: boolean;
         };
+        /** Importance */
+        Importance: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "gain" | "permutation";
+            /** Rows */
+            rows: [
+                string,
+                number
+            ][];
+            /** Target */
+            target: string;
+        };
         /**
          * Interval
          * @description A confidence interval ``[lo, hi]`` around ``estimate`` (fractions).
@@ -4172,6 +4323,13 @@ export interface components {
             kind: "constant" | "mean_reverting";
             /** Long Run */
             long_run?: number | null;
+        };
+        /** KV */
+        KV: {
+            /** Label */
+            label: string;
+            /** Value */
+            value: string;
         };
         /**
          * LegAnalytics
@@ -4393,6 +4551,52 @@ export interface components {
             /** Title */
             title: string;
         };
+        /**
+         * LiveBlock
+         * @description The latest ``ml_health`` record, for the family it serves (``arc ml monitor``).
+         */
+        LiveBlock: {
+            /** Brier */
+            brier?: number | null;
+            /** Brier Base */
+            brier_base?: number | null;
+            /** Calibration */
+            calibration?: string | null;
+            /** Calibration N */
+            calibration_n?: number | null;
+            /** Candidates */
+            candidates?: number | null;
+            /**
+             * Day
+             * Format: date
+             */
+            day: string;
+            /** Drift Status */
+            drift_status?: string | null;
+            /** Drift Warn */
+            drift_warn?: number | null;
+            /** Last Retrain */
+            last_retrain?: string | null;
+            /** Latency Ms P95 */
+            latency_ms_p95?: number | null;
+            /** Parity */
+            parity?: string | null;
+            /** Pct Scored */
+            pct_scored?: number | null;
+            /** Score Psi */
+            score_psi?: number | null;
+            /** Serving */
+            serving?: string | null;
+            /**
+             * Status
+             * @description 'unavailable' when the model did not load
+             */
+            status?: string | null;
+            /** Worst Psi */
+            worst_psi?: number | null;
+            /** Worst Psi Feature */
+            worst_psi_feature?: string | null;
+        };
         /** LlmDay */
         LlmDay: {
             /**
@@ -4486,6 +4690,26 @@ export interface components {
             level: string;
             /** Ts */
             ts: string | null;
+        };
+        /**
+         * LossBar
+         * @description One bar: the model's loss relative to a baseline (negative = better).
+         */
+        LossBar: {
+            /**
+             * Group
+             * @description 'Vol' / 'Return' (M1) or the split (M2)
+             */
+            group: string;
+            /**
+             * Label
+             * @description 'h21' or the baseline name
+             */
+            label: string;
+            /** Rel */
+            rel: number;
+            /** Year */
+            year: string;
         };
         /**
          * ManagedStats
@@ -4678,6 +4902,43 @@ export interface components {
             theme_default: "system" | "light" | "dark";
         };
         /**
+         * MlModelDetailResponse
+         * @description ``/api/ml/models/{family}/{version}``: the detail, discriminated on family_kind.
+         */
+        MlModelDetailResponse: {
+            /** Detail */
+            detail: components["schemas"]["QuantileDetail"] | components["schemas"]["OutcomeDetail"];
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Production's data (shared inputs)
+             * @default false
+             */
+            shared_from_control: boolean;
+        };
+        /** MlModelsResponse */
+        MlModelsResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Families */
+            families: components["schemas"]["FamilyCounts"][];
+            /** Items */
+            items: components["schemas"]["ModelRow"][];
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Production's data (shared inputs)
+             * @default false
+             */
+            shared_from_control: boolean;
+            summary: components["schemas"]["MlSummary"];
+        };
+        /**
          * MlShadowView
          * @description The proposal's shadow M2 score: the PROPOSED decision payload, else the copy on
          *     the outcome row (migration 041).
@@ -4693,6 +4954,193 @@ export interface components {
             p_win?: number | null;
             /** Rank M2 */
             rank_m2?: number | null;
+        };
+        /** MlStudiesResponse */
+        MlStudiesResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Items */
+            items: components["schemas"]["MlStudyItem"][];
+            /**
+             * Proposed
+             * @default 0
+             */
+            proposed: number;
+            /**
+             * Queued
+             * @default 0
+             */
+            queued: number;
+            /** Running */
+            running?: string | null;
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Production's data (shared inputs)
+             * @default false
+             */
+            shared_from_control: boolean;
+            /**
+             * Window Start
+             * @default 21:30
+             */
+            window_start: string;
+        };
+        /** MlStudyDetailResponse */
+        MlStudyDetailResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Expected Effect */
+            expected_effect?: string | null;
+            /** Grid */
+            grid?: {
+                [key: string]: unknown;
+            }[];
+            /** Overlay */
+            overlay?: {
+                [key: string]: unknown;
+            };
+            /** Rule */
+            rule?: string | null;
+            /** @description E15.6 (D69) */
+            scope?: components["schemas"]["ScopeInfo"];
+            /**
+             * Shared From Control
+             * @description True when an arm view serves Production's data (shared inputs)
+             * @default false
+             */
+            shared_from_control: boolean;
+            /** Spec */
+            spec: components["schemas"]["KV"][];
+            /** Spec File */
+            spec_file?: string | null;
+            study: components["schemas"]["MlStudyItem"];
+        };
+        /** MlStudyItem */
+        MlStudyItem: {
+            /** Change Kind */
+            change_kind?: string | null;
+            /** Created */
+            created?: string | null;
+            /**
+             * Eta S
+             * @description Estimated runner seconds left
+             */
+            eta_s?: number | null;
+            /**
+             * Evidence
+             * @description One line per rung run
+             */
+            evidence?: string[];
+            /** Family */
+            family?: string | null;
+            /** Family Label */
+            family_label?: string | null;
+            /** Hypothesis */
+            hypothesis: string;
+            /** Incumbent */
+            incumbent?: string | null;
+            /** Last At */
+            last_at?: string | null;
+            /** Nights Needed */
+            nights_needed?: number | null;
+            /** Queue Position */
+            queue_position?: number | null;
+            /**
+             * Retired
+             * @default false
+             */
+            retired: boolean;
+            /** Runtime S */
+            runtime_s?: number | null;
+            /**
+             * Stage
+             * @description Label of the furthest step reached
+             */
+            stage: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "proposed" | "queued" | "running" | "concluded" | "stopped" | "failed" | "dropped" | "approved";
+            /** Steps */
+            steps: components["schemas"]["StudyStep"][];
+            /** Study Id */
+            study_id: string;
+            /** Title */
+            title: string;
+            /**
+             * Variants
+             * @default 1
+             */
+            variants: number;
+            /** Verdict */
+            verdict?: ("pass" | "fail" | "dropped") | null;
+            /**
+             * Version
+             * @description The version its verdict registered
+             */
+            version?: string | null;
+        };
+        /** MlSummary */
+        MlSummary: {
+            /** Champion Families */
+            champion_families?: string[];
+            /** Champions */
+            champions: number;
+            /** Families */
+            families: number;
+            /** Health Day */
+            health_day?: string | null;
+            /**
+             * In Shadow
+             * @default 0
+             */
+            in_shadow: number;
+            /**
+             * Live Calibration
+             * @description 'ok' | 'insufficient' | None (no live record yet)
+             */
+            live_calibration?: string | null;
+            /** Live Calibration N */
+            live_calibration_n?: number | null;
+            /**
+             * Queued
+             * @description Approved studies (BT and ML) waiting for a night
+             * @default 0
+             */
+            queued: number;
+            /**
+             * Running
+             * @description Study the shared nightly runner is on
+             */
+            running?: string | null;
+            /**
+             * Studies Proposed
+             * @default 0
+             */
+            studies_proposed: number;
+            /**
+             * Studies Queued
+             * @default 0
+             */
+            studies_queued: number;
+            /**
+             * Window Start
+             * @default 21:30
+             */
+            window_start: string;
+            /** Worst Psi */
+            worst_psi?: number | null;
+            /** Worst Psi Feature */
+            worst_psi_feature?: string | null;
         };
         /** ModelCard */
         ModelCard: {
@@ -4762,6 +5210,48 @@ export interface components {
             shadow?: number | null;
             /** Ticker */
             ticker: string;
+        };
+        /**
+         * ModelRow
+         * @description One model on the Models card (a family's version, or a planned family).
+         */
+        ModelRow: {
+            /** Created */
+            created?: string | null;
+            /** Family */
+            family: string;
+            /**
+             * Family Kind
+             * @enum {string}
+             */
+            family_kind: "quantile" | "outcome";
+            /**
+             * Holdout Reads
+             * @default 0
+             */
+            holdout_reads: number;
+            /** Label */
+            label: string;
+            /** Purpose */
+            purpose: string;
+            /** Rule */
+            rule?: string | null;
+            /** Rule Passed */
+            rule_passed?: boolean | null;
+            /** Source */
+            source?: string | null;
+            /**
+             * Stats
+             * @description The row's three numbers
+             */
+            stats?: components["schemas"]["Stat"][];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "champion" | "shadow" | "candidate" | "retired" | "planned";
+            /** Version */
+            version?: string | null;
         };
         /** MoverTile */
         MoverTile: {
@@ -4997,6 +5487,77 @@ export interface components {
             state: string;
             /** Updated At */
             updated_at: string | null;
+        };
+        /** OutcomeDetail */
+        OutcomeDetail: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            cost?: components["schemas"]["Cost"] | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            family_kind: "outcome";
+            /** Feature Groups */
+            feature_groups?: {
+                [key: string]: number;
+            };
+            /** Headline */
+            headline: components["schemas"]["Stat"][];
+            /** Importance */
+            importance?: components["schemas"]["Importance"][];
+            live?: components["schemas"]["LiveBlock"] | null;
+            /** Loss */
+            loss?: components["schemas"]["LossBar"][];
+            model: components["schemas"]["ModelRow"];
+            /** Regimes */
+            regimes?: components["schemas"]["RegimeRow"][];
+            /** Reliability */
+            reliability?: components["schemas"]["ReliabilityBin"][];
+            /** Replay */
+            replay?: components["schemas"]["ReplayRow"][];
+            /** Rule */
+            rule?: components["schemas"]["OutcomeRuleRow"][];
+            /** Spec */
+            spec: components["schemas"]["KV"][];
+            /** Versions */
+            versions?: components["schemas"]["VersionRow"][];
+        };
+        /** OutcomeRuleRow */
+        OutcomeRuleRow: {
+            /** Beats Logistic */
+            beats_logistic?: boolean | null;
+            /** Beats Managed Pop */
+            beats_managed_pop?: boolean | null;
+            /** Dd Incumbent */
+            dd_incumbent?: number | null;
+            /** Dd Model */
+            dd_model?: number | null;
+            /** Er Ic */
+            er_ic?: number | null;
+            /** Er Ic T */
+            er_ic_t?: number | null;
+            /** Ic Pass */
+            ic_pass?: boolean | null;
+            /** Ll Logistic */
+            ll_logistic?: number | null;
+            /** Ll Managed Pop */
+            ll_managed_pop?: number | null;
+            /** Ll Model */
+            ll_model?: number | null;
+            /** Net Incumbent */
+            net_incumbent?: number | null;
+            /** Net Model */
+            net_model?: number | null;
+            /** Passed */
+            passed?: boolean | null;
+            /** Replay Pass */
+            replay_pass?: boolean | null;
+            /** Year */
+            year: string;
         };
         /** OutcomeSection */
         OutcomeSection: {
@@ -6147,6 +6708,89 @@ export interface components {
             /** Pop Managed */
             pop_managed?: number | null;
         };
+        /** QuantileDetail */
+        QuantileDetail: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            cost?: components["schemas"]["Cost"] | null;
+            /** Coverage */
+            coverage?: components["schemas"]["CoverageSeries"][];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            family_kind: "quantile";
+            /** Feature Groups */
+            feature_groups?: {
+                [key: string]: number;
+            };
+            /** Headline */
+            headline: components["schemas"]["Stat"][];
+            /** Importance */
+            importance?: components["schemas"]["Importance"][];
+            live?: components["schemas"]["LiveBlock"] | null;
+            /** Loss */
+            loss?: components["schemas"]["LossBar"][];
+            model: components["schemas"]["ModelRow"];
+            /** Regimes */
+            regimes?: components["schemas"]["RegimeRow"][];
+            /** Rolling */
+            rolling?: components["schemas"]["RollingCalibration"][];
+            /** Rule */
+            rule?: components["schemas"]["QuantileRuleRow"][];
+            /** Spec */
+            spec: components["schemas"]["KV"][];
+            /** Versions */
+            versions?: components["schemas"]["VersionRow"][];
+        };
+        /** QuantileRuleCell */
+        QuantileRuleCell: {
+            /**
+             * Beats
+             * @default false
+             */
+            beats: boolean;
+            /**
+             * Cov Err
+             * @description LightGBM coverage error after CQR
+             */
+            cov_err?: number | null;
+            /**
+             * Cov Ok
+             * @default false
+             */
+            cov_ok: boolean;
+            /** Dm P */
+            dm_p?: number | null;
+            /** Passed */
+            passed?: boolean | null;
+            /**
+             * Pinball Rel
+             * @description LightGBM pinball / baseline − 1
+             */
+            pinball_rel?: number | null;
+            /** Year */
+            year: string;
+        };
+        /** QuantileRuleRow */
+        QuantileRuleRow: {
+            /** H */
+            h: number;
+            /** Kind */
+            kind: string;
+            /**
+             * Ships
+             * @description 'baseline' | 'lgbm'
+             */
+            ships: string;
+            /** Target */
+            target: string;
+            /** Years */
+            years: components["schemas"]["QuantileRuleCell"][];
+        };
         /**
          * RampPoint
          * @description Control's ramp at one session index since t0 (0 = first session).
@@ -6227,6 +6871,31 @@ export interface components {
             /** Xps */
             xps?: string[];
         };
+        /** RegimeRow */
+        RegimeRow: {
+            /** Cov Err */
+            cov_err?: number | null;
+            /**
+             * Ece
+             * @description Win ECE in the regime (M2)
+             */
+            ece?: number | null;
+            /** Er Ic */
+            er_ic?: number | null;
+            /** N */
+            n?: number | null;
+            /** Regime */
+            regime: string;
+            /**
+             * Rel
+             * @description Loss vs baseline, relative (M1)
+             */
+            rel?: number | null;
+            /** Target */
+            target: string;
+            /** Year */
+            year: string;
+        };
         /** RegimeView */
         RegimeView: {
             /** As Of */
@@ -6264,6 +6933,36 @@ export interface components {
             /** Z */
             z?: number | null;
         };
+        /** ReliabilityBin */
+        ReliabilityBin: {
+            /** Bin */
+            bin: string;
+            /** Mean P */
+            mean_p: number;
+            /** N */
+            n?: number | null;
+            /** Observed */
+            observed: number;
+            /** Target */
+            target: string;
+            /** Year */
+            year: string;
+        };
+        /** ReplayRow */
+        ReplayRow: {
+            /** Max Dd Pct */
+            max_dd_pct?: number | null;
+            /** Net Pnl */
+            net_pnl?: number | null;
+            /** Trades */
+            trades?: number | null;
+            /** Use */
+            use: string;
+            /** Win Rate */
+            win_rate?: number | null;
+            /** Year */
+            year: string;
+        };
         /**
          * RetiredInfo
          * @description A retired study (history only; the strategy and harness moved on since).
@@ -6298,6 +6997,17 @@ export interface components {
             reviewer: string;
             /** Root Cause */
             root_cause: string;
+        };
+        /** RollingCalibration */
+        RollingCalibration: {
+            /** Annual */
+            annual: number | null;
+            /** Label */
+            label: string;
+            /** Rolling */
+            rolling: number | null;
+            /** Year */
+            year: string;
         };
         /** RunDetailResponse */
         RunDetailResponse: {
@@ -7105,6 +7815,41 @@ export interface components {
             t0: string;
         };
         /**
+         * Stat
+         * @description One headline number; the UI formats it by *unit* (pct = fraction, pts = fraction
+         *     shown in points, ratio = plain number, count = ``value / of``).
+         */
+        Stat: {
+            /** Label */
+            label: string;
+            /**
+             * Of
+             * @description Denominator for unit 'count' (e.g. 0 / 8)
+             */
+            of?: number | null;
+            /** Sub */
+            sub?: string | null;
+            /**
+             * Text
+             * @description Pre-formatted value for unit 'text'
+             */
+            text?: string | null;
+            /**
+             * Tone
+             * @default neutral
+             * @enum {string}
+             */
+            tone: "pos" | "neg" | "neutral";
+            /**
+             * Unit
+             * @default ratio
+             * @enum {string}
+             */
+            unit: "pct" | "pts" | "ratio" | "count" | "usd" | "text";
+            /** Value */
+            value?: number | null;
+        };
+        /**
          * StaticStats
          * @description Hold to expiry.
          */
@@ -7323,6 +8068,20 @@ export interface components {
              * @description Sum over its legs' broker P&L
              */
             unrealized_pl?: string | null;
+        };
+        /** StudyStep */
+        StudyStep: {
+            /** Label */
+            label: string;
+            /** Note */
+            note?: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "done" | "failed" | "pending";
+            /** Step */
+            step: string;
         };
         /** SwapView */
         SwapView: {
@@ -8251,6 +9010,29 @@ export interface components {
             /** Error Type */
             type: string;
         };
+        /** VersionRow */
+        VersionRow: {
+            /** Created */
+            created?: string | null;
+            /** Note */
+            note?: string | null;
+            /** Rule Passed */
+            rule_passed?: boolean | null;
+            /**
+             * Source
+             * @description 'card' or the ML-<n> study that made it
+             */
+            source?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "champion" | "shadow" | "candidate" | "retired" | "planned";
+            /** Train S */
+            train_s?: number | null;
+            /** Version */
+            version: string;
+        };
         /** ViolationView */
         ViolationView: {
             /** Code */
@@ -8588,6 +9370,211 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MetaResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    ml_models_api_ml_models_get: {
+        parameters: {
+            query?: {
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
+                arm?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MlModelsResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    ml_model_api_ml_models__family___version__get: {
+        parameters: {
+            query?: {
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
+                arm?: string | null;
+            };
+            header?: never;
+            path: {
+                family: string;
+                version: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MlModelDetailResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    ml_studies_api_ml_studies_get: {
+        parameters: {
+            query?: {
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
+                arm?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MlStudiesResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    ml_study_api_ml_studies__study_id__get: {
+        parameters: {
+            query?: {
+                /** @description E15.6 (D69): read one experiment arm's store ('<experiment id>:<arm>', e.g. 'XP-12:t1'; the ids are in /api/meta arms). Omitted or 'control' = Production (the production account, D108). */
+                arm?: string | null;
+            };
+            header?: never;
+            path: {
+                study_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MlStudyDetailResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Validation Error */

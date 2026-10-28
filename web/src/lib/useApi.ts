@@ -3,6 +3,7 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { apiGet, type ApiPath, type Meta, type Positions, type Snapshot } from "./api";
 import type { BacktestDetail, BacktestsList } from "./backtests";
 import type { ExperimentDetail, ExperimentsList } from "./experiments";
+import type { MlModelDetailResponse, MlModels, MlStudies, MlStudyDetail } from "./ml";
 import type { ContextEntry, RunDetail } from "./ops";
 import type { Overview, OverviewRange } from "./overview";
 import type { Funnel, Performance } from "./performance";
@@ -243,6 +244,57 @@ export function useExperiment(id: string | undefined) {
     queryKey: [arm, "experiment", id],
     queryFn: ({ signal }) =>
       apiGet(`/api/experiments/${id}` as "/api/experiments/{experiment_id}", { query: withArm(undefined, arm), signal }),
+    enabled: Boolean(id),
+    ...poll,
+  });
+}
+
+/** Model registry + ML studies (Model tab): read from the stored eval files, Production-level. */
+export function useMlModels(enabled = true) {
+  const arm = useArm();
+  const poll = usePoll();
+  return useQuery<MlModels>({
+    queryKey: [arm, "ml-models"],
+    queryFn: ({ signal }) => apiGet("/api/ml/models", { query: withArm(undefined, arm), signal }) as Promise<MlModels>,
+    placeholderData: keepPreviousData,
+    enabled,
+    ...poll,
+  });
+}
+
+export function useMlModel(family: string | undefined, version: string | undefined) {
+  const arm = useArm();
+  const poll = usePoll();
+  return useQuery<MlModelDetailResponse>({
+    queryKey: [arm, "ml-model", family, version],
+    queryFn: ({ signal }) =>
+      apiGet(`/api/ml/models/${encodeURIComponent(family ?? "")}/${encodeURIComponent(version ?? "")}` as "/api/ml/models/{family}/{version}", {
+        query: withArm(undefined, arm),
+        signal,
+      }) as Promise<MlModelDetailResponse>,
+    enabled: Boolean(family && version),
+    ...poll,
+  });
+}
+
+export function useMlStudies(enabled = true) {
+  const arm = useArm();
+  const poll = usePoll();
+  return useQuery<MlStudies>({
+    queryKey: [arm, "ml-studies"],
+    queryFn: ({ signal }) => apiGet("/api/ml/studies", { query: withArm(undefined, arm), signal }) as Promise<MlStudies>,
+    placeholderData: keepPreviousData,
+    enabled,
+    ...poll,
+  });
+}
+
+export function useMlStudy(id: string | undefined) {
+  const arm = useArm();
+  const poll = usePoll();
+  return useQuery<MlStudyDetail>({
+    queryKey: [arm, "ml-study", id],
+    queryFn: ({ signal }) => apiGet(`/api/ml/studies/${id}` as "/api/ml/studies/{study_id}", { query: withArm(undefined, arm), signal }) as Promise<MlStudyDetail>,
     enabled: Boolean(id),
     ...poll,
   });

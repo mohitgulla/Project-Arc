@@ -22,6 +22,9 @@ __all__ = ["ENV_DB", "ENV_LOOKBACK", "ENV_REFRESH", "app_from_env", "uvicorn_com
 ENV_DB = "ARC_TOWER_DB"
 ENV_REFRESH = "ARC_TOWER_REFRESH"
 ENV_LOOKBACK = "ARC_TOWER_LOOKBACK_DAYS"
+#: The Arc Analyst's state dir (proposed ``ML-<n>`` drafts, D133); the Analyst's default.
+ENV_ANALYST_HOME = "ARC_ANALYST_HOME"
+DEFAULT_ANALYST_HOME = "~/.hermes/profiles/arc-analyst/analyst"
 FACTORY = "arc.tower.serve:app_from_env"
 
 
@@ -60,4 +63,5 @@ def app_from_env() -> FastAPI:
         settings,
         refresh_s=int(os.environ.get(ENV_REFRESH, "60")),
         lookback_days=int(os.environ.get(ENV_LOOKBACK, "7")),
+        analyst_home=os.environ.get(ENV_ANALYST_HOME) or DEFAULT_ANALYST_HOME,
     )
