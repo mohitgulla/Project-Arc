@@ -99,33 +99,13 @@ export function rowDomain(h: Pick<BacktestHeadline, "ci_lo" | "ci_hi" | "pnl_dif
 }
 
 // ---------------------------------------------------------------------------
-// List: summary strip + filter
+// List
 // ---------------------------------------------------------------------------
-
-export type ListFilter = "all" | "live" | "backtest";
-export const FILTERS: { key: ListFilter; label: string }[] = [
-  { key: "all", label: "All" },
-  { key: "live", label: "Live" },
-  { key: "backtest", label: "Backtest" },
-];
-
-export function parseFilter(v: string | null | undefined): ListFilter {
-  return v === "live" || v === "backtest" ? v : "all";
-}
 
 export interface StripItem {
   label: string;
   value: string;
   sub: string;
-}
-
-interface LiveLike {
-  status: string;
-  verdict?: string | null;
-  experiment_id: string;
-  sessions?: number | null;
-  max_sessions?: number | null;
-  arm_verdicts?: Record<string, string>;
 }
 
 /** Current studies vs retired ones (history only; listed in a collapsed group). */
@@ -136,28 +116,6 @@ export function splitRetired<T extends { retired?: unknown }>(items: readonly T[
 /** The retired banner / row note: "Retired 2026-10-17: <reason>". */
 export function retiredText(r: { retired?: { at: string; reason: string } | null }): string | null {
   return r.retired ? `Retired ${r.retired.at}: ${r.retired.reason}` : null;
-}
-
-/** The six summary slots: live running / decided, backtests done / switches, queue, tonight. */
-export function summaryStrip(live: readonly LiveLike[], bt: BacktestsList | undefined): StripItem[] {
-  const running = live.filter((x) => x.status === "running");
-  const decided = live.filter((x) => x.verdict === "win" || x.verdict === "futility" || x.status === "promoted" || x.status === "rejected");
-  const wins = live.filter((x) => x.verdict === "win" || x.status === "promoted").length;
-  const items = splitRetired(bt?.items ?? []).current;
-  const done = items.filter((i) => i.stage_phase === "holdout");
-  const switches = done.filter((i) => i.headline?.switch).length;
-  const first = running[0];
-  const runningSub = first ? `${first.experiment_id} · day ${first.sessions ?? 0}/${first.max_sessions ?? "?"}` : "none running";
-  const tonight = bt?.running ? bt.running : (bt?.queued ?? 0) > 0 ? "Queued" : "Idle";
-  const tonightSub = bt?.running ? "running now" : `next slot ${bt?.window_start ?? "21:30"} ET`;
-  return [
-    { label: "Live Running", value: String(running.length), sub: runningSub },
-    { label: "Live Decided", value: String(decided.length), sub: `${wins} win${wins === 1 ? "" : "s"}` },
-    { label: "Backtests Done", value: `${done.length} / ${items.length}`, sub: "holdout reached" },
-    { label: "Backtest Switches", value: String(switches), sub: `on ${profileLabel(bt?.account_profile)} holdout` },
-    { label: "Queue", value: String(bt?.queued ?? 0), sub: (bt?.queued ?? 0) > 0 ? "approved, waiting" : "nothing approved" },
-    { label: "Tonight", value: tonight, sub: tonightSub },
-  ];
 }
 
 // ---------------------------------------------------------------------------

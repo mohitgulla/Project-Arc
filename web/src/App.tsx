@@ -18,7 +18,7 @@ import { OpsUniversePage } from "./pages/OpsUniverse";
 import { RunDetailPage } from "./pages/RunDetail";
 import { NotFoundPage } from "./routes/pages";
 import { PerformancePage } from "./pages/Performance";
-import { ExperimentsPage } from "./pages/Experiments";
+import { ExperimentsPage, ModelPage } from "./pages/Experiments";
 
 function makeClient() {
   return new QueryClient({
@@ -55,6 +55,7 @@ export function App() {
               <Route path="positions/*" element={<PositionsPage />} />
               <Route path="performance/*" element={<PerformancePage />} />
               <Route path="experiments/:experimentId?" element={<ExperimentsPage />} />
+              <Route path="experiments/model/:family/:version" element={<ModelPage />} />
               <Route path="ops" element={<OpsPage />} />
               <Route path="ops/config" element={<OpsConfigPage />} />
               <Route path="ops/config/changes" element={<OpsConfigPage />} />

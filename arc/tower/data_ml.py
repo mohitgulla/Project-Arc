@@ -896,7 +896,7 @@ def _quantile_stats(q: _QuantileEval, reads: int) -> tuple[list[Stat], list[Stat
         cov_s,
         Stat(label="Rank IC", value=ic, unit="ratio", sub=f"vol h21 · {yr}"),
         Stat(
-            label="Holdout Reads", value=reads, unit="ratio", sub="dev only" if not reads else None
+            label="Holdout Reads", value=reads, unit="count", sub="dev only" if not reads else None
         ),
     ]
     return [keep, beat, cov_s], head
@@ -1104,7 +1104,7 @@ def _outcome_stats(
             tone="neutral" if net is None else ("pos" if net > 0 else "neg"),
         ),
         Stat(
-            label="Holdout Reads", value=reads, unit="ratio", sub="dev only" if not reads else None
+            label="Holdout Reads", value=reads, unit="count", sub="dev only" if not reads else None
         ),
     ]
     return [promote, ll_s, ic_s], head
