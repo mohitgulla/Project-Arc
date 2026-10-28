@@ -100,6 +100,9 @@ __all__ = [
 log = structlog.get_logger(__name__)
 
 SPECS_DIR = "config/backtest_studies"
+#: E27.7 (D133): ``ML-<n>`` specs (``arc.ml.study.SPECS_DIR``; kept literal here so the
+#: runner imports the ML package only when an ML entry runs)
+ML_SPECS_DIR = "config/ml_studies"
 #: Recent ledger rows a rung's runtime estimate is the median of.
 RECENT_ROWS = 5
 #: Exit code of ``study run`` on SIGTERM (128 + 15).
@@ -423,16 +426,22 @@ class _Night:
                 log.warning("backtest.runner.post_failed", error=str(exc))
 
     def _committed_spec(self, study_id: str) -> str | None:
+        if study_id.startswith("ML-"):  # E27.7 (D133)
+            return self.main.files(ML_SPECS_DIR).get(f"{ML_SPECS_DIR}/{study_id}.yaml")
         return self.main.files(SPECS_DIR).get(f"{SPECS_DIR}/{study_id}.yaml")
 
     def _retired(self) -> dict[str, RetiredStudy]:
-        """E26.5 (D127): the retired studies committed on ``origin/main``."""
-        path = f"{SPECS_DIR}/{RETIRED_FILE}"
-        try:
-            return retired_from_text(self.main.files(SPECS_DIR).get(path), f"main:{path}")
-        except ValueError as exc:  # a typo must not un-retire: run nothing tonight
-            msg = f"cannot read the retired-study list: {exc}"
-            raise SkipNightError(msg) from exc
+        """E26.5 (D127): the retired studies committed on ``origin/main`` (E27.7: the
+        ML studies' list too)."""
+        out: dict[str, RetiredStudy] = {}
+        for d in (SPECS_DIR, ML_SPECS_DIR):
+            path = f"{d}/{RETIRED_FILE}"
+            try:
+                out |= retired_from_text(self.main.files(d).get(path), f"main:{path}")
+            except ValueError as exc:  # a typo must not un-retire: run nothing tonight
+                msg = f"cannot read the retired-study list: {exc}"
+                raise SkipNightError(msg) from exc
+        return out
 
     # -- the loop -----------------------------------------------------------
 
@@ -454,6 +463,12 @@ class _Night:
                 unmerged.clear()
                 continue
             entry, text = pick
+            if entry.kind == "ml":  # E27.7 (D133): an ML-<n> study's rung
+                outcome = self._run_ml(entry, text)
+                done += outcome == "done"
+                if outcome in ("deferred", "interrupted"):
+                    break
+                continue
             spec = self._spec(entry, text)
             if spec is None:
                 continue
@@ -503,11 +518,12 @@ class _Night:
             e.stop_reason = reason
 
         self._update(entry.id, go)
-        log_path = self.paths.runs_dir / entry.id / _LOG_NAME
+        runs = self._ml_path(self.cfg.ml_studies.runs_dir) if entry.kind == "ml" else None
+        log_path = (runs or self.paths.runs_dir) / entry.id / _LOG_NAME
         where = f" on {rung}" if rung else ""
         self._emit(
             f"{entry.id} failed{where}: {reason}",
-            f"BT · {entry.id} · failed{where}: {reason}{detail} · log {log_path}",
+            f"{entry.kind.upper()} · {entry.id} · failed{where}: {reason}{detail} · log {log_path}",
         )
 
     def _spec(self, entry: QueueEntry, text: str) -> StudySpec | None:
@@ -616,6 +632,126 @@ class _Night:
         last = next((x for x in reversed(tail) if x.strip()), "")
         self._fail(entry, rung, f"exit {rc}", f" ({last[:200]})" if last else "")
         return "failed"
+
+    def _ml_path(self, rel: str) -> Path:
+        p = Path(rel)
+        return p if p.is_absolute() else self.paths.cwd / p
+
+    def _run_ml(self, entry: QueueEntry, text: str) -> str:
+        """E27.7 (D133): one rung of an ``ML-<n>`` study: the same fit-or-defer, launch,
+        SIGTERM-at-window-end and owner-stop handling as a BT rung; the child is
+        ``arc ml study run ML-<n> --rung <r>`` and writes the ML study ledger."""
+        from arc.ml import study as mls
+
+        mcfg = self.cfg.ml_studies
+        ledger = self._ml_path(mcfg.ledger)
+        runs_dir = self._ml_path(mcfg.runs_dir)
+        try:
+            spec = mls.MlStudySpec.model_validate(yaml.safe_load(text) or {})
+        except (ValueError, yaml.YAMLError) as exc:
+            self._fail(entry, None, "committed spec does not load", f" ({str(exc)[:200]})")
+            return "failed"
+        if mls.ml_study_hash(spec) != entry.spec_hash:
+            got = mls.ml_study_hash(spec)[:12]
+            self._fail(entry, None, f"spec hash on main {got} != queued {entry.spec_hash[:12]}", "")
+            return "failed"
+        rung = entry.ladder_state
+        if rung is None:
+            self._update(entry.id, _concluded)
+            return "done"
+        est = mls.ml_estimate_s(
+            mls.load_ml_ledger(ledger), spec, rung, default_s=mcfg.default_rung_s
+        )
+        start = self.clock().astimezone(ET).replace(microsecond=0)
+        left = _elapsed(start, self.end).total_seconds()
+        if est > left:
+            self.res.lines.append(
+                f"{entry.id} {rung} deferred: window (needs ~{est / 60:.0f} min, "
+                f"{left / 60:.0f} min left)"
+            )
+            return "deferred"
+        study_dir = runs_dir / entry.id
+        spec_dir = study_dir / "spec"
+        spec_dir.mkdir(parents=True, exist_ok=True)
+        (spec_dir / f"{entry.id}.yaml").write_text(text)
+        log_path = study_dir / _LOG_NAME
+        with log_path.open("a") as fh:
+            fh.write(f"\n=== {start.isoformat()} {entry.id} {rung} (ml {spec.family}) ===\n")
+
+        def running(e: QueueEntry) -> None:
+            e.status = "running"
+
+        got = self._update(entry.id, running)
+        if got is None or got.status != "running":
+            self.res.lines.append(f"{entry.id} {rung} not started: {got.status if got else 'gone'}")
+            return "stopped"
+        argv = mls.rung_argv(
+            entry.id,
+            rung=rung,
+            spec_dir=spec_dir,
+            ledger=ledger,
+            runs_dir=runs_dir,
+            models_root=self._ml_path(mcfg.models_dir),
+            data_dir=self.paths.data_dir,
+            workers=mcfg.workers,
+            now=start,
+            python=self.python,
+        )
+        nice_bin = shutil.which("nice") if self.cfg.nice else None
+        if nice_bin:
+            argv = [nice_bin, "-n", str(self.cfg.nice), *argv]
+        rc, why = self._watch(self.launcher(argv, log_path, self.paths.cwd), entry.id)
+        led = mls.find_line(ledger, entry.id, entry.spec_hash, rung, start)
+        if led is not None:
+            return self._ml_done(entry, rung, led, start, mcfg.fail_margin)
+        run = QueueRun(rung=rung, at=start)
+        if why in ("window", "stopped"):
+            run.outcome = "interrupted" if why == "window" else "stopped"
+            update_queue(self.paths.queue, lambda q: _apply(q, entry.id, run))
+            what = "interrupted at the window end" if why == "window" else "stopped by the owner"
+            self.res.lines.append(f"{entry.id} {rung} {what}")
+            return "interrupted" if why == "window" else "stopped"
+        run.outcome = "failed"
+        update_queue(self.paths.queue, lambda q: _apply(q, entry.id, run))
+        tail = _tail(log_path)
+        last = next((x for x in reversed(tail) if x.strip()), "")
+        self._fail(entry, rung, f"exit {rc}", f" ({last[:200]})" if last else "")
+        return "failed"
+
+    def _ml_done(
+        self, entry: QueueEntry, rung: str, led: Any, start: dt.datetime, fail_margin: float
+    ) -> str:
+        from arc.backtest.queue import ML_RUNGS
+        from arc.ml.study import ml_rung_line
+
+        key = f"{entry.id}:{led.spec_hash[:12]}:{led.at.isoformat()}"
+        run = QueueRun(rung=rung, at=start, ledger_key=key, outcome="done")  # type: ignore[arg-type]
+        line = ml_rung_line(led)
+        if rung == "verdict":
+            update_queue(self.paths.queue, lambda q: _apply(q, entry.id, run, _concluded))
+            self._emit(f"{entry.id} verdict concluded", f"ML · {line}")
+            return "done"
+        if led.clear_fail:
+            reason = (
+                f"dev fail on {rung}: every variant misses {led.rule} by > {100 * fail_margin:g}%"
+            )
+
+            def stop(e: QueueEntry) -> None:
+                e.status = "stopped"
+                e.ladder_state = None
+                e.stop_reason = reason
+
+            update_queue(self.paths.queue, lambda q: _apply(q, entry.id, run, stop))
+            self._emit(f"{entry.id} stopped: dev fail on {rung}", f"ML · {line} · stopped")
+            return "done"
+        nxt = ML_RUNGS[ML_RUNGS.index(rung) + 1]  # type: ignore[arg-type]
+
+        def advance(e: QueueEntry) -> None:
+            e.ladder_state = nxt
+
+        update_queue(self.paths.queue, lambda q: _apply(q, entry.id, run, advance))
+        self._emit(f"{entry.id} {rung} done", f"ML · {line} · next {nxt}")
+        return "done"
 
     def _watch(self, h: RunHandle, study_id: str) -> tuple[int, str | None]:
         """Wait for *h*; SIGTERM at the window end or on an owner stop, SIGKILL after

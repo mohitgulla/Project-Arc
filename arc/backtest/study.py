@@ -119,6 +119,7 @@ STUDY_TARGETS: tuple[str, ...] = ("ranking", "exits", "costs")
 Universe = Literal["c125", "c250", "c500"]
 _LADDER_ORDER: dict[str, int] = {"c125": 0, "c250": 1, "c500": 2}
 _ID_RE = re.compile(r"^BT-[1-9]\d*$")
+_RETIRED_ML_RE = re.compile(r"^ML-[1-9]\d*$")
 _TREATMENT_RE = re.compile(r"^t[1-3]$")
 _FORBID = ConfigDict(extra="forbid", frozen=True)
 
@@ -477,7 +478,8 @@ class RetiredStudy(BaseModel):
     @field_validator("id")
     @classmethod
     def _id(cls, v: str) -> str:
-        if not _ID_RE.match(v):
+        # E27.7 (D133): config/ml_studies/retired.yaml reuses this row with ML-<n> ids
+        if not (_ID_RE.match(v) or _RETIRED_ML_RE.match(v)):
             msg = f"retired id {v!r}: use BT-<n>"
             raise ValueError(msg)
         return v

@@ -684,6 +684,8 @@ class TrainRun:
     metrics: pd.DataFrame
     checks: pd.DataFrame
     timings: dict[str, float]
+    #: inner-validation configurations tried per fold (E27.7: the selection metric)
+    trials: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _rss_mb() -> float:
@@ -704,8 +706,13 @@ def train_family(
     folds: Sequence[v.Fold] | None = None,
     monotone_check: bool = True,
     progress: Callable[[str], None] | None = None,
+    final_fit: bool = True,
 ) -> TrainRun:
-    """Walk-forward evaluation, final fit and registry artefacts for one family (dev only)."""
+    """Walk-forward evaluation, final fit and registry artefacts for one family (dev only).
+
+    ``final_fit=False`` (E27.7 study rungs) stops after the folds: no final fit, nothing
+    written; the run carries the fold metrics, the rule's fold legs and the inner
+    configurations tried (:attr:`TrainRun.trials`)."""
     from arc.ml.features.registry import schema_version
 
     say = progress or (lambda _m: None)
@@ -811,6 +818,9 @@ def train_family(
         say(f"  fold {fold.name} done ({time.monotonic() - tf:.0f}s, rss {_rss_mb():.0f} MB)")
     table = pd.concat(metrics, ignore_index=True)
     checks = promote_checks(table)
+    if not final_fit:  # E27.7 (D133): an ML study's dev rung, the fold legs only
+        timings = {"load_s": round(t_load, 1), "fold_fit_s": round(t_fit, 1)}
+        return TrainRun(family, "", out_root, table, checks, timings, trials)
 
     # final model: every dev row at fold-2023's points; calibrators = fold-2023 test raw
     # scores of the fold model (out of sample for it)
@@ -956,4 +966,4 @@ def train_family(
         f"{family}: {version} in {timings['total_s']:.0f}s, "
         f"peak rss {timings['peak_rss_mb']:.0f} MB"
     )
-    return TrainRun(family, version, vdir, table, checks, timings)
+    return TrainRun(family, version, vdir, table, checks, timings, trials)

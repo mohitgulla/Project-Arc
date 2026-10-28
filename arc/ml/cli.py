@@ -59,6 +59,14 @@ def add_ml_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> N
     t.add_argument("--tickers", default=None, help="Comma list (default: every stored ticker)")
     t.add_argument("--rounds", type=int, default=None, help="Boosting rounds (default fixed)")
     t.add_argument("--report", type=Path, default=None, help="Also write the research report")
+    t.add_argument(
+        "--overlay",
+        type=Path,
+        default=None,
+        help="Training-config overlay YAML (params, rounds, features add/drop, calibration, "
+        "targets; E27.7)",
+    )
+    t.add_argument("--study", default=None, help="ML-<n> stamped in the manifest (E27.7)")
     r = m1sub.add_parser("report", help="Render docs/RESEARCH/ml-m1.md from a trained version")
     r.add_argument("--model", type=Path, required=True, help="data/ml/models/m1/<version>")
     r.add_argument("--out", type=Path, default=REPO / "docs" / "RESEARCH" / "ml-m1.md")
@@ -169,8 +177,16 @@ def add_ml_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> N
     pr.add_argument("--data", type=Path, default=DEFAULT_DATA)
     pr.add_argument("--out", type=Path, default=None, help="Default <data>/ml/models")
 
+    from arc.ml.study_cli import add_ml_study_parser
+
+    add_ml_study_parser(msub)
+
 
 def run_ml(args: argparse.Namespace) -> int:
+    if args.ml_command == "study":
+        from arc.ml.study_cli import run_ml_study
+
+        return run_ml_study(args)
     if args.ml_command == "dl":
         return _dl(args)
     if args.ml_command == "m2":
@@ -385,7 +401,7 @@ def _m1(args: argparse.Namespace) -> int:
             Path(args.card).write_text(render_card(vdir))
         sys.stdout.write(f"wrote {args.out}\n")
         return 0
-    from arc.ml.m1.train import NUM_ROUNDS, train_m1
+    from arc.ml.m1.train import LGB_PARAMS, NUM_ROUNDS, model_features, train_m1
 
     data = Path(args.data)
     feats = Path(args.features) if args.features else data / "ml" / "features"
@@ -394,14 +410,40 @@ def _m1(args: argparse.Namespace) -> int:
     def progress(s: str) -> None:
         sys.stderr.write(s + "\n")
 
+    kw: dict[str, object] = {}
+    if args.overlay is not None:
+        import yaml
+
+        from arc.ml.features.compute import M1_HORIZONS
+        from arc.ml.study import M1Overlay
+
+        try:
+            ov = M1Overlay.model_validate(yaml.safe_load(Path(args.overlay).read_text()) or {})
+        except (OSError, ValueError) as exc:
+            sys.stderr.write(f"arc ml m1 train: --overlay: {exc}\n")
+            return 2
+        base = model_features()
+        fl = [f for f in base if f not in set(ov.features.drop)]
+        kw = {
+            "params": {**LGB_PARAMS, **ov.params},
+            "features": fl + [f for f in ov.features.add if f not in fl],
+            "calibration": ov.calibration.method,
+            "cal_sessions": ov.calibration.window_sessions,
+            "lgbm_targets": ov.target_set(M1_HORIZONS),
+            "extra": ov.extra(),
+        }
+        if ov.rounds and not args.rounds:
+            kw["rounds"] = ov.rounds
     run = train_m1(
         data,
         feats,
         out,
         code_sha=_git_sha(),
         tickers=_split(args.tickers) if args.tickers else None,
-        rounds=args.rounds or NUM_ROUNDS,
+        rounds=int(kw.pop("rounds", None) or args.rounds or NUM_ROUNDS),  # type: ignore[call-overload]
         progress=progress,
+        study=args.study,
+        **kw,  # type: ignore[arg-type]
     )
     (run.model_dir / "model_card.md").write_text(render_card(run.model_dir))
     if args.report:
