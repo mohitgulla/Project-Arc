@@ -77,8 +77,9 @@ line under "Obvious flaws" as `→ Sentinel` and do not draft a card for it.
    (`no-evidence | watching | action-proposed | settled`) with N and the evidence:
    `cost-model` (cost model vs realised slippage), `regime-menu` (regime-conditional menu),
    `ranker` (ranker choice), `exit-policy` (D19 early exits vs hold to expiry), `sizing` (D18),
-   `auto-approve` (D34 + scorecard gate). A `settled` theme is re-opened only with
-   `new_evidence`.
+   `auto-approve` (D34 + scorecard gate), `models` (D126/D133: the ML registry, ML-<n>
+   studies and live shadow health; dev metrics are model quality, never P&L evidence). A
+   `settled` theme is re-opened only with `new_evidence`.
 4. **OBVIOUS FLAWS at any N.** Call these out even with one trade, severity `high`+:
    auto-approve on (`auto_approve.paper|live`) while realised net EV < 0 or the scorecard gate
    is off; a config value outside its D4/D18 bound (e.g. `max_alloc_pct` > 5%, DTE window
@@ -200,6 +201,33 @@ line under "Obvious flaws" as `→ Sentinel` and do not draft a card for it.
      with more drafts, put the best two first. `## Backtest queue` shows each approved study's
      status (`queued | running | concluded | stopped | failed`), next rung, nights so far and
      ETA; its verdicts still come from the ledger.
+9. **ML MODEL STUDIES (D133, E27.7/E27.8; you never train a model).** An `ML-<n>` study
+   tests a change WITHIN an existing model family (`m1`, `credit`, `debit`) on the dev test
+   years only (dev 2022 → dev 2023 → verdict, on the same nightly runner and queue as BT). A
+   pass moves the new version to **shadow**, never to champion; the holdout is read only at
+   `arc ml promote` with the owner's re-read ok. A **new family is a card**, not a study.
+   - On a `theme` (usually `models`), `data-gap` or live-evidence `xp-proposal` you may attach
+     `ml_study_spec` (instead of a `study_spec`: one study per finding):
+     `{"hypothesis", "family", "incumbent", "change_kind", "overlay", "grid", "decision_rule"}`.
+     `incumbent` is a registered version from `## ML models` or `champion`. `change_kind` is
+     `challenger | tuning | features | calibration`. `overlay` changes the family's training
+     config (a `features` change lists features the registry knows); `grid` is ≤ 48 overlay
+     variants. `decision_rule` is the family's registered rule: `{"kind": "m1_keep"}` for m1,
+     `{"kind": "m2_promote"}` for credit/debit (a new rule kind needs a card + D#). Never
+     mention the holdout. Omit `id`, `owner`, `created`: `record` reserves `ML-<next>` (above
+     every spec, queue entry, ledger line, retired id and open `ml/<n>` PR; never reused),
+     runs `arc ml study validate` on the draft (fail closed) and writes
+     `RUN_DIR/study-specs/ML-<n>.yaml`.
+   - It needs `study_value` like a BT (same formula, cost in **compute nights**, from the
+     per-rung compute in `## ML studies` / `## Backtest queue`). `record` makes it a `kind: ml`
+     backlog entry keyed `ml:<finding key>` (re-list the key to keep its ML-<n>); a dropped,
+     queued or stopped key is frozen.
+   - Cite an `ML-<n>` only when `## ML studies` shows its **verdict** (a dev rung or a queued
+     study is a hypothesis); the validator refuses anything else and any retired id. Live
+     shadow numbers (`## ML live`) with n < 30 are `insufficient`: never a basis for a claim.
+   - Name `next_ml_study: ML-<n>` (the top-ranked ML draft, or another with
+     `next_ml_study_reason`), or `next_ml_study: none: <why>`.
+   - The **2-per-ISO-week cap is shared** by BT and ML approvals together (D121 + D133).
 
 ## Procedure
 1. Read `references/lessons.md` if it exists (calibration from owner triage).
@@ -301,16 +329,22 @@ line under "Obvious flaws" as `→ Sentinel` and do not draft a card for it.
   "next_reason": "only when next_experiment is not the top-ranked proposal",
   "next_slot": "free now | exits frees when XP-2 stops (~Nov 12)",
   "next_study": "BT-<n> | none: <why>",
-  "next_study_reason": "only when next_study is not the top-ranked BT draft"
+  "next_study_reason": "only when next_study is not the top-ranked BT draft",
+  "next_ml_study": "ML-<n> | none: <why>",
+  "next_ml_study_reason": "only when next_ml_study is not the top-ranked ML draft"
 }
 ```
+An `ml_study_spec` (gate 9) looks like `{"hypothesis": "a CQR-calibrated m1 cuts h5 coverage
+error", "family": "m1", "incumbent": "champion", "change_kind": "calibration", "overlay": {...},
+"grid": [], "decision_rule": {"kind": "m1_keep"}}` and carries its own `study_value`.
 `quick_change` is required for (and only on) `quick-change`, `proposal` for (and only on)
 `xp-proposal`; `forward_spec` and `experiment` are retired (D86). `study_spec` (gate 8) only on
 a `theme`, `data-gap` or live-evidence `xp-proposal`, i.e. an untested hypothesis. `verdict: quiet` only when
 nothing is medium or above. With no quick change, `quick_changes_none` says why. `experiments`
 lists every draft/queued/registered/running/stopped experiment in the context with its registry
-status (and `stop_advice` when running); `next_experiment`, `next_slot` and `next_study` are
-required. `study_value` is required for (and only on) a finding with a `study_spec`.
+status (and `stop_advice` when running); `next_experiment`, `next_slot`, `next_study` and
+`next_ml_study` are required. `study_value` is required for (and only on) a finding with a
+`study_spec` or `ml_study_spec`.
 
 ## Slack report format (final response; Slack markdown; no tables; ≤ 3,500 chars)
 ```
@@ -320,7 +354,7 @@ required. `study_value` is required for (and only on) a finding with a `study_sp
 • <kind> · <regime>: n=<n> realised $<x> vs EV $<y> (<±z>/trade) · slippage <a> bps vs modelled <b> bps
 • Sleeve <short|swing>: n=<n> mean net $<x> CI [<lo>, <hi>] · <keep|shrink|collect> (D97)
 *Standing themes*
-• cost-model: <status> — <note with N> (one line per theme, all six)
+• cost-model: <status> — <note with N> (one line per theme, all seven)
 *Quick changes* (≤3; "none: <why>" is a valid answer)
 • *A-<n>* <key>: <old> → <new> · evidence <kind> n=<n> · expected <effect> · rollback <how> · apply: `!arc config set …` or `ship A-<n>` → card
 *Quick-change review*
@@ -334,16 +368,20 @@ required. `study_value` is required for (and only on) a finding with a `study_sp
 *Backtest* (one line per study with a new verdict since the last run; else "no new verdict")
 • *BT-<n>* <hypothesis> · <c125|c500> <dev|holdout> <switch|fragile|keep control> diff $<±d> CI [<lo>, <hi>] · <citable | hypothesis only> · drafts: BT-<m> (RUN_DIR/study-specs)
 • *Next BT:* *BT-<n>* <hypothesis> · value <score> = <pct>%/day × share <s> × p <p> ÷ <nights> nights · queue: BT-<m> <status> ETA <k> nights (or none: <why>)
+*Next ML* (models: champion/shadow per family · live health n · studies)
+• m1 champion <v> · shadow <v> · live calibration n=<n> <ok|insufficient> · drift <ok|warn>
+• *Next ML:* *ML-<n>* <family> <change_kind>: <hypothesis> · value <score> ÷ <nights> nights · queue: ML-<m> <status> ETA <k> nights (or none: <why>)
 *Obvious flaws*
 • *A-<n>* [<severity>] <key = value> — <why it contradicts D#> (or "none")
 *Ledger*: new A-… · still open A-… · resolved A-… (evidence) · backlog new XP-… · dropped XP-…
 
-_Reply in thread: `@hermes create A-<n>` · `ship A-<n>` · `comment A-<n>` · `wontfix A-<n> <why>` · `accept A-<n>` · `approve XP-<n>` · `drop XP-<n> <why>` · `reprioritise XP-<n> <why>` · `approve BT-<n>` · `drop BT-<n> <why>` · `stop BT-<n> <why>` · `rerun`. Artefacts: <RUN_DIR>_
+_Reply in thread: `@hermes create A-<n>` · `ship A-<n>` · `comment A-<n>` · `wontfix A-<n> <why>` · `accept A-<n>` · `approve XP-<n>` · `drop XP-<n> <why>` · `reprioritise XP-<n> <why>` · `approve BT-<n>` · `drop BT-<n> <why>` · `stop BT-<n> <why>` · `approve ML-<n>` · `drop ML-<n> <why>` · `stop ML-<n> <why>` · `rerun`. Artefacts: <RUN_DIR>_
 ```
 
 ## Verdict run (E26.4, D121; cron `arc-analyst-verdict-check`, daily 09:30 PT)
 A short extra run that fires when a new verdict lands: a BT holdout verdict in the research
-ledger, or an XP verdict file `config/experiments/live/verdicts/XP-<n>.yaml`. Its gate
+ledger, an XP verdict file `config/experiments/live/verdicts/XP-<n>.yaml`, or an ML study
+verdict in `data/ml/studies/ledger.jsonl` (E27.8). Its gate
 (`arc_analyst.py gate --mode verdict`) wakes you only on a verdict neither the weekly run nor
 an earlier verdict run has read, **at most once per ET day** (several new verdicts are handled
 together in that one run), and never when the weekly run is due within 24 h (it reads them).
@@ -352,8 +390,9 @@ The context starts with `MODE: verdict run`; when you see it, this section repla
 - **Scope:** read the new verdict(s) and the related ledger/backlog entries in the context
   only. No quick changes, no standing themes, no full review, no web fetches: the weekly run
   still reviews everything, and lists your proposals there with their age.
-- **Allowed:** at most **one new XP proposal** and at most **one new BT proposal**
-  (`study_spec`), each citing a verdict id of this run in its `evidence`, plus status changes
+- **Allowed:** at most **one new XP proposal** and at most **one new study proposal** (a BT
+  `study_spec` or an ML `ml_study_spec`, D133), each citing a verdict id of this run in its
+  `evidence`, plus status changes
   of the related backlog entries (`backlog_drops`, reason citing the verdict). All other
   strategy gates still hold (C500 holdout evidence, 3 treatments, value inputs).
 - `RUN_DIR/findings.json` for a verdict run:
@@ -366,7 +405,8 @@ The context starts with `MODE: verdict run`; when you see it, this section repla
 }
 ```
   Every new verdict needs a `verdicts` line. `findings` holds only `xp-proposal`s and `theme` /
-  `data-gap` findings carrying a `study_spec` (same shapes as the weekly schema). Any other key
+  `data-gap` findings carrying a `study_spec` or `ml_study_spec` (same shapes as the weekly
+  schema). Any other key
   (`themes`, `quick_change_reviews`, `experiments`, `next_*`, …) is rejected.
 - Steps: `arc_analyst.py record RUN_DIR --mode verdict` → write `RUN_DIR/report.md` →
   `arc_analyst.py check-report RUN_DIR/report.md --mode verdict` → `arc_analyst.py mark RUN_DIR`
@@ -439,6 +479,19 @@ from `python3 ~/.hermes/profiles/arc-analyst/scripts/arc_analyst.py backlog`.
     are bot posts, not owner commands: don't answer them. Queue state:
     `.venv/bin/arc backtest study queue`. Pausing the runner is the owner's
     `!arc config set routines.backtest.studies.enabled off`.
+- `approve ML-<n>` · `drop ML-<n> <why>` · `stop ML-<n> <why>` (E27.8, D133; owner only):
+  - `approve ML-<n> [note]`: `arc_analyst.py approve ML-<n> "<note>" --approval slack:<ts>`.
+    The same **2 per ISO week** cap counts BT and ML approvals together (a refusal names the
+    week's approvals and the reset; reply with it as is). Then `arc ml study adopt` validates
+    and hash-locks the draft, commits `config/ml_studies/ML-<n>.yaml` on `ml/<n>` (auto-merged
+    PR) and adds a `kind: ml` entry to the shared queue. Reply with the PR URL, queue position
+    and ETA; on failure reply with its error (re-sending retries, idempotent).
+  - `drop ML-<n> <why>`: a never-committed draft (`arc_analyst.py drop ML-<n> "<why>"`, which
+    runs `arc ml study drop`: the number stays a gap in the ML ledger).
+  - `stop ML-<n> <why>`: a queued or running study (`arc_analyst.py stop ML-<n> "<why>"`, which
+    runs `arc ml study stop`). Queue state: `.venv/bin/arc ml study status`.
+  - A verdict reads DEV only: a pass moves the version to **shadow**, never to champion
+    (`arc ml promote` with the owner's holdout re-read is a separate owner step).
 - `drop XP-<n> <why>`: `arc_analyst.py drop XP-<n> "<why>"`.
 - `reprioritise XP-<n> <why>`: `arc_analyst.py reprioritise XP-<n> "<why>"` pins it to the top
   (`reprioritise XP-<n> "<why>" --score <x>` overrides its value instead). Reply with the rank.
