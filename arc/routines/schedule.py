@@ -39,6 +39,8 @@ def day_matches(days: Days | list[Weekday], d: _dt.date) -> bool:
         return d.weekday() < 5
     if days is Days.MONTH_START:
         return is_month_start(d)
+    if days is Days.MONTH_FIRST_SAT:
+        return d.weekday() == 5 and d.day <= 7  # noqa: PLR2004 - Saturday, first week
     return is_session(d)
 
 

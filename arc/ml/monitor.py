@@ -281,6 +281,10 @@ def write_health(data_dir: Path, rec: Mapping[str, Any]) -> Path:
     return p
 
 
+#: drift warnings listed by name in the rendered report (the rest are counted)
+WARN_SHOWN = 10
+
+
 def render(rec: Mapping[str, Any]) -> str:
     """Plain-text ``arc ml monitor`` output (n and CI everywhere; ``insufficient`` < 30)."""
     c = rec["coverage"]
@@ -321,19 +325,42 @@ def render(rec: Mapping[str, Any]) -> str:
         lines.append("feature drift: not run")
     else:
         top = ", ".join(f"{t['feature']} {t['psi']}" for t in d.get("top", []))
+        warn = list(d["warn"])
+        shown = ", ".join(warn[:WARN_SHOWN]) + (
+            f" (+{len(warn) - WARN_SHOWN} more)" if len(warn) > WARN_SHOWN else ""
+        )
         lines.append(
             f"feature drift (PSI, live n={d['n_live']} vs train n={d['n_train']}"
             f"{', insufficient' if d['status'] == 'insufficient' else ''}): top {top}; "
-            f"warn >{d['warn_above']}: {', '.join(d['warn']) or 'none'}"
+            f"warn >{d['warn_above']}: {len(warn)} · {shown or 'none'}"
         )
     sd = rec.get("score_drift")
     if sd:
-        for k, v in sd.items():
+        groups = [("all", sd.get("all", {}))] + [
+            (k, v) for k, v in sorted((sd.get("by_kind") or {}).items())
+        ]
+        idle = [n for n, g in groups if g and all(not v["n_live"] for v in g.values())]
+        if idle:  # no live scores yet: one line, not two per kind
             lines.append(
-                f"score drift {k}: live n={v['n_live']} mean {v['live_mean']} vs backtest "
-                f"n={v['n_ref']} mean {v['ref_mean']} PSI {v['psi']}"
-                + (" (insufficient)" if v["status"] == "insufficient" else "")
+                f"score drift: no live scores yet (backtest ref n="
+                f"{(sd.get('all') or {}).get('e_r', {}).get('n_ref', 0)}; {len(idle)} groups)"
             )
+        for name, g in groups:
+            if name in idle:
+                continue
+            for k, v in g.items():
+                lines.append(
+                    f"score drift {k} [{name}]: live n={v['n_live']} mean {v['live_mean']} "
+                    f"vs backtest n={v['n_ref']} mean {v['ref_mean']} PSI {v['psi']}"
+                    + (" (insufficient)" if v["status"] == "insufficient" else "")
+                )
     p = rec["parity"]
     lines.append(f"parity: {p.get('status')}" + (f" · {p['detail']}" if p.get("detail") else ""))
+    lr = rec.get("last_retrain")
+    if lr:
+        lines.append(
+            f"last retrain: {lr.get('version')} {'pass' if lr.get('passed') else 'fail'} on "
+            f"holdout {lr.get('holdout_start')}..{lr.get('holdout_end')} (n={lr.get('n')}, "
+            f"gap {lr.get('gap_days')}d) · candidate only"
+        )
     return "\n".join(lines) + "\n"

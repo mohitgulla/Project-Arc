@@ -3694,3 +3694,54 @@ second holdout read of a family needs `--actor <owner> --ack "OWNER UPDATE: hold
 re-read ok"`. `--overlay` (D133 studies) overrides params, grid, features and
 calibration; unknown keys and any `decision_rule` other than `m2_promote` are refused;
 the overlay is in the config digest, so it changes the version id.
+
+## E27.4 ML live shadow scoring, nightly refresh, monthly retrain (D126, D140)
+
+Shadow only: nothing here is a gate, sizing, ranking or prompt input (import-linter
+contract `arc.ml.* never imported by the decision path`). Every step fails open.
+
+- **`ml.score` in `quant.open`** (`ARC_ML_SHADOW`, registry `ml.shadow`, default on):
+  the menu is scored with the serving M2 bundle of the account profile's family
+  (`margin` → `credit`, `cash_debit` → `debit`; champion, else the newest shadow) and
+  an `ml_scores` context entry is written; journal rows carry `ml_scores_id`, outcomes
+  copy `ml_p_win/ml_e_r/ml_p_stop/ml_model_version` at entry (migration 041). The
+  approval card shows `ML (shadow): …` (`ml_card_line`, display only).
+- **`ml.refresh`** (20:45 ET trading days, after `history.topup`; `arc/ml/refresh.py`):
+  the day's live feature panel (`data/ml/live/features/v<schema>/`), the M1 next-day
+  read (`data/ml/live/m1/`), feature drift (PSI of the last 20 live sessions vs the
+  serving model's train window), score drift (live `ml_scores` vs the model's backtest
+  `oos_scores` of the same calendar month, all and per kind), parity on the newest
+  session both stores hold (the history store is first extended to the cache's last
+  session; `atm_spread_pct` and option volume are known live ≠ EOD gaps, see the E27.1
+  tolerances) and the `data/ml/health/<day>.json` record. A run that writes no health
+  record fails; any other step error is listed in the summary and the record.
+- **`arc ml monitor [--db P] [--day D]`** renders coverage, live calibration (n and CI;
+  `insufficient` below 30 closed trades), drift, parity and the last retrain from the
+  nightly record (recomputing what the record lacks).
+- **`ml.retrain`** (first Saturday 10:00 ET; `arc/ml/retrain.py`, D140):
+  1. extends the E7.21 ledger to the history cache's last session (candidates through
+     `data_end − 62 d`; clears the open year's `_done` markers once and resumes from
+     `_extend.json`; stops at `stop_at` 21:00 ET before the E26.3 window). An unfinished
+     extension posts one line and skips; the next run (or `arc routines run ml.retrain`)
+     resumes it. ~106 s per ticker-year per worker, so a full C500 year is ~2.5 h on 6.
+  2. plans the rolling window: gap = the longest settled label span (≥ 45 d), holdout =
+     the last 6 completed months resolved before `data_end − gap`, train = 2020-01-01 →
+     `holdout_start − gap` (`arc ml retrain --plan` prints it).
+  3. retrains M1 and M2 per family on that window (`holdout_reason` lets the dataset
+     guards pass 2024+ rows; nothing past the train end is read for training).
+  4. scores the candidate and the serving incumbent on the holdout, gates pass/fail on
+     the All slice (n ≥ 30), writes `rolling_holdout.json` in the version dir and a
+     `kind: rolling` row in `holdout_reads.jsonl`, registers `candidate` only and posts
+     one line to #arc-analyst.
+
+  Commands (`ml` extra; on macOS the trainer preloads sklearn's bundled libomp when
+  Homebrew's is missing; no `data/backtest/queue.json`):
+
+      .venv/bin/arc ml refresh --db data/arc.db [--day D] [--no-extend-store]
+      .venv/bin/arc ml retrain --plan
+      .venv/bin/arc ml retrain [--extend-ledger] [--families credit,debit] [--no-m1]
+      .venv/bin/arc ml promote <family> <version> --actor <owner id>   # owner only
+
+  A rolling-gate-passed candidate is promotable directly to champion; one whose newest
+  rolling read failed is refused. The D84 one-time holdout read of the E27.3 versions
+  is unaffected (`holdout_reads()` skips rolling rows).

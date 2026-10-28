@@ -144,15 +144,18 @@ def register(
     rule_passed: bool,
     feature_schema: str | None = None,
     summary: dict[str, object] | None = None,
+    auto_shadow: bool = True,
 ) -> VersionEntry:
     """Add (or refresh) *version* as ``candidate``; ``shadow`` when the rule passed.
 
-    Re-registering a version keeps a ``champion``/``retired`` status (never demotes).
+    ``auto_shadow=False`` (the monthly ``ml.retrain``, D140) registers ``candidate``
+    whatever the rule said: promotion stays a manual owner step. Re-registering a
+    version keeps a ``champion``/``retired`` status (never demotes).
     """
     verify(root, family, version)
     idx = load_index(root, family)
     prev = idx.versions.get(version)
-    status: Status = "shadow" if rule_passed else "candidate"
+    status: Status = "shadow" if rule_passed and auto_shadow else "candidate"
     if prev is not None and prev.status in ("champion", "retired"):
         status = prev.status
     entry = VersionEntry(
@@ -182,7 +185,9 @@ def register(
 
 
 def check_promotable(root: Path, family: str, version: str, *, actor: str, owner: str) -> None:
-    """Refuse unless *actor* is the owner and *version* is an intact ``shadow``."""
+    """Refuse unless *actor* is the owner and *version* is intact and either an E27.3
+    ``shadow`` with a fixed holdout read, or (D140) a monthly-retrain ``candidate``
+    whose newest rolling-holdout read passed."""
     if actor != owner:
         msg = f"{actor!r} is not the owner; only {owner} may promote a model to champion"
         raise RegistryError(msg)
@@ -191,8 +196,17 @@ def check_promotable(root: Path, family: str, version: str, *, actor: str, owner
     if entry is None:
         msg = f"{family}/{version} is not registered"
         raise RegistryError(msg)
+    rolling = [r for r in rolling_reads(root, family) if r.get("version") == version]
+    if entry.status == "candidate" and rolling:
+        if not rolling[-1].get("passed"):
+            msg = f"{family}/{version}: its rolling-holdout gate failed; not promotable (D140)"
+            raise RegistryError(msg)
+        return
     if entry.status != "shadow":
-        msg = f"{family}/{version} is {entry.status}; only a shadow version can become champion"
+        msg = (
+            f"{family}/{version} is {entry.status}; only a shadow version (or a retrain "
+            "candidate that passed its rolling holdout, D140) can become champion"
+        )
         raise RegistryError(msg)
     if not any(r.get("version") == version for r in holdout_reads(root, family)):
         msg = (
@@ -212,10 +226,12 @@ def promote(
     now: dt.datetime,
     reason: str = "",
 ) -> FamilyIndex:
-    """Owner-only ``shadow → champion``; the previous champion is ``retired``."""
+    """Owner-only ``shadow → champion`` (or a D140 retrain ``candidate``); the previous
+    champion is ``retired``."""
     check_promotable(root, family, version, actor=actor, owner=owner)
     idx = load_index(root, family)
     entry = idx.versions[version]
+    was = entry.status
     old = idx.champion
     if old is not None and old in idx.versions:
         idx.versions[old].status = "retired"
@@ -240,7 +256,7 @@ def promote(
             "at": now.isoformat(),
             "family": family,
             "version": version,
-            "old": "shadow",
+            "old": was,
             "new": "champion",
             "actor": actor,
             "reason": reason,
@@ -382,8 +398,28 @@ def model_asof(
     return max(hits, key=lambda m: m.labels_before) if hits else None
 
 
+#: ``kind`` of a monthly rolling-holdout read (D140); the fixed D84 holdout reads have
+#: no ``kind`` (or ``fixed``).
+ROLLING = "rolling"
+
+
 def holdout_reads(root: Path, family: str) -> list[dict[str, object]]:
-    return _read_jsonl(root / family / HOLDOUT_LOG)
+    """The family's fixed (D84 2024+) holdout reads; rolling reads are kept apart."""
+    return [r for r in _read_jsonl(root / family / HOLDOUT_LOG) if r.get("kind") != ROLLING]
+
+
+def rolling_reads(root: Path, family: str) -> list[dict[str, object]]:
+    """The family's monthly rolling-holdout reads (``ml.retrain``, D140)."""
+    return [r for r in _read_jsonl(root / family / HOLDOUT_LOG) if r.get("kind") == ROLLING]
+
+
+def log_rolling_read(root: Path, family: str, row: dict[str, object]) -> None:
+    """Append one rolling-holdout read (window, gap, n, metrics) to ``holdout_reads.jsonl``.
+
+    D140: the rolling holdout is a pass/fail gate read once per monthly run; it never
+    counts toward the one-time fixed-holdout read of :func:`authorize_holdout_read`.
+    """
+    _append(root / family / HOLDOUT_LOG, {**row, "family": family, "kind": ROLLING})
 
 
 def authorize_holdout_read(

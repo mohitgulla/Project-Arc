@@ -188,6 +188,9 @@ source_modules = [
     "arc.ml.live_rows",
     "arc.ml.live_menu",
     "arc.ml.lgbm_text",
+    "arc.ml.monitor",
+    "arc.ml.refresh",
+    "arc.ml.retrain",
 ]
 forbidden_modules = [
     "anthropic",
