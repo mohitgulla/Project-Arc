@@ -45,6 +45,11 @@ ml = [
     "scikit-learn>=1.9.1",
     "lightgbm>=4.5",
 ]
+# E27.6 (D126): deep-learning challengers (research only; `arc/ml/dl` imports torch
+# lazily and the live scorer never does). `uv sync --extra ml --extra ml-dl`.
+ml-dl = [
+    "torch>=2.4",
+]
 
 [build-system]
 requires = ["hatchling"]
