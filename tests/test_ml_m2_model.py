@@ -14,11 +14,12 @@ from arc.ml import registry as reg
 from arc.ml.m2 import dataset as ds
 from arc.ml.m2.config import GridPoint, M2Config
 from arc.utils.calendar import sessions_between
+from tests.ml_lightgbm import require_lightgbm
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-pytest.importorskip("lightgbm")
+require_lightgbm()
 
 NOW = dt.datetime(2026, 10, 26, 12, 0)
 TICKERS = ("AAA", "BBB", "ETF1")

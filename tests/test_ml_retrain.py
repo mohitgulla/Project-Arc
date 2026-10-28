@@ -15,6 +15,7 @@ from arc.ml import registry as reg
 from arc.ml import retrain as rt
 from arc.routines.config import Days
 from arc.routines.schedule import day_matches
+from tests.ml_lightgbm import require_lightgbm
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -332,13 +333,13 @@ def test_retrain_handler_posts_one_line_and_reports(tmp_path: Path) -> None:
     ctx = _Ctx({"families": ["credit"], "holdout_months": 6}, _et(2026, 11, 7, 10, 0))
     seen: dict[str, Any] = {}
 
-    def retrain(**kw: Any) -> rt.RetrainResult:
+    def retrain(**kw: Any) -> rt.ChildRetrain:
         seen.update(kw)
         res = rt.RetrainResult(window=rt.plan_window(dt.date(2026, 11, 6), 60))
         res.families["credit"] = rt.FamilyResult(
             "credit", version="m2-new", gate={"status": "pass", "passed": True}, n_holdout=900
         )
-        return res
+        return rt.ChildRetrain(res.summary(), res.metrics())
 
     import arc.ml.refresh as refresh
 
@@ -352,6 +353,7 @@ def test_retrain_handler_posts_one_line_and_reports(tmp_path: Path) -> None:
             retrain=retrain,
         )
     assert seen["families"] == ["credit"] and seen["months"] == 6  # noqa: PLR2004
+    assert seen["timeout_s"] == 4 * 3600 and seen["code_sha"]
     assert len(posts) == 1 and "candidate only" in posts[0] and "m2-new pass" in posts[0]
     assert out.metrics["families"]["credit"]["gate"] == "pass"
 
@@ -441,7 +443,7 @@ def _ledger_through(root: Path, last: dt.date, data_end: dt.date) -> tuple[Path,
 def test_run_retrain_end_to_end_registers_candidate_and_logs_rolling_read(
     tmp_path: Path,
 ) -> None:
-    pytest.importorskip("lightgbm")
+    require_lightgbm()
     from arc.ml.m2.config import GridPoint, M2Config
     from arc.ml.m2.train import train_family
 
@@ -512,3 +514,83 @@ def test_m1_dataset_crosses_the_d84_boundary_only_with_a_reason(tmp_path: Path) 
         ds.attach_targets(pd.DataFrame(), tmp_path, dev_end=dt.date(2024, 6, 30))
     with pytest.raises(FileNotFoundError):  # past the guard: only the empty store remains
         ds.load_panel(tmp_path, dt.date(2023, 12, 1), dt.date(2024, 2, 1), holdout_reason=rt.REASON)
+
+
+def test_retrain_child_runs_reniced_with_libomp_env_and_parses_the_report(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    from arc.ml.m2.train import bundled_libomp_dir
+
+    calls: list[dict[str, Any]] = []
+    report = {"summary": "ml.retrain: …", "metrics": {"families": {"debit": {"error": "x"}}}}
+
+    def run(cmd: list[str], **kw: Any) -> Any:
+        calls.append({"cmd": cmd, **kw})
+        return SimpleNamespace(returncode=0, stdout="noise\n" + json.dumps(report), stderr="")
+
+    out = rt.retrain_in_child(
+        repo=tmp_path, data_dir=tmp_path / "d", code_sha="abc", families=["credit", "debit"],
+        months=6, min_gap_days=45, env={"PATH": "/bin"}, timeout_s=60, runner=run,
+    )  # fmt: skip
+    (c,) = calls
+    assert c["cmd"][1:5] == ["-m", "arc.cli", "ml", "retrain"] and "--json" in c["cmd"]
+    assert callable(c["preexec_fn"])
+    assert c["cmd"][c["cmd"].index("--families") + 1] == "credit,debit"
+    assert c["timeout"] == 60 and c["env"]["PATH"] == "/bin"  # noqa: PLR2004
+    if bundled_libomp_dir():
+        assert c["env"]["DYLD_LIBRARY_PATH"] == bundled_libomp_dir()
+    assert out.summary() == "ml.retrain: …" and out.errors() == {"debit": "x"}
+
+    def boom(cmd: list[str], **kw: Any) -> Any:
+        return SimpleNamespace(returncode=1, stdout="", stderr="Traceback\nImportError: x")
+
+    with pytest.raises(RuntimeError, match="exited 1 without a report: Traceback"):
+        rt.retrain_in_child(
+            repo=tmp_path, data_dir=tmp_path, code_sha="a", families=["credit"], months=6,
+            min_gap_days=45, env={}, timeout_s=1, runner=boom,
+        )  # fmt: skip
+
+
+def test_load_lightgbm_names_the_libomp_fix(monkeypatch: pytest.MonkeyPatch) -> None:
+    import builtins
+    import sys
+
+    from arc.ml.m2 import train as m2t
+
+    real = builtins.__import__
+
+    def fake(name: str, *a: Any, **k: Any) -> Any:
+        if name == "lightgbm":
+            raise OSError("dlopen(lib_lightgbm.dylib): Library not loaded: @rpath/libomp.dylib")
+        return real(name, *a, **k)
+
+    monkeypatch.delitem(sys.modules, "lightgbm", raising=False)
+    monkeypatch.setattr(builtins, "__import__", fake)
+    with pytest.raises(ImportError, match="brew install libomp"):
+        m2t.load_lightgbm()
+    assert m2t.lightgbm_env({"DYLD_LIBRARY_PATH": "/x"})["DYLD_LIBRARY_PATH"].startswith("/x")
+
+
+def test_m1_failure_is_reported_and_m2_still_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from arc.ml.m1 import train as m1t
+    from arc.ml.m2 import train as m2t
+
+    _ledger_through(tmp_path, dt.date(2025, 8, 15), dt.date(2025, 10, 15))
+
+    def no_m1(*_a: Any, **_k: Any) -> Any:
+        raise ValueError("No objects to concatenate")
+
+    trained: list[str] = []
+
+    def fake_family(family: str, *_a: Any, **_k: Any) -> Any:
+        trained.append(family)
+        raise RuntimeError("stop here")
+
+    monkeypatch.setattr(m1t, "train_m1", no_m1)
+    monkeypatch.setattr(m2t, "train_family", fake_family)
+    res = rt.run_retrain(data_dir=tmp_path, now=NOW, code_sha="t", families=["debit"])
+    assert res.m1_version is None and res.m1_error == "ValueError: No objects to concatenate"
+    assert trained == ["debit"] and "M1 retrain failed" in res.summary()
+    assert res.metrics()["m1_error"] == res.m1_error

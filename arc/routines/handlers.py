@@ -1268,7 +1268,7 @@ def ml_retrain_source(
     to #arc-analyst.
     """
     import datetime as dtm
-    import time as _time
+    import os
 
     from arc.backtest.cli import _git_sha
     from arc.ml import retrain as rt
@@ -1306,21 +1306,22 @@ def ml_retrain_source(
         )
         post(text)
         raise JobSkippedError(text, notice="")
-    res = (retrain or rt.run_retrain)(
+    res = (retrain or rt.retrain_in_child)(
+        repo=_REPO_ROOT,
         data_dir=out,
-        now=ctx.now,
         code_sha=_git_sha(_REPO_ROOT),
         families=families,
         months=int(opts.get("holdout_months") or rt.HOLDOUT_MONTHS),
         min_gap_days=int(opts.get("min_gap_days") or rt.MIN_GAP_DAYS),
-        say=lambda m: log.info("ml.retrain.progress", msg=m),
-        clock=_time.monotonic,
+        env=dict(os.environ),
+        timeout_s=float(opts.get("max_runtime_s") or 4 * 3600),
     )
     post("🧪 " + res.summary())
     metrics = {**res.metrics(), "ledger": info}
-    if res.families and all(f.error for f in res.families.values()):
+    errors = res.errors()
+    if families and len(errors) == len(families):
         msg = "ml.retrain failed for every family: " + "; ".join(
-            f.line() for f in res.families.values()
+            f"{k}: {v}" for k, v in sorted(errors.items())
         )
         raise RuntimeError(msg)
     return JobResult(summary=res.summary(), metrics=metrics)

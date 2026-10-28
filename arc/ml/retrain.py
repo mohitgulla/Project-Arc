@@ -448,6 +448,7 @@ class RetrainResult:
     window: RollingWindow | None = None
     ledger: dict[str, Any] = field(default_factory=dict)
     m1_version: str | None = None
+    m1_error: str | None = None
     families: dict[str, FamilyResult] = field(default_factory=dict)
     seconds: dict[str, float] = field(default_factory=dict)
 
@@ -456,6 +457,8 @@ class RetrainResult:
             return "ml.retrain: no window"
         w = self.window
         fam = "; ".join(f.line() for f in self.families.values())
+        if self.m1_error:
+            fam += f" · M1 retrain failed ({self.m1_error[:80]})"
         return (
             f"ml.retrain: train ≤ {w.train_end} · gap {w.gap_days}d · holdout "
             f"{w.holdout_start:%Y-%m}..{w.holdout_end:%Y-%m} · {fam} · candidate only, "
@@ -467,6 +470,7 @@ class RetrainResult:
             "window": self.window.to_json() if self.window else None,
             "ledger": self.ledger,
             "m1_version": self.m1_version,
+            "m1_error": self.m1_error,
             "families": {
                 k: {
                     "version": f.version,
@@ -591,18 +595,22 @@ def run_retrain(
         t0 = clock()
         from arc.ml.m1.train import train_m1
 
-        run = train_m1(
-            data_dir,
-            features_root,
-            models_root / "m1",
-            code_sha=code_sha,
-            tickers=tickers,
-            dev_end=window.train_end,
-            folds=m1_folds(window),
-            holdout_reason=REASON,
-            progress=say,
-        )
-        m1_version = run.manifest.version
+        try:
+            run = train_m1(
+                data_dir,
+                features_root,
+                models_root / "m1",
+                code_sha=code_sha,
+                tickers=tickers,
+                dev_end=window.train_end,
+                folds=m1_folds(window),
+                holdout_reason=REASON,
+                progress=say,
+            )
+            m1_version = run.manifest.version
+        except Exception as exc:  # noqa: BLE001 - M2 still trains on the newest M1
+            res.m1_error = f"{type(exc).__name__}: {exc}"[:300]
+            say(f"M1 retrain failed ({res.m1_error}); M2 uses the newest M1")
         res.m1_version = m1_version
         res.seconds["m1"] = round(clock() - t0, 1)
 
@@ -709,3 +717,71 @@ def run_retrain(
         res.seconds[family] = round(clock() - t0, 1)
     log.info("ml.retrain", **res.metrics())
     return res
+
+
+@dataclass
+class ChildRetrain:
+    """:func:`run_retrain` as reported by the child process (:func:`retrain_in_child`)."""
+
+    text: str
+    data: dict[str, Any]
+
+    def summary(self) -> str:
+        return self.text
+
+    def metrics(self) -> dict[str, Any]:
+        return self.data
+
+    def errors(self) -> dict[str, str]:
+        fams = self.data.get("families") or {}
+        return {k: str(v["error"]) for k, v in fams.items() if v.get("error")}
+
+
+def retrain_in_child(
+    *,
+    repo: Path,
+    data_dir: Path,
+    code_sha: str,
+    families: Sequence[str],
+    months: int,
+    min_gap_days: int,
+    env: dict[str, str],
+    timeout_s: float,
+    runner: Callable[..., Any] | None = None,
+) -> ChildRetrain:
+    """Run ``arc ml retrain --json`` in a lower-priority child process whose environment
+    reaches ``libomp`` (:func:`arc.ml.m2.train.lightgbm_env`; the routines tick's own
+    process can't change its dyld path), and return its report. The priority drop is
+    ``os.nice`` in the child, not ``/usr/bin/nice``: macOS strips ``DYLD_*`` when it
+    executes a protected system binary."""
+    import os
+    import subprocess
+    import sys
+
+    from arc.ml.m2.train import lightgbm_env
+
+    cmd = [
+        sys.executable, "-m", "arc.cli", "ml", "retrain",
+        "--data", str(data_dir), "--families", ",".join(families), "--json",
+        "--holdout-months", str(months), "--min-gap-days", str(min_gap_days),
+        "--code-sha", code_sha,
+    ]  # fmt: skip
+    proc = (runner or subprocess.run)(
+        cmd,
+        cwd=repo,
+        env=lightgbm_env(env),
+        capture_output=True,
+        text=True,
+        timeout=timeout_s,
+        check=False,
+        preexec_fn=lambda: os.nice(10),  # noqa: PLW1509 - no threads touched before exec
+    )
+    line = next(
+        (ln for ln in reversed((proc.stdout or "").splitlines()) if ln.startswith("{")), None
+    )
+    if line is None:
+        tail = (proc.stderr or "").strip().splitlines()[-3:]
+        msg = f"ml retrain exited {proc.returncode} without a report: {' | '.join(tail)}"
+        raise RuntimeError(msg)
+    out = json.loads(line)
+    return ChildRetrain(text=str(out["summary"]), data=dict(out["metrics"]))

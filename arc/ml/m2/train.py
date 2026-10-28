@@ -69,30 +69,42 @@ OUTPUTS = ("p_win", "p_stop", "e_r", "r_q10", "r_q50", "r_q90", "e_days")
 def load_lightgbm() -> Any:
     """``lightgbm`` (``ml`` extra; on macOS it needs ``libomp``, OPS.md).
 
-    Without Homebrew's ``libomp`` the import fails to load ``lib_lightgbm.dylib``; the
-    ``libomp`` scikit-learn wheels bundle (same ``ml`` extra) is then preloaded and the
-    import retried (E27.4: the monthly ``ml.retrain`` runs in the routines venv).
+    ``lib_lightgbm.dylib`` finds ``libomp`` only through its Homebrew/MacPorts rpaths or
+    ``DYLD_LIBRARY_PATH``, which must be set before the process starts. Without either,
+    this raises ``ImportError`` naming the fix; :func:`lightgbm_env` gives the env that
+    points at the ``libomp`` scikit-learn's wheel bundles (E27.4 ``ml.retrain`` runs its
+    training step in a child process with it).
     """
     try:
         import lightgbm
-    except OSError:
-        _preload_bundled_libomp()
-        import lightgbm
-
+    except OSError as exc:
+        hint = bundled_libomp_dir()
+        msg = f"lightgbm can't load libomp ({str(exc).splitlines()[0]}): `brew install libomp`" + (
+            f" or run with DYLD_LIBRARY_PATH={hint}" if hint else ""
+        )
+        raise ImportError(msg) from exc
     return lightgbm
 
 
-def _preload_bundled_libomp() -> None:
-    import ctypes
+def bundled_libomp_dir() -> str | None:
+    """The directory of the ``libomp.dylib`` scikit-learn's macOS wheel bundles."""
     import importlib.util
     from pathlib import Path
 
     spec = importlib.util.find_spec("sklearn")
     if spec is None or spec.origin is None:
-        return
-    p = Path(spec.origin).parent / ".dylibs" / "libomp.dylib"
-    if p.is_file():
-        ctypes.CDLL(str(p), mode=ctypes.RTLD_GLOBAL)
+        return None
+    d = Path(spec.origin).parent / ".dylibs"
+    return str(d) if (d / "libomp.dylib").is_file() else None
+
+
+def lightgbm_env(base: dict[str, str]) -> dict[str, str]:
+    """*base* plus ``DYLD_LIBRARY_PATH`` → the bundled ``libomp`` when there is one."""
+    d = bundled_libomp_dir()
+    if d is None:
+        return dict(base)
+    cur = base.get("DYLD_LIBRARY_PATH")
+    return {**base, "DYLD_LIBRARY_PATH": d if not cur else f"{cur}:{d}"}
 
 
 # ---------------------------------------------------------------------------

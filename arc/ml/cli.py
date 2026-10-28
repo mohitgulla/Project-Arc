@@ -200,6 +200,10 @@ def add_ml_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> N
     rt.add_argument("--workers", type=int, default=6)
     rt.add_argument("--no-m1", action="store_true", help="Reuse the newest M1 instead")
     rt.add_argument("--plan", action="store_true", help="Print the rolling window and exit")
+    rt.add_argument("--holdout-months", type=int, default=None)
+    rt.add_argument("--min-gap-days", type=int, default=None)
+    rt.add_argument("--code-sha", default=None, help="Default: the repo HEAD")
+    rt.add_argument("--json", action="store_true", help="Print {summary, metrics} as one JSON line")
 
 
 def run_ml(args: argparse.Namespace) -> int:
@@ -744,11 +748,17 @@ def _retrain(args: argparse.Namespace) -> int:
     res = rt.run_retrain(
         data_dir=args.data,
         now=now_et(),
-        code_sha=_git_sha(),
+        code_sha=args.code_sha or _git_sha(),
         families=families,
         retrain_m1=not args.no_m1,
         tickers=tickers,
+        months=args.holdout_months or rt.HOLDOUT_MONTHS,
+        min_gap_days=args.min_gap_days or rt.MIN_GAP_DAYS,
         say=say,
     )
-    sys.stdout.write(res.summary() + "\n")
+    if args.json:
+        out = {"summary": res.summary(), "metrics": res.metrics()}
+        sys.stdout.write(json.dumps(out, default=str) + "\n")
+    else:
+        sys.stdout.write(res.summary() + "\n")
     return 1 if any(f.error for f in res.families.values()) else 0
