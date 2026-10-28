@@ -1624,7 +1624,7 @@ E26.4 (D121): the cron `arc-analyst-verdict-check` runs daily 09:30 PT (same mod
 delivery) and is created **active**. Its gate stays silent unless a BT holdout verdict
 (research ledger) or an XP verdict file (`config/experiments/live/verdicts/XP-<n>.yaml`)
 landed that no run has read; it runs at most once per ET day and never when the weekly
-run is due within 24 h. The short run reads only those verdicts, posts ≤ 1,200 chars
+run is due within 24 h. The short run reads only those verdicts, posts ≤ 1,400 chars
 top-level in #arc-analyst (the runner's message ts is not stored, so it can't thread),
 and may add ≤ 1 XP + ≤ 1 BT proposal citing a verdict (`record RUN_DIR --mode verdict`).
 `mark` on a verdict run marks only those verdicts as read; the weekly watermark is
@@ -1652,7 +1652,7 @@ token; they are stripped from every command it runs). It:
 ```
 python3 hermes/analyst/arc_analyst.py                         # the gate (ARC_ANALYST_DB / ARC_REPO to override)
 python3 …/arc_analyst.py record RUN_DIR                       # validate findings.json → ledger (A-ids) + backlog (P-ids)
-python3 …/arc_analyst.py check-report RUN_DIR/report.md       # ≤ 3,500 chars, all sections
+python3 …/arc_analyst.py check-report RUN_DIR/report.md       # ≤ 4,000 chars, all sections
 python3 …/arc_analyst.py mark RUN_DIR                         # advance the watermark
 python3 …/arc_analyst.py triage A-3 wontfix "why"             # owner: accepted|wontfix|fixed
 python3 …/arc_analyst.py ship A-4 "note"                      # owner: quick change shipped → next run reviews it
