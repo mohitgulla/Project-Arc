@@ -58,6 +58,7 @@ import {
   type AdjustedPairView,
   type ExperimentDetail,
   type ExperimentRow,
+  type MeanCi,
 } from "../lib/experiments";
 import { formatEt, titleCase } from "../lib/format";
 import { isBacktestId, parseFilter, splitRetired, summaryStrip, FILTERS, type ListFilter } from "../lib/backtests";
@@ -827,6 +828,16 @@ function ProductionCard({ d }: { d: ExperimentDetail }) {
   );
 }
 
+/** A per-day mean with its 95% range as muted subtext, so the row stays narrow on a phone. */
+function MeanCiCell({ m }: { m: MeanCi }) {
+  return (
+    <td className="whitespace-nowrap py-1.5 pl-2 text-right align-top" data-testid="regime-mean-ci">
+      {m.value}
+      {m.ci && <span className="block text-micro text-muted">{m.ci}</span>}
+    </td>
+  );
+}
+
 /** E25.5: P − C and pooled Ti − C by market regime across every v3 experiment. */
 function RegimeCard({ d }: { d: ExperimentDetail }) {
   const p = d.regime_panel!;
@@ -856,22 +867,28 @@ function RegimeCard({ d }: { d: ExperimentDetail }) {
           <table className="w-full text-body tabular-nums" data-testid="regime-table">
             <thead>
               <tr className="text-caption text-muted">
-                <th className="py-1 text-left font-normal">Regime</th>
-                <th className="text-right font-normal">Sessions</th>
-                <th className="whitespace-nowrap text-right font-normal">P − C / Day</th>
-                <th className="whitespace-nowrap text-right font-normal">Ti − C / Day</th>
+                <th className="py-1 text-left align-bottom font-normal">Regime</th>
+                <th className="hidden pl-2 text-right align-bottom font-normal min-[480px]:table-cell">Sessions</th>
+                <th className="pl-2 text-right align-bottom font-normal">P − C / Day</th>
+                <th className="pl-2 text-right align-bottom font-normal">Ti − C / Day</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((b) => (
                 <tr key={b.key} className="border-t border-line" data-testid="regime-row">
-                  <td className="py-1.5">
+                  <td className="py-1.5 align-top">
                     {b.label}
-                    {b.thin && <span className="ml-2 text-caption text-muted">thin</span>}
+                    <span className="block text-micro text-muted" data-testid="regime-sub">
+                      <span className="min-[480px]:hidden">
+                        {b.n} session{b.n === 1 ? "" : "s"}
+                        {b.thin ? " · " : ""}
+                      </span>
+                      {b.thin ? "Thin" : ""}
+                    </span>
                   </td>
-                  <td className="text-right">{b.n}</td>
-                  <td className="whitespace-nowrap text-right">{b.dPC}</td>
-                  <td className="whitespace-nowrap text-right">{b.tiC}</td>
+                  <td className="hidden py-1.5 pl-2 text-right align-top min-[480px]:table-cell">{b.n}</td>
+                  <MeanCiCell m={b.dPC} />
+                  <MeanCiCell m={b.tiC} />
                 </tr>
               ))}
             </tbody>

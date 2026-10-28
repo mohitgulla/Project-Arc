@@ -1800,10 +1800,13 @@ def _build_paired(
     market: BarsProvider | None = None,
     vix: Callable[[], Mapping[_dt.date, float]] | None = None,
 ) -> ExperimentReport:
-    """:func:`build_report` on the control store with the arm stores unioned in (E10.2)."""
+    """:func:`build_report` on the control store with *st*'s arm stores unioned in (E10.2).
+
+    E15.12: only this experiment's stores are attached, one experiment per view.
+    """
     from arc.experiments.paired import paired_view
 
-    with paired_view(conn) as view:
+    with paired_view(conn, experiment_id=st.experiment_id) as view:
         return build_report(
             view, st, cfg, now=now, aa_sigma=aa_sigma, aa_cal=aa_cal, market=market, vix=vix
         )

@@ -557,7 +557,7 @@ def _repair_ledger(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
 
         now = _parse_now(args.now)
         cfg = experiments_config(effective_settings(conn))
-        with paired_view(conn, paths) as view:
+        with paired_view(conn, paths, experiment_id=st.experiment_id) as view:
             report = build_report(view, st, cfg, now=now, aa_sigma=store.aa_sigma())
         with conn:
             rid = store_report(conn, report, run_id="repair-ledger")
