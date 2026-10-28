@@ -321,9 +321,12 @@ def run_family(
             prior = np.asarray(d["date"].tolist()) < fold.test_start
             tau = float(taus[fold.name])
             if prior.sum() >= pl.STACK_MIN_ROWS:
-                pd_ = np.asarray(d["date"].tolist())[prior]
-                ps = st.apply(pd_, m2_all[prior], dl_all[prior])["p_stop"].dropna()
-                tau = float(np.percentile(ps, cfg.p_stop_pct))
+                # the year's first-quarter blend (fitted only on labels closed before
+                # the year) applied to the earlier years' rows
+                q1 = np.full(int(prior.sum()), st.blocks[0][0])
+                ps = st.apply(q1, m2_all[prior], dl_all[prior])["p_stop"].dropna()
+                if len(ps):
+                    tau = float(np.percentile(ps, cfg.p_stop_pct))
             maps[(STACK, year)] = (
                 {
                     (d0, str(t), str(k)): (float(e), float(p))
