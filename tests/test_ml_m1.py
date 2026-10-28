@@ -31,6 +31,7 @@ from arc.ml.m1.predict import (
 )
 from arc.ml.m1.targets import ticker_targets
 from arc.ml.m1.train import FOLDS, cutoff, purged_outside, session_index
+from tests.ml_lightgbm import require_lightgbm
 
 LV = list(M1_QUANTILES)
 REPO = Path(__file__).resolve().parents[1]
@@ -395,7 +396,7 @@ def _synthetic_panel(n_days: int = 160, n_tick: int = 12) -> pd.DataFrame:
 
 
 def test_model_artefacts_roundtrip_and_byte_identical(tmp_path: Path) -> None:
-    pytest.importorskip("lightgbm")
+    require_lightgbm()
     from arc.ml.m1 import train
 
     df = _synthetic_panel()

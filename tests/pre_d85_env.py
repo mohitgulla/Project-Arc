@@ -38,6 +38,10 @@ PRE_D85_ENV: dict[str, str] = {
     # byte-identical. The shipped default (on) is tested in tests/test_gate_cluster.py
     # and tests/test_e285_cluster_cap.py.
     "ARC_CLUSTER_CAP_ENABLED": "false",
+    # E27.4 (D126): ML shadow scoring off, so the fixture pipelines write no ml_scores
+    # entry, no journal links and no `ml:score_failed` alert (no model bundle in the
+    # test tree). The shipped default (on) is tested in tests/test_ml_shadow_pipeline.py.
+    "ARC_ML_SHADOW": "false",
 }
 
 

@@ -136,8 +136,11 @@ class TestShippedDefaults:
         assert fri["scorecard"] == ["Fri 16:45"]
         weekend = _day_plan(shipped, et(2026, 10, 3, 0, 0), et(2026, 10, 5, 0, 0))
         # D91: nothing runs on a weekend (the daily overnight Scalp is gone; YouTube runs
-        # on trading days only, D45) -- except E7.22's offline weekly live<->sim recon.
-        assert weekend == {"backtest.recon": ["Sat 10:00"]}
+        # on trading days only, D45) -- except E7.22's offline weekly live<->sim recon
+        # and, on the first Saturday of a month (Oct 3), E27.4's ml.retrain (D140).
+        assert weekend == {"backtest.recon": ["Sat 10:00"], "ml.retrain": ["Sat 10:00"]}
+        second = _day_plan(shipped, et(2026, 10, 10, 0, 0), et(2026, 10, 12, 0, 0))
+        assert second == {"backtest.recon": ["Sat 10:00"]}
 
     def test_youtube_briefs_trading_days_only(self, shipped: RoutinesConfig) -> None:
         """E4.6: 02:00 ET on a trading day; none on a Saturday or a market holiday."""

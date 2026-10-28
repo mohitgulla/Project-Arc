@@ -93,7 +93,7 @@
     {
      "active": 0,
      "key": "trading_loop",
-     "kinds": 11,
+     "kinds": 12,
      "label": "Trading loop"
     },
     {
@@ -901,6 +901,25 @@
      "ttl": "8 sessions",
      "writers": [
       "Trade Loop"
+     ]
+    },
+    {
+     "active": 0,
+     "expired_24h": 0,
+     "group": "trading_loop",
+     "kind": "ml_scores",
+     "latest_at": null,
+     "latest_by": null,
+     "latest_id": null,
+     "latest_subject": null,
+     "next_expiry": null,
+     "readers": [
+      "Quant propose"
+     ],
+     "remaining_fraction": null,
+     "ttl": "30m",
+     "writers": [
+      "Quant open"
      ]
     }
    ],
@@ -3941,6 +3960,7 @@
     "levels_text": null,
     "max_gain": "90.00",
     "max_loss": "10.00",
+    "ml": null,
     "net_ev_hold": null,
     "net_ev_managed": null,
     "notional": "140",

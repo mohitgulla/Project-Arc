@@ -4677,6 +4677,23 @@ export interface components {
              */
             theme_default: "system" | "light" | "dark";
         };
+        /**
+         * MlShadowView
+         * @description The proposal's shadow M2 score: the PROPOSED decision payload, else the copy on
+         *     the outcome row (migration 041).
+         */
+        MlShadowView: {
+            /** E R */
+            e_r?: number | null;
+            /** Model Version */
+            model_version?: string | null;
+            /** P Stop */
+            p_stop?: number | null;
+            /** P Win */
+            p_win?: number | null;
+            /** Rank M2 */
+            rank_m2?: number | null;
+        };
         /** ModelCard */
         ModelCard: {
             /** Empty */
@@ -6110,6 +6127,8 @@ export interface components {
             max_gain?: string | null;
             /** Max Loss */
             max_loss?: string | null;
+            /** @description E27.4 (D126): the shadow M2 score at proposal time (display only; never a decision input). None when shadow scoring was off or unavailable */
+            ml?: components["schemas"]["MlShadowView"] | null;
             /** Net Ev Hold */
             net_ev_hold?: number | null;
             /**

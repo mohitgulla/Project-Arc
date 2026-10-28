@@ -169,7 +169,9 @@ def add_ml_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> N
     rv.add_argument("--data", type=Path, default=DEFAULT_DATA)
     rv.add_argument("--out", type=Path, default=None, help="Default <data>/ml/models")
 
-    pr = msub.add_parser("promote", help="Owner only: shadow -> champion (E27.3, D126/D133)")
+    pr = msub.add_parser(
+        "promote", help="Owner only: shadow (or a rolling-gate-passed candidate, D140) -> champion"
+    )
     pr.add_argument("family", choices=["credit", "debit"])
     pr.add_argument("version")
     pr.add_argument("--actor", required=True, help="Must be the owner's Slack id")
@@ -180,6 +182,40 @@ def add_ml_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> N
     from arc.ml.study_cli import add_ml_study_parser
 
     add_ml_study_parser(msub)
+
+    mo = msub.add_parser("monitor", help="Live shadow-score coverage / calibration (E27.4)")
+    mo.add_argument("--db", type=Path, default=None, help="Store (read-only; default data/arc.db)")
+    mo.add_argument("--day", type=_dt.date.fromisoformat, default=None, help="Default today ET")
+    mo.add_argument("--days", type=int, default=20, help="Window length in calendar days")
+    mo.add_argument("--json", action="store_true", help="Print the ml_health record as JSON")
+    mo.add_argument("--data", type=Path, default=DEFAULT_DATA)
+
+    rf = msub.add_parser(
+        "refresh", help="Nightly live panel / M1 / drift / parity / health (E27.4)"
+    )
+    rf.add_argument("--db", type=Path, required=True, help="Store (read-only)")
+    rf.add_argument("--day", type=_dt.date.fromisoformat, default=None, help="Default today ET")
+    rf.add_argument("--tickers", default=None, help="Comma list (default: the day's active list)")
+    rf.add_argument("--data", type=Path, default=DEFAULT_DATA, help="Output data dir")
+    rf.add_argument(
+        "--history-data", type=Path, default=None, help="History cache (default --data)"
+    )
+    rf.add_argument("--no-extend-store", action="store_true", help="Don't write history panels")
+
+    rt = msub.add_parser(
+        "retrain", help="Monthly rolling-holdout retrain -> candidate only (E27.4, D140)"
+    )
+    rt.add_argument("--data", type=Path, default=DEFAULT_DATA)
+    rt.add_argument("--families", default="credit,debit")
+    rt.add_argument("--tickers", default=None, help="Comma subset (smoke runs)")
+    rt.add_argument("--extend-ledger", action="store_true", help="Extend the ledger first")
+    rt.add_argument("--workers", type=int, default=6)
+    rt.add_argument("--no-m1", action="store_true", help="Reuse the newest M1 instead")
+    rt.add_argument("--plan", action="store_true", help="Print the rolling window and exit")
+    rt.add_argument("--holdout-months", type=int, default=None)
+    rt.add_argument("--min-gap-days", type=int, default=None)
+    rt.add_argument("--code-sha", default=None, help="Default: the repo HEAD")
+    rt.add_argument("--json", action="store_true", help="Print {summary, metrics} as one JSON line")
 
 
 def run_ml(args: argparse.Namespace) -> int:
@@ -199,6 +235,12 @@ def run_ml(args: argparse.Namespace) -> int:
         return _m1(args)
     if args.ml_command == "ledger":
         return _ledger(args)
+    if args.ml_command == "monitor":
+        return _monitor(args)
+    if args.ml_command == "refresh":
+        return _refresh(args)
+    if args.ml_command == "retrain":
+        return _retrain(args)
     cmd = args.features_command
     if cmd == "list":
         return _list(args)
@@ -642,3 +684,128 @@ def _parity(args: argparse.Namespace) -> int:
     else:
         w("input OHLC: identical in both stores over the window\n")
     return 0 if bool(rep["ok"].all()) else 1
+
+
+def _monitor(args: argparse.Namespace) -> int:
+    import json
+    import sqlite3
+
+    from arc.ml.monitor import health, render
+    from arc.ml.refresh import latest_health
+    from arc.pipeline.market import ETF_UNDERLYINGS
+    from arc.utils.calendar import now_et
+
+    day = args.day or now_et().date()
+    db = Path(args.db) if args.db else REPO / "data" / "arc.db"
+    nightly = latest_health(args.data, day) or {}
+    extra = {k: nightly[k] for k in ("score_drift", "serving", "last_retrain") if k in nightly}
+    if nightly:
+        extra["nightly_day"] = nightly.get("day")
+    conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)  # read-only: never writes
+    try:
+        rec = health(
+            conn,
+            day=day,
+            since=day - _dt.timedelta(days=args.days),
+            drift=nightly.get("feature_drift"),
+            parity=nightly.get("parity"),
+            extra=extra,
+            etfs=frozenset(ETF_UNDERLYINGS),
+        )
+    finally:
+        conn.close()
+    if args.json:
+        sys.stdout.write(json.dumps(rec, indent=2, sort_keys=True, default=str) + "\n")
+    else:
+        sys.stdout.write(render(rec))
+    return 0
+
+
+def _refresh(args: argparse.Namespace) -> int:
+    import sqlite3
+
+    from arc.config import ArcSettings
+    from arc.ml.refresh import refresh_tickers, run_refresh
+    from arc.ml.serve import family_for_profile
+    from arc.pipeline.market import ETF_UNDERLYINGS
+    from arc.utils.calendar import ET, is_session, now_et, previous_session, session_close
+
+    settings = ArcSettings()
+    now = now_et()
+    # default: the latest completed session (today only once it has closed)
+    today = now.date()
+    done_today = is_session(today) and now >= session_close(today)
+    day = args.day or (today if done_today else previous_session(today))
+    conn = sqlite3.connect(f"file:{args.db}?mode=ro", uri=True)  # read-only
+    conn.row_factory = sqlite3.Row
+    try:
+        names = (
+            [t.strip().upper() for t in args.tickers.split(",") if t.strip()]
+            if args.tickers
+            else refresh_tickers(conn, settings, _dt.datetime.combine(day, _dt.time(16), ET))
+        )
+        res = run_refresh(
+            conn,
+            data_dir=args.data,
+            day=day,
+            tickers=names,
+            family=family_for_profile(settings.account_profile),
+            etfs=frozenset(ETF_UNDERLYINGS),
+            history_data_dir=args.history_data,
+            extend_store=not args.no_extend_store,
+        )
+    finally:
+        conn.close()
+    sys.stdout.write(res.summary() + "\n")
+    return 0 if res.health_path else 1
+
+
+def _retrain(args: argparse.Namespace) -> int:
+    from arc.ml import retrain as rt
+    from arc.utils.calendar import now_et
+
+    families = [f.strip() for f in args.families.split(",") if f.strip()]
+    tickers = [t.strip().upper() for t in args.tickers.split(",")] if args.tickers else None
+    ledger_root = args.data / "ml" / "ledger"
+    if args.plan:
+        last, end = rt.ledger_dates(ledger_root)
+        gap = rt.gap_days(ledger_root, years=[end.year - 1, end.year])
+        w = rt.plan_window(end, gap, last_decision=last)
+        sys.stdout.write(json.dumps(w.to_json(), indent=2) + "\n")
+        return 0
+    say = lambda m: sys.stderr.write(m + "\n")  # noqa: E731
+    if args.extend_ledger:
+        from arc.ml.refresh import history_cache_end
+
+        end = history_cache_end(args.data, now_et().date())
+        if end is None:
+            sys.stderr.write("no history cache: run history.topup first\n")
+            return 2
+        info = rt.extend_ledger(
+            args.data,
+            data_end=end,
+            ranking_file=REPO / "config" / "ranking.yaml",
+            workers=args.workers,
+            tickers=tickers,
+            say=say,
+        )
+        sys.stdout.write(json.dumps(info) + "\n")
+        if not info["complete"]:
+            return 3
+    res = rt.run_retrain(
+        data_dir=args.data,
+        now=now_et(),
+        code_sha=args.code_sha or _git_sha(),
+        families=families,
+        retrain_m1=not args.no_m1,
+        tickers=tickers,
+        months=args.holdout_months or rt.HOLDOUT_MONTHS,
+        min_gap_days=args.min_gap_days or rt.MIN_GAP_DAYS,
+        say=say,
+    )
+    if args.json:
+        out = {"summary": res.summary(), "metrics": res.metrics()}
+        sys.stdout.write(json.dumps(out, default=str) + "\n")
+    else:
+        sys.stdout.write(res.summary() + "\n")
+    return 1 if any(f.error for f in res.families.values()) else 0

@@ -156,6 +156,7 @@ context_ttl:
   exit_case:     {ttl: 30m, supersede: latest}             # E13.17 (D56) Quant exit case; subject = open structure id
   risk_exit_review: {ttl: 30m, supersede: latest}          # E13.18 (D56) Risk exit verdicts; subject = session
   pullback_watch: {ttl: 8 sessions, supersede: latest}     # E23.2 (D98) anti-chase drops on watch; subject = TICKER:stance; outlives drop session + ttl_sessions (max 5) + 1 so expiry is journaled
+  ml_scores:     {ttl: 30m, supersede: latest}             # E27.4 (D126) shadow M2 scores of the Quant menu (TTL = the tick); subject = session. Context only
 
 # Source categories (D47/D49/D56), weighted EQUALLY. A source's `weight:` is its share
 # inside its category. `max_age` is the freshness window: older docs are never stored or
@@ -505,6 +506,31 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     feed: scout                 # slow feed (once a day)
     writes: []                  # parquet under data/ + iv_daily / iv_skips rows; no context kind
     lane: background            # up to history_topup.max_runtime_s (40 min) at the free tier's 20 req/min
+  ml.refresh:                   # E27.4 (D126): nightly ML live panel / M1 / drift / parity / ml_health
+    label: ML refresh
+    about: "Nightly ML upkeep: live feature panel, M1 next-day read, feature and score drift, live vs history parity, daily ml_health record"
+    schedule: ["20:45"]         # after history.topup (20:30); parity extends the history store to the cache's last session
+    days: trading
+    ttl: 2h
+    reference: true             # ML context only; never a gate, sizing, ranking or prompt input (D126)
+    feed: scout                 # once a day
+    writes: []                  # parquet + data/ml/health/<day>.json; no context kind
+    lane: background            # feature panels + parity for ~60 names (a few minutes)
+    universe: c500              # history-store panels written for parity
+  ml.retrain:                   # E27.4 (D140): monthly rolling-holdout retrain -> candidate only
+    label: ML retrain
+    about: "Monthly ML retrain: extend the ledger, retrain M1 + M2, gate on a rolling 6-month holdout, register as candidate only (owner promotes)"
+    schedule: ["10:00"]         # first Saturday 10:00 ET (off-market, outside the 21:30-08:30 study window)
+    days: month_first_sat
+    ttl: 4h
+    reference: true             # offline research artefacts; never a gate input
+    feed: scout                 # monthly
+    writes: []                  # data/ml/ledger, data/ml/models (+ holdout_reads.jsonl); no context kind
+    lane: background            # hours: ledger extension (resumable) + M1/M2 training
+    workers: 6
+    stop_at: "21:00"            # the ledger extension yields before the E26.3 study window; resumes next run
+    holdout_months: 6
+    min_gap_days: 45
   backtest.studies:             # E26.3 (D121): nightly runner of the approved BT study queue
     label: Backtest studies
     about: "Nightly runner of the owner-approved backtest studies (BT-<n>): one rung at a time, C125 dev -> C500 dev -> holdout, 21:30-08:30 ET, resumable"
@@ -853,12 +879,12 @@ personas:
 
 steps:                          # per-step settings for chain-only steps (E5.2, arc/pipeline/steps.py)
   # E13.9 (D56) open path.
-  quant.open:    {reads: [shortlist, regime], writes: [structures, note], notify: card}
+  quant.open:    {reads: [shortlist, regime], writes: [structures, note, ml_scores], notify: card}
   risk.open:     {reads: [structures, ex_dividend, macro_calendar], writes: [risk_review, note], notify: card}
   # One Quant revision round after Risk's verdicts; skipped when no structure is
   # `revise`, on a no-change loop, or with < 90 s of loop.max_runtime left.
   quant.revise:  {reads: [shortlist, regime, structures, risk_review], writes: [structures, note], notify: card, on_no_change: skip, min_remaining_s: 90}
-  quant.propose: {reads: [candidate, regime, shortlist, structures, risk_review, exit_case, risk_exit_review, position_review], writes: [proposal], llm: false, notify: summary}  # posts the proposal cards; fingerprint dedupe (E5.9); close branch (E13.18)
+  quant.propose: {reads: [candidate, regime, shortlist, structures, risk_review, exit_case, risk_exit_review, position_review, ml_scores], writes: [proposal], llm: false, notify: summary}  # posts the proposal cards; fingerprint dedupe (E5.9); close branch (E13.18)
   # E13.17 (D56) exit path: Quant judges one exit case per position Research flagged
   # `review`, with a discretionary signal, or paired with a capacity rejection.
   quant.exit:    {reads: [position_review, exit_watchlist, portfolio_context, regime, ex_dividend, story, scout_read], writes: [exit_case, note], notify: card, on_no_change: skip, min_remaining_s: 60}

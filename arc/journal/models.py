@@ -158,6 +158,12 @@ class OutcomeRecord(BaseModel):
     hold_to_expiry_shadow_pnl: Decimal | None = None
     supersedes_id: str | None = None
     at: _dt.datetime
+    # E27.4 (D126): the shadow M2 score at entry, COPIED from the chain's ml_scores
+    # entry (never joined later); None = no score. Context only, never a decision input.
+    ml_p_win: float | None = Field(None, ge=0.0, le=1.0)
+    ml_e_r: float | None = None
+    ml_p_stop: float | None = Field(None, ge=0.0, le=1.0)
+    ml_model_version: str | None = None
 
     _at = field_validator("at")(_aware)
 

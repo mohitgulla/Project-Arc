@@ -1057,6 +1057,30 @@ class ArcSettings(BaseSettings):
         ),
     )
 
+    # -- ML shadow scoring (E27.4, D126) -----------------------------------------------
+    ml_shadow: bool = Field(
+        default=True,
+        description=(
+            "E27.4 (D126): quant.open scores every menu item with the registered M2 bundle and "
+            "writes an `ml_scores` context entry (shadow: never a gate, sizing, ranking or "
+            "prompt input; fail open). Off = no scoring, no entry, no journal links."
+        ),
+    )
+    ml_card_line: bool = Field(
+        default=True,
+        description=(
+            "E27.4: display only. The `ML (shadow): p_win … · E[R] … · p_stop …` fact line on "
+            "the Quant proposal card. Changes no decision."
+        ),
+    )
+    ml_data_dir: Path = Field(
+        default=Path(__file__).resolve().parent.parent / "data",
+        description=(
+            "E27.4: root of the ML artefacts (`<dir>/ml/models`, `<dir>/ml/live/features`). "
+            "A missing model directory means `unavailable` scores (fail open)."
+        ),
+    )
+
     # -- IV history (E4.12, D55) -------------------------------------------------
     iv_min_obs_rank: Annotated[int, Field(ge=2)] = Field(
         default=120,

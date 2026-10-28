@@ -491,7 +491,7 @@ def test_m1_study_loader_reads_dev_only(monkeypatch: pytest.MonkeyPatch, tmp_pat
 
     seen: list[dt.date] = []
 
-    def fake_panel(_root: Path, start: dt.date, end: dt.date, *_a: Any) -> pd.DataFrame:
+    def fake_panel(_root: Path, start: dt.date, end: dt.date, *_a: Any, **_kw: Any) -> pd.DataFrame:
         seen.append(end)
         raise FileNotFoundError("stop")
 

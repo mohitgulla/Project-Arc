@@ -11,9 +11,10 @@ Job keys (``sources.<name>`` / ``personas.<name>``):
   anchored at the window start (midnight when no window), or
 - ``trigger: approval`` — event-driven only (``<job>.completed``, ``approval``,
   ``halt``, or any name emitted with ``arc routines emit``).
-- ``days: daily | trading | weekdays | month_start`` (default ``daily``), or a
-  list of weekdays for weekly jobs (``days: [fri]``). ``month_start`` = the first
-  trading session of each calendar month (holiday-aware, E12.2 / D51).
+- ``days: daily | trading | weekdays | month_start | month_first_sat`` (default
+  ``daily``), or a list of weekdays for weekly jobs (``days: [fri]``). ``month_start``
+  = the first trading session of each calendar month (holiday-aware, E12.2 / D51);
+  ``month_first_sat`` = the first Saturday of each month (E27.4 ``ml.retrain``).
 - ``catch_up: {days, until_written: <kind>:<subject>}`` — a slow job's retry
   cadence: on ``catch_up.days`` slots that are not regular slots, the job also
   runs while no entry of that kind/subject was written since its latest regular
@@ -168,6 +169,7 @@ class Days(enum.StrEnum):
     TRADING = "trading"
     WEEKDAYS = "weekdays"
     MONTH_START = "month_start"  # first trading session of each calendar month (E12.2)
+    MONTH_FIRST_SAT = "month_first_sat"  # first Saturday of each calendar month (E27.4)
 
 
 class Weekday(enum.StrEnum):

@@ -159,6 +159,53 @@ forbidden_modules = [
     "arc.context.kinds",
 ]
 
+# E27.4 / D126: ML scores are shadow context. No decision code (personas/prompts,
+# sizing, the scanner's menu ranking, the approval flow) reads them; arc.gate is
+# covered by the first contract. The live serving path stays off LLM clients, the
+# broker, execution and Slack.
+[[tool.importlinter.contracts]]
+name = "ML shadow scores never feed a persona, sizing, menu ranking or approvals (D126)"
+type = "forbidden"
+source_modules = [
+    "arc.personas",
+    "arc.sizing",
+    "arc.scanner.rank",
+    "arc.scanner.menu",
+    "arc.scanner.scan",
+    "arc.execution.submission",
+    "arc.execution.ladder",
+]
+forbidden_modules = ["arc.ml", "arc.pipeline.ml_shadow"]
+# The context-kind registry names the pydantic-only payload contract (no model code),
+# and quant.open calls the shadow step; neither edge lets a decision read a score.
+ignore_imports = [
+    "arc.context.kinds -> arc.ml.scores",
+    "arc.pipeline.steps -> arc.pipeline.ml_shadow",
+]
+
+[[tool.importlinter.contracts]]
+name = "ML live serving has no LLM, broker, execution or Slack dependencies (D126)"
+type = "forbidden"
+source_modules = [
+    "arc.ml.scores",
+    "arc.ml.serve",
+    "arc.ml.shadow",
+    "arc.ml.live_rows",
+    "arc.ml.live_menu",
+    "arc.ml.lgbm_text",
+    "arc.ml.monitor",
+    "arc.ml.refresh",
+    "arc.ml.retrain",
+]
+forbidden_modules = [
+    "anthropic",
+    "openai",
+    "slack_sdk",
+    "arc.execution",
+    "arc.slack",
+    "arc.approvals",
+]
+
 [[tool.importlinter.contracts]]
 name = "arc.journal records and attribution are deterministic: no LLM, network or broker"
 type = "forbidden"

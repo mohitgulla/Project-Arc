@@ -439,7 +439,7 @@ class ApprovalService:
                 note=self._auto_label(gate_off=auto is not None and "scorecard gate off" in auto)
                 if auto is not None
                 else (_gated_note(gated) if gated is not None else reason),
-                trail=load_trail(self.conn, phash, row["ticker"]),
+                trail=load_trail(self.conn, phash, row["ticker"], ml=self.settings.ml_card_line),
                 kind=row["kind"],
             )
             day_date = _dt.date.fromisoformat(row["day"])
@@ -523,7 +523,7 @@ class ApprovalService:
                 proposal_hash=phash,
                 actionable=True,
                 note=self._pending_note(phash),
-                trail=load_trail(self.conn, phash, req.ticker),
+                trail=load_trail(self.conn, phash, req.ticker, ml=self.settings.ml_card_line),
                 kind=self._kind(phash),
             )
             posted = self._post(_dt.date.fromisoformat(req.day), view, phash, quiet=True)
@@ -1223,7 +1223,9 @@ class ApprovalService:
             proposal_hash=req.proposal_hash,
             outcome=outcome,
             at=now,
-            trail=load_trail(self.conn, req.proposal_hash, req.ticker),
+            trail=load_trail(
+                self.conn, req.proposal_hash, req.ticker, ml=self.settings.ml_card_line
+            ),
             kind=self._kind(req.proposal_hash),
         )
         try:

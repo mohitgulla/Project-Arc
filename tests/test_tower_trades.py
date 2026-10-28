@@ -924,3 +924,41 @@ def test_detail_floor_exit_facts(fx_db: Path, tmp_path: Path) -> None:
         assert other.position.floor_exit is None
     finally:
         ro.close()
+
+
+def test_ml_shadow_score_from_the_proposal_then_the_outcome_copy(
+    fx_db: Path, tmp_path: Path
+) -> None:
+    """E27.4: Quant section carries the shadow score (display only); None when absent."""
+    db = tmp_path / "ml.db"
+    src = sqlite3.connect(fx_db)
+    c = sqlite3.connect(db)
+    src.backup(c)
+    src.close()
+    h = H("pos-spy")
+    row = c.execute(
+        "SELECT id, payload FROM decisions WHERE proposal_hash = ? AND reason_code = 'proposed'",
+        (h,),
+    ).fetchone()
+    assert row is not None
+    c.execute("DROP TRIGGER IF EXISTS decisions_no_update")  # test copy only
+    payload = json.loads(row[1] or "{}")
+    payload["ml"] = {
+        "p_win": 0.58,
+        "e_r": 0.04,
+        "p_stop": 0.22,
+        "rank_m2": 2,
+        "model_version": "m2-05fa82807a93",
+    }
+    c.execute("UPDATE decisions SET payload = ? WHERE id = ?", (json.dumps(payload), row[0]))
+    c.commit()
+    c.close()
+    ro = connect_ro(db)
+    try:
+        d = load_trade(ro, h, now=NOW)
+        assert d is not None and d.quant.ml is not None
+        assert (d.quant.ml.p_win, d.quant.ml.e_r, d.quant.ml.rank_m2) == (0.58, 0.04, 2)
+        other = load_trade(ro, H("pos-amd"), now=NOW)
+        assert other is not None and other.quant.ml is None
+    finally:
+        ro.close()
