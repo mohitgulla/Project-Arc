@@ -1175,7 +1175,8 @@ def train_m1(
     day = df[df["date"] == last_day].reset_index(drop=True)
     publish(model, day)
     t_pred = time.monotonic() - t_pred
-    # the all-LightGBM path (what a future version that keeps every target would cost)
+    # the all-LightGBM path (what a future version that keeps every target would cost);
+    # a target a study left off LightGBM (E27.7 target subset) stays on its own source
     t_lgbm = time.monotonic()
     all_lgbm = M1Model(
         man.model_copy(
@@ -1187,13 +1188,14 @@ def train_m1(
                             "offsets": {
                                 qtag(p): v
                                 for p, v in final_offsets(
-                                    last, t.kind, t.h, "lgbm", dev_end=dev_end
+                                    last, t.kind, t.h, "lgbm", cal_sessions, dev_end=dev_end
                                 ).items()
                             },
                         }
                     )
-                    for t in man.targets
                     if (t.kind, t.h, "lgbm") in last.q_raw
+                    else t
+                    for t in man.targets
                 ]
             }
         ),
