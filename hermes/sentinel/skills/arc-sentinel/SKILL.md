@@ -216,7 +216,8 @@ trigger actions. Resolve an S-id's full finding from the newest `~/.hermes/profi
 Layout rules (D141, owner 2026-10-28: as readable as the #arc-investor posts):
 - **Bold is `**text**`.** The gateway converts standard markdown to Slack mrkdwn and turns a
   single-star `*text*` into _italic_, so never use single stars for bold (headers, ids).
-- Every section header is its own line: the section's emoji, a space, then the bold title
+- Every section header is its own line: the section's emoji, a space, then the bold Title Case
+  title (capitalise each word except "vs"/"and"/"of")
   (`🧪 **Checks**`). Exactly one blank line before each header, none inside a section.
 - Severity dots lead each finding line: 🔴 blocker · 🟠 high · 🟡 medium · ⚪ low. Status emoji
   only where they add meaning: ✅ pass/clean/resolved · ❌ fail · ⚠️ warn/findings. Never put an
@@ -242,13 +243,13 @@ commits reviewed: N (prev <sha7>..<sha7>)
 🔁 **Regressed** (omit the section when empty)
 • <🔴|🟠|🟡|⚪> **S-<n>** … (one line each)
 
-⏳ **Still open** (re-verified at HEAD)
+⏳ **Still Open** (re-verified at HEAD)
 • <🔴|🟠|🟡|⚪> **S-<n>** … (one line each; low items may share a line)
 
 ✅ **Resolved**
 • **S-<n>** … (one line each, with evidence)
 
-📝 **Proposed cards** (need owner OK)
+📝 **Proposed Cards** (need owner OK)
 • **S-<n>** → `<draft title>` ← parents <keys> — <2-line acceptance>
 
 🤝 **Strategy → Analyst** (info-only cross-references, cited; no cards)

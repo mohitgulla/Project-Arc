@@ -147,15 +147,15 @@ THEMES = {
 }
 THEME_STATUSES = ("no-evidence", "watching", "action-proposed", "settled")
 REPORT_SECTIONS = (
-    "Performance vs model",
-    "Standing themes",
-    "Quick changes",
-    "Quick-change review",
+    "Performance vs Model",
+    "Standing Themes",
+    "Quick Changes",
+    "Quick-Change Review",
     "Experiments",
     "Next XP",
     "Backtest",
     "Next ML",
-    "Obvious flaws",
+    "Obvious Flaws",
     "create A-",
 )
 
@@ -395,7 +395,7 @@ LEGACY_REF_PREFIXES = ("docs/RESEARCH", "data/backtest")
 # ---- E26.4 (D121): the short verdict run ----
 XP_VERDICTS = Path("config") / "experiments" / "live" / "verdicts"  # E21.4 verdict files
 VERDICT_REPORT_MAX = 1_400  # D141 layout
-VERDICT_REPORT_SECTIONS = ("verdict run", "*Read*", "*Follow-up*")
+VERDICT_REPORT_SECTIONS = ("verdict run", "*Read*", "*Follow-Up*")
 VERDICT_DOC_KEYS = ("mode", "verdicts", "findings", "backlog_drops")
 VERDICT_CATEGORIES = ("xp-proposal", "theme", "data-gap")  # a study_spec rides on any of them
 VERDICT_MAX_NEW = 1  # new proposals per kind (XP, BT/ML together) per verdict run
@@ -2066,7 +2066,7 @@ def _validate_quick_lists(doc: dict, findings: list, ledger: dict) -> list[str]:
     ):
         errs.append(
             "no quick-change findings: say why in quick_changes_none (the report's "
-            "*Quick changes* section reads `none: <why>`)"
+            "*Quick Changes* section reads `none: <why>`)"
         )
     shipped = {it["id"]: it for it in quick_change_items(ledger)}
     reviews = doc.get("quick_change_reviews", [])
@@ -3543,16 +3543,18 @@ def validate_report(text: str) -> list[str]:
     errs = []
     if len(text) > REPORT_MAX:
         errs.append(f"report is {len(text)} chars; cap is {REPORT_MAX}")
+    # D141: headers are Title Case; match case-insensitively so either casing passes.
+    low = text.lower()
     for s in REPORT_SECTIONS:
-        if s not in text:
+        if s.lower() not in low:
             errs.append(f"report lacks {s!r}")
     # D86: both tracks every run. Each section's body holds items or `none: <why>`.
-    for title in ("Quick changes", "Experiments"):
+    for title in ("Quick Changes", "Experiments"):
         # D141: a section ends at the next blank line or the next (emoji +) bold header line.
         m = re.search(
             rf"\*{re.escape(title)}\*[^\n]*\n(.*?)(?=\n[ \t]*\n|\n[^\n•]*\*[A-Z][^\n]*\*|\Z)",
             text,
-            re.S,
+            re.S | re.I,
         )
         body = m.group(1).strip() if m else ""
         if m and not body:
@@ -6051,11 +6053,12 @@ def validate_verdict_report(text: str) -> list[str]:
     errs = []
     if len(text) > VERDICT_REPORT_MAX:
         errs.append(f"report is {len(text)} chars; a verdict run's cap is {VERDICT_REPORT_MAX}")
+    low = text.lower()
     for s in VERDICT_REPORT_SECTIONS:
-        if s not in text:
+        if s.lower() not in low:
             errs.append(f"report lacks {s!r}")
-    for weekly in ("*Quick changes*", "Standing themes"):
-        if weekly in text:
+    for weekly in ("*Quick Changes*", "Standing Themes"):
+        if weekly.lower() in low:
             errs.append(f"{weekly!r} belongs to the weekly report, not a verdict run")
     return errs
 

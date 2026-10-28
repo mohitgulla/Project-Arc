@@ -26,7 +26,7 @@ proposal with N stated is worth more than five opinions.
 fix change a decision the system makes → Analyst; does it change whether the system does what
 the spec says → Sentinel.* A ranker, menu, exit, sizing, cost or auto-approve choice is yours.
 A bug, a missing test, a wrong implementation of a spec'd rule is the Sentinel's: note it in one
-line under "Obvious flaws" as `→ Sentinel` and do not draft a card for it.
+line under "Obvious Flaws" as `→ Sentinel` and do not draft a card for it.
 
 ## Hard rules
 - You run in the dedicated `arc-analyst` Hermes profile. Besides this skill it holds only the
@@ -70,7 +70,7 @@ line under "Obvious flaws" as `→ Sentinel` and do not draft a card for it.
    is evidence, never `fragile`), a spec
    whose hash changed since the holdout, and a proposal whose overlay leaves are not the
    study's arm variable (a ranker study backs `exits.pipeline.rank_menu_by|menu_measure`).
-2. **Two tracks, every run.** *Quick changes* (0–3) ship now without an XP; *XP proposals* test
+2. **Two tracks, every run.** *Quick Changes* (0–3) ship now without an XP; *XP proposals* test
    what is uncertain enough to need 20–60 sessions. Most improvements ship as quick changes.
    When a track has nothing, say why (`quick_changes_none`, `next_experiment: none: <why>`).
 3. **STANDING THEMES.** Every run gives each theme exactly one status line
@@ -236,7 +236,7 @@ line under "Obvious flaws" as `→ Sentinel` and do not draft a card for it.
    context if stdout was truncated.
 3. Read `docs/PLAN.md` §0 (D4, D18, D19, D23, D25, D34, D44, D69, D86) in the repo as the spec
    of the strategy, and the newest `docs/RESEARCH/*.md` listed in the context.
-4. **Performance vs model**: realised vs EV and entry slippage vs modelled, by kind × regime,
+4. **Performance vs Model**: realised vs EV and entry slippage vs modelled, by kind × regime,
    this week and all time, against **both** the managed-EV model and the backtest simulator
    (`## Backtest <-> live drift`, E7.14: predicted vs actual entry/exit price, exit-reason
    match, P&L tracking error, with n). Where does realised diverge, and with what N? A
@@ -252,12 +252,12 @@ line under "Obvious flaws" as `→ Sentinel` and do not draft a card for it.
    holdout verdict + CI or `holdout pending`, variants vs `max_variants` and its evidence class,
    plus the E7.9 data checkpoints. Only a line marked `C500 holdout PASS` may back a proposal;
    a `FRAGILE` line (D125 robustness grid failed) is never evidence, so say so in one line.
-5. **Standing themes**: one status line per theme (gate 3).
-6. **Obvious flaws**: check every gate-4 condition against the effective config
+5. **Standing Themes**: one status line per theme (gate 3).
+6. **Obvious Flaws**: check every gate-4 condition against the effective config
    (`config-show.log`, `RUN_DIR/config/*.yaml`) and the halts. Quote the key and value.
-7. **Quick-change review** (gate 5): one review per entry under "Quick changes shipped since the
+7. **Quick-Change Review** (gate 5): one review per entry under "Quick changes shipped since the
    last review".
-8. **Quick changes** (gate 5, 0–3).
+8. **Quick Changes** (gate 5, 0–3).
 9. **Experiments** (gates 6–7): running lines with stop advice, new proposals (≤ 2), drops,
    seed dispositions, `next_experiment` + `next_slot`.
 10. Re-check every ACTIVE ledger item: still true → re-list with the same `key`; no longer →
@@ -269,7 +269,7 @@ line under "Obvious flaws" as `→ Sentinel` and do not draft a card for it.
     fix the JSON and rerun (rejection writes nothing). It prints the A-ids and the P-ids.
 13. Write the report to `RUN_DIR/report.md` and run
     `python3 ~/.hermes/profiles/arc-analyst/scripts/arc_analyst.py check-report RUN_DIR/report.md`
-    (≤ 4,000 chars, all sections present, *Quick changes* and *Experiments* not empty).
+    (≤ 4,000 chars, all sections present, *Quick Changes* and *Experiments* not empty).
     Shorten until it passes.
 14. `python3 ~/.hermes/profiles/arc-analyst/scripts/arc_analyst.py mark RUN_DIR` (advances the
     watermark so the next run wakes only on new closed trades, a halt, an experiment status
@@ -350,8 +350,9 @@ status (and `stop_advice` when running); `next_experiment`, `next_slot`, `next_s
 Layout rules (D141, owner 2026-10-28: as readable as the #arc-investor posts):
 - **Bold is `**text**`.** The gateway converts standard markdown to Slack mrkdwn and turns a
   single-star `*text*` into _italic_, so never use single stars for bold (headers, ids).
-- Every section header is its own line: the section's emoji, a space, then the bold title
-  (`📊 **Performance vs model**`). Exactly one blank line before each header, none inside a
+- Every section header is its own line: the section's emoji, a space, then the bold Title Case
+  title (capitalise each word except "vs"/"and"/"of")
+  (`📊 **Performance vs Model**`). Exactly one blank line before each header, none inside a
   section.
 - Severity dots lead each flaw/finding line: 🔴 blocker · 🟠 high · 🟡 medium · ⚪ low. Status
   emoji only where they add meaning: ✅ keep/resolved/pass · ↩️ roll back · ⏳ too early/continue ·
@@ -361,17 +362,17 @@ Layout rules (D141, owner 2026-10-28: as readable as the #arc-investor posts):
 📈 **Arc Analyst · <YYYY-MM-DD> · window <from>..<to>**
 <N> closed trades this week (<M> all time)
 
-📊 **Performance vs model**
+📊 **Performance vs Model**
 • <kind> · <regime>: n=<n> realised $<x> vs EV $<y> (<±z>/trade) · slippage <a> bps vs modelled <b> bps
 • Sleeve <short|swing>: n=<n> mean net $<x> CI [<lo>, <hi>] · <keep|shrink|collect> (D97)
 
-🧭 **Standing themes**
+🧭 **Standing Themes**
 • cost-model: <status> — <note with N> (one line per theme, all seven)
 
-⚡ **Quick changes** (≤3; "none: <why>" is a valid answer)
+⚡ **Quick Changes** (≤3; "none: <why>" is a valid answer)
 • **A-<n>** <key>: <old> → <new> · evidence <kind> n=<n> · expected <effect> · rollback <how> · apply: `!arc config set …` or `ship A-<n>` → card
 
-🔁 **Quick-change review**
+🔁 **Quick-Change Review**
 • **A-<n>** <✅ keep|↩️ roll back|⏳ too early> · <metric> before <x> (n=<a>) → after <y> (n=<b>) (or "none shipped")
 
 🧪 **Experiments**
@@ -389,7 +390,7 @@ Layout rules (D141, owner 2026-10-28: as readable as the #arc-investor posts):
 • m1 champion <v> · shadow <v> · live calibration n=<n> <ok|insufficient> · drift <ok|warn>
 • **Next ML:** **ML-<n>** <family> <change_kind>: <hypothesis> · value <score> ÷ <nights> nights · queue: ML-<m> <status> ETA <k> nights (or none: <why>)
 
-🚩 **Obvious flaws**
+🚩 **Obvious Flaws**
 • <🔴|🟠|🟡|⚪> **A-<n>** [<severity>] <key = value> — <why it contradicts D#> (or "none")
 
 🗂️ **Ledger**
@@ -444,7 +445,7 @@ sections, `───` before the footer):
 📖 **Read**
 • **BT-<n>** <c500 holdout> <✅ switch|🟡 fragile|⚪ keep control> diff $<±d> CI [<lo>, <hi>] · <what it means>
 
-➡️ **Follow-up**
+➡️ **Follow-Up**
 • new **XP-<n>** <title> · value <score> (or "none: <why>") · new **BT-<m>** <hypothesis> (or "none: <why>")
 • dropped XP-<k>: <why> (only related entries)
 

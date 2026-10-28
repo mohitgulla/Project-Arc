@@ -1852,8 +1852,8 @@ def test_skill_documents_the_two_tracks_and_the_backlog() -> None:
         "`approve XP-<n>` · `drop XP-<n> <why>` · `reprioritise XP-<n> <why>`",
         "The id is *reserved*, not registered",
         "`approve P-<n>` (a retired id) replies with the XP id to use",
-        "*Quick changes*",
-        "*Quick-change review*",
+        "*Quick Changes*",
+        "*Quick-Change Review*",
         "*Experiments*",
         "*Next XP:*",
         "register XP-<n>",
@@ -1865,7 +1865,7 @@ def test_skill_documents_the_two_tracks_and_the_backlog() -> None:
     # D121: P-<n> survives only in the retired-id sentences
     stray = [ln for ln in text.splitlines() if re.search(r"(?<![A-Za-z0-9_-])P-<n>", ln)]
     assert all("retired" in ln for ln in stray), stray
-    for section in ("Quick changes", "Quick-change review", "Experiments", "Next XP"):
+    for section in ("Quick Changes", "Quick-Change Review", "Experiments", "Next XP"):
         assert section in aa.REPORT_SECTIONS
 
 
@@ -1914,7 +1914,7 @@ def test_report_template_validates_size_cap(tmp_path: Path) -> None:
     long.write_text(template + "x" * aa.REPORT_MAX)
     assert aa.main(["check-report", str(long)]) == 2
     missing = tmp_path / "m.md"
-    missing.write_text(template.replace("Standing themes", "Themes"))
+    missing.write_text(template.replace("Standing Themes", "Themes"))
     assert aa.cmd_check_report(missing) == 2
 
 
@@ -1922,7 +1922,7 @@ def test_report_template_uses_the_d141_layout() -> None:
     """D141: `**bold**` emoji header lines with a blank line before each section."""
     template = _report_template()
     lines = template.splitlines()
-    for title in ("Performance vs model", "Quick changes", "Experiments", "Backtest", "Next ML"):
+    for title in ("Performance vs Model", "Quick Changes", "Experiments", "Backtest", "Next ML"):
         i = next(n for n, ln in enumerate(lines) if f"**{title}**" in ln and not ln.startswith("•"))
         assert lines[i - 1] == "", title
         assert not lines[i].startswith("*"), title  # an emoji leads the header line
@@ -1931,11 +1931,22 @@ def test_report_template_uses_the_d141_layout() -> None:
     assert "───" in template
 
 
+def test_report_headers_are_title_case_and_matched_case_insensitively() -> None:
+    """D141: Title Case headers; a report in the old sentence case still validates."""
+    template = _report_template()
+    for title in ("Performance vs Model", "Standing Themes", "Quick Changes", "Obvious Flaws"):
+        assert f"**{title}**" in template, title
+    old = template
+    for new, was in (("vs Model", "vs model"), ("Standing Themes", "Standing themes")):
+        old = old.replace(new, was)
+    assert old != template and aa.validate_report(old) == []
+
+
 def test_report_empty_section_detected_in_d141_layout() -> None:
     template = _report_template()
-    empty = re.sub(r"(⚡ \*\*Quick changes\*\*[^\n]*\n)•[^\n]*\n", r"\1", template)
+    empty = re.sub(r"(⚡ \*\*Quick Changes\*\*[^\n]*\n)•[^\n]*\n", r"\1", template)
     assert empty != template
-    assert any("*Quick changes* is empty" in e for e in aa.validate_report(empty))
+    assert any("*Quick Changes* is empty" in e for e in aa.validate_report(empty))
     header = '(≤3; "none: <why>" is a valid answer)\n'
     none = empty.replace(header, header + "• none: no bucket at n≥20\n", 1)
     assert aa.validate_report(none) == []
@@ -2521,7 +2532,7 @@ def test_verdict_report_template_and_cap(tmp_path: Path) -> None:
     r = tmp_path / "r.md"
     r.write_text(template + "x" * 1_400)
     assert aa.main(["check-report", str(r), "--mode", "verdict"], None, NOW) == 2
-    r.write_text(template + "\n*Quick changes*\n• none")
+    r.write_text(template + "\n*Quick Changes*\n• none")
     assert aa.cmd_check_report(r, "verdict") == 2
     r.write_text(template)
     assert aa.main(["check-report", str(r), "--mode", "verdict"], None, NOW) == 0
