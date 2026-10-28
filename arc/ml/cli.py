@@ -684,11 +684,14 @@ def _refresh(args: argparse.Namespace) -> int:
     from arc.ml.refresh import refresh_tickers, run_refresh
     from arc.ml.serve import family_for_profile
     from arc.pipeline.market import ETF_UNDERLYINGS
-    from arc.utils.calendar import ET, now_et
+    from arc.utils.calendar import ET, is_session, now_et, previous_session, session_close
 
     settings = ArcSettings()
     now = now_et()
-    day = args.day or now.date()
+    # default: the latest completed session (today only once it has closed)
+    today = now.date()
+    done_today = is_session(today) and now >= session_close(today)
+    day = args.day or (today if done_today else previous_session(today))
     conn = sqlite3.connect(f"file:{args.db}?mode=ro", uri=True)  # read-only
     conn.row_factory = sqlite3.Row
     try:

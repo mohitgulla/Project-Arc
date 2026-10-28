@@ -233,3 +233,20 @@ def test_card_line_display_only() -> None:
         _ml_line({"p_win": 0.584, "e_r": 0.04, "p_stop": 0.221})
         == "p_win 0.58 · E[R] +0.04 · p_stop 0.22"
     )
+
+
+def test_card_shows_the_shadow_line_only_with_a_score() -> None:
+    from arc.approvals.card import render_card
+    from arc.approvals.trail import DecisionTrail
+    from tests.test_card_v2 import _debit_vertical, _field
+
+    p, _ = _debit_vertical()
+    ml = {"p_win": 0.584, "e_r": 0.04, "p_stop": 0.221, "model_version": "m2-05fa82807a93"}
+
+    def card(trail: DecisionTrail) -> Any:
+        return render_card(p, None, proposal_hash="0" * 64, actionable=False, trail=trail)
+
+    on = card(DecisionTrail(ml=ml))
+    assert _field(on, "ML (shadow)") == ["p_win 0.58 · E[R] +0.04 · p_stop 0.22"]
+    assert card(DecisionTrail()).blocks == card(DecisionTrail(ml=None)).blocks
+    assert json.dumps(card(DecisionTrail()).blocks).count("ML (shadow)") == 0

@@ -3734,8 +3734,15 @@ contract `arc.ml.* never imported by the decision path`). Every step fails open.
      `kind: rolling` row in `holdout_reads.jsonl`, registers `candidate` only and posts
      one line to #arc-analyst.
 
-  Commands (`ml` extra; on macOS the trainer preloads sklearn's bundled libomp when
-  Homebrew's is missing; no `data/backtest/queue.json`):
+  The training step runs as a child `arc ml retrain --json` (nice 10, `max_runtime_s`
+  4 h) with `DYLD_LIBRARY_PATH` pointing at the `libomp` scikit-learn's wheel bundles,
+  so it works on the Mac mini without Homebrew's `libomp` (lightgbm's rpaths only look
+  in `/opt/homebrew` and `/opt/local`). An M1 failure is reported and M2 trains on the
+  newest M1; every family failing fails the run. By hand on macOS without Homebrew's
+  libomp, prefix the CLI with
+  `DYLD_LIBRARY_PATH=.venv/lib/python3.12/site-packages/sklearn/.dylibs`.
+
+  Commands (`ml` extra; no `data/backtest/queue.json`):
 
       .venv/bin/arc ml refresh --db data/arc.db [--day D] [--no-extend-store]
       .venv/bin/arc ml retrain --plan
