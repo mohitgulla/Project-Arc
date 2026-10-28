@@ -460,8 +460,16 @@ describe("Production panel (D108, E25.6)", () => {
       ],
     } as unknown as RegimePanel;
     expect(regimeRows(panel)).toEqual([
-      { key: "up/low", label: "Up · Low", n: 4, xps: 1, thin: true, dPC: "−0.14% [−0.70%, +0.45%]", tiC: "+0.02%" },
-      { key: "unknown", label: "Unknown", n: 26, xps: 1, thin: false, dPC: "n/a", tiC: "n/a" },
+      {
+        key: "up/low",
+        label: "Up · Low",
+        n: 4,
+        xps: 1,
+        thin: true,
+        dPC: { value: "−0.14%", ci: "−0.70% to +0.45%" },
+        tiC: { value: "+0.02%", ci: null },
+      },
+      { key: "unknown", label: "Unknown", n: 26, xps: 1, thin: false, dPC: { value: "n/a", ci: null }, tiC: { value: "n/a", ci: null } },
     ]);
     expect(regimeRows(null)).toEqual([]);
   });
