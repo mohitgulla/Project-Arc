@@ -40,7 +40,7 @@ def test_lens7_states_the_ops_boundary() -> None:
 
 def test_report_section_has_no_cards_for_strategy() -> None:
     text = SKILL.read_text()
-    assert "*Strategy → Analyst*" in text
+    assert "🤝 **Strategy → Analyst**" in text
     assert "*Strategy & ideas*" not in text
 
 

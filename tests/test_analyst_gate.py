@@ -1918,6 +1918,29 @@ def test_report_template_validates_size_cap(tmp_path: Path) -> None:
     assert aa.cmd_check_report(missing) == 2
 
 
+def test_report_template_uses_the_d141_layout() -> None:
+    """D141: `**bold**` emoji header lines with a blank line before each section."""
+    template = _report_template()
+    lines = template.splitlines()
+    for title in ("Performance vs model", "Quick changes", "Experiments", "Backtest", "Next ML"):
+        i = next(n for n, ln in enumerate(lines) if f"**{title}**" in ln and not ln.startswith("•"))
+        assert lines[i - 1] == "", title
+        assert not lines[i].startswith("*"), title  # an emoji leads the header line
+    # a single-star `*Header*` renders as italics through the gateway's markdown conversion
+    assert not re.search(r"(?<!\*)\*[A-Z][^*\n]*\*(?!\*)", template)
+    assert "───" in template
+
+
+def test_report_empty_section_detected_in_d141_layout() -> None:
+    template = _report_template()
+    empty = re.sub(r"(⚡ \*\*Quick changes\*\*[^\n]*\n)•[^\n]*\n", r"\1", template)
+    assert empty != template
+    assert any("*Quick changes* is empty" in e for e in aa.validate_report(empty))
+    header = '(≤3; "none: <why>" is a valid answer)\n'
+    none = empty.replace(header, header + "• none: no bucket at n≥20\n", 1)
+    assert aa.validate_report(none) == []
+
+
 def test_skill_frontmatter_and_rules() -> None:
     text = _skill()
     assert text.startswith("---\n")
@@ -2492,11 +2515,11 @@ def _verdict_template() -> str:
 
 def test_verdict_report_template_and_cap(tmp_path: Path) -> None:
     template = _verdict_template()
-    assert template.startswith("*Arc Analyst · verdict run")
+    assert template.startswith("🔔 **Arc Analyst · verdict run")
     assert aa.validate_verdict_report(template) == []
-    assert len(template) <= aa.VERDICT_REPORT_MAX == 1_200
+    assert len(template) <= aa.VERDICT_REPORT_MAX == 1_400
     r = tmp_path / "r.md"
-    r.write_text(template + "x" * 1_200)
+    r.write_text(template + "x" * 1_400)
     assert aa.main(["check-report", str(r), "--mode", "verdict"], None, NOW) == 2
     r.write_text(template + "\n*Quick changes*\n• none")
     assert aa.cmd_check_report(r, "verdict") == 2
@@ -2512,7 +2535,7 @@ def test_skill_and_prompt_document_the_verdict_run() -> None:
         "at most **one new XP proposal** and at most **one new study proposal** (a BT",
         "`arc_analyst.py record RUN_DIR --mode verdict`",
         "check-report RUN_DIR/report.md --mode verdict",
-        "**Report (≤ 1,200 chars),**",
+        "**Report (≤ 1,400 chars),**",
     ):
         assert rule in text, rule
     prompt = (ANALYST / "prompt_verdict.md").read_text()

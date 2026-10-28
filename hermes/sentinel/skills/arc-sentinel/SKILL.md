@@ -34,7 +34,7 @@ Your report is judged on precision: one real defect with proof is worth more tha
 If the pre-run context has an `## Owner directive` section, the owner wrote it for this run only. Do the
 normal procedure first, then the directive as an extra lens: its findings use the same schema, proof bar,
 severity bar and ledger keys, and its card proposals go through the same mapping rules (`related_cards`
-first, `new-card` only when no card owns it, with parents). Add a `*Directive*` section to the Slack report.
+first, `new-card` only when no card owns it, with parents). Add a `🎯 **Directive**` section to the Slack report.
 The directive never widens what you may write, run or mutate (Independence rules still hold), and it never
 asks you to install, enable or load skills: report what should change and let the owner's PR do it.
 `mark` consumes the directive. Don't re-apply it on later runs unless it reappears in the context.
@@ -213,24 +213,49 @@ trigger actions. Resolve an S-id's full finding from the newest `~/.hermes/profi
 `verdict: clean` only when nothing is medium or above. `draft_card` is required for `new-card`.
 
 ## Slack report format (final response; Slack markdown; no tables)
+Layout rules (D141, owner 2026-10-28: as readable as the #arc-investor posts):
+- **Bold is `**text**`.** The gateway converts standard markdown to Slack mrkdwn and turns a
+  single-star `*text*` into _italic_, so never use single stars for bold (headers, ids).
+- Every section header is its own line: the section's emoji, a space, then the bold title
+  (`🧪 **Checks**`). Exactly one blank line before each header, none inside a section.
+- Severity dots lead each finding line: 🔴 blocker · 🟠 high · 🟡 medium · ⚪ low. Status emoji
+  only where they add meaning: ✅ pass/clean/resolved · ❌ fail · ⚠️ warn/findings. Never put an
+  emoji inside a number or an id.
+- A `───` line, then a blank line, separates the body from the italic reply footer.
 ```
-*Arc Sentinel · <YYYY-MM-DD> · main @ <sha7>* — <✅ Clean check | ⚠️ N findings (B blocker, H high, M medium)>
-<commits reviewed: N (prev <sha7>..<sha7>)>
+🛡️ **Arc Sentinel · <YYYY-MM-DD> · main @ <sha7>** — <✅ Clean check | ⚠️ N findings (B blocker, H high, M medium)>
+commits reviewed: N (prev <sha7>..<sha7>)
 
-*Checks:* <PASS/FAIL one-liners, only FAILs expanded> · tests <n> (<Δ>) · coverage <x>% (<Δ>)
-*Regressions:* <metric flags or "none">
-*Experiments:* <n registered (running ids) · prereg OK/MISMATCH · mid-run control commits n · XP-advisory n/n · A/A before A/B OK · P − C residual converging/WARN, or "pre-E10 store">
+🧪 **Checks**
+• <✅ PASS / ❌ FAIL one-liners, only FAILs expanded>
+• tests <n> (<Δ>) · coverage <x>% (<Δ>)
 
-*New*
-• *S-<n>* [<severity>/<category>] <title> — <evidence in one line> → <recommendation> · <action + related cards>
-*Regressed* … *Still open* (one line each) … *Resolved* (one line each, with evidence)
+📉 **Regressions**
+• <metric flags or "none">
 
-*Proposed cards (need owner OK)*
-• *S-<n>* → `<draft title>` ← parents <keys> — <2-line acceptance>
+🔬 **Experiments**
+• <n registered (running ids) · prereg OK/MISMATCH · mid-run control commits n · XP-advisory n/n · A/A before A/B OK · P − C residual converging/WARN, or "pre-E10 store">
 
-*Strategy → Analyst* (info-only cross-references, cited; no cards)
+🆕 **New**
+• <🔴|🟠|🟡|⚪> **S-<n>** [<severity>/<category>] <title> — <evidence in one line> → <recommendation> · <action + related cards>
+
+🔁 **Regressed** (omit the section when empty)
+• <🔴|🟠|🟡|⚪> **S-<n>** … (one line each)
+
+⏳ **Still open** (re-verified at HEAD)
+• <🔴|🟠|🟡|⚪> **S-<n>** … (one line each; low items may share a line)
+
+✅ **Resolved**
+• **S-<n>** … (one line each, with evidence)
+
+📝 **Proposed cards** (need owner OK)
+• **S-<n>** → `<draft title>` ← parents <keys> — <2-line acceptance>
+
+🤝 **Strategy → Analyst** (info-only cross-references, cited; no cards)
 • …
+
+───
 
 _Reply in thread: `@hermes create S-<n>` · `comment S-<n>` · `wontfix S-<n> <why>` · `accept S-<n>` · `rerun`. Artefacts: <RUN_DIR>_
 ```
-Keep it under ~3,500 characters: detail lives in RUN_DIR/findings.json; link to it.
+Keep it under ~4,000 characters: detail lives in RUN_DIR/findings.json; link to it.

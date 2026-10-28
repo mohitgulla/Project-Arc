@@ -269,7 +269,7 @@ line under "Obvious flaws" as `→ Sentinel` and do not draft a card for it.
     fix the JSON and rerun (rejection writes nothing). It prints the A-ids and the P-ids.
 13. Write the report to `RUN_DIR/report.md` and run
     `python3 ~/.hermes/profiles/arc-analyst/scripts/arc_analyst.py check-report RUN_DIR/report.md`
-    (≤ 3,500 chars, all sections present, *Quick changes* and *Experiments* not empty).
+    (≤ 4,000 chars, all sections present, *Quick changes* and *Experiments* not empty).
     Shorten until it passes.
 14. `python3 ~/.hermes/profiles/arc-analyst/scripts/arc_analyst.py mark RUN_DIR` (advances the
     watermark so the next run wakes only on new closed trades, a halt, an experiment status
@@ -346,34 +346,56 @@ status (and `stop_advice` when running); `next_experiment`, `next_slot`, `next_s
 `next_ml_study` are required. `study_value` is required for (and only on) a finding with a
 `study_spec` or `ml_study_spec`.
 
-## Slack report format (final response; Slack markdown; no tables; ≤ 3,500 chars)
+## Slack report format (final response; Slack markdown; no tables; ≤ 4,000 chars)
+Layout rules (D141, owner 2026-10-28: as readable as the #arc-investor posts):
+- **Bold is `**text**`.** The gateway converts standard markdown to Slack mrkdwn and turns a
+  single-star `*text*` into _italic_, so never use single stars for bold (headers, ids).
+- Every section header is its own line: the section's emoji, a space, then the bold title
+  (`📊 **Performance vs model**`). Exactly one blank line before each header, none inside a
+  section.
+- Severity dots lead each flaw/finding line: 🔴 blocker · 🟠 high · 🟡 medium · ⚪ low. Status
+  emoji only where they add meaning: ✅ keep/resolved/pass · ↩️ roll back · ⏳ too early/continue ·
+  🛑 stop · ❌ fail. Never put an emoji inside a number or an id.
+- A `───` line, then a blank line, separates the body from the italic reply footer.
 ```
-*Arc Analyst · <YYYY-MM-DD> · window <from>..<to>* — <N> closed trades this week (<M> all time)
+📈 **Arc Analyst · <YYYY-MM-DD> · window <from>..<to>**
+<N> closed trades this week (<M> all time)
 
-*Performance vs model*
+📊 **Performance vs model**
 • <kind> · <regime>: n=<n> realised $<x> vs EV $<y> (<±z>/trade) · slippage <a> bps vs modelled <b> bps
 • Sleeve <short|swing>: n=<n> mean net $<x> CI [<lo>, <hi>] · <keep|shrink|collect> (D97)
-*Standing themes*
+
+🧭 **Standing themes**
 • cost-model: <status> — <note with N> (one line per theme, all seven)
-*Quick changes* (≤3; "none: <why>" is a valid answer)
-• *A-<n>* <key>: <old> → <new> · evidence <kind> n=<n> · expected <effect> · rollback <how> · apply: `!arc config set …` or `ship A-<n>` → card
-*Quick-change review*
-• *A-<n>* <keep|roll back|too early> · <metric> before <x> (n=<a>) → after <y> (n=<b>) (or "none shipped")
-*Experiments*
-• *XP-<n>* <kind>/<area> <status> · <sessions>/<min>–<max> sessions · mean <±d>%/day CI [<lo>, <hi>] · <verdict> · advice <continue | stop: why> — why: <regime/structure rows with n>
-• *Next XP:* *XP-<n>* <area>: <title> · slot <free now | after XP-<m> ~date> (or none: <why>)
-  T1 <leaf = value> · T2 <…> · T3 <…> · T4 <…>
+
+⚡ **Quick changes** (≤3; "none: <why>" is a valid answer)
+• **A-<n>** <key>: <old> → <new> · evidence <kind> n=<n> · expected <effect> · rollback <how> · apply: `!arc config set …` or `ship A-<n>` → card
+
+🔁 **Quick-change review**
+• **A-<n>** <✅ keep|↩️ roll back|⏳ too early> · <metric> before <x> (n=<a>) → after <y> (n=<b>) (or "none shipped")
+
+🧪 **Experiments**
+• **XP-<n>** <kind>/<area> <status> · <sessions>/<min>–<max> sessions · mean <±d>%/day CI [<lo>, <hi>] · <verdict> · advice <⏳ continue | 🛑 stop: why> — why: <regime/structure rows with n>
+• **Next XP:** **XP-<n>** <area>: <title> · slot <free now | after XP-<m> ~date> (or none: <why>)
+  T1 <leaf = value> · T2 <…> · T3 <…>
   value <score> = <pct>%/day × share <s> × p <p> ÷ <sessions> sessions
 • backlog top 5: XP-<a> <value> <title> · XP-<b> … (or "empty")
-*Backtest* (one line per study with a new verdict since the last run; else "no new verdict")
-• *BT-<n>* <hypothesis> · <c125|c500> <dev|holdout> <switch|fragile|keep control> diff $<±d> CI [<lo>, <hi>] · <citable | hypothesis only> · drafts: BT-<m> (RUN_DIR/study-specs)
-• *Next BT:* *BT-<n>* <hypothesis> · value <score> = <pct>%/day × share <s> × p <p> ÷ <nights> nights · queue: BT-<m> <status> ETA <k> nights (or none: <why>)
-*Next ML* (models: champion/shadow per family · live health n · studies)
+
+🔬 **Backtest** (one line per study with a new verdict since the last run; else "no new verdict")
+• **BT-<n>** <hypothesis> · <c125|c500> <dev|holdout> <switch|fragile|keep control> diff $<±d> CI [<lo>, <hi>] · <citable | hypothesis only> · drafts: BT-<m> (RUN_DIR/study-specs)
+• **Next BT:** **BT-<n>** <hypothesis> · value <score> = <pct>%/day × share <s> × p <p> ÷ <nights> nights · queue: BT-<m> <status> ETA <k> nights (or none: <why>)
+
+🤖 **Next ML** (models: champion/shadow per family · live health n · studies)
 • m1 champion <v> · shadow <v> · live calibration n=<n> <ok|insufficient> · drift <ok|warn>
-• *Next ML:* *ML-<n>* <family> <change_kind>: <hypothesis> · value <score> ÷ <nights> nights · queue: ML-<m> <status> ETA <k> nights (or none: <why>)
-*Obvious flaws*
-• *A-<n>* [<severity>] <key = value> — <why it contradicts D#> (or "none")
-*Ledger*: new A-… · still open A-… · resolved A-… (evidence) · backlog new XP-… · dropped XP-…
+• **Next ML:** **ML-<n>** <family> <change_kind>: <hypothesis> · value <score> ÷ <nights> nights · queue: ML-<m> <status> ETA <k> nights (or none: <why>)
+
+🚩 **Obvious flaws**
+• <🔴|🟠|🟡|⚪> **A-<n>** [<severity>] <key = value> — <why it contradicts D#> (or "none")
+
+🗂️ **Ledger**
+new A-… · still open A-… · resolved A-… (evidence) · backlog new XP-… · dropped XP-…
+
+───
 
 _Reply in thread: `@hermes create A-<n>` · `ship A-<n>` · `comment A-<n>` · `wontfix A-<n> <why>` · `accept A-<n>` · `approve XP-<n>` · `drop XP-<n> <why>` · `reprioritise XP-<n> <why>` · `approve BT-<n>` · `drop BT-<n> <why>` · `stop BT-<n> <why>` · `approve ML-<n>` · `drop ML-<n> <why>` · `stop ML-<n> <why>` · `rerun`. Artefacts: <RUN_DIR>_
 ```
@@ -412,15 +434,22 @@ The context starts with `MODE: verdict run`; when you see it, this section repla
   `arc_analyst.py check-report RUN_DIR/report.md --mode verdict` → `arc_analyst.py mark RUN_DIR`
   (marks these verdicts as read; the weekly watermark is untouched). Your final response IS
   the report.
-- **Report (≤ 1,200 chars),** a top-level post in #arc-analyst. The runner's verdict message
+- **Report (≤ 1,400 chars),** a top-level post in #arc-analyst. The runner's verdict message
   ts is not stored, so it can't be threaded under it:
+Same layout rules as the weekly report (`**bold**` emoji header lines, one blank line between
+sections, `───` before the footer):
 ```
-*Arc Analyst · verdict run · <YYYY-MM-DD>* — <BT-n / XP-n>
-*Read*
-• *BT-<n>* <c500 holdout> <switch|fragile|keep control> diff $<±d> CI [<lo>, <hi>] · <what it means>
-*Follow-up*
-• new *XP-<n>* <title> · value <score> (or "none: <why>") · new *BT-<m>* <hypothesis> (or "none: <why>")
+🔔 **Arc Analyst · verdict run · <YYYY-MM-DD>** — <BT-n / XP-n>
+
+📖 **Read**
+• **BT-<n>** <c500 holdout> <✅ switch|🟡 fragile|⚪ keep control> diff $<±d> CI [<lo>, <hi>] · <what it means>
+
+➡️ **Follow-up**
+• new **XP-<n>** <title> · value <score> (or "none: <why>") · new **BT-<m>** <hypothesis> (or "none: <why>")
 • dropped XP-<k>: <why> (only related entries)
+
+───
+
 _Reply: `approve XP-<n>` · `approve BT-<m>` · `drop … <why>`. Full review Sun 14:00 PT._
 ```
 

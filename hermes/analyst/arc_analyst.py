@@ -45,7 +45,7 @@ Agent subcommands:
                               verdict run it advances only the verdict run's watermark
   check-report FILE [--mode verdict]
                               the Slack report respects the size cap and sections
-                              (verdict run: <= 1,200 chars)
+                              (verdict run: <= 1,400 chars)
 
 Verdict gate (E26.4, D121; cron `arc-analyst-verdict-check`, daily 09:30 PT, through
 ``arc_analyst_verdict.py`` because Hermes runs a cron script without arguments):
@@ -103,7 +103,7 @@ WINDOW_DAYS = 7
 # `--min-sample 20` so their `low_sample` flags agree (arc.journal.views keeps 30 elsewhere).
 MIN_SAMPLE = 20
 MAX_STDOUT = 30_000
-REPORT_MAX = 3_500
+REPORT_MAX = 4_000  # D141: emoji headers + blank lines between sections
 MAX_SHOWN_TRADES = 5
 SECRET_PREFIXES = (
     "ALPACA_",
@@ -394,7 +394,7 @@ LEGACY_REF_PREFIXES = ("docs/RESEARCH", "data/backtest")
 
 # ---- E26.4 (D121): the short verdict run ----
 XP_VERDICTS = Path("config") / "experiments" / "live" / "verdicts"  # E21.4 verdict files
-VERDICT_REPORT_MAX = 1_200
+VERDICT_REPORT_MAX = 1_400  # D141 layout
 VERDICT_REPORT_SECTIONS = ("verdict run", "*Read*", "*Follow-up*")
 VERDICT_DOC_KEYS = ("mode", "verdicts", "findings", "backlog_drops")
 VERDICT_CATEGORIES = ("xp-proposal", "theme", "data-gap")  # a study_spec rides on any of them
@@ -3548,7 +3548,12 @@ def validate_report(text: str) -> list[str]:
             errs.append(f"report lacks {s!r}")
     # D86: both tracks every run. Each section's body holds items or `none: <why>`.
     for title in ("Quick changes", "Experiments"):
-        m = re.search(rf"\*{re.escape(title)}\*[^\n]*\n(.*?)(?=\n\s*\*[A-Z]|\Z)", text, re.S)
+        # D141: a section ends at the next blank line or the next (emoji +) bold header line.
+        m = re.search(
+            rf"\*{re.escape(title)}\*[^\n]*\n(.*?)(?=\n[ \t]*\n|\n[^\n•]*\*[A-Z][^\n]*\*|\Z)",
+            text,
+            re.S,
+        )
         body = m.group(1).strip() if m else ""
         if m and not body:
             errs.append(f"section *{title}* is empty: list items or `none: <why>`")

@@ -563,7 +563,7 @@ def test_install_dry_run_copies_the_lens_script(tmp_path: Path) -> None:
         "harness/account gap",
         "never PR review threads or comments",
         "Never run `arc experiment` write verbs",
-        "*Experiments:*",
+        "🔬 **Experiments**",
     ],
 )
 def test_skill_documents_lens_8(phrase: str) -> None:
