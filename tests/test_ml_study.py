@@ -24,6 +24,7 @@ from arc.ml.m1.dataset import HoldoutReadError
 from arc.ml.m1.train import LGB_PARAMS, model_features
 from arc.routines.config import BacktestStudiesSettings
 from arc.utils.calendar import ET
+from tests.ml_lightgbm import require_lightgbm
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -575,7 +576,7 @@ def test_m1_verdict_pass_shadow_fail_candidate(
 def test_m2_dev_rung_on_the_harness_is_deterministic(tmp_path: Path) -> None:
     """The real M2 dev path (``train_family(final_fit=False)``) on a synthetic store:
     one fold, nothing written, inner log-loss as the selection metric, same result twice."""
-    pytest.importorskip("lightgbm")
+    require_lightgbm()  # importorskip errors (OSError) on macOS without libomp
     from tests.test_ml_m2_model import _cfg, _write_store
 
     data = tmp_path / "data"
@@ -610,7 +611,7 @@ def test_version_id_plain_unchanged_and_overlay_deterministic() -> None:
 
 
 def test_parallel_fit_is_byte_identical(tmp_path: Path) -> None:
-    pytest.importorskip("lightgbm")
+    require_lightgbm()  # importorskip errors (OSError) on macOS without libomp
     import numpy as np
 
     from arc.ml.m1 import train
