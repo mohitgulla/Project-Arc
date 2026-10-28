@@ -909,7 +909,7 @@ def _run_covariate_check(args: argparse.Namespace) -> int:
         except ExperimentError as exc:
             _err(f"arc experiment covariate-check: {exc}")
             return 2
-        with paired_view(conn) as view:
+        with paired_view(conn, experiment_id=st.experiment_id) as view:
             rep = build_report(
                 view, st, cfg, now=now, aa_sigma=store.aa_sigma(),
                 aa_cal=store.aa_calibration(), market=_spy_market(args, settings),
@@ -968,10 +968,11 @@ def _run_eval(args: argparse.Namespace, store: Any, conn: sqlite3.Connection) ->
         else:
             from arc.experiments.paired import paired_view
 
-            with paired_view(conn) as view:
+            st = store.require(args.experiment_id)
+            with paired_view(conn, experiment_id=st.experiment_id) as view:
                 rep = build_report(
                     view,
-                    store.require(args.experiment_id),
+                    st,
                     cfg,
                     now=now,
                     aa_sigma=store.aa_sigma(),
