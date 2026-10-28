@@ -1565,7 +1565,9 @@ def _latest_mc(conn: sqlite3.Connection, h: str) -> sqlite3.Row | None:
     ).fetchone()
 
 
-def _quant(conn: sqlite3.Connection, p: sqlite3.Row, mc: sqlite3.Row | None) -> QuantSection:
+def _quant(
+    p: sqlite3.Row, mc: sqlite3.Row | None, conn: sqlite3.Connection | None = None
+) -> QuantSection:
     quant = _json(p["quant_json"], {})
     sizing = _json(p["sizing_json"], {})
     st = _json(p["structure_json"], {})
@@ -1600,7 +1602,7 @@ def _quant(conn: sqlite3.Connection, p: sqlite3.Row, mc: sqlite3.Row | None) -> 
         levels_text=(levels_text(analytics.levels) or None)
         if analytics is not None and analytics.levels
         else None,
-        ml=_ml_shadow(conn, p["proposal_hash"]),
+        ml=_ml_shadow(conn, p["proposal_hash"]) if conn is not None else None,
     )
 
 
@@ -2394,7 +2396,7 @@ def load_trade(
         as_of=now.astimezone(ET),
         header=header,
         payoff=_payoff(conn, p, header, market, pos),
-        quant=_quant(conn, p, mc),
+        quant=_quant(p, mc, conn),
         decisions=trail,
         gate=_gate(conn, proposal_hash),
         approval=approval,
