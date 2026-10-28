@@ -374,6 +374,9 @@ def test_never_touches_live_db(
         if " backtest study queue " in f" {' '.join(argv)} ":  # E26.2: files only, no store
             assert "--db" not in argv
             continue
+        if " ml study " in f" {' '.join(argv)} ":  # E27.8: the ML queue/specs, no store
+            assert "--db" not in argv
+            continue
         assert argv[argv.index("--db") + 1] == copy
     # no secret reaches the arc views
     monkeypatch.setenv("ALPACA_API_KEY", "k")
@@ -410,7 +413,8 @@ def _write_valid_findings(run_dir: Path, findings: list[dict[str, Any]] | None =
            "findings": findings or [], "resolved": [], "experiments": [],
            "quick_changes_none": "no bucket has n >= 20",
            "next_experiment": "none: no bucket has n >= 20",
-           "next_study": "none: no study_spec draft"}  # fmt: skip
+           "next_study": "none: no study_spec draft",
+           "next_ml_study": "none: no ml_study_spec draft"}  # fmt: skip
     (run_dir / "findings.json").write_text(json.dumps(doc))
 
 
@@ -611,11 +615,12 @@ def _errs(findings: list[dict[str, Any]], **kw: Any) -> list[str]:
            "next_experiment": kw.pop("next_experiment", "none: n < 20"),
            "next_slot": kw.pop("next_slot", "free now"),
            "next_study": kw.pop("next_study", "none: no study_spec draft"),
+           "next_ml_study": kw.pop("next_ml_study", "none: no ml_study_spec draft"),
            **kw.pop("extra", {})}  # fmt: skip
     return aa.validate_findings(
         doc, kw.pop("ledger", {"items": {}}), kw.pop("prev", None), kw.pop("registry", []),
         backlog=kw.pop("backlog", None), seed_ids=kw.pop("seed_ids", frozenset()),
-        max_arms=kw.pop("max_arms", 10), studies=kw.pop("studies", BT3),
+        max_arms=kw.pop("max_arms", 10), studies=kw.pop("studies", BT3), ml=kw.pop("ml", None),
     )  # fmt: skip
 
 
@@ -1034,7 +1039,8 @@ def test_context_has_backlog_and_record_reserves_xp_ids(
     doc = {"verdict": "findings", "themes": _themes(), "findings": [_prop()], "resolved": [],
            "experiments": LINES, "quick_changes_none": "n < 20 in every bucket",
            "next_experiment": "XP-4", "next_slot": "after XP-2, then XP-3 (queued)",
-           "next_study": "none: no study_spec draft"}  # fmt: skip
+           "next_study": "none: no study_spec draft",
+           "next_ml_study": "none: no ml_study_spec draft"}  # fmt: skip
     (run_dir / "findings.json").write_text(json.dumps({**doc, "experiments": LINES[:1]}))
     assert aa.main(["record", str(run_dir)], p, NOW) == 2
     assert "XP-2 (running) has no line" in capsys.readouterr().out
@@ -1175,12 +1181,15 @@ def test_owner_commands_route_on_the_id_prefix(
     assert aa.main(["approve", "BT-3", *approval], p, NOW) == 2
     assert "no study proposal BT-3 in the backlog" in capsys.readouterr().out
     assert aa.main(["stop", "XP-2", "x"], p, NOW) == 2
-    assert "`stop` is for backtest studies (BT-<n>)" in capsys.readouterr().out
+    assert "`stop` is for backtest and ML studies (BT-<n>, ML-<n>)" in capsys.readouterr().out
     assert aa.main(["drop", "A-3", "x"], p, NOW) == 2
     assert "is not a proposal id: use XP-<n>" in capsys.readouterr().out
-    assert [aa.owner_id_kind(x) for x in ("XP-2", "BT-1", "P-1", "S-1", "XP-0")] == [
-        "xp", "bt", "legacy", None, None,
+    ids = ("XP-2", "BT-1", "P-1", "S-1", "XP-0", "ML-4", "ML-0")
+    assert [aa.owner_id_kind(x) for x in ids] == [
+        "xp", "bt", "legacy", None, None, "ml", None,
     ]  # fmt: skip
+    assert aa.main(["approve", "ML-3", *approval], p, NOW) == 2
+    assert "no ML study proposal ML-3 in the backlog" in capsys.readouterr().out
     assert aa.backlog_by_id(aa.load_backlog(p.backlog), "XP-2")["status"] == "proposed"
 
 
@@ -2167,7 +2176,7 @@ def test_weekly_cap_two_pass_third_refused_resets_monday_et(
     sun_late = _dt.datetime(2026, 10, 18, 23, 59, tzinfo=ET)  # still week 42 in ET
     assert aa.main(["approve", "BT-6", *BT_APPROVAL], p, sun_late) == 2
     out = capsys.readouterr().out
-    assert "BT-6 refused: the weekly cap is 2 BT approvals per ISO week (D121)" in out
+    assert "BT-6 refused: the weekly cap is 2 study approvals per ISO week, BT and ML" in out
     assert "week 2026-W42 already has BT-4 (2026-10-12, stopped), BT-5 (2026-10-14, queued)" in out
     assert "It resets Mon 2026-10-19 00:00 ET" in out
     assert aa.bt_by_id(aa.load_backlog(p.backlog), "BT-6")["status"] == "proposed"
@@ -2426,7 +2435,7 @@ def test_record_verdict_accepts_one_xp_and_one_bt_and_mark_keeps_the_weekly_wate
     state = aa.load_json(p.state, {})
     assert state["closed_watermark"] == 5 and state["last_run_at"] == "2026-10-04T15:00:00-04:00"
     assert state["bt_holdouts_seen"] == [f"BT-3:{'a' * 12}:2026-10-03T18:00:00-04:00"]
-    assert aa.unseen_verdicts(state, state["bt_holdouts_seen"], []) == ([], [])
+    assert aa.unseen_verdicts(state, state["bt_holdouts_seen"], []) == ([], [], [])
 
 
 @pytest.mark.parametrize(
@@ -2436,7 +2445,7 @@ def test_record_verdict_accepts_one_xp_and_one_bt_and_mark_keeps_the_weekly_wate
         (_vdoc(_prop(), _prop(key="xp-proposal:tp-level-2")),
          "2 new XP proposals: at most 1 per verdict run"),
         (_vdoc(_bt_follow_up(), _bt_follow_up("theme:tp-follow-up-2")),
-         "2 new BT proposals: at most 1 per verdict run"),
+         "2 new study proposals (BT/ML): at most 1 per verdict run"),
         (_vdoc(themes=_themes()), "`themes` is not allowed in a verdict run"),
         (_vdoc(quick_changes_none="none"), "`quick_changes_none` is not allowed"),
         (_vdoc(_flaw()), "category 'flaw': a verdict run only proposes"),
@@ -2500,7 +2509,7 @@ def test_skill_and_prompt_document_the_verdict_run() -> None:
     for rule in (
         "## Verdict run (E26.4, D121; cron `arc-analyst-verdict-check`, daily 09:30 PT)",
         "**at most once per ET day**",
-        "at most **one new XP proposal** and at most **one new BT proposal**",
+        "at most **one new XP proposal** and at most **one new study proposal** (a BT",
         "`arc_analyst.py record RUN_DIR --mode verdict`",
         "check-report RUN_DIR/report.md --mode verdict",
         "**Report (≤ 1,200 chars),**",

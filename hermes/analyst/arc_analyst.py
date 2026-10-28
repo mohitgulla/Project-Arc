@@ -81,10 +81,12 @@ they are stripped from the environment of every command this script runs.
 
 from __future__ import annotations
 
+import csv
 import dataclasses
 import datetime as dt
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -140,6 +142,8 @@ THEMES = {
     "exit-policy": "exit policy / early exits vs hold to expiry (config/exits.yaml, D19)",
     "sizing": "sizing = min(Risk suggestion, 5%-equity cap) (D18)",
     "auto-approve": "auto-approve gating (D34 + E7.5a scorecard gate)",
+    # E27.8 (D133): model iteration is a standing responsibility (ML-<n> studies)
+    "models": "ML models: registry, ML-<n> studies, live shadow monitoring (D126, D133)",
 }
 THEME_STATUSES = ("no-evidence", "watching", "action-proposed", "settled")
 REPORT_SECTIONS = (
@@ -150,6 +154,7 @@ REPORT_SECTIONS = (
     "Experiments",
     "Next XP",
     "Backtest",
+    "Next ML",
     "Obvious flaws",
     "create A-",
 )
@@ -212,6 +217,32 @@ BT_QUEUED = ("queued", "running", "concluded", "stopped", "failed")  # in queue.
 BT_WEEKLY_CAP = 2  # D121: owner approvals per ISO week (America/New_York)
 BT_QUEUE = Path("data") / "backtest" / "queue.json"
 STUDY_VALUE_KEYS = ("pct_per_day", "source", "affected_share", "p_success", "nights_needed")
+# ---- E27.8 (D133): ML-<n> model studies in the same backlog (`kind: ml`) ----
+# An `ml_study_spec` draft becomes a `kind: ml` entry keyed `ml:<finding key>` with its ML-<n>
+# (the next free number across config/ml_studies/, the shared queue, the ML ledger, the
+# retired list, open ml/<n> spec PRs and the backlog; never reused). Same value formula as
+# BT (cost = compute nights). Owner: `approve ML-<n>` -> `arc ml study adopt` (spec PR +
+# a `kind: ml` queue entry; the 2-per-ISO-week approval cap is shared with BT),
+# `drop ML-<n>` (`arc ml study drop`: the number stays a gap), `stop ML-<n>` (queued).
+# Mirrors arc.ml.study (FAMILY_RULE, ChangeKind, MlStudySpec); a test pins the mirror.
+ML_KEY_PREFIX = "ml:"
+ML_STUDY_ID_RE = re.compile(r"^ML-[1-9]\d*$")
+ML_SPEC_PR_BRANCH_RE = re.compile(r"^ml/([1-9]\d*)(?:-|$)")  # arc ml study adopt's ml/<n>
+ML_FAMILY_RULE = {"m1": "m1_keep", "credit": "m2_promote", "debit": "m2_promote"}
+ML_CHANGE_KINDS = ("challenger", "tuning", "features", "calibration")
+ML_SPEC_KEYS = ("hypothesis", "family", "incumbent", "change_kind", "overlay", "grid",
+                "decision_rule")  # fmt: skip
+ML_SPEC_REQUIRED = ("hypothesis", "family", "incumbent", "change_kind", "decision_rule")
+ML_MAX_GRID = 48  # MlStudySpec.grid max_length (ml_studies.max_grid may be lower: validate)
+ML_MODELS = Path("data") / "ml" / "models"
+ML_LEDGER = Path("data") / "ml" / "studies" / "ledger.jsonl"
+ML_HEALTH = Path("data") / "ml" / "health"
+ML_SPECS = Path("config") / "ml_studies"
+ML_RETIRED = ML_SPECS / "retired.yaml"
+ML_SPECS_DIR = "study-specs"  # RUN_DIR/study-specs/ML-<n>.yaml, next to the BT drafts
+ML_MIN_N = 30  # live calibration / drift below this n is "insufficient" (E27.4)
+ML_SECTION_MAX = 3_000
+STUDY_KINDS = ("bt", "ml")
 K_TREATMENTS = 3  # D108 (revises D86's 4): control + exactly 3 treatments
 TREATMENT_NAMES = tuple(f"t{i}" for i in range(1, K_TREATMENTS + 1))
 #: D108: an XP runs control as its own arm on the experiment account: C + K runner arms.
@@ -367,8 +398,8 @@ VERDICT_REPORT_MAX = 1_200
 VERDICT_REPORT_SECTIONS = ("verdict run", "*Read*", "*Follow-up*")
 VERDICT_DOC_KEYS = ("mode", "verdicts", "findings", "backlog_drops")
 VERDICT_CATEGORIES = ("xp-proposal", "theme", "data-gap")  # a study_spec rides on any of them
-VERDICT_MAX_NEW = 1  # new proposals per kind (XP, BT) per verdict run
-VERDICT_REF_RE = re.compile(r"(?<![A-Za-z0-9_-])((?:XP|BT)-[1-9]\d*)(?![0-9])")
+VERDICT_MAX_NEW = 1  # new proposals per kind (XP, BT/ML together) per verdict run
+VERDICT_REF_RE = re.compile(r"(?<![A-Za-z0-9_-])((?:XP|BT|ML)-[1-9]\d*)(?![0-9])")
 WEEKLY_TZ = ZoneInfo("America/Los_Angeles")  # arc-analyst-weekly-audit: `0 14 * * 0` host PT
 WEEKLY_WEEKDAY = 6  # Sunday
 WEEKLY_AT = dt.time(14, 0)
@@ -497,10 +528,12 @@ def wake_decision(
     now: dt.datetime,
     holdouts: list | None = None,
     xp_verdicts: list | None = None,
+    ml_verdicts: list | None = None,
 ) -> dict:
     """Whether the agent should run, and why. Reads the COPY only. *holdouts* are the
     research ledger's holdout run keys (E7.15): one not seen at the last ``mark`` wakes it.
-    *xp_verdicts* are the XP verdict files' keys (E26.4, :func:`xp_verdict_keys`): the same."""
+    *xp_verdicts* are the XP verdict files' keys (E26.4, :func:`xp_verdict_keys`): the same.
+    *ml_verdicts* are the ML ledger's verdict keys (E27.8, :func:`ml_verdict_key`): the same."""
     closed_total, closed_max = conn.execute(
         f"SELECT COUNT(*), COALESCE(MAX(rowid), 0) FROM outcomes WHERE {closed_filter()}"
     ).fetchone()
@@ -544,6 +577,9 @@ def wake_decision(
     new_xp = [k for k in xp_verdicts or [] if k not in set(state.get("xp_verdicts_seen") or [])]
     if new_xp:
         reasons.append(f"new XP verdict file(s) since the last run: {verdict_ids(new_xp)}")
+    new_ml = [k for k in ml_verdicts or [] if k not in set(state.get("ml_verdicts_seen") or [])]
+    if new_ml:
+        reasons.append(f"new ML study verdict(s) since the last run: {verdict_ids(new_ml)}")
     wake = closed_total > 0 and bool(reasons)
     if closed_total == 0:
         reasons = ["no closed outcome in the journal yet (E9.4 start condition)"]
@@ -562,6 +598,7 @@ def wake_decision(
         "since": iso(since),
         "new_holdouts": new_holdouts,
         "new_xp_verdicts": new_xp,
+        "new_ml_verdicts": new_ml,
     }
 
 
@@ -1130,7 +1167,7 @@ def value_formula(entry: dict) -> str:
         f"{_num(entry.get('affected_share'), '.2f')} x p {_num(entry.get('p_success'), '.2f')} "
         + (
             f"/ {entry.get('nights_needed')} compute nights"
-            if is_bt(entry)
+            if is_study(entry)
             else f"/ {entry.get('sessions_needed')} sessions"
         )
     )
@@ -1556,6 +1593,11 @@ def spec_numbers(repo: Path) -> set[int]:
 def spec_pr_numbers(p: Paths) -> set[int]:
     """XP numbers of open spec PRs (branch ``xp/<n>``, adopt's publisher). Best effort:
     no ``gh``, no network or no JSON gives ``set()``."""
+    return _open_pr_numbers(p, SPEC_PR_BRANCH_RE)
+
+
+def _open_pr_numbers(p: Paths, branch_re: re.Pattern) -> set[int]:
+    """Numbers in the head branches of open PRs matching *branch_re* (group 1)."""
     if not p.gh:
         return set()
     try:
@@ -1573,7 +1615,7 @@ def spec_pr_numbers(p: Paths) -> set[int]:
         return set()
     out = set()
     for pr in prs if isinstance(prs, list) else []:
-        m = SPEC_PR_BRANCH_RE.match(str((pr or {}).get("headRefName") or ""))
+        m = branch_re.match(str((pr or {}).get("headRefName") or ""))
         if m:
             out.add(int(m.group(1)))
     return out
@@ -1614,7 +1656,9 @@ def _hist(entry: dict, when: str, event: str, **extra) -> None:
 
 def backlog_by_id(backlog: dict, pid: str) -> dict | None:
     """The XP entry holding *pid* (``kind: bt`` studies: :func:`bt_by_id`)."""
-    return next((e for e in backlog["items"].values() if e.get("id") == pid and not is_bt(e)), None)
+    return next(
+        (e for e in backlog["items"].values() if e.get("id") == pid and not is_study(e)), None
+    )
 
 
 def bt_by_id(backlog: dict, sid: str) -> dict | None:
@@ -1638,7 +1682,9 @@ def rereserve_collisions(backlog: dict, used, when: str) -> list[str]:
     out = []
     taken = set(used)
     for e in sorted(backlog["items"].values(), key=lambda e: _id_num(e["id"])):
-        if e.get("status") not in BACKLOG_RANKED or e.get("experiment_id") == e["id"] or is_bt(e):
+        if e.get("status") not in BACKLOG_RANKED or e.get("experiment_id") == e["id"]:
+            continue
+        if is_study(e):
             continue
         if _id_num(e["id"]) not in taken:
             continue
@@ -1675,7 +1721,7 @@ def ranked_backlog(
         for e in backlog["items"].values()
         if e.get("status") in statuses
         and not e.get("needs_rewrite")
-        and (kind is None or ("bt" if is_bt(e) else "xp") == kind)
+        and (kind is None or entry_kind(e) == kind)
     ]
     return sorted(
         items,
@@ -1706,7 +1752,7 @@ def flag_needs_rewrite(backlog: dict, when: str) -> list[str]:
     same key with three treatments (which clears the flag). Returns change lines."""
     out = []
     for e in sorted(backlog["items"].values(), key=lambda e: _id_num(e["id"])):
-        if e.get("status") not in BACKLOG_RANKED or e.get("needs_rewrite") or is_bt(e):
+        if e.get("status") not in BACKLOG_RANKED or e.get("needs_rewrite") or is_study(e):
             continue
         got = _spec_treatments(e.get("spec"))
         if got == sorted(TREATMENT_NAMES):
@@ -2191,6 +2237,22 @@ def is_bt(entry: dict) -> bool:
     return (entry or {}).get("kind") == "bt"
 
 
+def is_ml(entry: dict) -> bool:
+    """A ``kind: ml`` model-study entry (E27.8, D133)."""
+    return (entry or {}).get("kind") == "ml"
+
+
+def is_study(entry: dict) -> bool:
+    """A compute study (BT or ML): ranked by compute nights, approved under the shared cap."""
+    return (entry or {}).get("kind") in STUDY_KINDS
+
+
+def entry_kind(entry: dict) -> str:
+    """``xp`` | ``bt`` | ``ml`` (an entry without ``kind`` is an XP proposal)."""
+    k = (entry or {}).get("kind")
+    return k if k in STUDY_KINDS else "xp"
+
+
 def bt_numbers(backlog: dict) -> set[int]:
     """Every BT number a ``kind: bt`` entry holds (dropped ones too: never reused)."""
     return {
@@ -2357,13 +2419,14 @@ def load_bt_queue(path: Path) -> dict:
 
 
 def sync_bt_queue(backlog: dict, queue: dict, when: str) -> list[str]:
-    """``kind: bt`` statuses from the study queue (the runner moves queued -> running ->
-    concluded / stopped / failed, E26.3). Returns change lines."""
+    """``kind: bt`` and ``kind: ml`` statuses from the shared study queue (the runner
+    moves queued -> running -> concluded / stopped / failed, E26.3/E27.7). Returns change
+    lines."""
     out = []
     by_id = {
         e.get("id"): e
         for e in backlog["items"].values()
-        if is_bt(e) and e.get("status") != "dropped"
+        if is_study(e) and e.get("status") != "dropped"
     }
     for q in queue.get("entries") or []:
         entry = by_id.get(q.get("id"))
@@ -2446,6 +2509,785 @@ def bt_queue_lines(queue_view: dict | None, errors: str = "") -> list[str]:
     return out
 
 
+# ---------- ML-<n> model studies (E27.8, D133) ----------
+
+
+def ml_numbers(backlog: dict) -> set[int]:
+    """Every ML number a ``kind: ml`` entry holds (dropped ones too: never reused)."""
+    return {
+        _study_num(e["id"])
+        for e in backlog["items"].values()
+        if is_ml(e) and ML_STUDY_ID_RE.match(str(e.get("id") or ""))
+    }
+
+
+def ml_by_id(backlog: dict, sid: str) -> dict | None:
+    """The ``kind: ml`` entry holding *sid*."""
+    return next((e for e in backlog["items"].values() if is_ml(e) and e.get("id") == sid), None)
+
+
+def reserve_ml_id(backlog: dict, floor: int) -> str:
+    """The next free ``ML-<n>``: above *floor* - 1 (specs, queue, ledger, retired, open
+    ``ml/<n>`` PRs) and every ML number the backlog holds."""
+    return f"ML-{max([floor - 1, *ml_numbers(backlog)]) + 1}"
+
+
+def _ml_nums(ids) -> set[int]:
+    return {_study_num(str(x)) for x in ids if ML_STUDY_ID_RE.match(str(x or ""))}
+
+
+def load_ml_ledger_rows(path: Path) -> tuple[list[dict], list[str]]:
+    """``data/ml/studies/ledger.jsonl`` (E27.7), read-only: ``(rows, errors)``."""
+    if not path.exists():
+        return [], []
+    rows, errs = [], []
+    for i, line in enumerate(path.read_text().splitlines(), 1):
+        if not line.strip():
+            continue
+        d = _loads(line, None)
+        if not isinstance(d, dict) or not d.get("study") or not d.get("rung"):
+            errs.append(f"{path.name} line {i}: not an ML ledger row")
+            continue
+        rows.append(d)
+    return rows, errs
+
+
+def load_ml_retired(path: Path) -> tuple[dict[str, dict], list[str]]:
+    """``config/ml_studies/retired.yaml`` (JSON body, ``#`` comments) -> ``{ML-<n>: row}``."""
+    if not path.exists():
+        return {}, []
+    try:
+        doc = parse_seed_text(path.read_text())
+    except (OSError, ValueError) as e:
+        return {}, [f"ml {path.name} is not readable JSON ({e}): retired ML studies unknown"]
+    rows = doc.get("retired") if isinstance(doc, dict) else None
+    if not isinstance(rows, list):
+        return {}, [f"ml {path.name} has no `retired` list"]
+    out, errs = {}, []
+    for i, r in enumerate(rows):
+        sid = str((r or {}).get("id", "")) if isinstance(r, dict) else ""
+        if not ML_STUDY_ID_RE.match(sid) or sid in out:
+            errs.append(f"ml {path.name} retired[{i}]: bad or duplicate id {sid!r}")
+            continue
+        out[sid] = {"at": str(r.get("at") or ""), "by": r.get("by"), "reason": r.get("reason")}
+    return out, errs
+
+
+def ml_verdict_key(row: dict) -> str:
+    """One ML verdict's identity (the wake watermark), like :func:`holdout_key`."""
+    return f"{row['study']}:{str(row.get('spec_hash', ''))[:12]}:{row.get('at', '')}"
+
+
+def _read_csv(path: Path) -> list[dict]:
+    try:
+        with path.open(newline="") as fh:
+            return list(csv.DictReader(fh))
+    except (OSError, csv.Error):
+        return []
+
+
+def _truthy(v) -> bool:
+    return str(v).strip().lower() in ("true", "1", "yes")
+
+
+def ml_headline(vdir: Path, meta: dict) -> str:
+    """A version's headline dev metrics from its eval files (aggregates only, D126)."""
+    dec = _read_csv(vdir / "eval_decisions.csv")  # M1: the keep rule per (kind, h)
+    if dec:
+        cols = [c for c in dec[0] if c.endswith("_pass")]
+        keep = [r for r in dec if cols and all(_truthy(r.get(c)) for c in cols)]
+        folds = "/".join(c.removesuffix("_pass") for c in cols)
+        worst = ""
+        for r in dec[:1]:
+            worst = f"; e.g. {r.get('kind')} h{r.get('h')}: {r.get(cols[-1][:-5] + '_detail')}"
+        return f"LightGBM keeps {len(keep)}/{len(dec)} targets ({folds}, both years){worst}"
+    rule = _read_csv(vdir / "eval_rule.csv")  # M2: the promote rule per test year
+    if rule:
+        return "; ".join(
+            f"{r.get('fold')} {'pass' if _truthy(r.get('year_pass')) else 'fail'} "
+            f"(log-loss {_num(_float(r.get('ll_m2')), '.4f')} vs logistic "
+            f"{_num(_float(r.get('ll_logistic')), '.4f')}, e_r IC t "
+            f"{_num(_float(r.get('er_ic_t')), '.2f')}, replay "
+            f"{'pass' if _truthy(r.get('replay_pass')) else 'fail'})"
+            for r in rule
+        )
+    summary = meta.get("summary")
+    return f"summary {clip(json.dumps(summary, sort_keys=True), 200)}" if summary else "no eval"
+
+
+def _float(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def ml_models(root: Path) -> tuple[list[dict], list[str]]:
+    """The model registry (E27.3) per family, read-only: champion and every version with
+    its status, rule result, headline dev metrics and holdout reads. A version directory
+    with a manifest but no ``models.json`` row is listed as ``unregistered``."""
+    base = root / ML_MODELS
+    if not base.is_dir():
+        return [], []
+    out, errs = [], []
+    for fam in sorted(d for d in base.iterdir() if d.is_dir()):
+        idx: dict = {}
+        if (fam / "models.json").is_file():
+            idx = _loads((fam / "models.json").read_text(), None)
+            if not isinstance(idx, dict):
+                errs.append(f"ml {fam.name}/models.json is not readable JSON")
+                idx = {}
+        versions = {str(k): dict(v or {}) for k, v in (idx.get("versions") or {}).items()}
+        for m in sorted(fam.glob("*/manifest.json")):
+            versions.setdefault(m.parent.name, {"status": "unregistered"})
+        rows = []
+        for v, meta in versions.items():
+            man = _loads((fam / v / "manifest.json").read_text(), {}) if (
+                fam / v / "manifest.json"
+            ).is_file() else {}  # fmt: skip
+            rows.append(
+                {
+                    "version": v,
+                    "status": meta.get("status") or "unregistered",
+                    "created": str(meta.get("created") or (man or {}).get("created") or ""),
+                    "rule": meta.get("rule") or (man or {}).get("rule"),
+                    "rule_passed": meta.get("rule_passed", (man or {}).get("rule_passed")),
+                    "holdout_reads": (man or {}).get("holdout_reads"),
+                    "headline": ml_headline(fam / v, meta),
+                }
+            )
+        rows.sort(key=lambda r: (r["created"], r["version"]))
+        if rows:
+            out.append({"family": fam.name, "champion": idx.get("champion"), "versions": rows})
+    return out, errs
+
+
+def ml_snapshot(p: Paths) -> dict:
+    """Registry + ML ledger + queue + retired list, read-only (the gate's ML snapshot:
+    ``record`` validates families, incumbents, ``ML-<n>`` citations and the next id
+    against it, and ``mark`` stores its verdict keys)."""
+    root = p.bt_root
+    models, errs = ml_models(root)
+    rows, l_errs = load_ml_ledger_rows(root / ML_LEDGER)
+    retired, r_errs = load_ml_retired(root / ML_RETIRED)
+    errs += l_errs + r_errs
+    queue = [
+        e for e in load_bt_queue(root / BT_QUEUE).get("entries") or [] if e.get("kind") == "ml"
+    ]
+    spec_dir = root / ML_SPECS
+    spec_ids = [f.stem for f in spec_dir.glob("ML-*.yaml")] if spec_dir.is_dir() else []
+    studies: dict[str, dict] = {}
+    for r in rows:
+        s = studies.setdefault(r["study"], {"id": r["study"], "rungs": []})
+        s["rungs"].append(r)
+        for k in ("family", "incumbent", "spec_hash"):
+            if r.get(k):
+                s[k] = r[k]
+        if r["rung"] in ("verdict", "dropped"):
+            s["verdict"] = r
+    for q in queue:
+        studies.setdefault(q["id"], {"id": q["id"], "rungs": []})["queue"] = {
+            k: q.get(k) for k in ("status", "ladder_state", "stop_reason", "pr_url", "approved_at")
+        }
+    for s in studies.values():
+        s["retired"] = retired.get(s["id"])
+    nums = _ml_nums([*spec_ids, *studies, *retired])
+    keys = [
+        ml_verdict_key(r)
+        for r in rows
+        if r["rung"] == "verdict" and r.get("verdict") in ("pass", "fail")
+        and r["study"] not in retired
+    ]  # fmt: skip
+    return {
+        "models": models,
+        "studies": sorted(studies.values(), key=lambda s: _study_num(s["id"])),
+        "retired": retired,
+        "next_id": f"ML-{max(nums, default=0) + 1}",
+        "verdict_keys": keys,
+        "errors": errs,
+    }
+
+
+def ml_snapshot_meta(snap: dict) -> dict:
+    """The compact copy ``metrics.json`` carries for ``record`` (no rung detail)."""
+    return {
+        "models": [
+            {
+                "family": m["family"],
+                "champion": m.get("champion"),
+                "versions": [
+                    {"version": v["version"], "status": v["status"]} for v in m["versions"]
+                ],
+            }
+            for m in snap.get("models") or []
+        ],  # fmt: skip
+        "verdicts": {
+            s["id"]: {k: (s.get("verdict") or {}).get(k) for k in ("verdict", "status", "version")}
+            for s in snap.get("studies") or []
+            if (s.get("verdict") or {}).get("rung") == "verdict" and not s.get("retired")
+        },
+        "retired": sorted(snap.get("retired") or {}, key=_study_num),
+        "next_id": snap.get("next_id") or "ML-1",
+    }
+
+
+def ml_floor(ml_meta: dict | None, extra=()) -> int:
+    """The lowest ML number a new draft may take: the gate's ``next_id`` and *extra* (open
+    ``ml/<n>`` PR numbers, read at record time)."""
+    nxt = str((ml_meta or {}).get("next_id") or "ML-1")
+    base = _study_num(nxt) if ML_STUDY_ID_RE.match(nxt) else 1
+    return max([base, *(n + 1 for n in extra)])
+
+
+def _rel(x) -> str:
+    return f"{100 * x:+.0f}%" if _is_num(x) else "?"
+
+
+def ml_rung_text(r: dict) -> str:
+    """One ML ledger row as text (mirrors arc.ml.study.ml_rung_line)."""
+    if r.get("rung") == "verdict":
+        return (
+            f"verdict {r.get('verdict')} -> {r.get('version')} "
+            f"({(r.get('status') or 'candidate')}, variant {r.get('best_variant')}); dev only"
+        )
+    if r.get("rung") == "dropped":
+        return f"dropped ({r.get('note') or '-'})"
+    vs = r.get("vs_incumbent") or {}
+    if r.get("family") == "m1":
+        cov = vs.get("cov_err_max")
+        body = f"pinball {_rel(vs.get('pinball_rel'))} vs incumbent" + (
+            f", cov err {100 * cov:.1f} pts" if _is_num(cov) else ""
+        )
+    else:
+        body = f"log-loss {_rel(vs.get('log_loss_rel'))} vs incumbent, e_r IC {vs.get('er_ic')}"
+    n = len(r.get("variants") or [])
+    pick = f", best of {n}" if n > 1 else ""
+    ok = "pass" if r.get("rung_pass") else "fail"
+    return f"{str(r.get('rung')).replace('_', ' ')} {ok}: {body}{pick}"
+
+
+def ml_models_lines(models: list[dict], errors=()) -> list[str]:
+    """Context ``## ML models``: per family champion / shadow / candidate, then every
+    version with its headline dev metrics and holdout reads."""
+    out = [f"- WARNING: {e}" for e in errors]
+    if not models:
+        return [*out, "- no model under data/ml/models yet (E27.2/E27.3)"]
+    for m in models:
+        by: dict[str, list[str]] = {}
+        for v in m["versions"]:
+            by.setdefault(v["status"], []).append(v["version"])
+        out.append(
+            f"- {m['family']}: champion {m.get('champion') or 'none'} · shadow "
+            f"{', '.join(by.get('shadow', [])) or 'none'} · candidate "
+            f"{', '.join(by.get('candidate', [])) or 'none'}"
+            + (f" · unregistered {', '.join(by['unregistered'])}" if by.get("unregistered") else "")
+        )
+        for v in m["versions"]:
+            rp = v.get("rule_passed")
+            rule = f"{v.get('rule') or 'rule ?'} {'pass' if rp else 'fail' if rp is False else '?'}"
+            reads = v.get("holdout_reads")
+            out.append(
+                f"  - {v['version']} [{v['status']}] {v.get('created', '')[:10] or '-'} · {rule} · "
+                f"holdout reads {reads if reads is not None else '-'} · {v['headline']}"
+            )
+    return out
+
+
+def ml_studies_lines(snap: dict, eta: dict | None = None) -> list[str]:
+    """Context ``## ML studies``: each study's queue status, rungs and verdict (a verdict
+    is dev only: a pass moves the version to shadow, never to champion)."""
+    eta = eta or {}
+    out = [f"- WARNING: {e}" for e in snap.get("errors") or [] if not e.startswith("ml ")]
+    for s in snap.get("studies") or []:
+        if s.get("retired"):
+            continue
+        q = s.get("queue") or {}
+        status = q.get("status") or ("dropped" if (s.get("verdict") or {}).get("rung") == (
+            "dropped") else "ledger only")  # fmt: skip
+        e = eta.get(s["id"]) or {}
+        when = ""
+        if status in ("queued", "running"):
+            n = e.get("eta_nights")
+            eta_n = n if n is not None else "?"
+            when = f" | next rung {q.get('ladder_state') or '-'} | ETA {eta_n} night(s)"
+        out.append(
+            f"- {s['id']} [{status}] {s.get('family') or '-'} vs {s.get('incumbent') or '-'}{when}"
+            + (f" | {q['stop_reason']}" if q.get("stop_reason") else "")
+            + (f" | PR {q['pr_url']}" if q.get("pr_url") else "")
+        )
+        for r in s.get("rungs") or []:
+            out.append(f"  {ml_rung_text(r)}")
+    if len(out) == len([x for x in out if x.startswith("- WARNING")]):
+        out.append("- none yet (no ML-<n> study approved or run)")
+    by: dict[str, list[str]] = {}
+    for sid, r in (snap.get("retired") or {}).items():
+        by.setdefault(f"{r.get('reason')} ({r.get('at')})", []).append(sid)
+    out += [
+        f"- RETIRED (history only: never cite, re-run or build on these): "
+        f"{', '.join(sorted(ids, key=_study_num))}: {why}"
+        for why, ids in by.items()
+    ]
+    return out
+
+
+def _n_text(n) -> str:
+    return f"n={n}" + (" insufficient" if not _is_num(n) or n < ML_MIN_N else "")
+
+
+def ml_live_lines(rec: dict | None, built: bool = True) -> list[str]:
+    """Context ``## ML live``: the nightly ``ml_health`` record (E27.4) as text: coverage,
+    live calibration, PSI drift, score drift and parity, n everywhere and ``insufficient``
+    below 30 (never a basis for a claim)."""
+    if not built:
+        return ["- live monitoring not built yet (E27.4)"]
+    if not isinstance(rec, dict) or not rec:
+        return ["- no ml_health record yet (the nightly ml refresh has not written one)"]
+    out = [f"- record {rec.get('day')} (schema {rec.get('schema')}, nightly "
+           f"{rec.get('nightly_day') or rec.get('day')}); models "
+           f"{', '.join(rec.get('model_versions') or []) or '-'}"]  # fmt: skip
+    c = rec.get("coverage") or {}
+    if c:
+        out.append(
+            f"- coverage: {c.get('scored')}/{c.get('candidates')} candidates scored "
+            f"({c.get('pct_scored') if c.get('pct_scored') is not None else '-'}%) over "
+            f"{c.get('ticks')} ticks; latency p95 {c.get('latency_ms_p95')} ms"
+            + (
+                "; unavailable: "
+                + ", ".join(f"{k} x{v}" for k, v in (c.get("unavailable_reasons") or {}).items())
+                if c.get("unavailable_reasons")
+                else ""
+            )
+        )
+    for sp, cal in (rec.get("calibration") or {}).items():
+        parts = []
+        for k, v in (cal or {}).items():
+            if not isinstance(v, dict):
+                continue
+            n = v.get("n")
+            if not _is_num(n) or n < ML_MIN_N:
+                parts.append(f"{k} {_n_text(n)}")
+            elif k == "e_r":
+                parts.append(
+                    f"e_r {_n_text(n)} mean e_r {v.get('mean_e_r')} vs mean R {v.get('mean_r')}"
+                )
+            else:
+                parts.append(
+                    f"{k} {_n_text(n)} brier {v.get('brier')} vs base {v.get('brier_base')}"
+                )
+        out.append(f"- calibration [{sp}]: " + ("; ".join(parts) or "none"))
+    d = rec.get("feature_drift") or {}
+    if d.get("status") in (None, "not_run"):
+        out.append("- feature drift (PSI): not run")
+    else:
+        top = ", ".join(f"{t.get('feature')} {t.get('psi')}" for t in d.get("top") or [])
+        warn = list(d.get("warn") or [])
+        out.append(
+            f"- feature drift (PSI, live {_n_text(d.get('n_live'))} vs train "
+            f"n={d.get('n_train')}): "
+            f"top {top or '-'}; warn > {d.get('warn_above')}: {len(warn)}"
+            + (f" ({', '.join(warn[:5])})" if warn else "")
+        )
+    sd = (rec.get("score_drift") or {}).get("all") or {}
+    if sd:
+        out.append(
+            "- score drift [all]: "
+            + "; ".join(
+                f"{k} live {_n_text(v.get('n_live'))} mean {v.get('live_mean')} vs backtest "
+                f"n={v.get('n_ref')} mean {v.get('ref_mean')} PSI {v.get('psi')}"
+                for k, v in sd.items()
+                if isinstance(v, dict)
+            )
+        )
+    par = rec.get("parity") or {}
+    out.append(f"- parity: {par.get('status', 'not_run')}" + (
+        f" ({par['detail']})" if par.get("detail") else ""))  # fmt: skip
+    lr = rec.get("last_retrain")
+    if isinstance(lr, dict):
+        out.append(
+            f"- last retrain: {lr.get('version')} {'pass' if lr.get('passed') else 'fail'} "
+            f"(n={lr.get('n')}) · candidate only"
+        )
+    return out
+
+
+def latest_ml_health(root: Path, day: dt.date) -> dict | None:
+    """The newest ``data/ml/health/<YYYY-MM-DD>.json`` dated on or before *day* (stdlib
+    mirror of arc.ml.refresh.latest_health)."""
+    hdir = root / ML_HEALTH
+    if not hdir.is_dir():
+        return None
+    files = sorted(f for f in hdir.glob("*.json") if f.stem <= day.isoformat())
+    for f in reversed(files):
+        d = _loads(f.read_text(), None)
+        if isinstance(d, dict):
+            return d
+    return None
+
+
+def ml_live_record(p: Paths, run_dir: Path, copy: Path | None, day: dt.date) -> dict | None:
+    """``arc ml monitor --json`` on the store copy (coverage/calibration recomputed), else
+    the newest nightly ``ml_health`` file."""
+    if copy is not None:
+        text = run_arc(
+            p,
+            ["ml", "monitor", "--json", "--db", str(copy), "--day", day.isoformat(),
+             "--data", str(p.bt_root / "data")],
+            run_dir,
+            "ml-monitor",
+            timeout=120,
+        )  # fmt: skip
+        for s in ("-wal", "-shm"):  # a mode=ro reader of a WAL copy leaves its index behind
+            side = copy.with_name(copy.name + s)
+            if side.exists() and (s == "-shm" or side.stat().st_size == 0):
+                side.unlink(missing_ok=True)
+        rec = _loads(text, None)
+        if isinstance(rec, dict) and rec.get("coverage") is not None:
+            return rec
+    return latest_ml_health(p.bt_root, day)
+
+
+def ml_status_view(p: Paths, run_dir: Path) -> dict:
+    """``arc ml study status --json`` (the shared queue, ML priced from the ML ledger):
+    ``{ML-<n>: row}``; empty when it fails (the context shows ETA ?)."""
+    text = run_arc(
+        p,
+        ["ml", "study", "status", "--json", "--queue", str(p.bt_root / BT_QUEUE),
+         "--ledger", str(p.bt_root / ML_LEDGER), "--studies-dir", str(p.bt_root / ML_SPECS),
+         "--data", str(p.bt_root / "data")],
+        run_dir,
+        "ml-study-status",
+        timeout=60,
+    )  # fmt: skip
+    lines = text.strip().splitlines()
+    view = _loads(lines[-1] if lines else "", None)
+    rows = view.get("entries") if isinstance(view, dict) else None
+    return {r["id"]: r for r in rows or [] if isinstance(r, dict) and r.get("kind") == "ml"}
+
+
+def ml_refs(text) -> set[str]:
+    return set(re.findall(r"(?<![\w-])ML-[1-9]\d*(?!\d)", str(text or "")))
+
+
+def validate_ml_study_spec(spec, where: str = "ml_study_spec", ml: dict | None = None) -> list[str]:
+    """An ``ml_study_spec`` draft (E27.8, D133): a challenger, grid, feature-set or
+    calibration change within an EXISTING family, under that family's registered rule.
+    Mirrors arc.ml.study.MlStudySpec; ``record`` also runs ``arc ml study validate``.
+    *ml* is the gate's snapshot meta (families, versions); None skips those checks."""
+    if not isinstance(spec, dict):
+        return [f"{where} must be an object"]
+    errs = []
+    filled = sorted({"id", "owner", "created", "study_value"} & set(spec))
+    if filled:
+        errs.append(f"{where}: {filled} are filled by `record` (the ML-<n> is reserved there)")
+    extra = sorted(set(spec) - set(ML_SPEC_KEYS) - {"id", "owner", "created", "study_value"})
+    if extra:
+        errs.append(f"{where} has unknown keys {extra} (allowed: {list(ML_SPEC_KEYS)})")
+    missing = [k for k in ML_SPEC_REQUIRED if not spec.get(k)]
+    if missing:
+        errs.append(f"{where} missing {missing}")
+    fam = spec.get("family")
+    if fam and fam not in ML_FAMILY_RULE:
+        errs.append(
+            f"{where}.family {fam!r}: new model families are cards, not ML studies (D133); "
+            f"an ML-<n> works within {sorted(ML_FAMILY_RULE)}"
+        )
+        return errs
+    rule = spec.get("decision_rule")
+    kind = rule.get("kind") if isinstance(rule, dict) else rule
+    if fam and kind != ML_FAMILY_RULE[fam]:
+        errs.append(
+            f"{where}.decision_rule {kind!r} is not the registered rule of {fam} "
+            f"({{'kind': {ML_FAMILY_RULE[fam]!r}}}; a new rule kind needs a card + D#)"
+        )
+    if spec.get("change_kind") and spec["change_kind"] not in ML_CHANGE_KINDS:
+        errs.append(f"{where}.change_kind must be one of {list(ML_CHANGE_KINDS)}")
+    if not isinstance(spec.get("overlay", {}), dict):
+        errs.append(f"{where}.overlay must be an object")
+    grid = spec.get("grid", [])
+    if not isinstance(grid, list) or not all(isinstance(g, dict) for g in grid):
+        errs.append(f"{where}.grid must be a list of overlay objects")
+    elif len(grid) > ML_MAX_GRID:
+        errs.append(f"{where}.grid has {len(grid)} variants; at most {ML_MAX_GRID}")
+    body = json.dumps([spec.get("overlay"), spec.get("grid"), spec.get("incumbent")]).lower()
+    if "holdout" in body:
+        errs.append(
+            f"{where}: an ML study never reads the holdout (D133: dev test years only; the "
+            "holdout is read only at `arc ml promote` with the owner's re-read ok)"
+        )
+    if ml is not None and fam:
+        fams = {m["family"]: m for m in ml.get("models") or []}
+        if fam not in fams:
+            errs.append(f"{where}.family {fam} has no model under data/ml/models yet")
+        else:
+            inc = spec.get("incumbent")
+            versions = {v["version"] for v in fams[fam].get("versions") or []}
+            if inc == "champion" and not fams[fam].get("champion"):
+                errs.append(f"{where}.incumbent champion: {fam} has no champion; name a version")
+            elif inc and inc != "champion" and inc not in versions:
+                errs.append(
+                    f"{where}.incumbent {inc!r} is not a {fam} version ({sorted(versions)})"
+                )
+    return errs
+
+
+def _sub(f: dict, key: str, field: str):
+    """``f[key][field]`` when ``f[key]`` is an object (drafts are validated elsewhere)."""
+    v = f.get(key)
+    return v.get(field) if isinstance(v, dict) else None
+
+
+def check_ml_citations(findings: list, ml: dict | None) -> list[str]:
+    """Every ``ML-<n>`` a finding cites must resolve to an ML ledger verdict (a dev rung
+    or a queued study is a hypothesis, not evidence); a retired one is never evidence."""
+    verdicts = (ml or {}).get("verdicts") or {}
+    retired = set((ml or {}).get("retired") or [])
+    errs = []
+    for i, f in enumerate(findings):
+        if not isinstance(f, dict):
+            continue
+        texts = [
+            f.get("evidence"),
+            _sub(f, "proposal", "evidence_ref"),
+            _sub(f, "study_spec", "hypothesis"),
+            _sub(f, "ml_study_spec", "hypothesis"),
+        ]
+        for sid in sorted(set().union(*(ml_refs(t) for t in texts)), key=_study_num):
+            if sid in retired:
+                errs.append(f"findings[{i}] cites {sid}: it is retired (history only)")
+            elif sid not in verdicts:
+                errs.append(
+                    f"findings[{i}] cites {sid}: no verdict in the ML ledger (cite only an "
+                    "ML-<n> verdict; a dev rung or a queued study is a hypothesis)"
+                )
+    return errs
+
+
+def apply_ml_backlog(
+    backlog: dict, doc: dict, run: str, when: str, floor: int, finding_ids: dict | None = None
+) -> list[tuple[dict, dict]]:
+    """Every ``ml_study_spec`` finding as a ``kind: ml`` entry (key ``ml:<finding key>``),
+    like :func:`apply_study_backlog`: a re-listed draft keeps its ML id while proposed."""
+    finding_ids = finding_ids or {}
+    items = backlog["items"]
+    out = []
+    for f in doc.get("findings", []):
+        if "ml_study_spec" not in f:
+            continue
+        key = ML_KEY_PREFIX + f["key"]
+        v = f.get("study_value") or {}
+        spec = f["ml_study_spec"]
+        fields = {
+            "ml_study_spec": spec,
+            "title": f.get("title"),
+            "hypothesis": spec.get("hypothesis"),
+            "family": spec.get("family"),
+            "change_kind": spec.get("change_kind"),
+            "expected_effect": {"pct_per_day": v.get("pct_per_day"), "source": v.get("source")},
+            "affected_share": v.get("affected_share"),
+            "p_success": v.get("p_success"),
+            "nights_needed": v.get("nights_needed"),
+            "value_score": study_value(v),
+            "n": f.get("n"),
+        }
+        if f["key"] in finding_ids:
+            fields["finding_id"] = finding_ids[f["key"]]
+        entry = items.get(key)
+        if entry is None:
+            entry = items[key] = {
+                "id": reserve_ml_id(backlog, floor),
+                "kind": "ml",
+                "key": key,
+                "finding_key": f["key"],
+                "status": "proposed",
+                "created": when,
+                "created_run": run,
+                "history": [],
+                **fields,
+            }
+            _hist(entry, when, "proposed", run=run)
+        elif entry["status"] == "proposed":
+            changed = sorted(k for k, val in fields.items() if entry.get(k) != val)
+            if changed:
+                entry.update(fields)
+                _hist(entry, when, "edit", run=run, fields=changed)
+        else:
+            continue  # approved (an adopt to retry): frozen
+        out.append((f, entry))
+    return out
+
+
+def validate_ml_backlog(f: dict, i: int, backlog: dict) -> list[str]:
+    """An ``ml_study_spec`` on a key whose ML entry the owner already acted on is frozen."""
+    entry = backlog["items"].get(ML_KEY_PREFIX + str(f.get("key")))
+    if entry is None or entry.get("status") == "proposed":
+        return []
+    sid, st = entry["id"], entry["status"]
+    if st == "dropped":
+        return [
+            f"findings[{i}] ml_study_spec: {sid} (key {f.get('key')}) was dropped by the owner; "
+            "re-propose only a new design under a new finding key"
+        ]
+    if st == "approved" and f.get("ml_study_spec") == entry.get("ml_study_spec"):
+        return []
+    return [
+        f"findings[{i}] ml_study_spec: {sid} is {st} (owner-approved, the spec is frozen); "
+        "remove the ml_study_spec from this finding (its progress is in ## ML studies)"
+    ]
+
+
+def validate_ml_finding(f: dict, i: int, backlog: dict, ml: dict | None) -> list[str]:
+    """A finding carrying an ``ml_study_spec`` (one study per finding: not with a BT)."""
+    errs = []
+    if f.get("category") not in STUDY_SPEC_CATEGORIES:
+        errs.append(
+            f"findings[{i}] `ml_study_spec` drafts a model study: only on {STUDY_SPEC_CATEGORIES}"
+        )
+    if "study_spec" in f:
+        errs.append(f"findings[{i}] carries both study_spec and ml_study_spec: one study each")
+    errs += validate_ml_study_spec(f["ml_study_spec"], f"findings[{i}] ml_study_spec", ml)
+    errs += validate_study_value(f.get("study_value"), f"findings[{i}] study_value")
+    errs += validate_ml_backlog(f, i, backlog)
+    return errs
+
+
+def _validate_next_ml_study(doc: dict, backlog_after: dict) -> list[str]:
+    """E27.8 (D133): ``next_ml_study`` names the ML study the owner should approve next
+    (the top-ranked proposed ``kind: ml`` entry, or another with ``next_ml_study_reason``),
+    or ``none: <why>``."""
+    nxt = str(doc.get("next_ml_study", "")).strip()
+    if not nxt:
+        return ["next_ml_study is required: an ML-<n> from the ranked backlog, or 'none: <why>'"]
+    if nxt.lower().startswith("none"):
+        if not nxt.partition(":")[2].strip():
+            return ["next_ml_study 'none' needs a reason ('none: <why>')"]
+        return []
+    ranked = ranked_backlog(backlog_after, kind="ml")
+    if not any(e["id"] == nxt for e in ranked):
+        return [
+            f"next_ml_study {nxt!r} must be a proposed ML-<n> in the backlog (an ml_study_spec "
+            "draft after this run), or 'none: <why>'"
+        ]
+    if ranked[0]["id"] != nxt and not str(doc.get("next_ml_study_reason", "")).strip():
+        return [
+            f"next_ml_study {nxt} is not the top-ranked ML study ({ranked[0]['id']}); say why "
+            "in next_ml_study_reason"
+        ]
+    return []
+
+
+def write_ml_study_spec(path: Path, sid: str, spec: dict, f: dict, aid: str, now) -> Path:
+    """The draft for the owner: ``RUN_DIR/study-specs/ML-<n>.yaml`` (JSON is valid YAML),
+    an ``MlStudySpec`` (extra=forbid) that ``arc ml study adopt`` commits on approval."""
+    v = f.get("study_value") or {}
+    nights = v.get("nights_needed")
+    doc = {
+        "id": sid,
+        "hypothesis": spec["hypothesis"],
+        "owner": f"Arc Analyst {aid}",
+        "created": now.astimezone(ET).date().isoformat(),
+        "family": spec["family"],
+        "incumbent": spec["incumbent"],
+        "change_kind": spec["change_kind"],
+        "overlay": spec.get("overlay") or {},
+        "grid": spec.get("grid") or [],
+        "decision_rule": spec["decision_rule"]
+        if isinstance(spec["decision_rule"], dict)
+        else {"kind": spec["decision_rule"]},
+        "study_value": {
+            "expected_effect": {"pct_per_day": v.get("pct_per_day"), "source": v.get("source")},
+            "affected_share": v.get("affected_share"),
+            "p_success": v.get("p_success"),
+            "nights_needed": max(1, math.ceil(nights)) if _is_num(nights) else None,
+            "value_score": study_value(v),
+        },
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f"# DRAFT ML study spec by the Arc Analyst ({aid}, {f['key']}). Not committed, not run:\n"
+        f"# the Analyst never trains a model. The owner's `approve {sid}` in #arc-analyst runs\n"
+        f"# `arc ml study adopt` (config/ml_studies/{sid}.yaml via an auto-merged PR + a queue\n"
+        "# entry): dev 2022 -> dev 2023 -> verdict on the shared nightly runner. Dev only; a\n"
+        "# pass moves the version to shadow (D133).\n"
+        + json.dumps(doc, indent=2, sort_keys=True)
+        + "\n"
+    )
+    return path
+
+
+def ml_cli_validate(p: Paths, run_dir: Path, drafts: list[tuple[str, dict, dict]]) -> list[str]:
+    """``arc ml study validate`` on each draft (overlay vs the family's training config,
+    features vs the registry, incumbent manifest, grid cap): the pydantic check the
+    stdlib mirror cannot do. Fails closed: a validator that does not answer rejects."""
+    errs = []
+    tmp = run_dir / ML_SPECS_DIR / ".validate"
+    for sid, spec, f in drafts:
+        path = write_ml_study_spec(tmp / f"{sid}.yaml", sid, spec, f, "A-check", NOW_FOR_CHECK)
+        text = run_arc(
+            p,
+            ["ml", "study", "validate", str(path), "--json",
+             "--models", str(p.bt_root / ML_MODELS), "--studies-dir", str(p.bt_root / ML_SPECS),
+             "--data", str(p.bt_root / "data")],
+            run_dir,
+            f"ml-validate-{sid}",
+            timeout=120,
+        )  # fmt: skip
+        lines = text.strip().splitlines()
+        d = _loads(lines[-1] if lines else "", None)
+        if not isinstance(d, dict) or not d.get("spec_hash"):
+            errs.append(
+                f"{sid} (key {f['key']}): `arc ml study validate` refused it: "
+                f"{clip(text.strip(), 400)}"
+            )
+    shutil.rmtree(tmp, ignore_errors=True)
+    return errs
+
+
+NOW_FOR_CHECK = dt.datetime(2000, 1, 1, tzinfo=dt.timezone.utc)  # validation drafts only
+
+
+def write_ml_drafts(
+    run_dir: Path, backlog: dict, doc: dict, items: dict, finding_ids: dict, floor: int, now
+) -> list[str]:
+    """Each ml_study_spec as a ``kind: ml`` entry that keeps its ML-<n> while proposed;
+    its draft is written for ``approve ML-<n>``."""
+    out = []
+    for f, entry in apply_ml_backlog(backlog, doc, run_dir.name, iso(now), floor, finding_ids):
+        sid = entry["id"]
+        it = items[f["key"]]
+        path = write_ml_study_spec(
+            run_dir / ML_SPECS_DIR / f"{sid}.yaml", sid, f["ml_study_spec"], f, it["id"], now
+        )
+        entry["draft_path"] = str(path)
+        it["ml_study_spec"] = {"id": sid, "path": str(path), "run": run_dir.name}
+        out.append(f"{it['id']} -> {sid} ({path})")
+    return out
+
+
+def ml_pr_numbers(p: Paths) -> set[int]:
+    """ML numbers of open ``ml/<n>`` spec PRs (best effort, like :func:`spec_pr_numbers`)."""
+    return _open_pr_numbers(p, ML_SPEC_PR_BRANCH_RE)
+
+
+def pending_ml_drafts(backlog: dict, doc: dict, floor: int) -> list[tuple[str, dict, dict]]:
+    """``(ML-<n>, spec, finding)`` the drafts ``record`` will write (on a copy)."""
+    after = json.loads(json.dumps(backlog))
+    pairs = apply_ml_backlog(after, doc, "check", "", floor)
+    return [(e["id"], f["ml_study_spec"], f) for f, e in pairs]
+
+
+def study_approvals_in_week(backlog: dict, now: dt.datetime, exclude: str = "") -> list[dict]:
+    """BT and ML entries approved in *now*'s ISO week (ET): the shared cap (D121 + D133)."""
+    week = iso_week(now)
+    out = []
+    for e in backlog["items"].values():
+        at = e.get("approved_at")
+        if not is_study(e) or not at or e.get("id") == exclude:
+            continue
+        if iso_week(dt.datetime.fromisoformat(at)) == week:
+            out.append(e)
+    return sorted(out, key=lambda e: e["approved_at"])
+
+
 def apply_reviews(ledger: dict, doc: dict, run: str, when: str) -> list[str]:
     out = []
     for r in doc.get("quick_change_reviews", []) or []:
@@ -2509,7 +3351,10 @@ def validate_findings(
     max_arms: int = MAX_PARALLEL_ARMS_DEFAULT,
     studies: list | None = None,
     used=(),
+    ml: dict | None = None,
 ) -> list[str]:
+    """*ml* is the gate's ML snapshot meta (E27.8: families/versions, ML verdicts, retired
+    ids, next id); None (an old metrics.json) checks ML drafts by shape only."""
     errs: list[str] = []
     studies = studies or []
     prev_themes = prev_themes or {}
@@ -2551,8 +3396,10 @@ def validate_findings(
             errs += validate_study_spec(f["study_spec"], f"findings[{i}] study_spec")
             errs += validate_study_value(f.get("study_value"), f"findings[{i}] study_value")
             errs += validate_study_backlog(f, i, backlog)
-        elif "study_value" in f:
+        elif "study_value" in f and "ml_study_spec" not in f:
             errs.append(f"findings[{i}] `study_value` is only allowed with a study_spec")
+        if "ml_study_spec" in f:  # E27.8 (D133): a draft ML-<n> model study
+            errs += validate_ml_finding(f, i, backlog, ml)
         if cat == "quick-change":
             qcs += 1
             errs += validate_quick_change(f, i)
@@ -2567,8 +3414,11 @@ def validate_findings(
         after = json.loads(json.dumps(backlog))
         apply_backlog(after, doc, "check", "", used=used)  # the XP ids `record` reserves
         apply_study_backlog(after, doc, "check", "", study_floor(studies))  # E26.2 BT ids
+        apply_ml_backlog(after, doc, "check", "", ml_floor(ml))  # E27.8 ML ids
         n_open = sum(
-            1 for e in after["items"].values() if e.get("status") in BACKLOG_OPEN and not is_bt(e)
+            1
+            for e in after["items"].values()
+            if e.get("status") in BACKLOG_OPEN and not is_study(e)
         )
         if n_open > BACKLOG_CAP:
             errs.append(
@@ -2577,6 +3427,8 @@ def validate_findings(
             )
     errs += _validate_experiment_lines(doc, after or backlog, experiments, max_arms)
     errs += _validate_next_study(doc, after or backlog)
+    errs += _validate_next_ml_study(doc, after or backlog)  # E27.8 (D133)
+    errs += check_ml_citations(findings, ml)
     errs += _validate_retired_mentions(doc, studies)  # E26.5 (D127)
     themes = {t.get("theme"): t for t in doc.get("themes", [])}
     for tid in THEMES:
@@ -3497,7 +4349,11 @@ def cmd_record(p: Paths, run_dir: Path, now: dt.datetime) -> int:
         max_arms=max_arms,
         studies=studies,
         used=used,
+        ml=meta.get("ml"),
     )
+    ml_floor_n = ml_floor(meta.get("ml"), ml_pr_numbers(p))  # E27.8: + open ml/<n> PRs
+    if not errs:  # E27.8: the pydantic check (overlay keys, incumbent manifest): fail closed
+        errs = ml_cli_validate(p, run_dir, pending_ml_drafts(backlog, doc, ml_floor_n))
     if errs:
         print("findings.json rejected (ledger and backlog unchanged):\n- " + "\n- ".join(errs))
         return 2
@@ -3510,6 +4366,7 @@ def cmd_record(p: Paths, run_dir: Path, now: dt.datetime) -> int:
     finding_ids = {k: it["id"] for k, it in items.items()}
     floor = study_floor(studies, bt_meta.get("next_study_id"))
     study_specs = write_study_drafts(run_dir, backlog, doc, items, finding_ids, floor, now)
+    study_specs += write_ml_drafts(run_dir, backlog, doc, items, finding_ids, ml_floor_n, now)
     reviews = apply_reviews(ledger, doc, run_dir.name, iso(now))
     save_json(p.ledger, ledger)
     moves = apply_backlog(backlog, doc, run_dir.name, iso(now), finding_ids, used)
@@ -3522,6 +4379,11 @@ def cmd_record(p: Paths, run_dir: Path, now: dt.datetime) -> int:
     backlog["next_study"] = {
         "value": doc.get("next_study"),
         "reason": doc.get("next_study_reason"),
+        "run": run_dir.name,
+    }
+    backlog["next_ml_study"] = {
+        "value": doc.get("next_ml_study"),
+        "reason": doc.get("next_ml_study_reason"),
         "run": run_dir.name,
     }
     sync_bt_queue(backlog, load_bt_queue(p.bt_root / BT_QUEUE), iso(now))
@@ -3566,6 +4428,10 @@ def cmd_mark(p: Paths, run_dir: Path, now: dt.datetime) -> int:
     if "xp_verdicts" in meta:  # E26.4: the XP verdict files this run has read
         state["xp_verdicts_seen"] = sorted(
             set(state.get("xp_verdicts_seen") or []) | set(meta["xp_verdicts"])
+        )
+    if "ml_verdicts" in meta:  # E27.8: the ML study verdicts this run has read
+        state["ml_verdicts_seen"] = sorted(
+            set(state.get("ml_verdicts_seen") or []) | set(meta["ml_verdicts"])
         )
     save_json(p.state, state)
     print(f"watermark -> outcome rowid {meta['closed_max_rowid']}, last run {meta['now']}")
@@ -3618,11 +4484,14 @@ def cmd_ship(p: Paths, aid: str, note: str, now: dt.datetime) -> int:
 
 def owner_id_kind(oid: str) -> str | None:
     """D121: the owner commands route on the id prefix: ``xp`` (``XP-<n>``), ``bt``
-    (``BT-<n>``, E26.2), ``legacy`` (a retired ``P-<n>``), or None."""
+    (``BT-<n>``, E26.2), ``ml`` (``ML-<n>``, E27.8), ``legacy`` (a retired ``P-<n>``), or
+    None."""
     if PROPOSAL_ID_RE.match(oid or ""):
         return "xp"
     if BACKTEST_ID_RE.match(oid or ""):
         return "bt"
+    if ML_STUDY_ID_RE.match(oid or ""):
+        return "ml"  # E27.8: an ML-<n> model study
     if LEGACY_PROPOSAL_ID_RE.match(oid or ""):
         return "legacy"
     return None
@@ -3679,6 +4548,11 @@ def _owner_entry(
         entry = bt_by_id(backlog, pid)
         if entry is None:
             return backlog, None, f"no study proposal {pid} in the backlog"
+        return backlog, entry, None
+    if kind == "ml":  # E27.8: a `kind: ml` model-study proposal
+        entry = ml_by_id(backlog, pid)
+        if entry is None:
+            return backlog, None, f"no ML study proposal {pid} in the backlog"
         return backlog, entry, None
     entry = backlog_by_id(backlog, pid)
     if entry is None:
@@ -3745,6 +4619,8 @@ def cmd_approve(p: Paths, pid: str, note: str, approval: str, now: dt.datetime) 
         return 2
     if owner_id_kind(pid) == "bt":
         return cmd_approve_bt(p, pid, note, approval, now)
+    if owner_id_kind(pid) == "ml":
+        return cmd_approve_ml(p, pid, note, approval, now)
     backlog, entry, refusal = _owner_entry(p, pid, "approve", now)
     if entry is None:
         print(refusal)
@@ -3876,13 +4752,13 @@ def cmd_approve_bt(p: Paths, sid: str, note: str, approval: str, now: dt.datetim
         print(f"{sid}: its draft {draft} is gone; the Analyst re-drafts it on its next run")
         return 2
     if entry["status"] == "proposed":
-        week = bt_approvals_in_week(backlog, now, exclude=sid)
+        week = study_approvals_in_week(backlog, now, exclude=sid)
         if len(week) >= BT_WEEKLY_CAP:
             got = ", ".join(f"{e['id']} ({e['approved_at'][:10]}, {e['status']})" for e in week)
             y, w = iso_week(now)
             print(
-                f"{sid} refused: the weekly cap is {BT_WEEKLY_CAP} BT approvals per ISO week "
-                f"(D121); week {y}-W{w:02d} already has {got}. It resets "
+                f"{sid} refused: the weekly cap is {BT_WEEKLY_CAP} study approvals per ISO week, "
+                f"BT and ML together (D121, D133); week {y}-W{w:02d} already has {got}. It resets "
                 f"{week_reset(now).strftime('%a %Y-%m-%d %H:%M')} ET; re-send "
                 f"`approve {sid}` then."
             )
@@ -3922,6 +4798,99 @@ def cmd_approve_bt(p: Paths, sid: str, note: str, approval: str, now: dt.datetim
     return 0
 
 
+def ml_study_cli(p: Paths, args: list[str], timeout: int = 600) -> tuple[int, dict | str]:
+    """``arc ml study <args>`` (E27.7) with the analyst's paths: ``(exit, JSON | text)``.
+    The ``gh`` env passes through for adopt's spec PR, like :func:`adopt_study`."""
+    env = {**clean_env(), **{k: v for k, v in os.environ.items() if k.startswith(GH_PREFIXES)}}
+    try:
+        r = subprocess.run(
+            [*p.arc, "ml", "study", *args], cwd=p.repo, env=env, capture_output=True,
+            text=True, timeout=timeout, check=False,
+        )  # fmt: skip
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return 127, str(e)
+    if r.returncode:
+        return r.returncode, (r.stderr or r.stdout).strip()
+    lines = r.stdout.strip().splitlines()
+    doc = _loads(lines[-1] if lines else "", None)
+    return 0, doc if isinstance(doc, dict) else r.stdout.strip()
+
+
+def _ml_paths(p: Paths) -> list[str]:
+    root = p.bt_root
+    return ["--data", str(root / "data"), "--models", str(root / ML_MODELS),
+            "--ledger", str(root / ML_LEDGER), "--studies-dir", str(root / ML_SPECS)]  # fmt: skip
+
+
+def cmd_approve_ml(p: Paths, sid: str, note: str, approval: str, now: dt.datetime) -> int:
+    """Owner ``approve ML-<n>`` (E27.8, D133): the shared weekly cap (2 BT+ML approvals
+    per ISO week, ET), then ``arc ml study adopt``: spec PR (auto-merge) adding
+    ``config/ml_studies/ML-<n>.yaml`` + a ``kind: ml`` queue entry. Re-sending retries a
+    failed PR or queue step (idempotent per ML id; the approval keeps its week)."""
+    backlog, entry, refusal = _owner_entry(p, sid, "approve", now)
+    if entry is None:
+        print(refusal)
+        return 2
+    if entry["status"] not in ("proposed", "approved"):
+        print(f"{sid} is {entry['status']} (already committed and queued); nothing to do")
+        return 2
+    draft = Path(str(entry.get("draft_path") or ""))
+    if not entry.get("draft_path") or not draft.is_file():
+        print(f"{sid}: its draft {draft} is gone; the Analyst re-drafts it on its next run")
+        return 2
+    if entry["status"] == "proposed":
+        week = study_approvals_in_week(backlog, now, exclude=sid)
+        if len(week) >= BT_WEEKLY_CAP:
+            got = ", ".join(f"{e['id']} ({e['approved_at'][:10]}, {e['status']})" for e in week)
+            y, w = iso_week(now)
+            print(
+                f"{sid} refused: the weekly cap is {BT_WEEKLY_CAP} study approvals per ISO week, "
+                f"BT and ML together (D121, D133); week {y}-W{w:02d} already has {got}. It "
+                f"resets {week_reset(now).strftime('%a %Y-%m-%d %H:%M')} ET; re-send "
+                f"`approve {sid}` then."
+            )
+            return 2
+        entry["status"] = "approved"
+        entry["approved_at"] = iso(now)
+        entry["approval"] = approval
+        _hist(entry, iso(now), "approved", by="owner", note=note, approval=approval)
+        save_json(p.backlog, backlog)
+    args = [
+        "adopt", sid, "--spec", str(draft), "--approval", entry.get("approval") or approval,
+        "--queue", str(p.bt_root / BT_QUEUE), "--now", now.isoformat(), "--json", *_ml_paths(p),
+        *(["--expect-hash", entry["spec_hash"]] if entry.get("spec_hash") else []),
+        *(["--dry-run-pr"] if os.environ.get("ARC_ANALYST_BT_DRY_RUN_PR") == "1" else []),
+    ]  # fmt: skip
+    code, res = ml_study_cli(p, args)
+    if code or not isinstance(res, dict) or not res.get("spec_hash"):
+        print(
+            f"{sid} approved, but `arc ml study adopt` failed (exit {code}): {res}\n"
+            f"Draft: {draft}. Re-send `approve {sid}` to retry (idempotent; the approval "
+            "keeps its week)."
+        )
+        return 1
+    entry["status"] = res.get("status") or "queued"
+    entry["spec_hash"] = res["spec_hash"]
+    entry["pr_url"] = res.get("pr_url")
+    entry["ladder_state"] = (res.get("entry") or {}).get("ladder_state")
+    _hist(
+        entry, iso(now), "adopted", spec_hash=res["spec_hash"][:12], pr=res.get("pr_url"),
+        pr_status=res.get("pr_status"), queue_position=res.get("queue_position"),
+    )  # fmt: skip
+    save_json(p.backlog, backlog)
+    eta = res.get("eta_nights")
+    print(
+        f"{sid} [{entry['status']}] {entry.get('hypothesis')}\n"
+        f"Spec PR: {res.get('pr_url') or res.get('pr_status') or '-'} "
+        f"(config/ml_studies/{sid}.yaml; auto-merges when CI is green)\n"
+        f"Queue #{res.get('queue_position') or '-'}, ETA "
+        f"{eta if eta is not None else '?'} night(s) (21:30-08:30 ET, shared with BT; dev 2022 "
+        "-> dev 2023 -> verdict, dev only: a pass moves the version to shadow, never to "
+        "champion). The runner starts it once the spec PR is merged."
+    )
+    return 0
+
+
 def stop_study(p: Paths, sid: str, why: str) -> tuple[int, dict | str]:
     """``arc backtest study stop`` on the queue (E26.2)."""
     argv = [*p.arc, "backtest", "study", "stop", sid, "--reason", why,
@@ -3945,9 +4914,12 @@ def cmd_stop(p: Paths, sid: str, why: str, now: dt.datetime) -> int:
     """Owner ``stop BT-<n> <why>`` (E26.2): a queued/running study becomes ``stopped``
     (the runner obeys at its next check). A draft that was never committed is dropped
     with ``drop BT-<n>`` instead."""
+    if owner_id_kind(sid) == "ml":
+        return cmd_stop_ml(p, sid, why, now)
     if owner_id_kind(sid) != "bt":
         print(
-            "`stop` is for backtest studies (BT-<n>); an XP is stopped with `arc experiment stop`"
+            "`stop` is for backtest and ML studies (BT-<n>, ML-<n>); an XP is stopped with "
+            "`arc experiment stop`"
         )
         return 2
     if not why.strip():
@@ -3970,6 +4942,30 @@ def cmd_stop(p: Paths, sid: str, why: str, now: dt.datetime) -> int:
     return 0
 
 
+def cmd_stop_ml(p: Paths, sid: str, why: str, now: dt.datetime) -> int:
+    """Owner ``stop ML-<n> <why>`` (E27.8): ``arc ml study stop`` on the shared queue."""
+    if not why.strip():
+        print("stop needs a reason")
+        return 2
+    backlog, entry, _ = _owner_entry(p, sid, "stop", now)
+    if entry is not None and entry["status"] in BACKLOG_RANKED:
+        print(f"{sid} is {entry['status']} (not committed): use `drop {sid} <why>`")
+        return 2
+    code, res = ml_study_cli(
+        p, ["stop", sid, why, "--queue", str(p.bt_root / BT_QUEUE), "--json"], 120
+    )
+    if code:
+        print(f"{sid}: `arc ml study stop` refused (exit {code}): {res}")
+        return 2
+    if entry is not None:
+        entry["status"] = "stopped"
+        entry["stop_reason"] = res.get("stop_reason") if isinstance(res, dict) else why
+        _hist(entry, iso(now), "stopped", by="owner", reason=why)
+        save_json(p.backlog, backlog)
+    print(f"{sid} -> stopped ({why}); the runner stops it at its next check")
+    return 0
+
+
 def cmd_drop(p: Paths, pid: str, why: str, now: dt.datetime) -> int:
     """Owner ``drop XP-<n> <why>``. The number stays reserved: a gap, never reused (D121)."""
     backlog, entry, refusal = _owner_entry(p, pid, "drop", now)
@@ -3980,11 +4976,21 @@ def cmd_drop(p: Paths, pid: str, why: str, now: dt.datetime) -> int:
         print("drop needs a reason")
         return 2
     if entry["status"] not in BACKLOG_RANKED:
-        if is_bt(entry):
+        if is_study(entry):
             print(f"{pid} is {entry['status']} (committed and queued): use `stop {pid} <why>`")
         else:
             print(f"{pid} is {entry['status']}; stop the experiment with `arc experiment stop`")
         return 2
+    if is_ml(entry):  # E27.8: the ML ledger records the gap (the number is never reused)
+        code, res = ml_study_cli(
+            p,
+            ["drop", pid, why, "--queue", str(p.bt_root / BT_QUEUE), "--now", now.isoformat(),
+             *_ml_paths(p)],
+            120,
+        )  # fmt: skip
+        if code:
+            print(f"{pid}: `arc ml study drop` refused (exit {code}): {res}")
+            return 2
     entry["status"] = "dropped"
     _hist(entry, iso(now), "dropped", by="owner", reason=why)
     save_json(p.backlog, backlog)
@@ -4028,8 +5034,9 @@ def cmd_backlog(p: Paths) -> int:
     if not ranked:
         print("backlog: no open proposals")
     for i, e in enumerate(ranked, 1):
-        if is_bt(e):
-            print(f"#{i} {e['id']} [{e['status']}] backtest study: {e.get('title')}")
+        if is_study(e):
+            what = "backtest study" if is_bt(e) else "ML study"
+            print(f"#{i} {e['id']} [{e['status']}] {what}: {e.get('title')}")
         else:
             spec = e.get("spec") or {}
             print(f"#{i} {e['id']} [{e['status']}] {spec.get('area')}: {spec.get('title')}")
@@ -4039,9 +5046,9 @@ def cmd_backlog(p: Paths) -> int:
         for e in backlog["items"].values()
         if e.get("status") not in BACKLOG_RANKED or e.get("needs_rewrite")
     ]
-    for e in sorted(others, key=lambda e: (is_bt(e), _id_num(e["id"]), e["id"])):
+    for e in sorted(others, key=lambda e: (entry_kind(e), _id_num(e["id"]), e["id"])):
         flag = " NEEDS REWRITE (D108: 3 treatments)" if e.get("needs_rewrite") else ""
-        title = e.get("title") if is_bt(e) else (e.get("spec") or {}).get("title")
+        title = e.get("title") if is_study(e) else (e.get("spec") or {}).get("title")
         print(f"   {e['id']} [{e['status']}]{flag} {title}")
     # D121: what the next xp-proposal reserves (registry, specs, open xp/<n> PRs, backlog)
     print(f"next proposal id: {reserve_proposal_id(dict(backlog), used)} (reserved at record)")
@@ -4337,8 +5344,10 @@ def build_context(
     decision: dict,
     now: dt.datetime,
     bt: dict | None = None,
+    ml: dict | None = None,
 ) -> str:
     bt = bt if bt is not None else backtest_snapshot(p, run_dir)
+    ml = ml if ml is not None else ml_snapshot(p)  # E27.8 (D133)
     since = now - dt.timedelta(days=WINDOW_DAYS)
     since_day = since.astimezone(ET).date().isoformat()
     week_day = now.astimezone(ET).date().isoformat()
@@ -4500,6 +5509,26 @@ def build_context(
         "### Data checkpoints (E7.9 checkpoints.json)",
         *checkpoint_lines(p.bt_root / BT_CHECKPOINTS),
         "",
+        f"## ML models (E27.3 registry {ML_MODELS}; D126: dev metrics are model quality, never "
+        "P&L evidence; champion -> shadow -> candidate)",
+        *capped_section(
+            ml_models_lines(ml["models"], [e for e in ml["errors"] if e.startswith("ml ")]),
+            ML_SECTION_MAX,
+            run_dir / "ml-models.log",
+        ),
+        f"## ML studies (E27.7, D133: ledger {ML_LEDGER}, shared nightly queue with BT; next "
+        f"free id {reserve_ml_id(backlog, ml_floor(ml_snapshot_meta(ml)))} (an ml_study_spec "
+        "reserves it; a re-listed draft keeps its ML id); a verdict reads DEV only: a pass "
+        "moves the version to shadow, never to champion; cite only an ML-<n> verdict)",
+        *capped_section(
+            ml_studies_lines(ml, ml_status_view(p, run_dir)),
+            ML_SECTION_MAX,
+            run_dir / "ml-studies.log",
+        ),
+        "## ML live (E27.4 nightly ml_health / `arc ml monitor`; shadow scoring is the "
+        f"out-of-sample check; n < {ML_MIN_N} is insufficient: never a basis for a claim)",
+        *ml_live_lines(ml_live_record(p, run_dir, copy, now.astimezone(ET).date())),
+        "",
         "## Halts this week (and any still active)",
     ]
     out += [f"- {a} {k}: {r} (cleared {c or 'NO, still active'})" for a, k, r, c in halts] or [
@@ -4598,9 +5627,10 @@ def cmd_gate(p: Paths, now: dt.datetime) -> int:
     bt_entries, _ = load_bt_ledger(p.bt_root / BT_LEDGER)
     holdouts = live_holdouts(bt_entries, retired_ids(p))  # D127: retired never wakes
     xp_keys = xp_verdict_keys(p.xp_verdicts)
+    ml = ml_snapshot(p)  # E27.8 (D133): registry + ML ledger + queue, read-only
     conn = sqlite3.connect(f"{staging.resolve().as_uri()}?mode=ro", uri=True)
     try:
-        decision = wake_decision(conn, state, now, holdouts, xp_keys)
+        decision = wake_decision(conn, state, now, holdouts, xp_keys, ml["verdict_keys"])
         experiments = [
             {
                 "id": e["experiment_id"],
@@ -4636,9 +5666,11 @@ def cmd_gate(p: Paths, now: dt.datetime) -> int:
             "backtest": {"studies": bt["studies"], "next_study_id": bt["next_study_id"]},
             "bt_holdouts": holdouts,
             "xp_verdicts": xp_keys,  # E26.4: the XP verdict files `mark` stores as seen
+            "ml": ml_snapshot_meta(ml),  # E27.8: what `record` validates ML drafts against
+            "ml_verdicts": ml["verdict_keys"],  # E27.8: the ML verdicts `mark` stores
         },
     )
-    ctx = build_context(p, run_dir, copy, decision, now, bt)
+    ctx = build_context(p, run_dir, copy, decision, now, bt, ml)
     (run_dir / "context.md").write_text(ctx)
     tail = f"\n...[truncated; full: {run_dir}/context.md]"
     print(ctx if len(ctx) <= MAX_STDOUT else ctx[: MAX_STDOUT - len(tail)] + tail)
@@ -4648,12 +5680,20 @@ def cmd_gate(p: Paths, now: dt.datetime) -> int:
 # ---------- E26.4 (D121): the short verdict run ----------
 
 
-def unseen_verdicts(state: dict, holdouts: list, xp_keys: list) -> tuple[list, list]:
-    """The BT holdout keys and XP verdict-file keys neither the weekly run nor a verdict
-    run has marked as read (both ``mark`` paths add to the same seen lists)."""
+def unseen_verdicts(
+    state: dict, holdouts: list, xp_keys: list, ml_keys: list | None = None
+) -> tuple[list, list, list]:
+    """The BT holdout keys, XP verdict-file keys and ML verdict keys (E27.8) neither the
+    weekly run nor a verdict run has marked as read (both ``mark`` paths add to the same
+    seen lists)."""
     bt_seen = set(state.get("bt_holdouts_seen") or [])
     xp_seen = set(state.get("xp_verdicts_seen") or [])
-    return [h for h in holdouts if h not in bt_seen], [k for k in xp_keys if k not in xp_seen]
+    ml_seen = set(state.get("ml_verdicts_seen") or [])
+    return (
+        [h for h in holdouts if h not in bt_seen],
+        [k for k in xp_keys if k not in xp_seen],
+        [k for k in ml_keys or [] if k not in ml_seen],
+    )
 
 
 def next_weekly_run(now: dt.datetime) -> dt.datetime:
@@ -4664,15 +5704,17 @@ def next_weekly_run(now: dt.datetime) -> dt.datetime:
     return slot if slot >= local else slot + dt.timedelta(days=7)
 
 
-def verdict_gate_decision(state: dict, now: dt.datetime, holdouts: list, xp_keys: list) -> dict:
+def verdict_gate_decision(
+    state: dict, now: dt.datetime, holdouts: list, xp_keys: list, ml_keys: list | None = None
+) -> dict:
     """Wake the short run only on an unseen verdict, at most once per ET day, and never when
     the weekly run (which reads every verdict anyway) is due within ``VERDICT_WEEKLY_GAP``."""
-    new_bt, new_xp = unseen_verdicts(state, holdouts, xp_keys)
+    new_bt, new_xp, new_ml = unseen_verdicts(state, holdouts, xp_keys, ml_keys)
     today = now.astimezone(ET).date().isoformat()
     weekly = next_weekly_run(now)
-    out = {"wake": False, "new_holdouts": new_bt, "new_xp_verdicts": new_xp, "day": today,
-           "next_weekly": iso(weekly)}  # fmt: skip
-    if not new_bt and not new_xp:
+    out = {"wake": False, "new_holdouts": new_bt, "new_xp_verdicts": new_xp,
+           "new_ml_verdicts": new_ml, "day": today, "next_weekly": iso(weekly)}  # fmt: skip
+    if not new_bt and not new_xp and not new_ml:
         out["reason"] = "no new backtest holdout verdict or XP verdict file since the last run"
     elif (state.get("verdict_run") or {}).get("day") == today:
         out["reason"] = f"a verdict run already happened today ({today} ET); next one tomorrow"
@@ -4680,7 +5722,7 @@ def verdict_gate_decision(state: dict, now: dt.datetime, holdouts: list, xp_keys
         out["reason"] = f"the weekly run is due within 24 h ({iso(weekly)}); it reads them"
     else:
         out["wake"] = True
-        out["reason"] = f"new verdict(s): {verdict_ids(new_bt + new_xp)}"
+        out["reason"] = f"new verdict(s): {verdict_ids(new_bt + new_xp + new_ml)}"
     return out
 
 
@@ -4712,23 +5754,34 @@ def xp_verdict_lines(directory: Path, keys: list) -> list[str]:
 
 
 def build_verdict_context(
-    p: Paths, run_dir: Path, decision: dict, bt: dict, backlog: dict, now: dt.datetime
+    p: Paths,
+    run_dir: Path,
+    decision: dict,
+    bt: dict,
+    backlog: dict,
+    now: dt.datetime,
+    ml: dict | None = None,
 ) -> str:
-    ids = {k.split(":", 1)[0] for k in decision["new_holdouts"] + decision["new_xp_verdicts"]}
+    ml = ml or {"studies": [], "retired": {}, "next_id": "ML-1"}
+    new_ml = decision.get("new_ml_verdicts") or []
+    ids = {
+        k.split(":", 1)[0] for k in decision["new_holdouts"] + decision["new_xp_verdicts"] + new_ml
+    }
+    ml_ids = {k.split(":", 1)[0] for k in new_ml}
     bt_ids = {k.split(":", 1)[0] for k in decision["new_holdouts"]}
     studies = [s for s in bt["studies"] if s["id"] in bt_ids]
     related = related_backlog(backlog, ids)
     open_titles = [
         f"- {e['id']} [{e['status']}] "
-        f"{e.get('title') if is_bt(e) else (e.get('spec') or {}).get('title')}"
+        f"{e.get('title') if is_study(e) else (e.get('spec') or {}).get('title')}"
         for e in ranked_backlog(backlog, kind=None)
     ]
     lines = [
         f"RUN_DIR={run_dir}",
         "MODE: verdict run (E26.4, D121): read the new verdict(s) below and propose at most "
-        "one follow-up XP and one follow-up BT, each citing a verdict id. No quick changes, "
-        "no standing themes, no full review: the weekly run does those.",
-        f"VERDICTS: {verdict_ids(decision['new_holdouts'] + decision['new_xp_verdicts'])}",
+        "one follow-up XP and one follow-up study (a BT or an ML, D133), each citing a verdict "
+        "id. No quick changes, no standing themes, no full review: the weekly run does those.",
+        f"VERDICTS: {verdict_ids(decision['new_holdouts'] + decision['new_xp_verdicts'] + new_ml)}",
         f"NEXT WEEKLY RUN: {decision['next_weekly']}",
         "DELIVERY: top-level post in #arc-analyst (the runner's message ts is not stored, so "
         "the reply cannot be threaded under it)",
@@ -4739,6 +5792,14 @@ def build_verdict_context(
         f"## New XP verdict files ({p.xp_verdicts})",
         *(xp_verdict_lines(p.xp_verdicts, decision["new_xp_verdicts"]) or ["- none"]),
         "",
+        f"## New ML study verdicts (E27.7 ledger {ML_LEDGER}; dev only: a pass moves the "
+        "version to shadow, never to champion)",
+        *(
+            ml_studies_lines({"studies": [s for s in ml["studies"] if s["id"] in ml_ids]})
+            if ml_ids
+            else ["- none"]
+        ),
+        "",
         "## Backlog entries these verdicts touch (status changes go in backlog_drops)",
         *(
             [f"- {e['id']} [{e['status']}] key={e['key']} | {value_formula(e)}" for e in related]
@@ -4748,6 +5809,7 @@ def build_verdict_context(
         f"## Open backlog (ids only; do not re-propose these; cap {BACKLOG_CAP} XP)",
         *(open_titles or ["- empty"]),
         f"- next free study id {bt['next_study_id']}",
+        f"- next free ML study id {reserve_ml_id(backlog, ml_floor(ml_snapshot_meta(ml)))}",
         *retired_lines(bt["studies"]),
     ]
     return "\n".join(lines) + "\n"
@@ -4761,7 +5823,8 @@ def cmd_gate_verdict(p: Paths, now: dt.datetime) -> int:
     bt_entries, _ = load_bt_ledger(p.bt_root / BT_LEDGER)
     holdouts = live_holdouts(bt_entries, retired_ids(p))  # D127: retired never wakes
     xp_keys = xp_verdict_keys(p.xp_verdicts)
-    decision = verdict_gate_decision(state, now, holdouts, xp_keys)
+    ml = ml_snapshot(p)  # E27.8: an unseen ML study verdict also wakes the short run
+    decision = verdict_gate_decision(state, now, holdouts, xp_keys, ml["verdict_keys"])
     if not decision["wake"]:
         print(f"skip: {decision['reason']}")
         print(json.dumps({"wakeAgent": False}))
@@ -4779,16 +5842,23 @@ def cmd_gate_verdict(p: Paths, now: dt.datetime) -> int:
             "reason": decision["reason"],
             "next_weekly": decision["next_weekly"],
             "verdict_ids": sorted(
-                {k.split(":", 1)[0] for k in decision["new_holdouts"] + decision["new_xp_verdicts"]}
-            ),
+                {
+                    k.split(":", 1)[0]
+                    for k in decision["new_holdouts"]
+                    + decision["new_xp_verdicts"]
+                    + decision["new_ml_verdicts"]
+                }
+            ),  # fmt: skip
             "bt_holdouts": decision["new_holdouts"],
             "xp_verdicts": decision["new_xp_verdicts"],
+            "ml_verdicts": decision["new_ml_verdicts"],
             "backtest": {"studies": bt["studies"], "next_study_id": bt["next_study_id"]},
+            "ml": ml_snapshot_meta(ml),
         },
     )
     state["verdict_run"] = {"day": decision["day"], "run_dir": str(run_dir), "at": iso(now)}
     save_json(p.state, state)  # once per ET day, even if the agent fails to mark
-    ctx = build_verdict_context(p, run_dir, decision, bt, backlog, now)
+    ctx = build_verdict_context(p, run_dir, decision, bt, backlog, now, ml)
     (run_dir / "context.md").write_text(ctx)
     print(f"WAKE: {decision['reason']}")
     print(clip(ctx, MAX_STDOUT))
@@ -4801,10 +5871,12 @@ def validate_verdict_findings(
     verdict_id_list: list,
     studies: list | None = None,
     used=(),
+    ml: dict | None = None,
 ) -> list[str]:
     """The narrower E26.4 contract: ``mode: verdict``, every verdict read, at most one new
-    XP and one new BT proposal (each citing a verdict of this run), drops of related
-    entries only. Anything weekly-only (quick changes, themes, review lists) is refused."""
+    XP and one new study proposal (a BT or an ML, D133; each citing a verdict of this run),
+    drops of related entries only. Anything weekly-only (quick changes, themes, review
+    lists) is refused."""
     errs: list[str] = []
     studies = studies or []
     vids = set(verdict_id_list)
@@ -4842,8 +5914,10 @@ def validate_verdict_findings(
             )
             continue
         errs += _finding_shape_errs(f, i)
-        cited = verdict_refs(f.get("evidence")) | verdict_refs(
-            (f.get("proposal") or {}).get("evidence_ref")
+        cited = (
+            verdict_refs(f.get("evidence"))
+            | verdict_refs((f.get("proposal") or {}).get("evidence_ref"))
+            | verdict_refs((f.get("ml_study_spec") or {}).get("hypothesis"))
         )
         if not cited & vids:
             errs.append(f"findings[{i}] must cite a verdict of this run ({sorted(vids)}) in "
@@ -4862,15 +5936,24 @@ def validate_verdict_findings(
             n_bt += 1
             errs += validate_study_spec(f["study_spec"], f"findings[{i}] study_spec")
             errs += validate_study_value(f.get("study_value"), f"findings[{i}] study_value")
+        elif "ml_study_spec" in f:  # E27.8: the follow-up study may be an ML-<n> (D133)
+            if ML_KEY_PREFIX + str(f.get("key")) in backlog["items"]:
+                errs.append(f"findings[{i}] ml_study_spec on {f['key']}: already in the backlog")
+            n_bt += 1
+            errs += validate_ml_finding(f, i, backlog, ml)
         elif "study_value" in f:
             errs.append(f"findings[{i}] `study_value` is only allowed with a study_spec")
         elif cat != "xp-proposal":
             errs.append(f"findings[{i}] a {cat} finding in a verdict run carries a study_spec "
-                        "(the follow-up BT); anything else waits for the weekly run")  # fmt: skip
+                        "or ml_study_spec (the follow-up study); anything else waits for the "
+                        "weekly run")  # fmt: skip
     if n_xp > VERDICT_MAX_NEW:
         errs.append(f"{n_xp} new XP proposals: at most {VERDICT_MAX_NEW} per verdict run")
     if n_bt > VERDICT_MAX_NEW:
-        errs.append(f"{n_bt} new BT proposals: at most {VERDICT_MAX_NEW} per verdict run")
+        errs.append(
+            f"{n_bt} new study proposals (BT/ML): at most {VERDICT_MAX_NEW} per verdict run"
+        )
+    errs += check_ml_citations(findings, ml)
     errs += _validate_backlog_moves(doc, findings, backlog, frozenset())
     related_ids = {e["id"] for e in related_backlog(backlog, vids)}
     for j, d in enumerate(doc.get("backlog_drops") or []):
@@ -4886,7 +5969,9 @@ def validate_verdict_findings(
         after = json.loads(json.dumps(backlog))
         apply_backlog(after, doc, "check", "", used=used)
         n_open = sum(
-            1 for e in after["items"].values() if e.get("status") in BACKLOG_OPEN and not is_bt(e)
+            1
+            for e in after["items"].values()
+            if e.get("status") in BACKLOG_OPEN and not is_study(e)
         )
         if n_open > BACKLOG_CAP:
             errs.append(f"backlog would hold {n_open} open proposals; cap is {BACKLOG_CAP}: "
@@ -4905,7 +5990,12 @@ def cmd_record_verdict(p: Paths, run_dir: Path, now: dt.datetime) -> int:
     backlog = load_backlog(p.backlog, used, iso(now))
     bt_meta = meta.get("backtest") or {}
     studies = bt_meta.get("studies") or []
-    errs = validate_verdict_findings(doc, backlog, meta.get("verdict_ids") or [], studies, used)
+    errs = validate_verdict_findings(
+        doc, backlog, meta.get("verdict_ids") or [], studies, used, meta.get("ml")
+    )
+    ml_floor_n = ml_floor(meta.get("ml"), ml_pr_numbers(p))
+    if not errs:
+        errs = ml_cli_validate(p, run_dir, pending_ml_drafts(backlog, doc, ml_floor_n))
     if errs:
         print("findings.json rejected (ledger and backlog unchanged):\n- " + "\n- ".join(errs))
         return 2
@@ -4914,6 +6004,7 @@ def cmd_record_verdict(p: Paths, run_dir: Path, now: dt.datetime) -> int:
     finding_ids = {k: it["id"] for k, it in items.items()}
     floor = study_floor(studies, bt_meta.get("next_study_id"))
     study_specs = write_study_drafts(run_dir, backlog, doc, items, finding_ids, floor, now)
+    study_specs += write_ml_drafts(run_dir, backlog, doc, items, finding_ids, ml_floor_n, now)
     save_json(p.ledger, ledger)
     moves = apply_backlog(backlog, doc, run_dir.name, iso(now), finding_ids, used)
     sync_bt_queue(backlog, load_bt_queue(p.bt_root / BT_QUEUE), iso(now))
@@ -4938,6 +6029,9 @@ def mark_verdict_run(p: Paths, run_dir: Path, meta: dict, now: dt.datetime) -> i
     )
     state["xp_verdicts_seen"] = sorted(
         set(state.get("xp_verdicts_seen") or []) | set(meta.get("xp_verdicts") or [])
+    )
+    state["ml_verdicts_seen"] = sorted(
+        set(state.get("ml_verdicts_seen") or []) | set(meta.get("ml_verdicts") or [])
     )
     run = state.get("verdict_run") or {}
     run.update(marked_run_dir=str(run_dir), marked_at=iso(now))
