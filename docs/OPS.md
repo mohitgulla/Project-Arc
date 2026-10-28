@@ -3745,3 +3745,39 @@ contract `arc.ml.* never imported by the decision path`). Every step fails open.
   A rolling-gate-passed candidate is promotable directly to champion; one whose newest
   rolling read failed is refused. The D84 one-time holdout read of the E27.3 versions
   is unaffected (`holdout_reads()` skips rolling rows).
+
+## E27.6 Deep-learning challengers vs M2 (D126)
+
+Research only (`arc/ml/dl/`, torch via the optional `ml-dl` extra, imported lazily;
+nothing live imports it, and `tests/test_ml_dl.py` checks that the live scorer
+modules load without `arc.ml.dl` or torch). Challengers per family, trained on the
+**registered M2 version's own frame** (digest checked against its manifest) with the
+E27.3 harness (walk-forward folds, purge, embargo, weights, inner split, isotonic
+calibration, `eval_rows`, `ml_er`/`ml_pstop` replays):
+
+- `mlp`: ResNet-MLP on the quantile-normalised M2 features (+ missing flags, category
+  embeddings), 5 seeds averaged;
+- `ft`: FT-Transformer on the same inputs, 3 seeds;
+- `temporal`: ResNet-MLP + a dilated 1-D CNN over the ticker's last 60 sessions
+  (ret, range, gap, RV20, IV30, term slope, 25Δ skew, volume / option-volume vs 20d,
+  SPY ret + IV30, observed flag);
+- `surface`: ResNet-MLP + a small CNN over that day's IV surface (7 Δ buckets × 6 DTE
+  buckets 10–75, ln IV / shape vs ATM-30 / mask), built from the quoted marked chain;
+  cache `data/ml/dl/surfaces/v1/` (aggregates only);
+- `stack`: logistic/linear blend of M2 + the fold's best DL challenger (picked on the
+  inner-validation IC), fitted strictly ex ante per test quarter.
+
+All settings are pre-registered in `arc/ml/dl/config.py` (no search). Decision rule
+`dl_promote`, per family, both dev test years: log-loss below M2, `e_r` IC above M2
+with NW t > 2, and the `ml_er` replay beats M2's on net **and** max DD. A pass would
+still need the absolute `m2_promote` rule before any shadow/holdout step. The surface
+is also tested as an M1 input (`move_vs_implied_h21`, same net with/without it).
+
+      .venv/bin/arc ml dl train [--family credit,debit] [--challenger mlp,ft,temporal,surface] \
+          [--no-replay] [--no-m1] [--workers 6]          # data/ml/dl/dl-<hash>/, resumable
+      .venv/bin/arc ml dl report data/ml/dl/dl-<hash>      # → docs/RESEARCH/ml-dl-challengers.md
+
+Install: `uv sync --extra ml --extra ml-dl`. Same etiquette as M2 (no
+`data/backtest/queue.json`, `nice -n 10`, ≤ 6 workers). CPU runs are byte-deterministic
+(tested); MPS runs (`ft`, `temporal`, `surface` default to `auto`) are not, so the report
+gives the seed spread instead.
