@@ -341,6 +341,13 @@ export function QuantBlocks({ d }: { d: TradeDetail }) {
   ];
   // E23.3 (D98): the trade card's Levels fact (short strike / breakeven vs volume-profile and OI-wall levels)
   if (q.levels_text) value.push({ label: "Levels", value: q.levels_text, hint: "vs volume profile / OI walls" });
+  // E27.4 (D126): the shadow M2 score at proposal time; display only, never a decision input
+  if (q.ml?.p_win != null)
+    value.push({
+      label: "ML (shadow)",
+      value: `p_win ${formatNumber(q.ml.p_win, 2)} · E[R] ${q.ml.e_r == null ? DASH : (q.ml.e_r >= 0 ? "+" : "") + formatNumber(q.ml.e_r, 2)} · p_stop ${q.ml.p_stop == null ? DASH : formatNumber(q.ml.p_stop, 2)}`,
+      hint: q.ml.model_version ?? undefined,
+    });
   if (realized != null && r.net_ev != null && r.net_ev !== 0)
     value.push({
       label: "Realized vs modelled",

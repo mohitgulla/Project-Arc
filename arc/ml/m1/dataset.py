@@ -38,10 +38,19 @@ class HoldoutReadError(RuntimeError):
 
 
 def load_panel(
-    features_root: Path, start: dt.date, end: dt.date, schema: str | None = None
+    features_root: Path,
+    start: dt.date,
+    end: dt.date,
+    schema: str | None = None,
+    *,
+    holdout_reason: str | None = None,
 ) -> pd.DataFrame:
-    """Feature-store rows for every stored session in [start, end]."""
-    if end >= HOLDOUT_START:
+    """Feature-store rows for every stored session in [start, end].
+
+    Sessions in the D84 holdout are refused unless *holdout_reason* names the read
+    (the D140 monthly retrain, whose rolling window moves past 2024-01-01).
+    """
+    if end >= HOLDOUT_START and not holdout_reason:
         msg = f"M1 dev dataset end {end} reaches the holdout (≥ {HOLDOUT_START}); D84"
         raise HoldoutReadError(msg)
     vdir = version_dir(features_root, schema)
@@ -63,9 +72,11 @@ def attach_targets(
     data_dir: Path,
     dev_end: dt.date = DEV_END,
     horizons: Sequence[int] = M1_HORIZONS,
+    *,
+    holdout_reason: str | None = None,
 ) -> pd.DataFrame:
     """*panel* + the M1 labels (``log_ret_h`` … ``end_h``) from OHLC cut at *dev_end*."""
-    if dev_end >= HOLDOUT_START:
+    if dev_end >= HOLDOUT_START and not holdout_reason:
         msg = f"labels may not read past {DEV_END} (holdout from {HOLDOUT_START})"
         raise HoldoutReadError(msg)
     lo = min(panel["date"])

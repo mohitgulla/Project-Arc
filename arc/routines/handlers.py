@@ -1202,6 +1202,165 @@ def _analyst_poster(ctx: JobContext) -> Callable[[str], None]:
     return post
 
 
+def _ml_data_dir(ctx: JobContext, root: Path | None = None) -> Path:
+    """``options.data_dir`` (repo-relative) else ``ArcSettings.ml_data_dir``."""
+    raw = ctx.spec.options.get("data_dir")
+    if raw is None:
+        return Path(ctx.settings.ml_data_dir)
+    p = Path(str(raw))
+    return p if p.is_absolute() else (root or _REPO_ROOT) / p
+
+
+def ml_refresh_source(
+    ctx: JobContext,
+    *,
+    data_dir: Path | None = None,
+    live_inputs_fn: Callable[..., Any] | None = None,
+    history_inputs_fn: Callable[..., Any] | None = None,
+) -> JobResult:
+    """E27.4 (D126): the nightly ML refresh (:mod:`arc.ml.refresh`).
+
+    After ``history.topup``: the day's live feature panel, the M1 next-day read,
+    feature / score drift, parity on the newest overlapping session and the daily
+    ``ml_health`` record. Fail-open per step; context only (never a gate, sizing,
+    ranking or prompt input).
+    """
+    from arc.ml.refresh import refresh_tickers, run_refresh
+    from arc.ml.serve import family_for_profile
+    from arc.pipeline.market import ETF_UNDERLYINGS
+
+    opts = ctx.spec.options
+    out = data_dir or _ml_data_dir(ctx)
+    day = ctx.now.astimezone(ET).date()
+    names = refresh_tickers(ctx.conn, ctx.settings, ctx.now)
+    res = run_refresh(
+        ctx.conn,
+        data_dir=out,
+        day=day,
+        tickers=names,
+        family=family_for_profile(ctx.settings.account_profile),
+        etfs=frozenset(ETF_UNDERLYINGS),
+        universe=str(opts.get("universe") or "c500"),
+        extend_store=bool(opts.get("extend_store", True)),
+        live_inputs_fn=live_inputs_fn,
+        history_inputs_fn=history_inputs_fn,
+    )
+    if res.health_path is None:
+        msg = f"ml.refresh wrote no ml_health record ({res.errors})"
+        raise RuntimeError(msg)
+    _ml_parity_alert(ctx, (res.health or {}).get("parity") or {})
+    return JobResult(summary=res.summary(), metrics=res.metrics())
+
+
+def _ml_parity_alert(ctx: JobContext, parity: dict[str, Any]) -> None:
+    """One informational ``ml:parity_breach:<day>`` ops alert per day on a parity
+    breach, naming the features over tolerance. Never fails the run."""
+    import sqlite3
+
+    from arc.ml.refresh import parity_alert_message
+    from arc.monitoring.store import AlertRepo
+
+    msg = parity_alert_message(parity)
+    if msg is None:
+        return
+    day = ctx.now.astimezone(ET).date().isoformat()
+    key = f"ml:parity_breach:{day}"
+    try:
+        repo = AlertRepo(ctx.conn)
+        if repo.seen(key):
+            return
+        repo.open(
+            key,
+            "ml:parity_breach",
+            msg[:500],
+            at=ctx.now,
+            correlation={
+                "session": day,
+                "parity_day": parity.get("day"),
+                "breached": list(parity.get("breached") or [])[:20],
+            },
+            resolved=True,
+        )
+    except sqlite3.Error as exc:
+        log.warning("ml.parity_alert_failed", error=str(exc))
+
+
+def ml_retrain_source(
+    ctx: JobContext,
+    *,
+    data_dir: Path | None = None,
+    post: Callable[[str], None] | None = None,
+    extend: Callable[..., dict[str, Any]] | None = None,
+    retrain: Callable[..., Any] | None = None,
+) -> JobResult:
+    """E27.4 (D140): the monthly rolling-holdout retrain (:mod:`arc.ml.retrain`).
+
+    Extends the candidate ledger to the history cache's last session (resumable; stops
+    at ``options.stop_at`` ET, before the E26.3 study window), then retrains M1 + M2
+    and gates each family on the rolling 6-month holdout. Results register as
+    ``candidate`` only; promotion stays the owner's ``arc ml promote``. One line goes
+    to #arc-analyst.
+    """
+    import datetime as dtm
+    import os
+
+    from arc.backtest.cli import _git_sha
+    from arc.ml import retrain as rt
+    from arc.ml.refresh import history_cache_end
+
+    opts = ctx.spec.options
+    out = data_dir or _ml_data_dir(ctx)
+    post = post or _analyst_poster(ctx)
+    stop_at = dtm.time.fromisoformat(str(opts.get("stop_at") or "21:00"))
+    deadline = dtm.datetime.combine(ctx.now.astimezone(ET).date(), stop_at, ET)
+
+    def _stop() -> bool:
+        ctx.heartbeat()
+        return ctx.clock() >= deadline
+
+    families = [str(f) for f in (opts.get("families") or ["credit", "debit"])]
+    end = history_cache_end(out, ctx.now.astimezone(ET).date())
+    if end is None:
+        msg = f"no history cache under {out} (history.topup first)"
+        raise JobSkippedError(msg)
+    info = (extend or rt.extend_ledger)(
+        out,
+        data_end=end,
+        ranking_file=_REPO_ROOT / "config" / "ranking.yaml",
+        universe=str(opts.get("universe") or "c500"),
+        workers=int(opts.get("workers") or 6),
+        stop=_stop,
+        say=lambda m: log.info("ml.retrain.ledger", msg=m),
+    )
+    if not info.get("complete"):
+        text = (
+            f"🧪 ml.retrain: ledger extension to {info.get('data_end')} paused with "
+            f"{info.get('pending')} ticker(s) pending; resumes on the next run "
+            "(`arc routines run ml.retrain`) — no retrain this time"
+        )
+        post(text)
+        raise JobSkippedError(text, notice="")
+    res = (retrain or rt.retrain_in_child)(
+        repo=_REPO_ROOT,
+        data_dir=out,
+        code_sha=_git_sha(_REPO_ROOT),
+        families=families,
+        months=int(opts.get("holdout_months") or rt.HOLDOUT_MONTHS),
+        min_gap_days=int(opts.get("min_gap_days") or rt.MIN_GAP_DAYS),
+        env=dict(os.environ),
+        timeout_s=float(opts.get("max_runtime_s") or 4 * 3600),
+    )
+    post("🧪 " + res.summary())
+    metrics = {**res.metrics(), "ledger": info}
+    errors = res.errors()
+    if families and len(errors) == len(families):
+        msg = "ml.retrain failed for every family: " + "; ".join(
+            f"{k}: {v}" for k, v in sorted(errors.items())
+        )
+        raise RuntimeError(msg)
+    return JobResult(summary=res.summary(), metrics=metrics)
+
+
 def _store_path(conn: sqlite3.Connection) -> Path:
     """The file behind the routine's store connection (``main`` database)."""
     for row in conn.execute("PRAGMA database_list").fetchall():
@@ -3443,6 +3602,8 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "history.topup": "arc.routines.handlers:history_topup_source",  # E7.13 (D84) nightly Theta
     "backtest.studies": "arc.routines.handlers:backtest_studies_source",  # E26.3 (D121)
     "backtest.recon": "arc.routines.handlers:backtest_recon_source",  # E7.22 (D125) weekly
+    "ml.refresh": "arc.routines.handlers:ml_refresh_source",  # E27.4 (D126) nightly
+    "ml.retrain": "arc.routines.handlers:ml_retrain_source",  # E27.4 (D140) monthly
     "betas": "arc.routines.handlers:betas_source",  # E3.6 (D62) daily 1y beta vs SPY
     "levels": "arc.routines.handlers:levels_source",  # E23.0 (D98) volume profile + OI walls
     # E4.8 (D46): Finnhub per-ticker context (typed kinds, shared 55/min budget)

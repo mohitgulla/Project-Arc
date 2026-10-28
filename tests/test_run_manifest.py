@@ -316,7 +316,8 @@ class TestTraceCli:
         quant = next(o for o in report.outcomes if o.job == "quant.open")
         m = ManifestRepo(conn).latest(quant.run_id)
         assert m is not None
-        assert m.declared_writes == ["structures", "note"]
+        # E27.4: `ml.score` (ml_shadow on by default) adds the shadow `ml_scores` entry
+        assert m.declared_writes == ["structures", "note", "ml_scores"]
         assert m.output_ids["structures"]
         assert m.persona_call_ids
         assert len(m.input_digest) == 64 and int(m.input_digest, 16) >= 0

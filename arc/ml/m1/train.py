@@ -121,9 +121,13 @@ def model_features() -> list[str]:
 
 
 def _lgb() -> Any:
-    import lightgbm
+    from arc.ml.m2.train import load_lightgbm
 
-    return lightgbm
+    return load_lightgbm()
+
+
+def _lgb_from_text(text: str) -> Any:
+    return _lgb().Booster(model_str=text)
 
 
 # ---------------------------------------------------------------------------
@@ -131,8 +135,8 @@ def _lgb() -> Any:
 # ---------------------------------------------------------------------------
 
 
-def dev_sessions() -> list[dt.date]:
-    return sessions_between(dt.date(2020, 1, 1), DEV_END)
+def dev_sessions(end: dt.date = DEV_END) -> list[dt.date]:
+    return sessions_between(dt.date(2020, 1, 1), end)
 
 
 def _idx(sessions: Sequence[dt.date], d: dt.date) -> int:
@@ -346,8 +350,9 @@ def run_fold(
     params: dict[str, Any] | None = None,
     rounds: int = NUM_ROUNDS,
     progress: Callable[[str], None] | None = None,
+    dev_end: dt.date = DEV_END,
 ) -> tuple[FoldResult, FitSet]:
-    s = dev_sessions()
+    s = dev_sessions(dev_end)
     si = session_index(df, s)
     say = progress or (lambda _m: None)
     halves = {h: plan.cal_halves(s, h) for h in horizons}
@@ -447,12 +452,17 @@ def rolling_blocks(dates: np.ndarray) -> list[tuple[dt.date, np.ndarray]]:
 
 
 def final_offsets(
-    res: FoldResult, kind: str, h: int, name: str, last_n: int = CAL_SESSIONS
+    res: FoldResult,
+    kind: str,
+    h: int,
+    name: str,
+    last_n: int = CAL_SESSIONS,
+    dev_end: dt.date = DEV_END,
 ) -> dict[float, float]:
     """Offsets for the shipped model: the fold's test-year OOS rows in the last *last_n*
     sessions with labels inside dev (what the nightly refresh would hold at dev end)."""
     rows = res.rows[(kind, h)]
-    s = dev_sessions()
+    s = dev_sessions(dev_end)
     si = session_index(rows, s)
     sel = si >= si.max() - last_n + 1
     return fit_offsets(
@@ -776,25 +786,35 @@ def write_model(
     return man
 
 
-def load_model(vdir: Path, *, check_schema: bool = True) -> M1Model:
-    """Read an artefact directory (text dumps only; refuses a stale feature schema)."""
+def load_model(vdir: Path, *, check_schema: bool = True, text: bool = False) -> M1Model:
+    """Read an artefact directory (text dumps only; refuses a stale feature schema).
+
+    ``text=True`` (E27.4 live serving) evaluates the dumps with the pure-numpy
+    :class:`~arc.ml.lgbm_text.TextBooster` instead of ``lightgbm`` (absent in prod/CI).
+    """
     from arc.ml.features.registry import require_schema
 
     man = M1Manifest.model_validate_json((vdir / "manifest.json").read_text())
     if check_schema:
         require_schema(man.feature_schema)
-    lgb = _lgb()
+    make: Callable[[str], Any]
+    if text:
+        from arc.ml.lgbm_text import TextBooster
+
+        make = TextBooster
+    else:
+        make = _lgb_from_text
     boosters = {}
     for t in man.targets:
         if t.source != "lgbm":
             continue
         for p in man.levels:
             name = booster_file(t.kind, t.h, p)
-            text = (vdir / name).read_text()
-            if hashlib.sha256(text.encode()).hexdigest() != man.files[name]:
+            text_ = (vdir / name).read_text()
+            if hashlib.sha256(text_.encode()).hexdigest() != man.files[name]:
                 msg = f"{name}: sha256 mismatch with manifest"
                 raise ValueError(msg)
-            boosters[(t.kind, t.h, float(p))] = lgb.Booster(model_str=text)
+            boosters[(t.kind, t.h, float(p))] = make(text_)
     return M1Model(man, boosters)
 
 
@@ -895,17 +915,24 @@ def train_m1(
     rounds: int = NUM_ROUNDS,
     horizons: Sequence[int] = M1_HORIZONS,
     progress: Callable[[str], None] | None = None,
+    dev_end: dt.date = DEV_END,
+    folds: Sequence[FoldPlan] = FOLDS,
+    holdout_reason: str | None = None,
 ) -> TrainRun:
-    """Walk-forward evaluation, keep rule, final fit and artefacts (dev data only)."""
+    """Walk-forward evaluation, keep rule, final fit and artefacts (dev data only).
+
+    The D140 monthly retrain passes a later *dev_end* (its rolling train end), its own
+    *folds* and the *holdout_reason* that lets the dataset read past the D84 boundary.
+    """
     from arc.ml.m1.dataset import attach_targets, load_panel
 
     say = progress or (lambda _m: None)
     prm = dict(params or LGB_PARAMS)
     t0 = time.monotonic()
-    panel = load_panel(features_root, dt.date(2020, 1, 1), DEV_END)
+    panel = load_panel(features_root, dt.date(2020, 1, 1), dev_end, holdout_reason=holdout_reason)
     if tickers is not None:
         panel = panel[panel["ticker"].isin(set(tickers))].reset_index(drop=True)
-    df = attach_targets(panel, data_dir, horizons=horizons)
+    df = attach_targets(panel, data_dir, dev_end, horizons=horizons, holdout_reason=holdout_reason)
     features = model_features()
     digest = data_digest(df, features)
     t_load = time.monotonic() - t0
@@ -913,9 +940,16 @@ def train_m1(
 
     results: list[FoldResult] = []
     fitsets: list[FitSet] = []
-    for plan in FOLDS:
+    for plan in folds:
         res, fs = run_fold(
-            df, plan, features, horizons=horizons, params=prm, rounds=rounds, progress=progress
+            df,
+            plan,
+            features,
+            horizons=horizons,
+            params=prm,
+            rounds=rounds,
+            progress=progress,
+            dev_end=dev_end,
         )
         results.append(res)
         fitsets.append(fs)
@@ -923,9 +957,9 @@ def train_m1(
     decisions = keep_decisions(table, horizons)
     say("keep decisions:\n" + decisions[["kind", "h", "source"]].to_string(index=False))
 
-    # final model: every dev row; offsets from the fold-2023 test residuals
+    # final model: every dev row; offsets from the last fold's test residuals
     say("final model")
-    s = dev_sessions()
+    s = dev_sessions(dev_end)
     si = session_index(df, s)
     final = fit_set(
         df,
@@ -944,7 +978,9 @@ def train_m1(
             source=r.source,  # type: ignore[arg-type]
             offsets={
                 qtag(p): v
-                for p, v in final_offsets(last, str(r.kind), int(r.h), str(r.source)).items()
+                for p, v in final_offsets(
+                    last, str(r.kind), int(r.h), str(r.source), dev_end=dev_end
+                ).items()
             },
             har_iv=final.har_iv[int(r.h)] if r.kind == "rv" else None,
         )
@@ -960,19 +996,19 @@ def train_m1(
         rounds=rounds,
         code_sha=code_sha,
         feature_manifest_sha=_feature_manifest_sha(features_root),
-        train_window={"start": str(TRAIN_START), "end": str(DEV_END), "purge": "labels inside dev"},
+        train_window={"start": str(TRAIN_START), "end": str(dev_end), "purge": "labels inside dev"},
         calibration_window={
-            "start": str(FOLDS[-1].test_start),
-            "end": str(DEV_END),
-            "source": "fold test2023 residuals of the model trained before 2023",
+            "start": str(folds[-1].test_start),
+            "end": str(dev_end),
+            "source": f"fold {folds[-1].name} residuals of the model trained before it",
         },
     )
     vdir = out_dir / man.version
 
-    # out-of-sample m1 features (2022, 2023) for M2 / the backtest
+    # out-of-sample m1 features (the test folds) for M2 / the backtest
     oos = []
     for res, fs in zip(results, fitsets, strict=True):
-        plan = next(p for p in FOLDS if p.name == res.fold)
+        plan = next(p for p in folds if p.name == res.fold)
         m = (df["date"] >= plan.test_start) & (df["date"] <= plan.test_end)
         oos.append(publish(fold_model(res, fs, decisions, features), df[m].reset_index(drop=True)))
     oos_df = pd.concat(oos, ignore_index=True)
@@ -1038,7 +1074,9 @@ def train_m1(
                             "source": "lgbm",
                             "offsets": {
                                 qtag(p): v
-                                for p, v in final_offsets(last, t.kind, t.h, "lgbm").items()
+                                for p, v in final_offsets(
+                                    last, t.kind, t.h, "lgbm", dev_end=dev_end
+                                ).items()
                             },
                         }
                     )

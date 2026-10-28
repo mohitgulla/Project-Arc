@@ -285,6 +285,17 @@ def _sleeve(p: Proposal, a: ProposalAnalytics | None) -> str | None:
     return f"{name} ({window})" if window else name
 
 
+def _ml_line(ml: dict[str, Any] | None) -> str | None:
+    """``p_win 0.58 · E[R] +0.04 · p_stop 0.22`` from the trail's shadow score."""
+    if not ml:
+        return None
+    try:
+        p_win, e_r, p_stop = float(ml["p_win"]), float(ml["e_r"]), float(ml["p_stop"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return f"p_win {p_win:.2f} · E[R] {e_r:+.2f} · p_stop {p_stop:.2f}"
+
+
 def _gate_short(decision: GateDecision | None) -> str:
     if decision is None:
         return ":grey_question: No gate decision"
@@ -588,6 +599,9 @@ def _body(
     levels = levels_text(a.levels) if a is not None and a.levels else ""
     if levels:  # E23.3 (D98): strike_levels on and a level known; else card unchanged
         pairs.append(("Levels", levels))
+    ml = _ml_line(t.ml)
+    if ml:  # E27.4 (D126): display only; no score (or ml_card_line off) = card unchanged
+        pairs.append(("ML (shadow)", ml))
     blocks.extend(B.facts(pairs))
     blocks.append(B.divider())
     blocks.extend(_net_ev_section(p, em))

@@ -198,6 +198,8 @@ class TestConfig:
             "iv.record",
             "levels",  # E23.0: one bars + one chain request per ticker, pre-market
             "market_movers",  # E14.3: two screener calls + one snapshot call
+            "ml.refresh",  # E27.4: nightly live panel + parity + drift (a few minutes)
+            "ml.retrain",  # E27.4 (D140): monthly ledger extension + M1/M2 retrain, hours
             "options_fast",  # E13.6: ~50 chain requests, ~45 s
             "retail_sentiment",  # E14.6: ~55 paced Stocktwits requests, ~90 s
             "scalp",

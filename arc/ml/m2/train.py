@@ -67,10 +67,44 @@ OUTPUTS = ("p_win", "p_stop", "e_r", "r_q10", "r_q50", "r_q90", "e_days")
 
 
 def load_lightgbm() -> Any:
-    """``lightgbm`` (``ml`` extra; on macOS it needs ``brew install libomp``, OPS.md)."""
-    import lightgbm
+    """``lightgbm`` (``ml`` extra; on macOS it needs ``libomp``, OPS.md).
 
+    ``lib_lightgbm.dylib`` finds ``libomp`` only through its Homebrew/MacPorts rpaths or
+    ``DYLD_LIBRARY_PATH``, which must be set before the process starts. Without either,
+    this raises ``ImportError`` naming the fix; :func:`lightgbm_env` gives the env that
+    points at the ``libomp`` scikit-learn's wheel bundles (E27.4 ``ml.retrain`` runs its
+    training step in a child process with it).
+    """
+    try:
+        import lightgbm
+    except OSError as exc:
+        hint = bundled_libomp_dir()
+        msg = f"lightgbm can't load libomp ({str(exc).splitlines()[0]}): `brew install libomp`" + (
+            f" or run with DYLD_LIBRARY_PATH={hint}" if hint else ""
+        )
+        raise ImportError(msg) from exc
     return lightgbm
+
+
+def bundled_libomp_dir() -> str | None:
+    """The directory of the ``libomp.dylib`` scikit-learn's macOS wheel bundles."""
+    import importlib.util
+    from pathlib import Path
+
+    spec = importlib.util.find_spec("sklearn")
+    if spec is None or spec.origin is None:
+        return None
+    d = Path(spec.origin).parent / ".dylibs"
+    return str(d) if (d / "libomp.dylib").is_file() else None
+
+
+def lightgbm_env(base: dict[str, str]) -> dict[str, str]:
+    """*base* plus ``DYLD_LIBRARY_PATH`` → the bundled ``libomp`` when there is one."""
+    d = bundled_libomp_dir()
+    if d is None:
+        return dict(base)
+    cur = base.get("DYLD_LIBRARY_PATH")
+    return {**base, "DYLD_LIBRARY_PATH": d if not cur else f"{cur}:{d}"}
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +169,12 @@ def build_frame(
     *,
     years: Sequence[int] = DEV_YEARS,
     tickers: Sequence[str] | None = None,
+    end: dt.date | None = None,
+    holdout_reason: str | None = None,
 ) -> Frame:
+    """The training frame. The D140 monthly retrain passes *end* (its rolling train end:
+    rows dated after it, or whose label window reaches past it, are dropped) and the
+    *holdout_reason* that lets the read cross the D84 boundary."""
     from arc.utils.calendar import sessions_between
 
     rows = ds.load_family(
@@ -145,7 +184,12 @@ def build_frame(
         cfg.label_x,
         cap_per_day=cfg.cap_per_day,
         tickers=tickers,
+        split="all" if holdout_reason else "dev",
+        holdout_reason=holdout_reason,
     )
+    if end is not None:
+        keep = (rows["date"] <= end) & (rows["label_end_date"] <= end)
+        rows = rows[keep]
     rows = rows.reset_index(drop=True)
     pcols = panel_columns()
     panel = ds.load_panel_range(
@@ -704,14 +748,30 @@ def train_family(
     folds: Sequence[v.Fold] | None = None,
     monotone_check: bool = True,
     progress: Callable[[str], None] | None = None,
+    years: Sequence[int] = DEV_YEARS,
+    train_end: dt.date | None = None,
+    holdout_reason: str | None = None,
+    m1_version: str | None = None,
 ) -> TrainRun:
-    """Walk-forward evaluation, final fit and registry artefacts for one family (dev only)."""
+    """Walk-forward evaluation, final fit and registry artefacts for one family (dev only;
+    the D140 monthly retrain passes its rolling *years* / *train_end* / *holdout_reason*
+    and its own *folds*)."""
     from arc.ml.features.registry import schema_version
 
     say = progress or (lambda _m: None)
     t0 = time.monotonic()
     schema = schema_version()
-    fr = build_frame(cfg, family, ledger_root, features_root, schema, tickers=tickers)
+    fr = build_frame(
+        cfg,
+        family,
+        ledger_root,
+        features_root,
+        schema,
+        years=years,
+        tickers=tickers,
+        end=train_end,
+        holdout_reason=holdout_reason,
+    )
     digest = data_digest(fr)
     t_load = time.monotonic() - t0
     say(
@@ -882,6 +942,8 @@ def train_family(
         if (features_root.parent / "models" / "m1").is_dir()
         else []
     )
+    if m1_version is None and m1_dirs:
+        m1_version = m1_dirs[-1].name
     meta = {
         "version": version,
         "family": family,
@@ -889,7 +951,7 @@ def train_family(
         "rule": RULE_KIND,
         "protocol_rev": PROTOCOL_REV,
         "feature_schema": schema,
-        "m1_version": m1_dirs[-1].name if m1_dirs else None,
+        "m1_version": m1_version,
         "m1_features_used": False,
         "label_slippage": cfg.label_x,
         "config": cfg.model_dump(mode="json"),
@@ -898,9 +960,11 @@ def train_family(
         "code_sha": code_sha,
         "created": now.isoformat(),
         "train_window": {
-            "start": "2020-01-01",
-            "end": "2023-12-31",
-            "purge": "label_end_date inside dev",
+            "start": f"{min(years)}-01-01",
+            "end": str(train_end) if train_end is not None else f"{max(years)}-12-31",
+            "purge": "label_end_date inside dev"
+            if train_end is None
+            else f"label_end_date <= {train_end}",
         },
         "calibration_window": {
             "start": str(folds[-1].test_start),
