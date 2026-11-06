@@ -1,0 +1,13 @@
+# XP-3: futility (K=3 A/A calibration on the margin profile, control arm plus three identical treatments).
+# Written by arc.experiments.verdicts (E21.4, PLAN D86) when the experiment stopped at 2026-11-06T16:40:15.935267-05:00 by arc.experiments.
+# A/A complete after 10 sessions: every pair null, as expected
+# Not a promotion: this file only unlocks the spec's leaves (E21.1).
+experiment_id: XP-3
+verdict: futility
+report_hash: 42c59579152002ff079ca9b36eb283e473c02ed12a07b7f6c48bd636c2c13428
+kind: aa
+area: other
+spec_hash: 2463597ee2797ab4650ddc465e8deff9191370b424dff058844d3b6b2e421f44
+reference: control
+sessions: 10
+sigma: 0.054151391020193666
